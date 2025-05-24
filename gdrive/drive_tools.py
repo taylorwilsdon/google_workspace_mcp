@@ -87,12 +87,10 @@ async def search_drive_files(
             )
 
     try:
-        service = build("drive", "v3", credentials=credentials)
-        user_email_from_creds = (
-            credentials.id_token.get("email")
-            if credentials.id_token
-            else "Unknown (Drive)"
-        )
+        service = build('drive', 'v3', credentials=credentials)
+        user_email_from_creds = 'Unknown (Drive)'
+        if credentials.id_token and isinstance(credentials.id_token, dict):
+            user_email_from_creds = credentials.id_token.get('email', 'Unknown (Drive)')
 
         # Check if the query looks like a structured Drive query or free text
         # Basic check for operators or common keywords used in structured queries
@@ -376,12 +374,11 @@ async def list_drive_items(
             )
 
     try:
-        service = build("drive", "v3", credentials=credentials)
-        user_email_from_creds = (
-            credentials.id_token.get("email")
-            if credentials.id_token
-            else "Unknown (Drive)"
-        )
+
+        service = build('drive', 'v3', credentials=credentials)
+        user_email_from_creds = 'Unknown (Drive)'
+        if credentials.id_token and isinstance(credentials.id_token, dict):
+            user_email_from_creds = credentials.id_token.get('email', 'Unknown (Drive)')
 
         results = await asyncio.to_thread(
             service.files()
@@ -489,12 +486,10 @@ async def create_drive_file(
             )
 
     try:
-        service = build("drive", "v3", credentials=credentials)
-        user_email_from_creds = (
-            credentials.id_token.get("email")
-            if credentials.id_token
-            else "Unknown (Drive)"
-        )
+        service = build('drive', 'v3', credentials=credentials)
+        user_email_from_creds = 'Unknown (Drive)'
+        if credentials.id_token and isinstance(credentials.id_token, dict):
+            user_email_from_creds = credentials.id_token.get('email', 'Unknown (Drive)')
 
         file_metadata = {
             "name": file_name,

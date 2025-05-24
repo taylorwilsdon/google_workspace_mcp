@@ -143,11 +143,17 @@ async def _get_authenticated_calendar_service(
 
     try:
         service = build("calendar", "v3", credentials=credentials)
-        log_user_email = user_google_email or (
-            credentials.id_token.get("email")
-            if credentials and credentials.id_token
-            else "Unknown"
-        )
+        log_user_email = user_google_email or "Unknown"
+
+        # Try to get email from id_token if it's a dict, otherwise use user_google_email or "Unknown"
+        if not user_google_email and credentials and credentials.id_token:
+            try:
+                if isinstance(credentials.id_token, dict):
+                    log_user_email = credentials.id_token.get("email", "Unknown")
+                # If id_token is a string (JWT), we'd need to decode it, but for logging purposes "Unknown" is fine
+            except Exception:
+                pass  # Keep log_user_email as "Unknown"
+
         logger.info(
             f"[{tool_name}] Successfully built calendar service. User associated with creds: {log_user_email}"
         )
@@ -161,7 +167,6 @@ async def _get_authenticated_calendar_service(
 
 
 # --- Tool Implementations ---
-
 
 @server.tool()
 async def list_calendars(
@@ -184,6 +189,7 @@ async def list_calendars(
                                an error message if the API call fails,
                                or an authentication guidance message if credentials are required.
     """
+
     logger.info(
         f"[list_calendars] Invoked. Session: '{mcp_session_id}', Email: '{user_google_email}'"
     )

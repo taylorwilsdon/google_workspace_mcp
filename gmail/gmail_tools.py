@@ -202,11 +202,9 @@ async def get_gmail_message_content(
     try:
         # Build the service object directly
         service = build("gmail", "v1", credentials=credentials)
-        user_email_from_creds = (
-            credentials.id_token.get("email")
-            if credentials.id_token
-            else "Unknown (Gmail)"
-        )
+        user_email_from_creds = "Unknown (Gmail)"
+        if credentials.id_token and isinstance(credentials.id_token, dict):
+            user_email_from_creds = credentials.id_token.get("email", "Unknown (Gmail)")
         logger.info(f"[{tool_name}] Using service for: {user_email_from_creds}")
 
         # Fetch message metadata first to get headers
@@ -452,11 +450,9 @@ async def draft_gmail_message(
     try:
         # Build the service object directly
         service = build("gmail", "v1", credentials=credentials)
-        user_email_from_creds = (
-            credentials.id_token.get("email")
-            if credentials.id_token
-            else "Unknown (Gmail)"
-        )
+        user_email_from_creds = "Unknown (Gmail)"
+        if credentials.id_token and isinstance(credentials.id_token, dict):
+            user_email_from_creds = credentials.id_token.get("email", "Unknown (Gmail)")
         logger.info(f"[{tool_name}] Using service for: {user_email_from_creds}")
 
         # Prepare the email
