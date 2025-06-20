@@ -6,9 +6,8 @@ This module provides MCP tools for interacting with Google Docs API and managing
 import logging
 import asyncio
 import io
-from typing import List
+from typing import List, Annotated, Optional, Dict
 
-from mcp import types
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaIoBaseDownload
 
@@ -16,6 +15,8 @@ from googleapiclient.http import MediaIoBaseDownload
 from auth.service_decorator import require_google_service, require_multiple_services
 from core.utils import extract_office_xml_text, handle_http_errors
 from core.server import server
+
+from pydantic import Field
 
 logger = logging.getLogger(__name__)
 
@@ -214,3 +215,144 @@ async def create_doc(
     msg = f"Created Google Doc '{title}' (ID: {doc_id}) for {user_google_email}. Link: {link}"
     logger.info(f"Successfully created Google Doc '{title}' (ID: {doc_id}) for {user_google_email}. Link: {link}")
     return msg
+
+
+@server.tool()
+@require_google_service("drive", "drive_read")
+async def copy_google_doc(
+    service,
+    user_google_email: str,
+    template_id: str,
+    new_title: str,
+    target_folder_id: Optional[str] = None,
+) -> str:
+    """
+    Creates a new Google Doc by making a copy of an existing document. This is useful for creating documents from templates
+    or duplicating existing documents while preserving their formatting and content.
+
+    The tool will:
+    1. Create an exact copy of the source document
+    2. Give it the specified new title
+    3. Place it in the specified folder (or root if no folder specified)
+    4. Return the ID and view link of the new document
+
+    Args:
+        service: Authenticated Google Drive service instance.
+        user_google_email: Email of the user making the request.
+        template_id: The Google Drive ID of the source document that will be used as a template. This is the document you want to copy from.
+        new_title: The title/name that will be given to the new copy of the document. This is what the document will be called in Google Drive.
+        target_folder_id: Optional Google Drive folder ID where the new document should be created. If not provided, the document will be created in the root of the user's Google Drive.
+    Returns:
+        str: A message containing the new document's ID and view link.
+    """
+    logger.info(f"[copy_google_doc] Copying document {template_id} with new title {new_title}. Email: '{user_google_email}'")
+
+    try:
+        # Prepare copy metadata
+        copy_metadata = {
+            'name': new_title,
+        }
+
+        if target_folder_id:
+            copy_metadata['parents'] = [target_folder_id]
+
+        # Execute the copy
+        response = service.files().copy(
+            fileId=template_id,
+            body=copy_metadata,
+            fields='id,name,webViewLink'
+        ).execute()
+
+        document_id = response['id']
+        document_name = response['name']
+        view_link = response.get('webViewLink')
+
+        return f'Successfully created document "{document_name}" with ID: {document_id}\nView Link: {view_link}'
+
+    except HttpError as e:
+        status = e.resp.status
+        logger.error(f"Error copying document: {str(e)}")
+        if status == 404:
+            raise Exception("Template document or parent folder not found. Check the IDs. HTTP Status: 404")
+        elif status == 403:
+            raise Exception("Permission denied. Make sure you have read access to the template and write access to the destination folder. HTTP Status: 403")
+        else:
+            raise Exception(f"Failed to copy document: {e._get_reason() or 'Unknown error'} HTTP Status: {status}")
+
+    except Exception as e:
+        logger.error(f"Unhandled error: {str(e)}")
+        raise e
+
+
+@server.tool()
+@require_google_service("docs", "docs_write")
+async def replace_text_in_google_doc(
+    service,
+    user_google_email: Annotated[str, Field(description="Email of the user making the request")],
+    document_id: Annotated[str, Field(description="The Google Drive ID of the document where text replacements should be performed")],
+    replacements: Annotated[Dict[str, str], Field(
+        description="Dictionary mapping text patterns to their replacements. Each key is the text to find (case-insensitive), and each value is the text to replace it with",
+        json_schema_extra={"additionalProperties": {"type": "string"}}
+    )],
+) -> str:
+    """
+    Performs multiple text replacements within a Google Doc in a single operation. This is useful for:
+    - Replacing template placeholders with actual content
+    - Updating multiple instances of the same text
+    - Making bulk text changes across the document
+
+    The tool will:
+    1. Find all instances of each specified text pattern (case-insensitive)
+    2. Replace them with their corresponding replacement text
+    3. Perform all replacements in a single batch operation
+    4. Return a summary of how many replacements were made
+
+    Args:
+        service: Authenticated Google Docs service instance.
+        user_google_email: Email of the user making the request.
+        document_id: The Google Drive ID of the document where text replacements should be performed. This is the document you want to modify.
+        replacements: A dictionary mapping text patterns to their replacements. Each key is the text to find (case-insensitive),
+                     and each value is the text to replace it with. Example: {'{{NAME}}': 'John Doe', '(% DATE %)': '2025-01-01'}
+                     will replace all instances of '{{NAME}}' with 'John Doe' and '(% DATE %)' with '2025-01-01'.
+    Returns:
+        str: A message confirming the number of replacements that were successfully applied.
+    """
+    logger.info(f'Replacing text in document {document_id}. Amount of replacements: {len(replacements)}')
+
+    try:
+        requests = []
+        for search_text, replace_text in replacements.items():
+            requests.append({
+                "replaceAllText": {
+                    "containsText": {
+                        "text": search_text,
+                        "matchCase": False
+                    },
+                    "replaceText": replace_text
+                }
+            })
+
+        if not requests:
+            raise Exception("Error: The replacements dictionary is empty. Please provide at least one replacement.")
+
+        service.documents().batchUpdate(
+            documentId=document_id,
+            body={"requests": requests}
+        ).execute()
+
+        count = len(requests)
+        return f"Successfully applied {count} text replacement{'s' if count != 1 else ''} to the document."
+
+    except HttpError as e:
+        status = e.resp.status
+        logger.error(f"Error replacing text in document: {str(e)}")
+        if status == 404:
+            raise Exception("Document not found. Check the document ID. HTTP Status: 404") from e
+        elif status == 403:
+            raise Exception("Permission denied. Make sure you have write access to the document. HTTP Status: 403") from e
+        else:
+            raise Exception(f"Failed to replace text: {e._get_reason() or 'Unknown error'} HTTP Status: {status}") from e
+
+    except Exception as e:
+        logger.error(f"Unhandled error: {str(e)}")
+        raise e

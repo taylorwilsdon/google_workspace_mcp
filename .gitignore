@@ -13,11 +13,11 @@ dist/
 .venv/
 venv/
 .idea/
-.vscode/
+mcp_server_debug.log
 
 # ---- macOS clutter -----------------------------------------------------
 .DS_Store
 
 # ---- Secrets -----------------------------------------------------------
 client_secret.json
-
+.credentials/*.json*

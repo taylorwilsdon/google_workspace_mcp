@@ -1,0 +1,9 @@
+{
+"servers": {
+     "google_workspace": {
+        "type": "stdio",
+        "command": "uvx",
+        "args": ["workspace-mcp", "--single-user"]
+    }
+  }
+}

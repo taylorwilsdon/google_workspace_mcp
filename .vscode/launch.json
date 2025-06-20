@@ -1,0 +1,23 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Run in Debug Mode",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/main.py",
+            "args": [
+                "--transport",
+                "streamable-http",
+                "--tools",
+                "docs",
+                "--single-user"
+            ],
+            "env": {
+                "WORKSPACE_MCP_PORT": "8000"
+            },
+            "justMyCode": false,
+            "console": "integratedTerminal"
+        }
+    ]
+}
