@@ -3,7 +3,6 @@ Google Docs MCP Tools
 
 This module provides MCP tools for interacting with Google Docs API and managing Google Docs via Drive.
 """
-import pdb
 import asyncio
 import logging
 import io
@@ -337,7 +336,7 @@ def _extract_document_content_with_tabs(docs_service, document_id: str) -> Dict[
     
     # Process document content
     processed_content = []
-    processed_content.append('--- CONTENT ---')
+    processed_content.append('--- CONTENIDO ---')
     
     # Process main document body
     body = doc_data.get('body', {})
@@ -349,11 +348,9 @@ def _extract_document_content_with_tabs(docs_service, document_id: str) -> Dict[
     # Structure tabs data for easy access
     tabs_data = {}
     tabs = doc_data.get('tabs', [])
-    pdb.set_trace()
     if tabs:
-        processed_content.append("\n=== TABS CONTENT ===")
+        processed_content.append("\n=== CONTENIDO DE PESTAÑAS ===")
         for i, tab in enumerate(tabs):
-            pdb.set_trace()
             tab_id = tab.get('tabId', f'tab_{i}')
             
             # Store tab data in structured format
@@ -369,16 +366,16 @@ def _extract_document_content_with_tabs(docs_service, document_id: str) -> Dict[
             title = tab_properties.get('title', 'Untitled Tab')
             index = tab_properties.get('index', i)
             
-            processed_content.append(f"\n--- TAB ID: {tab_id} ---")
-            processed_content.append(f"Tab Title: {title}")
-            processed_content.append(f"Tab Index: {index}")
+            processed_content.append(f"\n--- ID DE PESTAÑA: {tab_id} ---")
+            processed_content.append(f"Título de Pestaña: {title}")
+            processed_content.append(f"Índice de Pestaña: {index}")
             
             # Process tab content
             document_tab = tab.get('documentTab', {})
             if document_tab:
                 body_content = document_tab.get('body', {}).get('content', [])
                 if body_content:
-                    processed_content.append("Tab Content:")
+                    processed_content.append("Contenido de Pestaña:")
                     tab_processed = process_content_elements(body_content, "  ")
                     processed_content.extend(tab_processed)
                     tab_info['content'] = tab_processed
@@ -386,16 +383,16 @@ def _extract_document_content_with_tabs(docs_service, document_id: str) -> Dict[
             # Process child tabs
             child_tabs = tab.get('childTabs', [])
             if child_tabs:
-                processed_content.append(f"Child Tabs: {len(child_tabs)}")
+                processed_content.append(f"Pestañas secundarias: {len(child_tabs)}")
                 for j, child_tab in enumerate(child_tabs):
                     child_tab_id = child_tab.get('tabId', f'child_tab_{j}')
-                    processed_content.append(f"  Child Tab ID: {child_tab_id}")
+                    processed_content.append(f"  ID de Pestaña Secundaria: {child_tab_id}")
                     
                     child_doc_tab = child_tab.get('documentTab', {})
                     if child_doc_tab:
                         child_body = child_doc_tab.get('body', {}).get('content', [])
                         if child_body:
-                            processed_content.append("  Child Tab Content:")
+                            processed_content.append("  Contenido de Pestaña Secundaria:")
                             child_processed = process_content_elements(child_body, "    ")
                             processed_content.extend(child_processed)
                             
@@ -411,7 +408,7 @@ def _extract_document_content_with_tabs(docs_service, document_id: str) -> Dict[
     # Extract document metadata
     metadata = extract_document_metadata(doc_data)
     if metadata:
-        processed_content.append("\n=== DOCUMENT METADATA ===")
+        processed_content.append("\n=== METADATOS DEL DOCUMENTO ===")
         processed_content.append(metadata)
     
     # Prepare result
@@ -448,6 +445,75 @@ def _extract_tab_id_from_url(url_or_id: str) -> str:
     return url_or_id  # Return as-is if not a URL
 
 
+def _get_tab_content_lightweight(docs_service, document_id: str, tab_id: str) -> Dict[str, Any]:
+    """
+    Lightweight function to get only specific tab content without processing entire document.
+    Falls back to full document processing if needed.
+    
+    Args:
+        docs_service: Google Docs service instance
+        document_id: ID of the document
+        tab_id: Specific tab ID to retrieve
+        
+    Returns:
+        Dict containing tab content and metadata
+    """
+    try:
+        # First try to get just the document structure without full content
+        doc_data = docs_service.documents().get(
+            documentId=document_id,
+            includeTabsContent=False  # Load structure only first
+        ).execute()
+        
+        tabs = doc_data.get('tabs', [])
+        target_tab = None
+        
+        # Find the specific tab
+        for tab in tabs:
+            if tab.get('tabId') == tab_id:
+                target_tab = tab
+                break
+        
+        if target_tab:
+            # Now get just this tab's content
+            full_doc = docs_service.documents().get(
+                documentId=document_id,
+                includeTabsContent=True
+            ).execute()
+            
+            # Find and return just the target tab
+            for tab in full_doc.get('tabs', []):
+                if tab.get('tabId') == tab_id:
+                    return {
+                        'tab_data': tab,
+                        'doc_title': full_doc.get('title', 'Unknown Document'),
+                        'timestamp': datetime.now()
+                    }
+        
+        # Fallback: tab not found or structure loading failed
+        return None
+        
+    except Exception as e:
+        logger.warning(f"Lightweight tab loading failed: {e}, falling back to full processing")
+        return None
+
+
+def _format_tab_selection_prompt(doc_title: str, tabs_count: int) -> str:
+    """Helper function to format the tab selection prompt for users."""
+    return f"""
+🎯 **Listo para leer contenido de "{doc_title}"**
+
+Encontré {tabs_count} pestañas en este documento. 
+
+**¿Qué te gustaría que lea?**
+- Proporciona el ID de la pestaña (código entre comillas invertidas como `tab_0`)
+- Cargaré ese contenido y lo usaré como contexto para nuestra conversación
+- También puedes especificar IDs de sub-pestañas para una lectura más enfocada
+
+**Ejemplo:** "Lee la pestaña `tab_0`" o "Muéstrame el contenido de `child_tab_2`"
+"""
+
+
 @server.tool()
 @require_multiple_services([
     {"service_type": "drive", "scopes": "drive_read", "param_name": "drive_service"},
@@ -464,8 +530,14 @@ async def get_tab_content(
     search_by_name: bool = False,
 ) -> str:
     """
-    Unified function to retrieve content of tabs or subtabs from a Google Doc.
-    Supports both direct IDs, Google Docs URLs with tab parameters, and searching by name.
+    **STEP 3 of Interactive Flow:** Retrieve content of a specific tab or subtab from a Google Doc.
+    
+    **Usage Flow:**
+    1. First use `list_document_tabs` to see available tabs
+    2. User chooses which tab to read  
+    3. Use this function to get the actual content
+    
+    **Performance Optimized:** Uses lightweight loading for fast response times.
     
     Args:
         user_google_email: The user's Google email address
@@ -475,7 +547,7 @@ async def get_tab_content(
         search_by_name: If True, searches for tabs/subtabs by name instead of ID
     
     Returns:
-        str: The content of the specified tab/subtab with metadata header.
+        str: The content of the specified tab/subtab formatted for context usage.
     """
     # Extract tab ID from URL if needed
     tab_id = _extract_tab_id_from_url(tab_identifier)
@@ -483,11 +555,88 @@ async def get_tab_content(
     logger.info(f"[get_tab_content] Getting content for document {document_id}, tab: {tab_id}, parent: {parent_tab_id}, search_by_name: {search_by_name}")
     
     try:
-        # Extract document content with tabs
-        doc_result = await asyncio.to_thread(
-            _extract_document_content_with_tabs,
-            docs_service,
-            document_id
+        # First, try the lightweight approach for specific tab content (if not searching by name)
+        if not search_by_name and not parent_tab_id:
+            logger.info(f"[get_tab_content] Attempting lightweight loading for tab {tab_id}")
+            lightweight_result = await asyncio.to_thread(
+                _get_tab_content_lightweight,
+                docs_service,
+                document_id,
+                tab_id
+            )
+            
+            if lightweight_result:
+                logger.info(f"[get_tab_content] Successfully loaded tab {tab_id} using lightweight method")
+                tab_data = lightweight_result.get('tab_data', {})
+                doc_title = lightweight_result.get('doc_title', 'Unknown Document')
+                doc_link = f"https://docs.google.com/document/d/{document_id}/edit?usp=drivesdk"
+                
+                tab_properties = tab_data.get('tabProperties', {})
+                tab_title = tab_properties.get('title', 'Untitled Tab')
+                tab_index = tab_properties.get('index', 0)
+                
+                response_parts = [
+                    f'Archivo: "{doc_title}" (ID: {document_id}, Tipo: application/vnd.google-apps.document)',
+                    f'Enlace: {doc_link}',
+                    f'ID de Pestaña Solicitado: {tab_id}',
+                    '',
+                    f'--- PESTAÑA ENCONTRADA: {tab_id} ---',
+                    f'Título de Pestaña: {tab_title}',
+                    f'Índice de Pestaña: {tab_index}',
+                    '',
+                    '--- CONTENIDO DE PESTAÑA ---'
+                ]
+                
+                # Process tab content
+                document_tab = tab_data.get('documentTab', {})
+                if document_tab:
+                    body_content = document_tab.get('body', {}).get('content', [])
+                    if body_content:
+                        # We need to define process_content_elements here since we're not loading the full doc
+                        from core.utils import extract_office_xml_text
+                        
+                        def process_content_elements(elements, indent=""):
+                            """Simplified content processing for lightweight mode"""
+                            processed = []
+                            for element in elements:
+                                if 'paragraph' in element:
+                                    para = element['paragraph']
+                                    para_elements = para.get('elements', [])
+                                    line_content = []
+                                    
+                                    for para_element in para_elements:
+                                        if 'textRun' in para_element:
+                                            text_content = para_element['textRun'].get('content', '')
+                                            line_content.append(text_content)
+                                    
+                                    if line_content:
+                                        processed.append(indent + ''.join(line_content).strip())
+                                elif 'table' in element:
+                                    processed.append(indent + "[TABLE CONTENT]")
+                                elif 'sectionBreak' in element:
+                                    processed.append(indent + "[SECTION BREAK]")
+                            
+                            return processed
+                        
+                        processed_content = process_content_elements(body_content, "")
+                        response_parts.extend(processed_content)
+                    else:
+                        response_parts.append('No content found in this tab.')
+                else:
+                    response_parts.append('No content found in this tab.')
+                
+                return '\n'.join(response_parts)
+        
+        # Fallback: Full document processing (for search by name, subtabs, or when lightweight fails)
+        logger.info(f"[get_tab_content] Using full document processing for document {document_id}")
+        # Extract document content with tabs - Add timeout protection
+        doc_result = await asyncio.wait_for(
+            asyncio.to_thread(
+                _extract_document_content_with_tabs,
+                docs_service,
+                document_id
+            ),
+            timeout=60.0  # 60 second timeout
         )
         
         tabs_data = doc_result.get('tabs_data', {})
@@ -495,9 +644,9 @@ async def get_tab_content(
         doc_link = f"https://docs.google.com/document/d/{document_id}/edit?usp=drivesdk"
         
         response_parts = [
-            f'File: "{doc_title}" (ID: {document_id}, Type: application/vnd.google-apps.document)',
-            f'Link: {doc_link}',
-            f'Requested Tab ID: {tab_id}',
+            f'Archivo: "{doc_title}" (ID: {document_id}, Tipo: application/vnd.google-apps.document)',
+            f'Enlace: {doc_link}',
+            f'ID de Pestaña Solicitado: {tab_id}',
             ''
         ]
         
@@ -539,7 +688,7 @@ async def get_tab_content(
                         })
             
             if matches:
-                response_parts.append(f'--- FOUND {len(matches)} MATCH(ES) BY NAME ---')
+                response_parts.append(f'--- ENCONTRADO {len(matches)} COINCIDENCIA(S) POR NOMBRE ---')
                 response_parts.append('')
                 
                 for i, match in enumerate(matches, 1):
@@ -548,12 +697,12 @@ async def get_tab_content(
                         response_parts.extend([
                             f'Parent Tab: {match["parent_title"]} (ID: {match["parent_id"]})',
                             f'Subtab: {match["title"]} (ID: {match["id"]})',
-                            '--- SUBTAB CONTENT ---'
+                            '--- CONTENIDO DE SUBPESTAÑA ---'
                         ])
                     else:
                         response_parts.extend([
                             f'Tab: {match["title"]} (ID: {match["id"]})',
-                            '--- TAB CONTENT ---'
+                            '--- CONTENIDO DE PESTAÑA ---'
                         ])
                     
                     # Add content
@@ -566,7 +715,7 @@ async def get_tab_content(
                     response_parts.append('')  # Spacing between matches
             else:
                 response_parts.extend([
-                    f'--- NO MATCHES FOUND FOR NAME: "{tab_id}" ---',
+                    f'--- NO COINCIDENCIAS ENCONTRADAS PARA EL NOMBRE: "{tab_id}" ---',
                     '',
                     'Available tabs and subtabs in this document:'
                 ])
@@ -620,12 +769,12 @@ async def get_tab_content(
                     subtab_index = subtab_properties.get('index', 0)
                     
                     response_parts.extend([
-                        f'--- SUBTAB FOUND: {target_subtab_id} ---',
+                        f'--- SUBTAB ENCONTRADO: {target_subtab_id} ---',
                         f'Parent Tab: {parent_title} (ID: {parent_tab_id})',
                         f'Subtab Title: {subtab_title}',
                         f'Subtab Index: {subtab_index}',
                         '',
-                        '--- SUBTAB CONTENT ---'
+                        '--- CONTENIDO DE SUBPESTAÑA ---'
                     ])
                     
                     # Extract content for this specific subtab
@@ -636,7 +785,7 @@ async def get_tab_content(
                         response_parts.append('No content found in this subtab.')
                 else:
                     response_parts.extend([
-                        f'--- SUBTAB NOT FOUND: {tab_id} ---',
+                        f'--- SUBTAB NO ENCONTRADO: {tab_id} ---',
                         f'Parent Tab: {parent_title} (ID: {parent_tab_id})',
                         '',
                         'Available subtabs in this parent tab:'
@@ -661,11 +810,11 @@ async def get_tab_content(
                 tab_index = tab_properties.get('index', 0)
                 
                 response_parts.extend([
-                    f'--- TAB FOUND: {tab_id} ---',
-                    f'Tab Title: {tab_title}',
-                    f'Tab Index: {tab_index}',
+                    f'--- PESTAÑA ENCONTRADA: {tab_id} ---',
+                    f'Título de Pestaña: {tab_title}',
+                    f'Índice de Pestaña: {tab_index}',
                     '',
-                    '--- TAB CONTENT ---'
+                    '--- CONTENIDO DE PESTAÑA ---'
                 ])
                 
                 # Extract content for this tab
@@ -678,11 +827,11 @@ async def get_tab_content(
                 # Show child tabs if any
                 child_tabs = tab_info.get('child_tabs', {})
                 if child_tabs:
-                    response_parts.extend(['', '--- CHILD TABS ---'])
+                    response_parts.extend(['', '--- SUBPESTAÑAS ---'])
                     for child_id, child_info in child_tabs.items():
                         child_properties = child_info.get('properties', {})
                         child_title = child_properties.get('title', 'Untitled Child Tab')
-                        response_parts.append(f'  - Child Tab ID: {child_id} | Title: "{child_title}"')
+                        response_parts.append(f'  - Subtab ID: {child_id} | Title: "{child_title}"')
                 
                 found_content = True
             
@@ -699,11 +848,11 @@ async def get_tab_content(
                         subtab_title = subtab_properties.get('title', 'Untitled Subtab')
                         
                         response_parts.extend([
-                            f'--- SUBTAB FOUND: {tab_id} ---',
+                            f'--- SUBTAB ENCONTRADO: {tab_id} ---',
                             f'Parent Tab: {parent_title} (ID: {parent_id})',
                             f'Subtab Title: {subtab_title}',
                             '',
-                            '--- SUBTAB CONTENT ---'
+                            '--- CONTENIDO DE SUBPESTAÑA ---'
                         ])
                         
                         subtab_content = subtab_info.get('content', [])
@@ -718,7 +867,7 @@ async def get_tab_content(
             # If still not found, show available tabs
             if not found_content:
                 response_parts.extend([
-                    f'--- TAB NOT FOUND: {tab_id} ---',
+                    f'--- PESTAÑA NO ENCONTRADA: {tab_id} ---',
                     '',
                     'Available tabs in this document:'
                 ])
@@ -733,7 +882,7 @@ async def get_tab_content(
                         for child_id, child_info in child_tabs.items():
                             child_properties = child_info.get('properties', {})
                             child_title = child_properties.get('title', 'Untitled Child Tab')
-                            response_parts.append(f'  - Child Tab ID: {child_id} | Title: "{child_title}"')
+                            response_parts.append(f'  - Subtab ID: {child_id} | Title: "{child_title}"')
         
         return '\n'.join(response_parts)
         
@@ -741,213 +890,98 @@ async def get_tab_content(
         return f"Error reading document tab: {str(e)}"
 
 
-# Removed redundant search_subtabs function - functionality consolidated into get_tab_content
-
-
-# Removed redundant get_specific_tab_content function - functionality consolidated into get_tab_content
-
-
 @server.tool()
 @require_multiple_services([
     {"service_type": "drive", "scopes": "drive_read", "param_name": "drive_service"},
     {"service_type": "docs", "scopes": "docs_read", "param_name": "docs_service"}
 ])
-@handle_http_errors("list_docs_in_folder")
-async def list_docs_in_folder(
+@handle_http_errors("list_document_tabs")
+async def list_document_tabs(
     drive_service,
     docs_service,
     user_google_email: str,
-    folder_id: str = 'root',
-    page_size: int = 100
+    document_url_or_id: str,
 ) -> str:
     """
-    Lists Google Docs within a specific Drive folder.
-
+    List all tabs and subtabs available in a Google Document.
+    This is the first step in the interactive flow - user gets tab list and chooses which to read.
+    
+    Args:
+        user_google_email: The user's Google email address
+        document_url_or_id: Google Docs URL or document ID
+    
     Returns:
-        str: A formatted list of Google Docs in the specified folder.
+        str: Formatted list of all available tabs and subtabs with their IDs and titles.
     """
-    logger.info(f"[list_docs_in_folder] Invoked. Email: '{user_google_email}', Folder ID: '{folder_id}'")
-
-    rsp = await asyncio.to_thread(
-        drive_service.files().list(
-            q=f"'{folder_id}' in parents and mimeType='application/vnd.google-apps.document' and trashed=false",
-            pageSize=page_size,
-            fields="files(id, name, modifiedTime, webViewLink)"
-        ).execute
-    )
-    items = rsp.get('files', [])
-    if not items:
-        return f"No Google Docs found in folder '{folder_id}'."
-    out = [f"Found {len(items)} Docs in folder '{folder_id}':"]
-    for f in items:
-        out.append(f"- {f['name']} (ID: {f['id']}) Modified: {f.get('modifiedTime')} Link: {f.get('webViewLink')}")
-    return "\n".join(out)
-
-@server.tool()
-@require_google_service("drive", "drive_read")
-@handle_http_errors("search_docs")
-async def search_docs(
-    service,
-    user_google_email: str,
-    query: str,
-    page_size: int = 10,
-) -> str:
-    """
-    Searches for Google Docs by name using Drive API (mimeType filter).
-
-    Returns:
-        str: A formatted list of Google Docs matching the search query.
-    """
-    logger.info(f"[search_docs] Email={user_google_email}, Query='{query}'")
-
-    escaped_query = query.replace("'", "\\'")
-
-    response = await asyncio.to_thread(
-        service.files().list(
-            q=f"name contains '{escaped_query}' and mimeType='application/vnd.google-apps.document' and trashed=false",
-            pageSize=page_size,
-            fields="files(id, name, createdTime, modifiedTime, webViewLink)"
-        ).execute
-    )
-    files = response.get('files', [])
-    if not files:
-        return f"No Google Docs found matching '{query}'."
-
-    output = [f"Found {len(files)} Google Docs matching '{query}':"]
-    for f in files:
-        output.append(
-            f"- {f['name']} (ID: {f['id']}) Modified: {f.get('modifiedTime')} Link: {f.get('webViewLink')}"
-        )
-    return "\n".join(output)
-
-
-@server.tool()
-@require_multiple_services([
-    {"service_type": "drive", "scopes": "drive_read", "param_name": "drive_service"},
-    {"service_type": "docs", "scopes": "docs_read", "param_name": "docs_service"}
-])
-@handle_http_errors("get_doc_content")
-async def get_doc_content(
-    drive_service,
-    docs_service,
-    user_google_email: str,
-    document_id: str,
-) -> str:
-    """
-    Retrieves content of a Google Doc or a Drive file (like .docx) identified by document_id.
-    - Native Google Docs: Fetches content via Docs API.
-    - Office files (.docx, etc.) stored in Drive: Downloads via Drive API and extracts text.
-
-    Returns:
-        str: The document content with metadata header.
-    """
-    logger.info(f"[get_doc_content] Invoked. Document/File ID: '{document_id}' for user '{user_google_email}'")
-
-    # Step 2: Get file metadata from Drive
-    file_metadata = await asyncio.to_thread(
-        drive_service.files().get(
-            fileId=document_id, fields="id, name, mimeType, webViewLink"
-        ).execute
-    )
-    mime_type = file_metadata.get("mimeType", "")
-    file_name = file_metadata.get("name", "Unknown File")
-    web_view_link = file_metadata.get("webViewLink", "#")
-
-    logger.info(f"[get_doc_content] File '{file_name}' (ID: {document_id}) has mimeType: '{mime_type}'")
-
-    body_text = "" # Initialize body_text
-
-    # Step 3: Process based on mimeType
-    if mime_type == "application/vnd.google-apps.document":
-        logger.info(f"[get_doc_content] Processing as native Google Doc.")
-        doc_data = await asyncio.to_thread(
-            docs_service.documents().get(documentId=document_id).execute
-        )
-        body_elements = doc_data.get('body', {}).get('content', [])
-
-        processed_text_lines: List[str] = []
-        for element in body_elements:
-            if 'paragraph' in element:
-                paragraph = element.get('paragraph', {})
-                para_elements = paragraph.get('elements', [])
-                current_line_text = ""
-                for pe in para_elements:
-                    text_run = pe.get('textRun', {})
-                    if text_run and 'content' in text_run:
-                        current_line_text += text_run['content']
-                if current_line_text.strip():
-                        processed_text_lines.append(current_line_text)
-        body_text = "".join(processed_text_lines)
-    else:
-        logger.info(f"[get_doc_content] Processing as Drive file (e.g., .docx, other). MimeType: {mime_type}")
-
-        export_mime_type_map = {
-                # Example: "application/vnd.google-apps.spreadsheet"z: "text/csv",
-                # Native GSuite types that are not Docs would go here if this function
-                # was intended to export them. For .docx, direct download is used.
-        }
-        effective_export_mime = export_mime_type_map.get(mime_type)
-
-        request_obj = (
-            drive_service.files().export_media(fileId=document_id, mimeType=effective_export_mime)
-            if effective_export_mime
-            else drive_service.files().get_media(fileId=document_id)
-        )
-
-        fh = io.BytesIO()
-        downloader = MediaIoBaseDownload(fh, request_obj)
-        loop = asyncio.get_event_loop()
-        done = False
-        while not done:
-            status, done = await loop.run_in_executor(None, downloader.next_chunk)
-
-        file_content_bytes = fh.getvalue()
-
-        office_text = extract_office_xml_text(file_content_bytes, mime_type)
-        if office_text:
-            body_text = office_text
+    # Extract document ID from URL if needed
+    if 'docs.google.com' in document_url_or_id:
+        import re
+        doc_id_match = re.search(r'/document/d/([a-zA-Z0-9-_]+)', document_url_or_id)
+        if doc_id_match:
+            document_id = doc_id_match.group(1)
         else:
-            try:
-                body_text = file_content_bytes.decode("utf-8")
-            except UnicodeDecodeError:
-                body_text = (
-                    f"[Binary or unsupported text encoding for mimeType '{mime_type}' - "
-                    f"{len(file_content_bytes)} bytes]"
-                )
+            return "Could not extract document ID from URL. Please provide a valid Google Docs URL."
+    else:
+        document_id = document_url_or_id
+    
+    logger.info(f"[list_document_tabs] Listing tabs for document {document_id}")
+    
+    try:
+        # Use lightweight approach to get document structure
+        doc_data = await asyncio.to_thread(
+            lambda: docs_service.documents().get(
+                documentId=document_id,
+                includeTabsContent=False  # We only need structure, not content
+            ).execute()
+        )
+        
+        doc_title = doc_data.get('title', 'Unknown Document')
+        tabs = doc_data.get('tabs', [])
+        doc_link = f"https://docs.google.com/document/d/{document_id}/edit?usp=drivesdk"
+        
+        if not tabs:
+            return f"""Archivo: "{doc_title}"
+Enlace: {doc_link}
 
-    header = (
-        f'File: "{file_name}" (ID: {document_id}, Type: {mime_type})\n'
-        f'Link: {web_view_link}\n\n--- CONTENT ---\n'
-    )
-    return header + body_text
-
-
-@server.tool()
-@require_google_service("docs", "docs_write")
-@handle_http_errors("create_doc")
-async def create_doc(
-    service,
-    user_google_email: str,
-    title: str,
-    content: str = '',
-) -> str:
-    """
-    Creates a new Google Doc and optionally inserts initial content.
-
-    Returns:
-        str: Confirmation message with document ID and link.
-    """
-    logger.info(f"[create_doc] Invoked. Email: '{user_google_email}', Title='{title}'")
-
-    doc = await asyncio.to_thread(service.documents().create(body={'title': title}).execute)
-    doc_id = doc.get('documentId')
-    if content:
-        requests = [{'insertText': {'location': {'index': 1}, 'text': content}}]
-        await asyncio.to_thread(service.documents().batchUpdate(documentId=doc_id, body={'requests': requests}).execute)
-    link = f"https://docs.google.com/document/d/{doc_id}/edit"
-    msg = f"Created Google Doc '{title}' (ID: {doc_id}) for {user_google_email}. Link: {link}"
-    logger.info(f"Successfully created Google Doc '{title}' (ID: {doc_id}) for {user_google_email}. Link: {link}")
-    return msg
+Este documento no tiene pestañas - es un documento único.
+Puedes leer el contenido principal directamente."""
+        
+        response_parts = [
+            f"Archivo: {doc_title}",
+            f"Enlace: {doc_link}",
+            f"Pestañas totales: {len(tabs)}",
+            "",
+            "Pestañas disponibles:",
+            ""
+        ]
+        
+        for i, tab in enumerate(tabs):
+            tab_id = tab.get('tabId', f'tab_{i}')
+            tab_properties = tab.get('tabProperties', {})
+            tab_title = tab_properties.get('title', 'Untitled Tab')
+            tab_index = tab_properties.get('index', i)
+            
+            response_parts.append(f"{tab_index + 1}. `{tab_id}` - **{tab_title}**")
+            
+            # Check for child tabs (subtabs)
+            child_tabs = tab.get('childTabs', [])
+            if child_tabs:
+                response_parts.append(f"   Subtabs ({len(child_tabs)}):")
+                for j, child_tab in enumerate(child_tabs):
+                    child_id = child_tab.get('tabId', f'child_tab_{j}')
+                    child_properties = child_tab.get('tabProperties', {})
+                    child_title = child_properties.get('title', 'Untitled Subtab')
+                    response_parts.append(f"      {j + 1}. `{child_id}` - {child_title}")
+            
+            response_parts.append("")  # Add spacing between tabs
+        
+        response_parts.append(_format_tab_selection_prompt(doc_title, len(tabs)))
+        
+        return '\n'.join(response_parts)
+        
+    except Exception as e:
+        logger.error(f"[list_document_tabs] Error listing tabs: {e}")
+        return f"Error accessing document: {str(e)}\n\nPlease check:\n- Document ID/URL is correct\n- You have access to the document\n- Document exists"
 
 
 @server.tool()
@@ -1092,37 +1126,3 @@ async def create_doc_comment(
     created = comment.get('createdTime', '')
     
     return f"Comment created successfully!\nComment ID: {comment_id}\nAuthor: {author}\nCreated: {created}\nContent: {comment_content}"
-
-
-@server.tool()
-@require_google_service("drive", "drive_file")
-@handle_http_errors("resolve_comment")
-async def resolve_comment(
-    service,
-    user_google_email: str,
-    document_id: str,
-    comment_id: str,
-) -> str:
-    """
-    Resolve a comment in a Google Doc.
-
-    Args:
-        document_id: The ID of the Google Document
-        comment_id: The ID of the comment to resolve
-
-    Returns:
-        str: Confirmation message.
-    """
-    logger.info(f"[resolve_comment] Resolving comment {comment_id} in document {document_id}")
-
-    body = {"resolved": True}
-    
-    await asyncio.to_thread(
-        service.comments().update(
-            fileId=document_id,
-            commentId=comment_id,
-            body=body
-        ).execute
-    )
-    
-    return f"Comment {comment_id} has been resolved successfully."
