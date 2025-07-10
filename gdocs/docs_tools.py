@@ -59,15 +59,15 @@ async def search_docs(
 
 @server.tool()
 @require_multiple_services([
-    {"service_type": "drive", "scopes": "drive_read", "param_name": "drive_service"},
-    {"service_type": "docs", "scopes": "docs_read", "param_name": "docs_service"}
+    {"service_type": "drive", "scopes": "drive_read", "param_name": "drive"},
+    {"service_type": "docs", "scopes": "docs_read", "param_name": "docs"}
 ])
 @handle_http_errors("get_doc_content")
 async def get_doc_content(
-    drive_service,
-    docs_service,
     user_google_email: str,
     document_id: str,
+    drive,
+    docs,
 ) -> str:
     """
     Retrieves content of a Google Doc or a Drive file (like .docx) identified by document_id.
@@ -77,6 +77,8 @@ async def get_doc_content(
     Returns:
         str: The document content with metadata header.
     """
+    drive_service = drive
+    docs_service = docs
     logger.info(f"[get_doc_content] Invoked. Document/File ID: '{document_id}' for user '{user_google_email}'")
 
     # Step 2: Get file metadata from Drive

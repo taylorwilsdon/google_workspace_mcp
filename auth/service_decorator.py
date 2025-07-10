@@ -293,33 +293,32 @@ def require_multiple_services(service_configs: List[Dict[str, Any]]):
 
     Usage:
         @require_multiple_services([
-            {"service_type": "drive", "scopes": "drive_read", "param_name": "drive_service"},
-            {"service_type": "docs", "scopes": "docs_read", "param_name": "docs_service"}
+            {"service_type": "drive", "scopes": "drive_read", "param_name": "drive"},
+            {"service_type": "docs", "scopes": "docs_read", "param_name": "docs"}
         ])
-        async def get_doc_with_metadata(drive_service, docs_service, user_google_email: str, doc_id: str):
+        async def get_doc_with_metadata(user_google_email: str, doc_id: str, drive, docs):
             # Both services are automatically injected
     """
     def decorator(func: Callable) -> Callable:
+        original_sig = inspect.signature(func)
+        params = list(original_sig.parameters.values())
+
+        service_param_names = {config['param_name'] for config in service_configs}
+
+        # New params for the wrapper, excluding the service params
+        wrapper_params = [p for p in params if p.name not in service_param_names]
+        wrapper_sig = original_sig.replace(parameters=wrapper_params)
+
         @wraps(func)
         async def wrapper(*args, **kwargs):
-            # Extract user_google_email
-            sig = inspect.signature(func)
-            param_names = list(sig.parameters.keys())
-
-            user_google_email = None
-            if 'user_google_email' in kwargs:
-                user_google_email = kwargs['user_google_email']
-            else:
-                try:
-                    user_email_index = param_names.index('user_google_email')
-                    if user_email_index < len(args):
-                        user_google_email = args[user_email_index]
-                except ValueError:
-                    pass
+            bound_args = wrapper_sig.bind(*args, **kwargs)
+            bound_args.apply_defaults()
+            user_google_email = bound_args.arguments.get('user_google_email')
 
             if not user_google_email:
-                raise Exception("user_google_email parameter is required but not found")
+                raise Exception("'user_google_email' parameter is required but was not found.")
 
+            injected_services = {}
             # Authenticate all services
             for config in service_configs:
                 service_type = config["service_type"]
@@ -344,21 +343,21 @@ def require_multiple_services(service_configs: List[Dict[str, Any]]):
                         user_google_email=user_google_email,
                         required_scopes=resolved_scopes,
                     )
-
-                    # Inject service with specified parameter name
-                    kwargs[param_name] = service
-
+                    injected_services[param_name] = service
                 except GoogleAuthenticationError as e:
                     raise Exception(str(e))
 
-            # Call the original function with refresh error handling
+            # Combine original arguments with injected services
+            final_kwargs = {**bound_args.arguments, **injected_services}
+
+            # Call the original function
             try:
-                return await func(*args, **kwargs)
+                return await func(**final_kwargs)
             except RefreshError as e:
-                # Handle token refresh errors gracefully
                 error_message = _handle_token_refresh_error(e, user_google_email, "Multiple Services")
                 raise Exception(error_message)
 
+        wrapper.__signature__ = wrapper_sig
         return wrapper
     return decorator
 
