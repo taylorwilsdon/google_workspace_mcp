@@ -532,6 +532,19 @@ async def get_event(
     attendees = event.get("attendees", [])
     attendee_emails = ", ".join([a.get("email", "") for a in attendees]) if attendees else "None"
     color = event.get("colorId", "No Color")
+
+    response_status = _is_user_attending_event(attendees, event, user_google_email)
+    if response_status == "accepted":
+        attending_str = "Yes"
+    elif response_status == "tentative":
+        attending_str = "Tentative"
+    elif response_status == "needsAction":
+        attending_str = "No response yet"
+    elif response_status == "declined":
+        attending_str = "No"
+    else:
+        attending_str = "Unknown"
+
     event_details = (
         f'Event Details:\n'
         f'- Title: {summary}\n'
@@ -540,9 +553,36 @@ async def get_event(
         f'- Description: {description}\n'
         f'- Location: {location}\n'
         f'- Attendees: {attendee_emails}\n'
+        f'- Attending myself: {attending_str}\n'
         f'- Event ID: {event_id}\n'
         f'- Link: {link}\n'
         f'- Color: {color}'
     )
     logger.info(f"[get_event] Successfully retrieved event {event_id} for {user_google_email}.")
     return event_details
+
+
+def _is_user_attending_event(attendees, event, user_google_email):
+    """
+    Determines if the user is attending the event (not declined).
+    Args:
+        attendees (list): List of attendee dicts.
+        event (dict): The event object.
+        user_google_email (str): The user's Google email address.
+    Returns:
+        bool: True if attending, False otherwise.
+    """
+    """
+    Returns one of: 'accepted', 'tentative', 'needsAction', 'declined', or None if not found.
+    """
+    for attendee in attendees:
+        email = attendee.get("email", "")
+        response_status = attendee.get("responseStatus", "needsAction")
+        if email.lower() == user_google_email.lower():
+            return response_status
+    # If no attendees and creator is myself, treat as accepted
+    if not attendees:
+        creator = event.get("creator", {}).get("email", "")
+        if creator.lower() == user_google_email.lower():
+            return "accepted"
+    return None
