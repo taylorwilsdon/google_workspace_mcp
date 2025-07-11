@@ -77,7 +77,6 @@ def _correct_time_format_for_api(
     logger.info(f"{param_name} '{time_str}' doesn't need formatting, using as is.")
     return time_str
 
-
 @server.tool()
 @require_google_service("calendar", "calendar_read")
 @handle_http_errors("list_calendars")
@@ -110,6 +109,7 @@ async def list_calendars(service, user_google_email: str) -> str:
     )
     logger.info(f"Successfully listed {len(items)} calendars for {user_google_email}.")
     return text_output
+
 
 
 @server.tool()
@@ -531,6 +531,7 @@ async def get_event(
     location = event.get("location", "No Location")
     attendees = event.get("attendees", [])
     attendee_emails = ", ".join([a.get("email", "") for a in attendees]) if attendees else "None"
+    color = event.get("colorId", "No Color")
     event_details = (
         f'Event Details:\n'
         f'- Title: {summary}\n'
@@ -540,7 +541,8 @@ async def get_event(
         f'- Location: {location}\n'
         f'- Attendees: {attendee_emails}\n'
         f'- Event ID: {event_id}\n'
-        f'- Link: {link}'
+        f'- Link: {link}\n'
+        f'- Color: {color}'
     )
     logger.info(f"[get_event] Successfully retrieved event {event_id} for {user_google_email}.")
     return event_details
