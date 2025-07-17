@@ -57,7 +57,7 @@ A production-ready MCP server that integrates all major Google Workspace service
 - **📅 Google Calendar**: Full calendar management with event CRUD operations
 - **📁 Google Drive**: File operations with native Microsoft Office format support (.docx, .xlsx)
 - **📧 Gmail**: Complete email management with search, send, and draft capabilities
-- **📄 Google Docs**: Document operations including content extraction, creation, and comment management
+- **📄 Google Docs**: Document operations including content extraction, creation, line-based editing, find/replace, versioned updates, and comment management
 - **📊 Google Sheets**: Comprehensive spreadsheet management with flexible cell operations and comment management
 - **🖼️ Google Slides**: Presentation management with slide creation, updates, content manipulation, and comment management
 - **📝 Google Forms**: Form creation, retrieval, publish settings, and response management
