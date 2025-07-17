@@ -182,15 +182,7 @@ async def get_events(
 
     event_details_list = []
     for item in items:
-        summary = item.get("summary", "No Title")
-        start_time = item["start"].get("dateTime", item["start"].get("date"))
-        end_time = item["end"].get("dateTime", item["end"].get("date"))
-        link = item.get("htmlLink", "No Link")
-        event_id = item.get("id", "No ID")
-        # Include the start/end date, and event ID in the output so users can copy it for modify/delete operations
-        event_details_list.append(
-            f'- "{summary}" (Starts: {start_time}, Ends: {end_time}) ID: {event_id} | Link: {link}'
-        )
+        event_details_list.append(_format_event_details(item, user_google_email))
 
     text_output = (
         f"Successfully retrieved {len(items)} events from calendar '{calendar_id}' for {user_google_email}:\n"
@@ -534,16 +526,7 @@ async def get_event(
     color = event.get("colorId", "No Color")
 
     response_status = _is_user_attending_event(attendees, event, user_google_email)
-    if response_status == "accepted":
-        attending_str = "Yes"
-    elif response_status == "tentative":
-        attending_str = "Tentative"
-    elif response_status == "needsAction":
-        attending_str = "No response yet"
-    elif response_status == "declined":
-        attending_str = "No"
-    else:
-        attending_str = "Unknown"
+    attending_str = _format_attendance_status(response_status)
 
     event_details = (
         f'Event Details:\n'
@@ -586,3 +569,47 @@ def _is_user_attending_event(attendees, event, user_google_email):
         if creator.lower() == user_google_email.lower():
             return "accepted"
     return None
+
+def _format_event_details(item: Dict[str, Any], user_google_email: str) -> str:
+    """
+    Formats event details into a standardized string format.
+    
+    Args:
+        item (Dict[str, Any]): Event item from Google Calendar API.
+        
+    Returns:
+        str: Formatted event details string.
+    """
+    summary = item.get("summary", "No Title")
+    start_time = item["start"].get("dateTime", item["start"].get("date"))
+    end_time = item["end"].get("dateTime", item["end"].get("date"))
+    link = item.get("htmlLink", "No Link")
+    event_id = item.get("id", "No ID")
+    attending = _format_attendance_status(
+        _is_user_attending_event(item.get("attendees", []), item, user_google_email)
+    )
+    color = item.get("colorId", "No Color")
+    
+    return f'- "{summary}" (Starts: {start_time}, Ends: {end_time}) ID: {event_id} | Link: {link} | Attending myself: {attending} | Color: {color}'
+
+def _format_attendance_status(response_status: Optional[str]) -> str:
+    """
+    Converts a Google Calendar response status to a human-readable attendance string.
+    
+    Args:
+        response_status (Optional[str]): The response status from Google Calendar API.
+                                       Can be 'accepted', 'tentative', 'needsAction', 'declined', or None.
+    
+    Returns:
+        str: Human-readable attendance status.
+    """
+    if response_status == "accepted":
+        return "Yes"
+    elif response_status == "tentative":
+        return "Tentative"
+    elif response_status == "needsAction":
+        return "No response yet"
+    elif response_status == "declined":
+        return "No"
+    else:
+        return "Unknown"
