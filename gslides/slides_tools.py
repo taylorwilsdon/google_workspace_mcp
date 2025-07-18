@@ -20,8 +20,8 @@ logger = logging.getLogger(__name__)
 
 
 @server.tool()
-@require_google_service("slides", "slides")
 @handle_http_errors("create_presentation")
+@require_google_service("slides", "slides")
 async def create_presentation(
     service,
     user_google_email: str,
@@ -42,27 +42,27 @@ async def create_presentation(
     body = {
         'title': title
     }
-    
+
     result = await asyncio.to_thread(
         service.presentations().create(body=body).execute
     )
-    
+
     presentation_id = result.get('presentationId')
     presentation_url = f"https://docs.google.com/presentation/d/{presentation_id}/edit"
-    
+
     confirmation_message = f"""Presentation Created Successfully for {user_google_email}:
 - Title: {title}
 - Presentation ID: {presentation_id}
 - URL: {presentation_url}
 - Slides: {len(result.get('slides', []))} slide(s) created"""
-    
+
     logger.info(f"Presentation created successfully for {user_google_email}")
     return confirmation_message
 
 
 @server.tool()
+@handle_http_errors("get_presentation", is_read_only=True)
 @require_google_service("slides", "slides_read")
-@handle_http_errors("get_presentation")
 async def get_presentation(
     service,
     user_google_email: str,
@@ -83,17 +83,17 @@ async def get_presentation(
     result = await asyncio.to_thread(
         service.presentations().get(presentationId=presentation_id).execute
     )
-    
+
     title = result.get('title', 'Untitled')
     slides = result.get('slides', [])
     page_size = result.get('pageSize', {})
-    
+
     slides_info = []
     for i, slide in enumerate(slides, 1):
         slide_id = slide.get('objectId', 'Unknown')
         page_elements = slide.get('pageElements', [])
         slides_info.append(f"  Slide {i}: ID {slide_id}, {len(page_elements)} element(s)")
-    
+
     confirmation_message = f"""Presentation Details for {user_google_email}:
 - Title: {title}
 - Presentation ID: {presentation_id}
@@ -103,14 +103,14 @@ async def get_presentation(
 
 Slides Breakdown:
 {chr(10).join(slides_info) if slides_info else '  No slides found'}"""
-    
+
     logger.info(f"Presentation retrieved successfully for {user_google_email}")
     return confirmation_message
 
 
 @server.tool()
-@require_google_service("slides", "slides")
 @handle_http_errors("batch_update_presentation")
+@require_google_service("slides", "slides")
 async def batch_update_presentation(
     service,
     user_google_email: str,
@@ -133,22 +133,22 @@ async def batch_update_presentation(
     body = {
         'requests': requests
     }
-    
+
     result = await asyncio.to_thread(
         service.presentations().batchUpdate(
             presentationId=presentation_id,
             body=body
         ).execute
     )
-    
+
     replies = result.get('replies', [])
-    
+
     confirmation_message = f"""Batch Update Completed for {user_google_email}:
 - Presentation ID: {presentation_id}
 - URL: https://docs.google.com/presentation/d/{presentation_id}/edit
 - Requests Applied: {len(requests)}
 - Replies Received: {len(replies)}"""
-    
+
     if replies:
         confirmation_message += "\n\nUpdate Results:"
         for i, reply in enumerate(replies, 1):
@@ -160,14 +160,14 @@ async def batch_update_presentation(
                 confirmation_message += f"\n  Request {i}: Created shape with ID {shape_id}"
             else:
                 confirmation_message += f"\n  Request {i}: Operation completed"
-    
+
     logger.info(f"Batch update completed successfully for {user_google_email}")
     return confirmation_message
 
 
 @server.tool()
+@handle_http_errors("get_page", is_read_only=True)
 @require_google_service("slides", "slides_read")
-@handle_http_errors("get_page")
 async def get_page(
     service,
     user_google_email: str,
@@ -193,10 +193,10 @@ async def get_page(
             pageObjectId=page_object_id
         ).execute
     )
-    
+
     page_type = result.get('pageType', 'Unknown')
     page_elements = result.get('pageElements', [])
-    
+
     elements_info = []
     for element in page_elements:
         element_id = element.get('objectId', 'Unknown')
@@ -213,7 +213,7 @@ async def get_page(
             elements_info.append(f"  Line: ID {element_id}, Type: {line_type}")
         else:
             elements_info.append(f"  Element: ID {element_id}, Type: Unknown")
-    
+
     confirmation_message = f"""Page Details for {user_google_email}:
 - Presentation ID: {presentation_id}
 - Page ID: {page_object_id}
@@ -222,14 +222,14 @@ async def get_page(
 
 Page Elements:
 {chr(10).join(elements_info) if elements_info else '  No elements found'}"""
-    
+
     logger.info(f"Page retrieved successfully for {user_google_email}")
     return confirmation_message
 
 
 @server.tool()
+@handle_http_errors("get_page_thumbnail", is_read_only=True)
 @require_google_service("slides", "slides_read")
-@handle_http_errors("get_page_thumbnail")
 async def get_page_thumbnail(
     service,
     user_google_email: str,
@@ -258,9 +258,9 @@ async def get_page_thumbnail(
             thumbnailPropertiesImageSize=thumbnail_size
         ).execute
     )
-    
+
     thumbnail_url = result.get('contentUrl', '')
-    
+
     confirmation_message = f"""Thumbnail Generated for {user_google_email}:
 - Presentation ID: {presentation_id}
 - Page ID: {page_object_id}
@@ -268,7 +268,7 @@ async def get_page_thumbnail(
 - Thumbnail URL: {thumbnail_url}
 
 You can view or download the thumbnail using the provided URL."""
-    
+
     logger.info(f"Thumbnail generated successfully for {user_google_email}")
     return confirmation_message
 

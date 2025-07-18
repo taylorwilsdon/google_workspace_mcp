@@ -21,8 +21,8 @@ logger = logging.getLogger(__name__)
 
 
 @server.tool()
+@handle_http_errors("list_spreadsheets", is_read_only=True)
 @require_google_service("drive", "drive_read")
-@handle_http_errors("list_spreadsheets")
 async def list_spreadsheets(
     service,
     user_google_email: str,
@@ -70,8 +70,8 @@ async def list_spreadsheets(
 
 
 @server.tool()
+@handle_http_errors("get_spreadsheet_info", is_read_only=True)
 @require_google_service("sheets", "sheets_read")
-@handle_http_errors("get_spreadsheet_info")
 async def get_spreadsheet_info(
     service,
     user_google_email: str,
@@ -120,8 +120,8 @@ async def get_spreadsheet_info(
 
 
 @server.tool()
+@handle_http_errors("read_sheet_values", is_read_only=True)
 @require_google_service("sheets", "sheets_read")
-@handle_http_errors("read_sheet_values")
 async def read_sheet_values(
     service,
     user_google_email: str,
@@ -170,8 +170,8 @@ async def read_sheet_values(
 
 
 @server.tool()
-@require_google_service("sheets", "sheets_write")
 @handle_http_errors("modify_sheet_values")
+@require_google_service("sheets", "sheets_write")
 async def modify_sheet_values(
     service,
     user_google_email: str,
@@ -241,8 +241,8 @@ async def modify_sheet_values(
 
 
 @server.tool()
-@require_google_service("sheets", "sheets_write")
 @handle_http_errors("create_spreadsheet")
+@require_google_service("sheets", "sheets_write")
 async def create_spreadsheet(
     service,
     user_google_email: str,
@@ -290,8 +290,8 @@ async def create_spreadsheet(
 
 
 @server.tool()
-@require_google_service("sheets", "sheets_write")
 @handle_http_errors("create_sheet")
+@require_google_service("sheets", "sheets_write")
 async def create_sheet(
     service,
     user_google_email: str,
@@ -731,7 +731,7 @@ _comment_tools = create_comment_tools("spreadsheet", "spreadsheet_id")
 
 # Extract and register the functions
 read_sheet_comments = _comment_tools['read_comments']
-create_sheet_comment = _comment_tools['create_comment'] 
+create_sheet_comment = _comment_tools['create_comment']
 reply_to_sheet_comment = _comment_tools['reply_to_comment']
 resolve_sheet_comment = _comment_tools['resolve_comment']
 

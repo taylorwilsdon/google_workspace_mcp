@@ -13,12 +13,14 @@ from googleapiclient.errors import HttpError
 
 from auth.service_decorator import require_google_service
 from core.server import server
+from core.utils import handle_http_errors
 
 logger = logging.getLogger(__name__)
 
 
 @server.tool()
 @require_google_service("tasks", "tasks_read")
+@handle_http_errors("list_task_lists")
 async def list_task_lists(
     service,
     user_google_email: str,
@@ -78,6 +80,7 @@ async def list_task_lists(
 
 @server.tool()
 @require_google_service("tasks", "tasks_read")
+@handle_http_errors("get_task_list")
 async def get_task_list(
     service,
     user_google_email: str,
@@ -121,6 +124,7 @@ async def get_task_list(
 
 @server.tool()
 @require_google_service("tasks", "tasks")
+@handle_http_errors("create_task_list")
 async def create_task_list(
     service,
     user_google_email: str,
@@ -168,6 +172,7 @@ async def create_task_list(
 
 @server.tool()
 @require_google_service("tasks", "tasks")
+@handle_http_errors("update_task_list")
 async def update_task_list(
     service,
     user_google_email: str,
@@ -217,6 +222,7 @@ async def update_task_list(
 
 @server.tool()
 @require_google_service("tasks", "tasks")
+@handle_http_errors("delete_task_list")
 async def delete_task_list(
     service,
     user_google_email: str,
@@ -256,6 +262,7 @@ async def delete_task_list(
 
 @server.tool()
 @require_google_service("tasks", "tasks_read")
+@handle_http_errors("list_tasks")
 async def list_tasks(
     service,
     user_google_email: str,
@@ -361,6 +368,7 @@ async def list_tasks(
 
 @server.tool()
 @require_google_service("tasks", "tasks_read")
+@handle_http_errors("get_task")
 async def get_task(
     service,
     user_google_email: str,
@@ -421,6 +429,7 @@ async def get_task(
 
 @server.tool()
 @require_google_service("tasks", "tasks")
+@handle_http_errors("create_task")
 async def create_task(
     service,
     user_google_email: str,
@@ -495,6 +504,7 @@ async def create_task(
 
 @server.tool()
 @require_google_service("tasks", "tasks")
+@handle_http_errors("update_task")
 async def update_task(
     service,
     user_google_email: str,
@@ -576,6 +586,7 @@ async def update_task(
 
 @server.tool()
 @require_google_service("tasks", "tasks")
+@handle_http_errors("delete_task")
 async def delete_task(
     service,
     user_google_email: str,
@@ -617,6 +628,7 @@ async def delete_task(
 
 @server.tool()
 @require_google_service("tasks", "tasks")
+@handle_http_errors("move_task")
 async def move_task(
     service,
     user_google_email: str,
@@ -695,6 +707,7 @@ async def move_task(
 
 @server.tool()
 @require_google_service("tasks", "tasks")
+@handle_http_errors("clear_completed_tasks")
 async def clear_completed_tasks(
     service,
     user_google_email: str,

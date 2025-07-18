@@ -76,8 +76,8 @@ def _build_drive_list_params(
     return list_params
 
 @server.tool()
+@handle_http_errors("search_drive_files", is_read_only=True)
 @require_google_service("drive", "drive_read")
-@handle_http_errors("search_drive_files")
 async def search_drive_files(
     service,
     user_google_email: str,
@@ -143,8 +143,8 @@ async def search_drive_files(
     return text_output
 
 @server.tool()
+@handle_http_errors("get_drive_file_content", is_read_only=True)
 @require_google_service("drive", "drive_read")
-@handle_http_errors("get_drive_file_content")
 async def get_drive_file_content(
     service,
     user_google_email: str,
@@ -200,7 +200,7 @@ async def get_drive_file_content(
         "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     }
-    
+
     if mime_type in office_mime_types:
         office_text = extract_office_xml_text(file_content_bytes, mime_type)
         if office_text:
@@ -233,8 +233,8 @@ async def get_drive_file_content(
 
 
 @server.tool()
+@handle_http_errors("list_drive_items", is_read_only=True)
 @require_google_service("drive", "drive_read")
-@handle_http_errors("list_drive_items")
 async def list_drive_items(
     service,
     user_google_email: str,
@@ -289,8 +289,8 @@ async def list_drive_items(
     return text_output
 
 @server.tool()
-@require_google_service("drive", "drive_file")
 @handle_http_errors("create_drive_file")
+@require_google_service("drive", "drive_file")
 async def create_drive_file(
     service,
     user_google_email: str,
