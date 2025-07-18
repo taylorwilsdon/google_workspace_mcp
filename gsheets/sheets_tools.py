@@ -339,6 +339,393 @@ async def create_sheet(
     return text_output
 
 
+@server.tool()
+@require_google_service("sheets", "sheets_write")
+@handle_http_errors("format_cell_style")
+async def format_cell_style(
+    service,
+    user_google_email: str,
+    spreadsheet_id: str,
+    range_name: str,
+    bold: bool = None,
+    italic: bool = None,
+    underline: bool = None,
+    strikethrough: bool = None,
+    font_size: int = None,
+    font_family: str = None,
+    text_color: str = None,
+    background_color: str = None,
+    horizontal_alignment: str = None,
+    vertical_alignment: str = None,
+) -> str:
+    """
+    Apply formatting to a range of cells in a Google Sheet.
+
+    Args:
+        service: Google Sheets service
+        user_google_email: User's email
+        spreadsheet_id: Spreadsheet ID to modify
+        range_name: Range to format (e.g., "A1:C3", "Sheet1!A1:C3")
+        bold: Set bold formatting (True/False)
+        italic: Set italic formatting (True/False)
+        underline: Set underline formatting (True/False)
+        strikethrough: Set strikethrough formatting (True/False)
+        font_size: Font size in points
+        font_family: Font family name (e.g., 'Arial', 'Calibri')
+        text_color: Text color in hex format (e.g., '#FF0000' for red)
+        background_color: Background color in hex format
+        horizontal_alignment: Horizontal alignment ('LEFT', 'CENTER', 'RIGHT')
+        vertical_alignment: Vertical alignment ('TOP', 'MIDDLE', 'BOTTOM')
+
+    Returns:
+        str: Confirmation message
+    """
+    logger.info(f"[format_cell_style] Invoked. Spreadsheet ID: '{spreadsheet_id}', Range: '{range_name}', User: '{user_google_email}'")
+
+    # Parse range to get sheet ID if needed
+    sheet_id = 0  # Default to first sheet
+    if '!' in range_name:
+        sheet_name, cell_range = range_name.split('!', 1)
+        # Get sheet ID from sheet name
+        spreadsheet = await asyncio.to_thread(
+            service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute
+        )
+        for sheet in spreadsheet.get('sheets', []):
+            if sheet['properties']['title'] == sheet_name:
+                sheet_id = sheet['properties']['sheetId']
+                break
+    else:
+        cell_range = range_name
+
+    # Build cell format object
+    cell_format = {}
+    text_format = {}
+    
+    if bold is not None:
+        text_format['bold'] = bold
+    if italic is not None:
+        text_format['italic'] = italic
+    if underline is not None:
+        text_format['underline'] = underline
+    if strikethrough is not None:
+        text_format['strikethrough'] = strikethrough
+    if font_size is not None:
+        text_format['fontSize'] = font_size
+    if font_family is not None:
+        text_format['fontFamily'] = font_family
+    if text_color is not None:
+        text_format['foregroundColor'] = _hex_to_rgb_sheets(text_color)
+    
+    if text_format:
+        cell_format['textFormat'] = text_format
+    
+    if background_color is not None:
+        cell_format['backgroundColor'] = _hex_to_rgb_sheets(background_color)
+    
+    if horizontal_alignment is not None or vertical_alignment is not None:
+        cell_format['horizontalAlignment'] = horizontal_alignment
+        cell_format['verticalAlignment'] = vertical_alignment
+
+    if not cell_format:
+        return f"No formatting changes specified for range {range_name}"
+
+    # Create batch update request
+    requests = [{
+        'repeatCell': {
+            'range': _parse_range_to_grid_range(cell_range, sheet_id),
+            'cell': {
+                'userEnteredFormat': cell_format
+            },
+            'fields': 'userEnteredFormat(' + ','.join(_get_format_fields(cell_format)) + ')'
+        }
+    }]
+
+    await asyncio.to_thread(
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id,
+            body={'requests': requests}
+        ).execute
+    )
+
+    logger.info(f"[format_cell_style] Successfully applied cell formatting to range {range_name} in spreadsheet {spreadsheet_id}")
+    return f"Cell formatting applied to range {range_name} in spreadsheet {spreadsheet_id} for {user_google_email}"
+
+
+@server.tool()
+@require_google_service("sheets", "sheets_write")
+@handle_http_errors("format_cell_borders")
+async def format_cell_borders(
+    service,
+    user_google_email: str,
+    spreadsheet_id: str,
+    range_name: str,
+    border_style: str = "SOLID",
+    border_color: str = "#000000",
+    border_width: int = 1,
+    top: bool = True,
+    bottom: bool = True,
+    left: bool = True,
+    right: bool = True,
+    inner_horizontal: bool = False,
+    inner_vertical: bool = False,
+) -> str:
+    """
+    Apply borders to a range of cells in a Google Sheet.
+
+    Args:
+        service: Google Sheets service
+        user_google_email: User's email
+        spreadsheet_id: Spreadsheet ID to modify
+        range_name: Range to format (e.g., "A1:C3", "Sheet1!A1:C3")
+        border_style: Border style ('SOLID', 'DOTTED', 'DASHED', 'SOLID_MEDIUM', 'SOLID_THICK', 'DOUBLE')
+        border_color: Border color in hex format (e.g., '#000000' for black)
+        border_width: Border width in pixels
+        top: Apply top border
+        bottom: Apply bottom border
+        left: Apply left border
+        right: Apply right border
+        inner_horizontal: Apply inner horizontal borders
+        inner_vertical: Apply inner vertical borders
+
+    Returns:
+        str: Confirmation message
+    """
+    logger.info(f"[format_cell_borders] Invoked. Spreadsheet ID: '{spreadsheet_id}', Range: '{range_name}', User: '{user_google_email}'")
+
+    # Parse range to get sheet ID
+    sheet_id = 0
+    if '!' in range_name:
+        sheet_name, cell_range = range_name.split('!', 1)
+        spreadsheet = await asyncio.to_thread(
+            service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute
+        )
+        for sheet in spreadsheet.get('sheets', []):
+            if sheet['properties']['title'] == sheet_name:
+                sheet_id = sheet['properties']['sheetId']
+                break
+    else:
+        cell_range = range_name
+
+    # Create border object
+    border = {
+        'style': border_style,
+        'color': _hex_to_rgb_sheets(border_color),
+        'width': border_width
+    }
+
+    # Build requests for each border position
+    requests = []
+    grid_range = _parse_range_to_grid_range(cell_range, sheet_id)
+    
+    if top:
+        requests.append({
+            'updateBorders': {
+                'range': grid_range,
+                'top': border
+            }
+        })
+    
+    if bottom:
+        requests.append({
+            'updateBorders': {
+                'range': grid_range,
+                'bottom': border
+            }
+        })
+    
+    if left:
+        requests.append({
+            'updateBorders': {
+                'range': grid_range,
+                'left': border
+            }
+        })
+    
+    if right:
+        requests.append({
+            'updateBorders': {
+                'range': grid_range,
+                'right': border
+            }
+        })
+    
+    if inner_horizontal:
+        requests.append({
+            'updateBorders': {
+                'range': grid_range,
+                'innerHorizontal': border
+            }
+        })
+    
+    if inner_vertical:
+        requests.append({
+            'updateBorders': {
+                'range': grid_range,
+                'innerVertical': border
+            }
+        })
+
+    if not requests:
+        return f"No border changes specified for range {range_name}"
+
+    await asyncio.to_thread(
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id,
+            body={'requests': requests}
+        ).execute
+    )
+
+    logger.info(f"[format_cell_borders] Successfully applied borders to range {range_name} in spreadsheet {spreadsheet_id}")
+    return f"Borders applied to range {range_name} in spreadsheet {spreadsheet_id} for {user_google_email}"
+
+
+@server.tool()
+@require_google_service("sheets", "sheets_write")
+@handle_http_errors("format_number_display")
+async def format_number_display(
+    service,
+    user_google_email: str,
+    spreadsheet_id: str,
+    range_name: str,
+    number_format: str,
+) -> str:
+    """
+    Apply number formatting to a range of cells in a Google Sheet.
+
+    Args:
+        service: Google Sheets service
+        user_google_email: User's email
+        spreadsheet_id: Spreadsheet ID to modify
+        range_name: Range to format (e.g., "A1:C3", "Sheet1!A1:C3")
+        number_format: Number format pattern:
+            - 'CURRENCY': '$#,##0.00'
+            - 'PERCENT': '0.00%'
+            - 'DATE': 'M/d/yyyy'
+            - 'TIME': 'h:mm:ss AM/PM'
+            - 'SCIENTIFIC': '0.00E+00'
+            - Custom pattern like '#,##0.00', '0.00%', 'M/d/yyyy', etc.
+
+    Returns:
+        str: Confirmation message
+    """
+    logger.info(f"[format_number_display] Invoked. Spreadsheet ID: '{spreadsheet_id}', Range: '{range_name}', Format: '{number_format}', User: '{user_google_email}'")
+
+    # Parse range to get sheet ID
+    sheet_id = 0
+    if '!' in range_name:
+        sheet_name, cell_range = range_name.split('!', 1)
+        spreadsheet = await asyncio.to_thread(
+            service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute
+        )
+        for sheet in spreadsheet.get('sheets', []):
+            if sheet['properties']['title'] == sheet_name:
+                sheet_id = sheet['properties']['sheetId']
+                break
+    else:
+        cell_range = range_name
+
+    # Convert common format names to patterns
+    format_patterns = {
+        'CURRENCY': '$#,##0.00',
+        'PERCENT': '0.00%',
+        'DATE': 'M/d/yyyy',
+        'TIME': 'h:mm:ss AM/PM',
+        'SCIENTIFIC': '0.00E+00',
+        'NUMBER': '#,##0.00',
+        'INTEGER': '#,##0'
+    }
+    
+    pattern = format_patterns.get(number_format.upper(), number_format)
+
+    # Create batch update request
+    requests = [{
+        'repeatCell': {
+            'range': _parse_range_to_grid_range(cell_range, sheet_id),
+            'cell': {
+                'userEnteredFormat': {
+                    'numberFormat': {
+                        'type': 'NUMBER',
+                        'pattern': pattern
+                    }
+                }
+            },
+            'fields': 'userEnteredFormat.numberFormat'
+        }
+    }]
+
+    await asyncio.to_thread(
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id,
+            body={'requests': requests}
+        ).execute
+    )
+
+    logger.info(f"[format_number_display] Successfully applied number formatting to range {range_name} in spreadsheet {spreadsheet_id}")
+    return f"Number formatting '{pattern}' applied to range {range_name} in spreadsheet {spreadsheet_id} for {user_google_email}"
+
+
+def _hex_to_rgb_sheets(hex_color: str) -> dict:
+    """Convert hex color to RGB dict for Google Sheets API."""
+    hex_color = hex_color.lstrip('#')
+    if len(hex_color) != 6:
+        raise ValueError("Invalid hex color format. Use #RRGGBB format")
+    
+    return {
+        'red': int(hex_color[0:2], 16) / 255.0,
+        'green': int(hex_color[2:4], 16) / 255.0,
+        'blue': int(hex_color[4:6], 16) / 255.0
+    }
+
+
+def _parse_range_to_grid_range(range_name: str, sheet_id: int) -> dict:
+    """Parse A1 notation to GridRange object."""
+    # Simple A1 notation parser - handles cases like "A1:C3"
+    if ':' in range_name:
+        start_cell, end_cell = range_name.split(':')
+    else:
+        start_cell = end_cell = range_name
+    
+    def _a1_to_coords(cell: str):
+        """Convert A1 notation to row/col coordinates."""
+        col = 0
+        row = 0
+        i = 0
+        
+        # Extract column letters
+        while i < len(cell) and cell[i].isalpha():
+            col = col * 26 + (ord(cell[i].upper()) - ord('A') + 1)
+            i += 1
+        
+        # Extract row numbers
+        if i < len(cell):
+            row = int(cell[i:])
+        
+        return row - 1, col - 1  # Convert to 0-based
+    
+    start_row, start_col = _a1_to_coords(start_cell)
+    end_row, end_col = _a1_to_coords(end_cell)
+    
+    return {
+        'sheetId': sheet_id,
+        'startRowIndex': start_row,
+        'endRowIndex': end_row + 1,
+        'startColumnIndex': start_col,
+        'endColumnIndex': end_col + 1
+    }
+
+
+def _get_format_fields(cell_format: dict) -> List[str]:
+    """Get list of format fields for API request."""
+    fields = []
+    for key in cell_format.keys():
+        if key == 'textFormat':
+            for text_key in cell_format[key].keys():
+                fields.append(f'textFormat.{text_key}')
+        else:
+            fields.append(key)
+    return fields
+
+
 # Create comment management tools for sheets
 _comment_tools = create_comment_tools("spreadsheet", "spreadsheet_id")
 

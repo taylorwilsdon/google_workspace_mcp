@@ -452,6 +452,328 @@ async def create_versioned_document(
     return f"Document {document_id} updated successfully for {user_google_email}. Backup created: {backup_name} (ID: {backup_id}, Link: {backup_link})"
 
 
+@server.tool()
+@require_google_service("docs", "docs_write")
+@handle_http_errors("format_text_style")
+async def format_text_style(
+    service,
+    user_google_email: str,
+    document_id: str,
+    start_index: int,
+    end_index: int,
+    bold: bool = None,
+    italic: bool = None,
+    underline: bool = None,
+    font_size: int = None,
+    font_family: str = None,
+    text_color: str = None,
+    background_color: str = None,
+) -> str:
+    """
+    Apply text formatting to a range of text in a Google Doc.
+
+    Args:
+        service: Google Docs service
+        user_google_email: User's email
+        document_id: Document ID to modify
+        start_index: Start position (0-based)
+        end_index: End position (0-based, exclusive)
+        bold: Set bold formatting (True/False)
+        italic: Set italic formatting (True/False)
+        underline: Set underline formatting (True/False)
+        font_size: Font size in points
+        font_family: Font family name (e.g., 'Arial', 'Times New Roman')
+        text_color: Text color in hex format (e.g., '#FF0000' for red)
+        background_color: Background color in hex format
+
+    Returns:
+        str: Confirmation message
+    """
+    logger.info(f"[format_text_style] Invoked. Document ID: '{document_id}', Range: {start_index}-{end_index}, User: '{user_google_email}'")
+
+    if start_index < 0 or end_index <= start_index:
+        raise ValueError("Invalid range: start_index must be >= 0 and end_index must be > start_index")
+
+    # Build text style object
+    text_style = {}
+    if bold is not None:
+        text_style['bold'] = bold
+    if italic is not None:
+        text_style['italic'] = italic
+    if underline is not None:
+        text_style['underline'] = underline
+    if font_size is not None:
+        text_style['fontSize'] = {'magnitude': font_size, 'unit': 'PT'}
+    if font_family is not None:
+        text_style['fontFamily'] = font_family
+    if text_color is not None:
+        text_style['foregroundColor'] = {'color': {'rgbColor': _hex_to_rgb(text_color)}}
+    if background_color is not None:
+        text_style['backgroundColor'] = {'color': {'rgbColor': _hex_to_rgb(background_color)}}
+
+    if not text_style:
+        return f"No formatting changes specified for document {document_id}"
+
+    # Create batch update request
+    requests = [{
+        'updateTextStyle': {
+            'range': {
+                'startIndex': start_index,
+                'endIndex': end_index
+            },
+            'textStyle': text_style,
+            'fields': ','.join(text_style.keys())
+        }
+    }]
+
+    await asyncio.to_thread(
+        service.documents().batchUpdate(
+            documentId=document_id,
+            body={'requests': requests}
+        ).execute
+    )
+
+    logger.info(f"[format_text_style] Successfully applied text formatting to document {document_id} for {user_google_email}")
+    return f"Text formatting applied to range {start_index}-{end_index} in document {document_id} for {user_google_email}"
+
+
+@server.tool()
+@require_google_service("docs", "docs_write")
+@handle_http_errors("format_paragraph_style")
+async def format_paragraph_style(
+    service,
+    user_google_email: str,
+    document_id: str,
+    start_index: int,
+    end_index: int,
+    alignment: str = None,
+    line_spacing: float = None,
+    indent_first_line: float = None,
+    indent_start: float = None,
+    indent_end: float = None,
+    space_above: float = None,
+    space_below: float = None,
+) -> str:
+    """
+    Apply paragraph formatting to a range of text in a Google Doc.
+
+    Args:
+        service: Google Docs service
+        user_google_email: User's email
+        document_id: Document ID to modify
+        start_index: Start position (0-based)
+        end_index: End position (0-based, exclusive)
+        alignment: Text alignment ('START', 'CENTER', 'END', 'JUSTIFY')
+        line_spacing: Line spacing multiplier (e.g., 1.0 for single, 1.5 for 1.5x, 2.0 for double)
+        indent_first_line: First line indent in points
+        indent_start: Left indent in points
+        indent_end: Right indent in points
+        space_above: Space above paragraph in points
+        space_below: Space below paragraph in points
+
+    Returns:
+        str: Confirmation message
+    """
+    logger.info(f"[format_paragraph_style] Invoked. Document ID: '{document_id}', Range: {start_index}-{end_index}, User: '{user_google_email}'")
+
+    if start_index < 0 or end_index <= start_index:
+        raise ValueError("Invalid range: start_index must be >= 0 and end_index must be > start_index")
+
+    # Build paragraph style object
+    paragraph_style = {}
+    if alignment is not None:
+        valid_alignments = ['START', 'CENTER', 'END', 'JUSTIFY']
+        if alignment.upper() not in valid_alignments:
+            raise ValueError(f"Invalid alignment. Must be one of: {valid_alignments}")
+        paragraph_style['alignment'] = alignment.upper()
+    if line_spacing is not None:
+        paragraph_style['lineSpacing'] = line_spacing
+    if indent_first_line is not None:
+        paragraph_style['indentFirstLine'] = {'magnitude': indent_first_line, 'unit': 'PT'}
+    if indent_start is not None:
+        paragraph_style['indentStart'] = {'magnitude': indent_start, 'unit': 'PT'}
+    if indent_end is not None:
+        paragraph_style['indentEnd'] = {'magnitude': indent_end, 'unit': 'PT'}
+    if space_above is not None:
+        paragraph_style['spaceAbove'] = {'magnitude': space_above, 'unit': 'PT'}
+    if space_below is not None:
+        paragraph_style['spaceBelow'] = {'magnitude': space_below, 'unit': 'PT'}
+
+    if not paragraph_style:
+        return f"No paragraph formatting changes specified for document {document_id}"
+
+    # Create batch update request
+    requests = [{
+        'updateParagraphStyle': {
+            'range': {
+                'startIndex': start_index,
+                'endIndex': end_index
+            },
+            'paragraphStyle': paragraph_style,
+            'fields': ','.join(paragraph_style.keys())
+        }
+    }]
+
+    await asyncio.to_thread(
+        service.documents().batchUpdate(
+            documentId=document_id,
+            body={'requests': requests}
+        ).execute
+    )
+
+    logger.info(f"[format_paragraph_style] Successfully applied paragraph formatting to document {document_id} for {user_google_email}")
+    return f"Paragraph formatting applied to range {start_index}-{end_index} in document {document_id} for {user_google_email}"
+
+
+@server.tool()
+@require_google_service("docs", "docs_write")
+@handle_http_errors("apply_heading_style")
+async def apply_heading_style(
+    service,
+    user_google_email: str,
+    document_id: str,
+    start_index: int,
+    end_index: int,
+    heading_level: int,
+) -> str:
+    """
+    Apply heading style to a range of text in a Google Doc.
+
+    Args:
+        service: Google Docs service
+        user_google_email: User's email
+        document_id: Document ID to modify
+        start_index: Start position (0-based)
+        end_index: End position (0-based, exclusive)
+        heading_level: Heading level (1-6, where 1 is H1, 2 is H2, etc.)
+
+    Returns:
+        str: Confirmation message
+    """
+    logger.info(f"[apply_heading_style] Invoked. Document ID: '{document_id}', Range: {start_index}-{end_index}, Heading Level: {heading_level}, User: '{user_google_email}'")
+
+    if start_index < 0 or end_index <= start_index:
+        raise ValueError("Invalid range: start_index must be >= 0 and end_index must be > start_index")
+
+    if heading_level < 1 or heading_level > 6:
+        raise ValueError("Heading level must be between 1 and 6")
+
+    # Map heading level to Google Docs named style
+    heading_style = f"HEADING_{heading_level}"
+
+    # Create batch update request
+    requests = [{
+        'updateParagraphStyle': {
+            'range': {
+                'startIndex': start_index,
+                'endIndex': end_index
+            },
+            'paragraphStyle': {
+                'namedStyleType': heading_style
+            },
+            'fields': 'namedStyleType'
+        }
+    }]
+
+    await asyncio.to_thread(
+        service.documents().batchUpdate(
+            documentId=document_id,
+            body={'requests': requests}
+        ).execute
+    )
+
+    logger.info(f"[apply_heading_style] Successfully applied {heading_style} to document {document_id} for {user_google_email}")
+    return f"Applied {heading_style} to range {start_index}-{end_index} in document {document_id} for {user_google_email}"
+
+
+@server.tool()
+@require_google_service("docs", "docs_write")
+@handle_http_errors("create_list")
+async def create_list(
+    service,
+    user_google_email: str,
+    document_id: str,
+    start_index: int,
+    end_index: int,
+    list_type: str = "BULLET",
+    nesting_level: int = 0,
+) -> str:
+    """
+    Convert paragraphs to a bulleted or numbered list in a Google Doc.
+
+    Args:
+        service: Google Docs service
+        user_google_email: User's email
+        document_id: Document ID to modify
+        start_index: Start position (0-based)
+        end_index: End position (0-based, exclusive)
+        list_type: Type of list ('BULLET' or 'NUMBERED')
+        nesting_level: Nesting level (0-8, where 0 is top level)
+
+    Returns:
+        str: Confirmation message
+    """
+    logger.info(f"[create_list] Invoked. Document ID: '{document_id}', Range: {start_index}-{end_index}, List Type: {list_type}, User: '{user_google_email}'")
+
+    if start_index < 0 or end_index <= start_index:
+        raise ValueError("Invalid range: start_index must be >= 0 and end_index must be > start_index")
+
+    if list_type not in ['BULLET', 'NUMBERED']:
+        raise ValueError("List type must be 'BULLET' or 'NUMBERED'")
+
+    if nesting_level < 0 or nesting_level > 8:
+        raise ValueError("Nesting level must be between 0 and 8")
+
+    # Create batch update request
+    requests = [{
+        'createParagraphBullets': {
+            'range': {
+                'startIndex': start_index,
+                'endIndex': end_index
+            },
+            'bulletPreset': f"{list_type}_DISC_CIRCLE_SQUARE" if list_type == "BULLET" else "NUMBERED_DECIMAL_ALPHA_ROMAN"
+        }
+    }]
+
+    # Add nesting if specified
+    if nesting_level > 0:
+        requests.append({
+            'updateParagraphStyle': {
+                'range': {
+                    'startIndex': start_index,
+                    'endIndex': end_index
+                },
+                'paragraphStyle': {
+                    'indentStart': {'magnitude': nesting_level * 18, 'unit': 'PT'}
+                },
+                'fields': 'indentStart'
+            }
+        })
+
+    await asyncio.to_thread(
+        service.documents().batchUpdate(
+            documentId=document_id,
+            body={'requests': requests}
+        ).execute
+    )
+
+    logger.info(f"[create_list] Successfully created {list_type} list in document {document_id} for {user_google_email}")
+    return f"Created {list_type} list at range {start_index}-{end_index} in document {document_id} for {user_google_email}"
+
+
+def _hex_to_rgb(hex_color: str) -> dict:
+    """Convert hex color to RGB dict for Google Docs API."""
+    hex_color = hex_color.lstrip('#')
+    if len(hex_color) != 6:
+        raise ValueError("Invalid hex color format. Use #RRGGBB format")
+    
+    return {
+        'red': int(hex_color[0:2], 16) / 255.0,
+        'green': int(hex_color[2:4], 16) / 255.0,
+        'blue': int(hex_color[4:6], 16) / 255.0
+    }
+
+
 # Create comment management tools for documents
 _comment_tools = create_comment_tools("document", "document_id")
 
