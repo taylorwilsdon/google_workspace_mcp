@@ -371,10 +371,37 @@ async def modify_event(
         f"[modify_event] Invoked. Email: '{user_google_email}', Event ID: {event_id}"
     )
 
-    # Build the event body with only the fields that are provided
+    # Get the existing event to preserve fields that aren't being modified
+    existing_event = None
+    try:
+        existing_event = await asyncio.to_thread(
+            lambda: service.events().get(calendarId=calendar_id, eventId=event_id).execute()
+        )
+        logger.info(
+            "[modify_event] Successfully retrieved existing event for field preservation"
+        )
+    except HttpError as get_error:
+        if get_error.resp.status == 404:
+            logger.error(
+                f"[modify_event] Event not found during retrieval: {get_error}"
+            )
+            message = f"Event not found. The event with ID '{event_id}' could not be found in calendar '{calendar_id}'. This may be due to incorrect ID format or the event no longer exists."
+            raise Exception(message)
+        else:
+            logger.warning(
+                f"[modify_event] Error during event retrieval, but proceeding with update: {get_error}"
+            )
+
+    # Build the event body, preserving existing fields when not explicitly provided
     event_body: Dict[str, Any] = {}
+
+    # Handle summary/title - preserve existing if not provided
     if summary is not None:
         event_body["summary"] = summary
+    elif existing_event and "summary" in existing_event:
+        event_body["summary"] = existing_event["summary"]
+
+    # Handle start time
     if start_time is not None:
         event_body["start"] = (
             {"date": start_time}
@@ -383,18 +410,36 @@ async def modify_event(
         )
         if timezone is not None and "dateTime" in event_body["start"]:
             event_body["start"]["timeZone"] = timezone
+    elif existing_event and "start" in existing_event:
+        event_body["start"] = existing_event["start"]
+
+    # Handle end time
     if end_time is not None:
         event_body["end"] = (
             {"date": end_time} if "T" not in end_time else {"dateTime": end_time}
         )
         if timezone is not None and "dateTime" in event_body["end"]:
             event_body["end"]["timeZone"] = timezone
+    elif existing_event and "end" in existing_event:
+        event_body["end"] = existing_event["end"]
+
+    # Handle description
     if description is not None:
         event_body["description"] = description
+    elif existing_event and "description" in existing_event:
+        event_body["description"] = existing_event["description"]
+
+    # Handle location
     if location is not None:
         event_body["location"] = location
+    elif existing_event and "location" in existing_event:
+        event_body["location"] = existing_event["location"]
+
+    # Handle attendees
     if attendees is not None:
         event_body["attendees"] = [{"email": email} for email in attendees]
+    elif existing_event and "attendees" in existing_event:
+        event_body["attendees"] = existing_event["attendees"]
     if (
         timezone is not None
         and "start" not in event_body
@@ -418,25 +463,7 @@ async def modify_event(
         f"[modify_event] Attempting to update event with ID: '{event_id}' in calendar '{calendar_id}'"
     )
 
-    # Try to get the event first to verify it exists
-    try:
-        await asyncio.to_thread(
-            lambda: service.events().get(calendarId=calendar_id, eventId=event_id).execute()
-        )
-        logger.info(
-            "[modify_event] Successfully verified event exists before update"
-        )
-    except HttpError as get_error:
-        if get_error.resp.status == 404:
-            logger.error(
-                f"[modify_event] Event not found during pre-update verification: {get_error}"
-            )
-            message = f"Event not found during verification. The event with ID '{event_id}' could not be found in calendar '{calendar_id}'. This may be due to incorrect ID format or the event no longer exists."
-            raise Exception(message)
-        else:
-            logger.warning(
-                f"[modify_event] Error during pre-update verification, but proceeding with update: {get_error}"
-            )
+
 
     # Proceed with the update
     updated_event = await asyncio.to_thread(
