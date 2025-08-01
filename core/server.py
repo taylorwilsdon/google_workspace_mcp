@@ -69,7 +69,7 @@ _current_transport_mode = "stdio"  # Default to stdio
 # Basic MCP server instance
 server = FastMCP(
     name="google_workspace",
-    server_url=f"{WORKSPACE_MCP_BASE_URI}:{WORKSPACE_MCP_PORT}/mcp",
+    streamable_http_path="/mcp",
     port=WORKSPACE_MCP_PORT,
     host="0.0.0.0"
 )
