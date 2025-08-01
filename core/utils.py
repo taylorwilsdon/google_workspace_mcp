@@ -1,16 +1,16 @@
 import io
 import logging
 import os
-import tempfile
-import zipfile, xml.etree.ElementTree as ET
+import zipfile
+import xml.etree.ElementTree as ET
 import ssl
-import time
 import asyncio
 import functools
 
 from typing import List, Optional
 
 from googleapiclient.errors import HttpError
+from .api_enablement import get_api_enablement_message
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +70,7 @@ def check_credentials_directory_permissions(credentials_dir: str = None) -> None
                 try:
                     if os.path.exists(credentials_dir):
                         os.rmdir(credentials_dir)
-                except:
+                except (PermissionError, OSError):
                     pass
                 raise PermissionError(
                     f"Cannot create or write to credentials directory '{os.path.abspath(credentials_dir)}': {e}"
@@ -234,7 +234,7 @@ def extract_office_xml_text(file_bytes: bytes, mime_type: str) -> Optional[str]:
         return None
 
 
-def handle_http_errors(tool_name: str, is_read_only: bool = False):
+def handle_http_errors(tool_name: str, is_read_only: bool = False, service_type: Optional[str] = None):
     """
     A decorator to handle Google API HttpErrors and transient SSL errors in a standardized way.
 
@@ -248,6 +248,7 @@ def handle_http_errors(tool_name: str, is_read_only: bool = False):
         tool_name (str): The name of the tool being decorated (e.g., 'list_calendars').
         is_read_only (bool): If True, the operation is considered safe to retry on
                              transient network errors. Defaults to False.
+        service_type (str): Optional. The Google service type (e.g., 'calendar', 'gmail').
     """
 
     def decorator(func):
@@ -276,12 +277,31 @@ def handle_http_errors(tool_name: str, is_read_only: bool = False):
                         ) from e
                 except HttpError as error:
                     user_google_email = kwargs.get("user_google_email", "N/A")
-                    message = (
-                        f"API error in {tool_name}: {error}. "
-                        f"You might need to re-authenticate for user '{user_google_email}'. "
-                        f"LLM: Try 'start_google_auth' with the user's email and the appropriate service_name."
-                    )
-                    logger.error(message, exc_info=True)
+                    error_details = str(error)
+                    
+                    # Check if this is an API not enabled error
+                    if error.resp.status == 403 and "accessNotConfigured" in error_details:
+                        enablement_msg = get_api_enablement_message(error_details, service_type)
+                        
+                        if enablement_msg:
+                            message = (
+                                f"API error in {tool_name}: {enablement_msg}\n\n"
+                                f"User: {user_google_email}"
+                            )
+                        else:
+                            message = (
+                                f"API error in {tool_name}: {error}. "
+                                f"The required API is not enabled for your project. "
+                                f"Please check the Google Cloud Console to enable it."
+                            )
+                    else:
+                        message = (
+                            f"API error in {tool_name}: {error}. "
+                            f"You might need to re-authenticate for user '{user_google_email}'. "
+                            f"LLM: Try 'start_google_auth' with the user's email and the appropriate service_name."
+                        )
+                    
+                    logger.error(f"API error in {tool_name}: {error}", exc_info=True)
                     raise Exception(message) from error
                 except TransientNetworkError:
                     # Re-raise without wrapping to preserve the specific error type

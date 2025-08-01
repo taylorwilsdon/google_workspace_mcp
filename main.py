@@ -56,7 +56,7 @@ def main():
     parser.add_argument('--single-user', action='store_true',
                         help='Run in single-user mode - bypass session mapping and use any credentials from the credentials directory')
     parser.add_argument('--tools', nargs='*',
-                        choices=['gmail', 'drive', 'calendar', 'docs', 'sheets', 'chat', 'forms', 'slides', 'tasks'],
+                        choices=['gmail', 'drive', 'calendar', 'docs', 'sheets', 'chat', 'forms', 'slides', 'tasks', 'search'],
                         help='Specify which tools to register. If not provided, all tools are registered.')
     parser.add_argument('--transport', choices=['stdio', 'streamable-http'], default='stdio',
                         help='Transport mode: stdio (default) or streamable-http')
@@ -92,7 +92,8 @@ def main():
         'chat': lambda: __import__('gchat.chat_tools'),
         'forms': lambda: __import__('gforms.forms_tools'),
         'slides': lambda: __import__('gslides.slides_tools'),
-        'tasks': lambda: __import__('gtasks.tasks_tools')
+        'tasks': lambda: __import__('gtasks.tasks_tools'),
+        'search': lambda: __import__('gsearch.search_tools')
     }
 
     tool_icons = {
@@ -104,7 +105,8 @@ def main():
         'chat': '💬',
         'forms': '📝',
         'slides': '🖼️',
-        'tasks': '✓'
+        'tasks': '✓',
+        'search': '🔍'
     }
 
     # Import specified tools or all tools if none specified
@@ -115,9 +117,9 @@ def main():
         safe_print(f"   {tool_icons[tool]} {tool.title()} - Google {tool.title()} API integration")
     safe_print("")
 
-    safe_print(f"📊 Configuration Summary:")
+    safe_print("📊 Configuration Summary:")
     safe_print(f"   🔧 Tools Enabled: {len(tools_to_import)}/{len(tool_imports)}")
-    safe_print(f"   🔑 Auth Method: OAuth 2.0 with PKCE")
+    safe_print("   🔑 Auth Method: OAuth 2.0 with PKCE")
     safe_print(f"   📝 Log Level: {logging.getLogger().getEffectiveLevel()}")
     safe_print("")
 
@@ -149,10 +151,14 @@ def main():
             safe_print("🚀 Starting server in stdio mode")
             # Start minimal OAuth callback server for stdio mode
             from auth.oauth_callback_server import ensure_oauth_callback_available
-            if ensure_oauth_callback_available('stdio', port, base_uri):
+            success, error_msg = ensure_oauth_callback_available('stdio', port, base_uri)
+            if success:
                 safe_print(f"   OAuth callback server started on {base_uri}:{port}/oauth2callback")
             else:
-                safe_print("   ⚠️  Warning: Failed to start OAuth callback server")
+                warning_msg = f"   ⚠️  Warning: Failed to start OAuth callback server"
+                if error_msg:
+                    warning_msg += f": {error_msg}"
+                safe_print(warning_msg)
 
         safe_print("   Ready for MCP connections!")
         safe_print("")

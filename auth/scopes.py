@@ -5,13 +5,8 @@ This module centralizes OAuth scope definitions for Google Workspace integration
 Separated from service_decorator.py to avoid circular imports.
 """
 import logging
-from typing import Dict
 
 logger = logging.getLogger(__name__)
-
-# Temporary map to associate OAuth state with MCP session ID
-# This should ideally be a more robust cache in a production system (e.g., Redis)
-OAUTH_STATE_TO_SESSION_ID_MAP: Dict[str, str] = {}
 
 # Individual OAuth Scope Constants
 USERINFO_EMAIL_SCOPE = 'https://www.googleapis.com/auth/userinfo.email'
@@ -55,6 +50,9 @@ SLIDES_READONLY_SCOPE = 'https://www.googleapis.com/auth/presentations.readonly'
 # Google Tasks API scopes
 TASKS_SCOPE = 'https://www.googleapis.com/auth/tasks'
 TASKS_READONLY_SCOPE = 'https://www.googleapis.com/auth/tasks.readonly'
+
+# Google Custom Search API scope
+CUSTOM_SEARCH_SCOPE = 'https://www.googleapis.com/auth/cse'
 
 # Base OAuth scopes required for user identification
 BASE_SCOPES = [
@@ -113,5 +111,9 @@ TASKS_SCOPES = [
     TASKS_READONLY_SCOPE
 ]
 
+CUSTOM_SEARCH_SCOPES = [
+    CUSTOM_SEARCH_SCOPE
+]
+
 # Combined scopes for all supported Google Workspace operations
-SCOPES = list(set(BASE_SCOPES + CALENDAR_SCOPES + DRIVE_SCOPES + GMAIL_SCOPES + DOCS_SCOPES + CHAT_SCOPES + SHEETS_SCOPES + FORMS_SCOPES + SLIDES_SCOPES + TASKS_SCOPES))
+SCOPES = list(set(BASE_SCOPES + CALENDAR_SCOPES + DRIVE_SCOPES + GMAIL_SCOPES + DOCS_SCOPES + CHAT_SCOPES + SHEETS_SCOPES + FORMS_SCOPES + SLIDES_SCOPES + TASKS_SCOPES + CUSTOM_SEARCH_SCOPES))

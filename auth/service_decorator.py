@@ -6,10 +6,6 @@ from datetime import datetime, timedelta
 
 from google.auth.exceptions import RefreshError
 from auth.google_auth import get_authenticated_google_service, GoogleAuthenticationError
-
-logger = logging.getLogger(__name__)
-
-# Import scope constants
 from auth.scopes import (
     GMAIL_READONLY_SCOPE, GMAIL_SEND_SCOPE, GMAIL_COMPOSE_SCOPE, GMAIL_MODIFY_SCOPE, GMAIL_LABELS_SCOPE,
     DRIVE_READONLY_SCOPE, DRIVE_FILE_SCOPE,
@@ -19,8 +15,11 @@ from auth.scopes import (
     CHAT_READONLY_SCOPE, CHAT_WRITE_SCOPE, CHAT_SPACES_SCOPE,
     FORMS_BODY_SCOPE, FORMS_BODY_READONLY_SCOPE, FORMS_RESPONSES_READONLY_SCOPE,
     SLIDES_SCOPE, SLIDES_READONLY_SCOPE,
-    TASKS_SCOPE, TASKS_READONLY_SCOPE
+    TASKS_SCOPE, TASKS_READONLY_SCOPE,
+    CUSTOM_SEARCH_SCOPE
 )
+
+logger = logging.getLogger(__name__)
 
 # Service configuration mapping
 SERVICE_CONFIGS = {
@@ -32,7 +31,8 @@ SERVICE_CONFIGS = {
     "chat": {"service": "chat", "version": "v1"},
     "forms": {"service": "forms", "version": "v1"},
     "slides": {"service": "slides", "version": "v1"},
-    "tasks": {"service": "tasks", "version": "v1"}
+    "tasks": {"service": "tasks", "version": "v1"},
+    "customsearch": {"service": "customsearch", "version": "v1"}
 }
 
 
@@ -78,6 +78,9 @@ SCOPE_GROUPS = {
     # Tasks scopes
     "tasks": TASKS_SCOPE,
     "tasks_read": TASKS_READONLY_SCOPE,
+    
+    # Custom Search scope
+    "customsearch": CUSTOM_SEARCH_SCOPE,
 }
 
 # Service cache: {cache_key: (service, cached_time, user_email)}
@@ -391,7 +394,6 @@ def clear_service_cache(user_email: Optional[str] = None) -> int:
 
 def get_cache_stats() -> Dict[str, Any]:
     """Get service cache statistics."""
-    now = datetime.now()
     valid_entries = 0
     expired_entries = 0
 

@@ -8,9 +8,9 @@ import datetime
 import logging
 import asyncio
 import re
+import uuid
 from typing import List, Optional, Dict, Any
 
-from mcp import types
 from googleapiclient.errors import HttpError
 from googleapiclient.discovery import build
 
@@ -22,6 +22,23 @@ from core.server import server
 
 # Configure module logger
 logger = logging.getLogger(__name__)
+
+
+def _preserve_existing_fields(event_body: Dict[str, Any], existing_event: Dict[str, Any], field_mappings: Dict[str, Any]) -> None:
+    """
+    Helper function to preserve existing event fields when not explicitly provided.
+
+    Args:
+        event_body: The event body being built for the API call
+        existing_event: The existing event data from the API
+        field_mappings: Dict mapping field names to their new values (None means preserve existing)
+    """
+    for field_name, new_value in field_mappings.items():
+        if new_value is None and field_name in existing_event:
+            event_body[field_name] = existing_event[field_name]
+            logger.info(f"[modify_event] Preserving existing {field_name}")
+        elif new_value is not None:
+            event_body[field_name] = new_value
 
 
 # Helper function to ensure time strings for API calls are correctly formatted
@@ -80,7 +97,7 @@ def _correct_time_format_for_api(
 
 
 @server.tool()
-@handle_http_errors("list_calendars", is_read_only=True)
+@handle_http_errors("list_calendars", is_read_only=True, service_type="calendar")
 @require_google_service("calendar", "calendar_read")
 async def list_calendars(service, user_google_email: str) -> str:
     """
@@ -114,7 +131,7 @@ async def list_calendars(service, user_google_email: str) -> str:
 
 
 @server.tool()
-@handle_http_errors("get_events", is_read_only=True)
+@handle_http_errors("get_events", is_read_only=True, service_type="calendar")
 @require_google_service("calendar", "calendar_read")
 async def get_events(
     service,
@@ -123,9 +140,11 @@ async def get_events(
     time_min: Optional[str] = None,
     time_max: Optional[str] = None,
     max_results: int = 25,
+    query: Optional[str] = None,
 ) -> str:
     """
     Retrieves a list of events from a specified Google Calendar within a given time range.
+    You can also search for events by keyword by supplying the optional "query" param.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
@@ -133,12 +152,13 @@ async def get_events(
         time_min (Optional[str]): The start of the time range (inclusive) in RFC3339 format (e.g., '2024-05-12T10:00:00Z' or '2024-05-12'). If omitted, defaults to the current time.
         time_max (Optional[str]): The end of the time range (exclusive) in RFC3339 format. If omitted, events starting from `time_min` onwards are considered (up to `max_results`).
         max_results (int): The maximum number of events to return. Defaults to 25.
+        query (Optional[str]): A keyword to search for within event fields (summary, description, location).
 
     Returns:
         str: A formatted list of events (summary, start and end times, link) within the specified range.
     """
     logger.info(
-        f"[get_events] Raw time parameters - time_min: '{time_min}', time_max: '{time_max}'"
+        f"[get_events] Raw time parameters - time_min: '{time_min}', time_max: '{time_max}', query: '{query}'"
     )
 
     # Ensure time_min and time_max are correctly formatted for the API
@@ -162,19 +182,25 @@ async def get_events(
         )
 
     logger.info(
-        f"[get_events] Final API parameters - calendarId: '{calendar_id}', timeMin: '{effective_time_min}', timeMax: '{effective_time_max}', maxResults: {max_results}"
+        f"[get_events] Final API parameters - calendarId: '{calendar_id}', timeMin: '{effective_time_min}', timeMax: '{effective_time_max}', maxResults: {max_results}, query: '{query}'"
     )
+
+    # Build the request parameters dynamically
+    request_params = {
+        "calendarId": calendar_id,
+        "timeMin": effective_time_min,
+        "timeMax": effective_time_max,
+        "maxResults": max_results,
+        "singleEvents": True,
+        "orderBy": "startTime",
+    }
+
+    if query:
+        request_params["q"] = query
 
     events_result = await asyncio.to_thread(
         lambda: service.events()
-        .list(
-            calendarId=calendar_id,
-            timeMin=effective_time_min,
-            timeMax=effective_time_max,
-            maxResults=max_results,
-            singleEvents=True,
-            orderBy="startTime",
-        )
+        .list(**request_params)
         .execute()
     )
     items = events_result.get("items", [])
@@ -202,7 +228,7 @@ async def get_events(
 
 
 @server.tool()
-@handle_http_errors("create_event")
+@handle_http_errors("create_event", service_type="calendar")
 @require_google_service("calendar", "calendar_events")
 async def create_event(
     service,
@@ -216,6 +242,7 @@ async def create_event(
     attendees: Optional[List[str]] = None,
     timezone: Optional[str] = None,
     attachments: Optional[List[str]] = None,
+    add_google_meet: bool = False,
 ) -> str:
     """
     Creates a new event.
@@ -231,6 +258,7 @@ async def create_event(
         attendees (Optional[List[str]]): Attendee email addresses.
         timezone (Optional[str]): Timezone (e.g., "America/New_York").
         attachments (Optional[List[str]]): List of Google Drive file URLs or IDs to attach to the event.
+        add_google_meet (bool): Whether to add a Google Meet video conference to the event. Defaults to False.
 
     Returns:
         str: Confirmation message of the successful event creation with event link.
@@ -266,6 +294,18 @@ async def create_event(
     if attendees:
         event_body["attendees"] = [{"email": email} for email in attendees]
 
+    if add_google_meet:
+        request_id = str(uuid.uuid4())
+        event_body["conferenceData"] = {
+            "createRequest": {
+                "requestId": request_id,
+                "conferenceSolutionKey": {
+                    "type": "hangoutsMeet"
+                }
+            }
+        }
+        logger.info(f"[create_event] Adding Google Meet conference with request ID: {request_id}")
+
     if attachments:
         # Accept both file URLs and file IDs. If a URL, extract the fileId.
         event_body["attachments"] = []
@@ -300,7 +340,7 @@ async def create_event(
                             title = filename
                             logger.info(f"[create_event] Using filename '{filename}' as attachment title")
                         else:
-                            logger.info(f"[create_event] No filename found, using generic title")
+                            logger.info("[create_event] No filename found, using generic title")
                     except Exception as e:
                         logger.warning(f"Could not fetch metadata for file {file_id}: {e}")
                 event_body["attachments"].append({
@@ -310,15 +350,31 @@ async def create_event(
                 })
         created_event = await asyncio.to_thread(
             lambda: service.events().insert(
-                calendarId=calendar_id, body=event_body, supportsAttachments=True
+                calendarId=calendar_id, body=event_body, supportsAttachments=True,
+                conferenceDataVersion=1 if add_google_meet else 0
             ).execute()
         )
     else:
         created_event = await asyncio.to_thread(
-            lambda: service.events().insert(calendarId=calendar_id, body=event_body).execute()
+            lambda: service.events().insert(
+                calendarId=calendar_id, body=event_body,
+                conferenceDataVersion=1 if add_google_meet else 0
+            ).execute()
         )
     link = created_event.get("htmlLink", "No link available")
     confirmation_message = f"Successfully created event '{created_event.get('summary', summary)}' for {user_google_email}. Link: {link}"
+
+    # Add Google Meet information if conference was created
+    if add_google_meet and "conferenceData" in created_event:
+        conference_data = created_event["conferenceData"]
+        if "entryPoints" in conference_data:
+            for entry_point in conference_data["entryPoints"]:
+                if entry_point.get("entryPointType") == "video":
+                    meet_link = entry_point.get("uri", "")
+                    if meet_link:
+                        confirmation_message += f" Google Meet: {meet_link}"
+                        break
+
     logger.info(
             f"Event created successfully for {user_google_email}. ID: {created_event.get('id')}, Link: {link}"
         )
@@ -326,7 +382,7 @@ async def create_event(
 
 
 @server.tool()
-@handle_http_errors("modify_event")
+@handle_http_errors("modify_event", service_type="calendar")
 @require_google_service("calendar", "calendar_events")
 async def modify_event(
     service,
@@ -340,6 +396,7 @@ async def modify_event(
     location: Optional[str] = None,
     attendees: Optional[List[str]] = None,
     timezone: Optional[str] = None,
+    add_google_meet: Optional[bool] = None,
 ) -> str:
     """
     Modifies an existing event.
@@ -355,6 +412,7 @@ async def modify_event(
         location (Optional[str]): New event location.
         attendees (Optional[List[str]]): New attendee email addresses.
         timezone (Optional[str]): New timezone (e.g., "America/New_York").
+        add_google_meet (Optional[bool]): Whether to add or remove Google Meet video conference. If True, adds Google Meet; if False, removes it; if None, leaves unchanged.
 
     Returns:
         str: Confirmation message of the successful event modification with event link.
@@ -397,7 +455,7 @@ async def modify_event(
         # might handle this more robustly or require start/end with timezone.
         # For now, we'll log a warning and skip applying timezone if start/end are missing.
         logger.warning(
-            f"[modify_event] Timezone provided but start_time and end_time are missing. Timezone will not be applied unless start/end times are also provided."
+            "[modify_event] Timezone provided but start_time and end_time are missing. Timezone will not be applied unless start/end times are also provided."
         )
 
     if not event_body:
@@ -410,14 +468,46 @@ async def modify_event(
         f"[modify_event] Attempting to update event with ID: '{event_id}' in calendar '{calendar_id}'"
     )
 
-    # Try to get the event first to verify it exists
+    # Get the existing event to preserve fields that aren't being updated
     try:
-        await asyncio.to_thread(
+        existing_event = await asyncio.to_thread(
             lambda: service.events().get(calendarId=calendar_id, eventId=event_id).execute()
         )
         logger.info(
-            f"[modify_event] Successfully verified event exists before update"
+            "[modify_event] Successfully retrieved existing event before update"
         )
+
+        # Preserve existing fields if not provided in the update
+        _preserve_existing_fields(event_body, existing_event, {
+            "summary": summary,
+            "description": description,
+            "location": location,
+            "attendees": attendees
+        })
+
+        # Handle Google Meet conference data
+        if add_google_meet is not None:
+            if add_google_meet:
+                # Add Google Meet
+                request_id = str(uuid.uuid4())
+                event_body["conferenceData"] = {
+                    "createRequest": {
+                        "requestId": request_id,
+                        "conferenceSolutionKey": {
+                            "type": "hangoutsMeet"
+                        }
+                    }
+                }
+                logger.info(f"[modify_event] Adding Google Meet conference with request ID: {request_id}")
+            else:
+                # Remove Google Meet by setting conferenceData to empty
+                event_body["conferenceData"] = {}
+                logger.info("[modify_event] Removing Google Meet conference")
+        elif 'conferenceData' in existing_event:
+            # Preserve existing conference data if not specified
+            event_body["conferenceData"] = existing_event["conferenceData"]
+            logger.info("[modify_event] Preserving existing conference data")
+
     except HttpError as get_error:
         if get_error.resp.status == 404:
             logger.error(
@@ -433,12 +523,26 @@ async def modify_event(
     # Proceed with the update
     updated_event = await asyncio.to_thread(
         lambda: service.events()
-        .update(calendarId=calendar_id, eventId=event_id, body=event_body)
+        .update(calendarId=calendar_id, eventId=event_id, body=event_body, conferenceDataVersion=1)
         .execute()
     )
 
     link = updated_event.get("htmlLink", "No link available")
     confirmation_message = f"Successfully modified event '{updated_event.get('summary', summary)}' (ID: {event_id}) for {user_google_email}. Link: {link}"
+
+    # Add Google Meet information if conference was added
+    if add_google_meet is True and "conferenceData" in updated_event:
+        conference_data = updated_event["conferenceData"]
+        if "entryPoints" in conference_data:
+            for entry_point in conference_data["entryPoints"]:
+                if entry_point.get("entryPointType") == "video":
+                    meet_link = entry_point.get("uri", "")
+                    if meet_link:
+                        confirmation_message += f" Google Meet: {meet_link}"
+                        break
+    elif add_google_meet is False:
+        confirmation_message += " (Google Meet removed)"
+
     logger.info(
         f"Event modified successfully for {user_google_email}. ID: {updated_event.get('id')}, Link: {link}"
     )
@@ -446,7 +550,7 @@ async def modify_event(
 
 
 @server.tool()
-@handle_http_errors("delete_event")
+@handle_http_errors("delete_event", service_type="calendar")
 @require_google_service("calendar", "calendar_events")
 async def delete_event(service, user_google_email: str, event_id: str, calendar_id: str = "primary") -> str:
     """
@@ -475,7 +579,7 @@ async def delete_event(service, user_google_email: str, event_id: str, calendar_
             lambda: service.events().get(calendarId=calendar_id, eventId=event_id).execute()
         )
         logger.info(
-            f"[delete_event] Successfully verified event exists before deletion"
+            "[delete_event] Successfully verified event exists before deletion"
         )
     except HttpError as get_error:
         if get_error.resp.status == 404:
@@ -500,7 +604,7 @@ async def delete_event(service, user_google_email: str, event_id: str, calendar_
 
 
 @server.tool()
-@handle_http_errors("get_event", is_read_only=True)
+@handle_http_errors("get_event", is_read_only=True, service_type="calendar")
 @require_google_service("calendar", "calendar_read")
 async def get_event(
     service,

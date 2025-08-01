@@ -6,7 +6,6 @@ from importlib import metadata
 from fastapi import Header
 from fastapi.responses import HTMLResponse
 
-from mcp import types
 
 from mcp.server.fastmcp import FastMCP
 from starlette.requests import Request
@@ -17,42 +16,43 @@ from auth.oauth_responses import create_error_response, create_success_response,
 
 # Import shared configuration
 from auth.scopes import (
-    OAUTH_STATE_TO_SESSION_ID_MAP,
-    USERINFO_EMAIL_SCOPE,
-    OPENID_SCOPE,
-    CALENDAR_READONLY_SCOPE,
-    CALENDAR_EVENTS_SCOPE,
-    DRIVE_READONLY_SCOPE,
-    DRIVE_FILE_SCOPE,
-    GMAIL_READONLY_SCOPE,
-    GMAIL_SEND_SCOPE,
-    GMAIL_COMPOSE_SCOPE,
-    GMAIL_MODIFY_SCOPE,
-    GMAIL_LABELS_SCOPE,
-    BASE_SCOPES,
-    CALENDAR_SCOPES,
-    DRIVE_SCOPES,
-    GMAIL_SCOPES,
-    DOCS_READONLY_SCOPE,
-    DOCS_WRITE_SCOPE,
-    CHAT_READONLY_SCOPE,
-    CHAT_WRITE_SCOPE,
-    CHAT_SPACES_SCOPE,
-    CHAT_SCOPES,
-    SHEETS_READONLY_SCOPE,
-    SHEETS_WRITE_SCOPE,
-    SHEETS_SCOPES,
-    FORMS_BODY_SCOPE,
-    FORMS_BODY_READONLY_SCOPE,
-    FORMS_RESPONSES_READONLY_SCOPE,
-    FORMS_SCOPES,
-    SLIDES_SCOPE,
-    SLIDES_READONLY_SCOPE,
-    SLIDES_SCOPES,
-    TASKS_SCOPE,
-    TASKS_READONLY_SCOPE,
-    TASKS_SCOPES,
-    SCOPES
+    SCOPES,
+    USERINFO_EMAIL_SCOPE,  # noqa: F401
+    OPENID_SCOPE,  # noqa: F401
+    CALENDAR_READONLY_SCOPE,  # noqa: F401
+    CALENDAR_EVENTS_SCOPE,  # noqa: F401
+    DRIVE_READONLY_SCOPE,  # noqa: F401
+    DRIVE_FILE_SCOPE,  # noqa: F401
+    GMAIL_READONLY_SCOPE,  # noqa: F401
+    GMAIL_SEND_SCOPE,  # noqa: F401
+    GMAIL_COMPOSE_SCOPE,  # noqa: F401
+    GMAIL_MODIFY_SCOPE,  # noqa: F401
+    GMAIL_LABELS_SCOPE,  # noqa: F401
+    BASE_SCOPES,  # noqa: F401
+    CALENDAR_SCOPES,  # noqa: F401
+    DRIVE_SCOPES,  # noqa: F401
+    GMAIL_SCOPES,  # noqa: F401
+    DOCS_READONLY_SCOPE,  # noqa: F401
+    DOCS_WRITE_SCOPE,  # noqa: F401
+    CHAT_READONLY_SCOPE,  # noqa: F401
+    CHAT_WRITE_SCOPE,  # noqa: F401
+    CHAT_SPACES_SCOPE,  # noqa: F401
+    CHAT_SCOPES,  # noqa: F401
+    SHEETS_READONLY_SCOPE,  # noqa: F401
+    SHEETS_WRITE_SCOPE,  # noqa: F401
+    SHEETS_SCOPES,  # noqa: F401
+    FORMS_BODY_SCOPE,  # noqa: F401
+    FORMS_BODY_READONLY_SCOPE,  # noqa: F401
+    FORMS_RESPONSES_READONLY_SCOPE,  # noqa: F401
+    FORMS_SCOPES,  # noqa: F401
+    SLIDES_SCOPE,  # noqa: F401
+    SLIDES_READONLY_SCOPE,  # noqa: F401
+    SLIDES_SCOPES,  # noqa: F401
+    TASKS_SCOPE,  # noqa: F401
+    TASKS_READONLY_SCOPE,  # noqa: F401
+    TASKS_SCOPES,  # noqa: F401
+    CUSTOM_SEARCH_SCOPE,  # noqa: F401
+    CUSTOM_SEARCH_SCOPES,  # noqa: F401
 )
 
 # Configure logging
@@ -69,7 +69,6 @@ _current_transport_mode = "stdio"  # Default to stdio
 # Basic MCP server instance
 server = FastMCP(
     name="google_workspace",
-    server_url=f"{WORKSPACE_MCP_BASE_URI}:{WORKSPACE_MCP_PORT}/mcp",
     port=WORKSPACE_MCP_PORT,
     host="0.0.0.0"
 )
@@ -130,23 +129,16 @@ async def oauth2_callback(request: Request) -> HTMLResponse:
 
         logger.info(f"OAuth callback: Received code (state: {state}). Attempting to exchange for tokens.")
 
-        mcp_session_id: Optional[str] = OAUTH_STATE_TO_SESSION_ID_MAP.pop(state, None)
-        if mcp_session_id:
-            logger.info(f"OAuth callback: Retrieved MCP session ID '{mcp_session_id}' for state '{state}'.")
-        else:
-            logger.warning(f"OAuth callback: No MCP session ID found for state '{state}'. Auth will not be tied to a specific session directly via this callback.")
-
         # Exchange code for credentials. handle_auth_callback will save them.
         # The user_id returned here is the Google-verified email.
         verified_user_id, credentials = handle_auth_callback(
             scopes=SCOPES, # Ensure all necessary scopes are requested
             authorization_response=str(request.url),
             redirect_uri=get_oauth_redirect_uri_for_current_mode(),
-            session_id=mcp_session_id # Pass session_id if available
+            session_id=None # Session ID tracking removed
         )
 
-        log_session_part = f" (linked to session: {mcp_session_id})" if mcp_session_id else ""
-        logger.info(f"OAuth callback: Successfully authenticated user: {verified_user_id} (state: {state}){log_session_part}.")
+        logger.info(f"OAuth callback: Successfully authenticated user: {verified_user_id} (state: {state}).")
 
         # Return success page using shared template
         return create_success_response(verified_user_id)
@@ -160,14 +152,13 @@ async def oauth2_callback(request: Request) -> HTMLResponse:
 @server.tool()
 async def start_google_auth(
     service_name: str,
-    user_google_email: str = USER_GOOGLE_EMAIL,
-    mcp_session_id: Optional[str] = Header(None, alias="Mcp-Session-Id")
+    user_google_email: str = USER_GOOGLE_EMAIL
 ) -> str:
     """
     Initiates the Google OAuth 2.0 authentication flow for the specified user email and service.
     This is the primary method to establish credentials when no valid session exists or when targeting a specific account for a particular service.
     It generates an authorization URL that the LLM must present to the user.
-    The authentication attempt is linked to the current MCP session via `mcp_session_id`.
+    This initiates a new authentication flow for the specified user and service.
 
     LLM Guidance:
     - Use this tool when you need to authenticate a user for a specific Google service (e.g., "Google Calendar", "Google Docs", "Gmail", "Google Drive")
@@ -183,7 +174,6 @@ async def start_google_auth(
     Args:
         user_google_email (str): The user's full Google email address (e.g., 'example@gmail.com'). This is REQUIRED.
         service_name (str): The name of the Google service for which authentication is being requested (e.g., "Google Calendar", "Google Docs"). This is REQUIRED.
-        mcp_session_id (Optional[str]): The active MCP session ID (automatically injected by FastMCP from the Mcp-Session-Id header). Links the OAuth flow state to the session.
 
     Returns:
         str: A detailed message for the LLM with the authorization URL and instructions to guide the user through the authentication process.
@@ -198,15 +188,18 @@ async def start_google_auth(
         logger.error(f"[start_google_auth] {error_msg}")
         raise Exception(error_msg)
 
-    logger.info(f"Tool 'start_google_auth' invoked for user_google_email: '{user_google_email}', service: '{service_name}', session: '{mcp_session_id}'.")
+    logger.info(f"Tool 'start_google_auth' invoked for user_google_email: '{user_google_email}', service: '{service_name}'.")
 
     # Ensure OAuth callback is available for current transport mode
     redirect_uri = get_oauth_redirect_uri_for_current_mode()
-    if not ensure_oauth_callback_available(_current_transport_mode, WORKSPACE_MCP_PORT, WORKSPACE_MCP_BASE_URI):
-        raise Exception("Failed to start OAuth callback server. Please try again.")
+    success, error_msg = ensure_oauth_callback_available(_current_transport_mode, WORKSPACE_MCP_PORT, WORKSPACE_MCP_BASE_URI)
+    if not success:
+        if error_msg:
+            raise Exception(f"Failed to start OAuth callback server: {error_msg}")
+        else:
+            raise Exception("Failed to start OAuth callback server. Please try again.")
 
     auth_result = await start_auth_flow(
-        mcp_session_id=mcp_session_id,
         user_google_email=user_google_email,
         service_name=service_name,
         redirect_uri=redirect_uri

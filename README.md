@@ -3,7 +3,7 @@
 # Google Workspace MCP Server <img src="https://github.com/user-attachments/assets/b89524e4-6e6e-49e6-ba77-00d6df0c6e5c" width="80" align="right" />
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![PyPI](https://img.shields.io/pypi/v/workspace-mcp.svg)](https://pypi.org/project/workspace-mcp/)
 [![PyPI Downloads](https://static.pepy.tech/badge/workspace-mcp/month)](https://pepy.tech/projects/workspace-mcp)
 [![Website](https://img.shields.io/badge/Website-workspacemcp.com-green.svg)](https://workspacemcp.com)
@@ -63,6 +63,7 @@ A production-ready MCP server that integrates all major Google Workspace service
 - **📝 Google Forms**: Form creation, retrieval, publish settings, and response management
 - **✓ Google Tasks**: Complete task and task list management with hierarchy, due dates, and status tracking
 - **💬 Google Chat**: Space management and messaging capabilities
+- **🔍 Google Custom Search**: Programmable Search Engine (PSE) integration for custom web searches
 - **🔄 All Transports**: Stdio, Streamable HTTP & SSE, OpenAPI compatibility via `mcpo`
 - **⚡ High Performance**: Service caching, thread-safe sessions, FastMCP integration
 - **🧩 Developer Friendly**: Minimal boilerplate, automatic service injection, centralized configuration
@@ -76,7 +77,7 @@ A production-ready MCP server that integrates all major Google Workspace service
 1. **Download:** Grab the latest `google_workspace_mcp.dxt` from the “Releases” page
 2. **Install:** Double-click the file – Claude Desktop opens and prompts you to **Install**
 3. **Configure:** In Claude Desktop → **Settings → Extensions → Google Workspace MCP**, paste your Google OAuth credentials
-4. **Use it:** Start a new Claude chat and call any Google Workspace tool 🎉
+4. **Use it:** Start a new Claude chat and call any Google Workspace tool
 
 >
 **Why DXT?**
@@ -91,6 +92,8 @@ A production-ready MCP server that integrates all major Google Workspace service
 | `GOOGLE_OAUTH_CLIENT_ID` | OAuth client ID from Google Cloud |
 | `GOOGLE_OAUTH_CLIENT_SECRET` | OAuth client secret |
 | `USER_GOOGLE_EMAIL` *(optional)* | Default email for single-user auth |
+| `GOOGLE_PSE_API_KEY` *(optional)* | API key for Google Custom Search - see [Custom Search Setup](#google-custom-search-setup) |
+| `GOOGLE_PSE_ENGINE_ID` *(optional)* | Programmable Search Engine ID for Custom Search |
 | `OAUTHLIB_INSECURE_TRANSPORT=1` | Development only (allows `http://` redirect) |
 
 Claude Desktop stores these securely in the OS keychain; set them once in the extension pane.
@@ -101,51 +104,9 @@ Claude Desktop stores these securely in the OS keychain; set them once in the ex
 </div>
 ---
 
-### 2. Advanced / Cross-Platform Installation
-
-If you’re developing, deploying to servers, or using another MCP-capable client, keep reading.
-
-#### Instant CLI (uvx)
-
-```bash
-# Requires Python 3.11+ and uvx
-export GOOGLE_OAUTH_CLIENT_ID="xxx"
-export GOOGLE_OAUTH_CLIENT_SECRET="yyy"
-uvx workspace-mcp --tools gmail drive calendar
-```
-
-> Run instantly without manual installation - you must configure OAuth credentials when using uvx. You can use either environment variables (recommended for production) or set the `GOOGLE_CLIENT_SECRET_PATH` (or legacy `GOOGLE_CLIENT_SECRETS`) environment variable to point to your `client_secret.json` file.
-
-```bash
-# Set OAuth credentials via environment variables (recommended)
-export GOOGLE_OAUTH_CLIENT_ID="your-client-id.apps.googleusercontent.com"
-export GOOGLE_OAUTH_CLIENT_SECRET="your-client-secret"
-
-# Start the server with all Google Workspace tools
-uvx workspace-mcp
-
-# Start with specific tools only
-uvx workspace-mcp --tools gmail drive calendar tasks
-
-# Start in HTTP mode for debugging
-uvx workspace-mcp --transport streamable-http
-```
-
-*Requires Python 3.11+ and [uvx](https://github.com/astral-sh/uv). The package is available on [PyPI](https://pypi.org/project/workspace-mcp).*
-
-### Development Installation
-
-For development or customization:
-
-```bash
-git clone https://github.com/taylorwilsdon/google_workspace_mcp.git
-cd google_workspace_mcp
-uv run main.py
-```
-
 ### Prerequisites
 
-- **Python 3.11+**
+- **Python 3.10+**
 - **[uvx](https://github.com/astral-sh/uv)** (for instant installation) or [uv](https://github.com/astral-sh/uv) (for development)
 - **Google Cloud Project** with OAuth 2.0 credentials
 
@@ -153,8 +114,34 @@ uv run main.py
 
 1. **Google Cloud Setup**:
    - Create OAuth 2.0 credentials (web application) in [Google Cloud Console](https://console.cloud.google.com/)
-   - Enable APIs: Calendar, Drive, Gmail, Docs, Sheets, Slides, Forms, Tasks, Chat
+   - Create a new project (or use an existing one) for your MCP server.
+   - Navigate to APIs & Services → Credentials.
+   - Click Create Credentials → OAuth Client ID.
+   - Choose Web Application as the application type.
    - Add redirect URI: `http://localhost:8000/oauth2callback`
+
+   - **Enable APIs**:
+   - In the Google Cloud Console, go to APIs & Services → Library.
+   - Search for & enable Calendar, Drive, Gmail, Docs, Sheets, Slides, Forms, Tasks, Chat
+   - Expand the section below marked "API Enablement Links" for direct links to each!
+<details>
+  <summary>API Enablement Links</summary>
+  You can enable each one by clicking the links below (make sure you're logged into the Google Cloud Console and have the correct project selected):
+
+* [Enable Google Calendar API](https://console.cloud.google.com/flows/enableapi?apiid=calendar-json.googleapis.com)
+* [Enable Google Drive API](https://console.cloud.google.com/flows/enableapi?apiid=drive.googleapis.com)
+* [Enable Gmail API](https://console.cloud.google.com/flows/enableapi?apiid=gmail.googleapis.com)
+* [Enable Google Docs API](https://console.cloud.google.com/flows/enableapi?apiid=docs.googleapis.com)
+* [Enable Google Sheets API](https://console.cloud.google.com/flows/enableapi?apiid=sheets.googleapis.com)
+* [Enable Google Slides API](https://console.cloud.google.com/flows/enableapi?apiid=slides.googleapis.com)
+* [Enable Google Forms API](https://console.cloud.google.com/flows/enableapi?apiid=forms.googleapis.com)
+* [Enable Google Tasks API](https://console.cloud.google.com/flows/enableapi?apiid=tasks.googleapis.com)
+* [Enable Google Chat API](https://console.cloud.google.com/flows/enableapi?apiid=chat.googleapis.com)
+* [Enable Google Custom Search API](https://console.cloud.google.com/flows/enableapi?apiid=customsearch.googleapis.com)
+
+</details>
+
+1.1. **Credentials**:
    - Configure credentials using one of these methods:
 
      **Option A: Environment Variables (Recommended for Production)**
@@ -184,6 +171,8 @@ uv run main.py
    ```bash
    export OAUTHLIB_INSECURE_TRANSPORT=1  # Development only
    export USER_GOOGLE_EMAIL=your.email@gmail.com  # Optional: Default email for auth - use this for single user setups and you won't need to set your email in system prompt for magic auth
+   export GOOGLE_PSE_API_KEY=your-custom-search-api-key  # Optional: Only needed for Google Custom Search tools
+   export GOOGLE_PSE_ENGINE_ID=your-search-engine-id  # Optional: Only needed for Google Custom Search tools
    ```
 
 3. **Server Configuration**:
@@ -192,6 +181,28 @@ uv run main.py
    - `WORKSPACE_MCP_PORT`: Sets the port the server listens on (default: 8000). This affects the server_url, port, and OAUTH_REDIRECT_URI.
    - `USER_GOOGLE_EMAIL`: Optional default email for authentication flows. If set, the LLM won't need to specify your email when calling `start_google_auth`.
    - `GOOGLE_OAUTH_REDIRECT_URI`: Sets an override for OAuth redirect specifically, must include a full address (i.e. include port if necessary). Use this if you want to run your OAuth redirect separately from the MCP. This is not recommended outside of very specific cases
+
+### Google Custom Search Setup
+
+To use the Google Custom Search tools, you need to:
+
+1. **Create a Programmable Search Engine**:
+   - Go to [Programmable Search Engine Control Panel](https://programmablesearchengine.google.com/controlpanel/create)
+   - Configure sites to search (or search the entire web)
+   - Note your Search Engine ID (cx parameter)
+
+2. **Get an API Key**:
+   - Visit [Google Developers Console](https://developers.google.com/custom-search/v1/overview)
+   - Create or select a project
+   - Enable the Custom Search API
+   - Create credentials (API Key)
+   - Set the `GOOGLE_PSE_API_KEY` environment variable with your API key
+
+3. **Configure Environment Variables**:
+   - Set `GOOGLE_PSE_API_KEY` to your Custom Search API key
+   - Set `GOOGLE_PSE_ENGINE_ID` to your Search Engine ID (the cx parameter from step 1)
+
+For detailed setup instructions, see the [Custom Search JSON API documentation](https://developers.google.com/custom-search/v1/overview).
 
 ### Start the Server
 
@@ -215,7 +226,7 @@ docker build -t workspace-mcp .
 docker run -p 8000:8000 -v $(pwd):/app workspace-mcp --transport streamable-http
 ```
 
-**Available Tools for `--tools` flag**: `gmail`, `drive`, `calendar`, `docs`, `sheets`, `forms`, `tasks`, `chat`
+**Available Tools for `--tools` flag**: `gmail`, `drive`, `calendar`, `docs`, `sheets`, `forms`, `tasks`, `chat`, `search`
 
 ### Connect to Claude Desktop
 
@@ -258,10 +269,47 @@ After running the script, just restart Claude Desktop and you're ready to go.
    }
    ```
 
-**Get Google OAuth Credentials** (if you don't have them):
-- Go to [Google Cloud Console](https://console.cloud.google.com/)
-- Create a new project and enable APIs: Calendar, Drive, Gmail, Docs, Sheets, Slides, Forms, Tasks, Chat
-- Create OAuth 2.0 Client ID (Web application) with redirect URI: `http://localhost:8000/oauth2callback`
+### 2. Advanced / Cross-Platform Installation
+
+If you’re developing, deploying to servers, or using another MCP-capable client, keep reading.
+
+#### Instant CLI (uvx)
+
+```bash
+# Requires Python 3.10+ and uvx
+export GOOGLE_OAUTH_CLIENT_ID="xxx"
+export GOOGLE_OAUTH_CLIENT_SECRET="yyy"
+uvx workspace-mcp --tools gmail drive calendar
+```
+
+> Run instantly without manual installation - you must configure OAuth credentials when using uvx. You can use either environment variables (recommended for production) or set the `GOOGLE_CLIENT_SECRET_PATH` (or legacy `GOOGLE_CLIENT_SECRETS`) environment variable to point to your `client_secret.json` file.
+
+```bash
+# Set OAuth credentials via environment variables (recommended)
+export GOOGLE_OAUTH_CLIENT_ID="your-client-id.apps.googleusercontent.com"
+export GOOGLE_OAUTH_CLIENT_SECRET="your-client-secret"
+
+# Start the server with all Google Workspace tools
+uvx workspace-mcp
+
+# Start with specific tools only
+uvx workspace-mcp --tools gmail drive calendar tasks
+
+# Start in HTTP mode for debugging
+uvx workspace-mcp --transport streamable-http
+```
+
+*Requires Python 3.10+ and [uvx](https://github.com/astral-sh/uv). The package is available on [PyPI](https://pypi.org/project/workspace-mcp).*
+
+### Development Installation
+
+For development or customization:
+
+```bash
+git clone https://github.com/taylorwilsdon/google_workspace_mcp.git
+cd google_workspace_mcp
+uv run main.py
+```
 
 **Development Installation (For Contributors)**:
 ```json
@@ -428,6 +476,14 @@ When calling a tool:
 | `send_message` | Send messages to spaces |
 | `search_messages` | Search across chat history |
 
+### 🔍 Google Custom Search ([`search_tools.py`](gsearch/search_tools.py))
+
+| Tool | Description |
+|------|-------------|
+| `search_custom` | Perform web searches using Programmable Search Engine |
+| `get_search_engine_info` | Retrieve search engine metadata and configuration |
+| `search_custom_siterestrict` | Search within specific sites/domains |
+
 ---
 
 ## 🛠️ Development
@@ -480,6 +536,14 @@ async def your_new_tool(service, param1: str, param2: int = 10):
 ## 🌐 Integration with Open WebUI
 
 To use this server as a tool provider within Open WebUI:
+
+### Instant Start (No Config Needed)
+Just copy and paste the below, set your values and you're off!
+```bash
+GOOGLE_OAUTH_CLIENT_ID="your_client_id" GOOGLE_OAUTH_CLIENT_SECRET="your_client_secret" uvx mcpo --port 8000 --api-key "top-secret" -- uvx workspace-mcp
+```
+
+Otherwise:
 
 ### 1. Create MCPO Configuration
 

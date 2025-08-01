@@ -7,17 +7,16 @@ This module provides MCP tools for interacting with the Gmail API.
 import logging
 import asyncio
 import base64
+import ssl
 from typing import Optional, List, Dict, Literal
 
 from email.mime.text import MIMEText
 
-from mcp import types
 from fastapi import Body
 
 from auth.service_decorator import require_google_service
 from core.utils import handle_http_errors
 from core.server import (
-    GMAIL_READONLY_SCOPE,
     GMAIL_SEND_SCOPE,
     GMAIL_COMPOSE_SCOPE,
     GMAIL_MODIFY_SCOPE,
@@ -26,6 +25,9 @@ from core.server import (
 )
 
 logger = logging.getLogger(__name__)
+
+GMAIL_BATCH_SIZE = 25
+GMAIL_REQUEST_DELAY = 0.1
 
 
 def _extract_message_body(payload):
@@ -108,14 +110,40 @@ def _format_gmail_results_plain(messages: list, query: str) -> str:
     ]
 
     for i, msg in enumerate(messages, 1):
-        message_url = _generate_gmail_web_url(msg["id"])
-        thread_url = _generate_gmail_web_url(msg["threadId"])
+        # Handle potential null/undefined message objects
+        if not msg or not isinstance(msg, dict):
+            lines.extend([
+                f"  {i}. Message: Invalid message data",
+                "     Error: Message object is null or malformed",
+                "",
+            ])
+            continue
+
+        # Handle potential null/undefined values from Gmail API
+        message_id = msg.get("id")
+        thread_id = msg.get("threadId")
+
+        # Convert None, empty string, or missing values to "unknown"
+        if not message_id:
+            message_id = "unknown"
+        if not thread_id:
+            thread_id = "unknown"
+
+        if message_id != "unknown":
+            message_url = _generate_gmail_web_url(message_id)
+        else:
+            message_url = "N/A"
+
+        if thread_id != "unknown":
+            thread_url = _generate_gmail_web_url(thread_id)
+        else:
+            thread_url = "N/A"
 
         lines.extend(
             [
-                f"  {i}. Message ID: {msg['id']}",
+                f"  {i}. Message ID: {message_id}",
                 f"     Web Link: {message_url}",
-                f"     Thread ID: {msg['threadId']}",
+                f"     Thread ID: {thread_id}",
                 f"     Thread Link: {thread_url}",
                 "",
             ]
@@ -134,7 +162,7 @@ def _format_gmail_results_plain(messages: list, query: str) -> str:
 
 
 @server.tool()
-@handle_http_errors("search_gmail_messages", is_read_only=True)
+@handle_http_errors("search_gmail_messages", is_read_only=True, service_type="gmail")
 @require_google_service("gmail", "gmail_read")
 async def search_gmail_messages(
     service, query: str, user_google_email: str, page_size: int = 10
@@ -161,7 +189,17 @@ async def search_gmail_messages(
         .list(userId="me", q=query, maxResults=page_size)
         .execute
     )
+
+    # Handle potential null response (but empty dict {} is valid)
+    if response is None:
+        logger.warning("[search_gmail_messages] Null response from Gmail API")
+        return f"No response received from Gmail API for query: '{query}'"
+
     messages = response.get("messages", [])
+    # Additional safety check for null messages array
+    if messages is None:
+        messages = []
+
     formatted_output = _format_gmail_results_plain(messages, query)
 
     logger.info(f"[search_gmail_messages] Found {len(messages)} messages")
@@ -169,7 +207,7 @@ async def search_gmail_messages(
 
 
 @server.tool()
-@handle_http_errors("get_gmail_message_content", is_read_only=True)
+@handle_http_errors("get_gmail_message_content", is_read_only=True, service_type="gmail")
 @require_google_service("gmail", "gmail_read")
 async def get_gmail_message_content(
     service, message_id: str, user_google_email: str
@@ -237,7 +275,7 @@ async def get_gmail_message_content(
 
 
 @server.tool()
-@handle_http_errors("get_gmail_messages_content_batch", is_read_only=True)
+@handle_http_errors("get_gmail_messages_content_batch", is_read_only=True, service_type="gmail")
 @require_google_service("gmail", "gmail_read")
 async def get_gmail_messages_content_batch(
     service,
@@ -247,10 +285,10 @@ async def get_gmail_messages_content_batch(
 ) -> str:
     """
     Retrieves the content of multiple Gmail messages in a single batch request.
-    Supports up to 100 messages per request using Google's batch API.
+    Supports up to 25 messages per batch to prevent SSL connection exhaustion.
 
     Args:
-        message_ids (List[str]): List of Gmail message IDs to retrieve (max 100).
+        message_ids (List[str]): List of Gmail message IDs to retrieve (max 25 per batch).
         user_google_email (str): The user's Google email address. Required.
         format (Literal["full", "metadata"]): Message format. "full" includes body, "metadata" only headers.
 
@@ -266,9 +304,9 @@ async def get_gmail_messages_content_batch(
 
     output_messages = []
 
-    # Process in chunks of 100 (Gmail batch limit)
-    for chunk_start in range(0, len(message_ids), 100):
-        chunk_ids = message_ids[chunk_start : chunk_start + 100]
+    # Process in smaller chunks to prevent SSL connection exhaustion
+    for chunk_start in range(0, len(message_ids), GMAIL_BATCH_SIZE):
+        chunk_ids = message_ids[chunk_start : chunk_start + GMAIL_BATCH_SIZE]
         results: Dict[str, Dict] = {}
 
         def _batch_callback(request_id, response, exception):
@@ -303,44 +341,57 @@ async def get_gmail_messages_content_batch(
             await asyncio.to_thread(batch.execute)
 
         except Exception as batch_error:
-            # Fallback to asyncio.gather if batch API fails
+            # Fallback to sequential processing instead of parallel to prevent SSL exhaustion
             logger.warning(
-                f"[get_gmail_messages_content_batch] Batch API failed, falling back to asyncio.gather: {batch_error}"
+                f"[get_gmail_messages_content_batch] Batch API failed, falling back to sequential processing: {batch_error}"
             )
 
-            async def fetch_message(mid: str):
-                try:
-                    if format == "metadata":
-                        msg = await asyncio.to_thread(
-                            service.users()
-                            .messages()
-                            .get(
-                                userId="me",
-                                id=mid,
-                                format="metadata",
-                                metadataHeaders=["Subject", "From"],
+            async def fetch_message_with_retry(mid: str, max_retries: int = 3):
+                """Fetch a single message with exponential backoff retry for SSL errors"""
+                for attempt in range(max_retries):
+                    try:
+                        if format == "metadata":
+                            msg = await asyncio.to_thread(
+                                service.users()
+                                .messages()
+                                .get(
+                                    userId="me",
+                                    id=mid,
+                                    format="metadata",
+                                    metadataHeaders=["Subject", "From"],
+                                )
+                                .execute
                             )
-                            .execute
-                        )
-                    else:
-                        msg = await asyncio.to_thread(
-                            service.users()
-                            .messages()
-                            .get(userId="me", id=mid, format="full")
-                            .execute
-                        )
-                    return mid, msg, None
-                except Exception as e:
-                    return mid, None, e
+                        else:
+                            msg = await asyncio.to_thread(
+                                service.users()
+                                .messages()
+                                .get(userId="me", id=mid, format="full")
+                                .execute
+                            )
+                        return mid, msg, None
+                    except ssl.SSLError as ssl_error:
+                        if attempt < max_retries - 1:
+                            # Exponential backoff: 1s, 2s, 4s
+                            delay = 2 ** attempt
+                            logger.warning(
+                                f"[get_gmail_messages_content_batch] SSL error for message {mid} on attempt {attempt + 1}: {ssl_error}. Retrying in {delay}s..."
+                            )
+                            await asyncio.sleep(delay)
+                        else:
+                            logger.error(
+                                f"[get_gmail_messages_content_batch] SSL error for message {mid} on final attempt: {ssl_error}"
+                            )
+                            return mid, None, ssl_error
+                    except Exception as e:
+                        return mid, None, e
 
-            # Fetch all messages in parallel
-            fetch_results = await asyncio.gather(
-                *[fetch_message(mid) for mid in chunk_ids], return_exceptions=False
-            )
-
-            # Convert to results format
-            for mid, msg, error in fetch_results:
-                results[mid] = {"data": msg, "error": error}
+            # Process messages sequentially with small delays to prevent connection exhaustion
+            for mid in chunk_ids:
+                mid_result, msg_data, error = await fetch_message_with_retry(mid)
+                results[mid_result] = {"data": msg_data, "error": error}
+                # Brief delay between requests to allow connection cleanup
+                await asyncio.sleep(GMAIL_REQUEST_DELAY)
 
         # Process results for this chunk
         for mid in chunk_ids:
@@ -391,7 +442,7 @@ async def get_gmail_messages_content_batch(
 
 
 @server.tool()
-@handle_http_errors("send_gmail_message")
+@handle_http_errors("send_gmail_message", service_type="gmail")
 @require_google_service("gmail", GMAIL_SEND_SCOPE)
 async def send_gmail_message(
     service,
@@ -428,7 +479,7 @@ async def send_gmail_message(
 
 
 @server.tool()
-@handle_http_errors("draft_gmail_message")
+@handle_http_errors("draft_gmail_message", service_type="gmail")
 @require_google_service("gmail", GMAIL_COMPOSE_SCOPE)
 async def draft_gmail_message(
     service,
@@ -546,7 +597,7 @@ def _format_thread_content(thread_data: dict, thread_id: str) -> str:
 
 @server.tool()
 @require_google_service("gmail", "gmail_read")
-@handle_http_errors("get_gmail_thread_content", is_read_only=True)
+@handle_http_errors("get_gmail_thread_content", is_read_only=True, service_type="gmail")
 async def get_gmail_thread_content(
     service, thread_id: str, user_google_email: str
 ) -> str:
@@ -574,7 +625,7 @@ async def get_gmail_thread_content(
 
 @server.tool()
 @require_google_service("gmail", "gmail_read")
-@handle_http_errors("get_gmail_threads_content_batch", is_read_only=True)
+@handle_http_errors("get_gmail_threads_content_batch", is_read_only=True, service_type="gmail")
 async def get_gmail_threads_content_batch(
     service,
     thread_ids: List[str],
@@ -582,10 +633,10 @@ async def get_gmail_threads_content_batch(
 ) -> str:
     """
     Retrieves the content of multiple Gmail threads in a single batch request.
-    Supports up to 100 threads per request using Google's batch API.
+    Supports up to 25 threads per batch to prevent SSL connection exhaustion.
 
     Args:
-        thread_ids (List[str]): A list of Gmail thread IDs to retrieve. The function will automatically batch requests in chunks of 100.
+        thread_ids (List[str]): A list of Gmail thread IDs to retrieve. The function will automatically batch requests in chunks of 25.
         user_google_email (str): The user's Google email address. Required.
 
     Returns:
@@ -604,9 +655,9 @@ async def get_gmail_threads_content_batch(
         """Callback for batch requests"""
         results[request_id] = {"data": response, "error": exception}
 
-    # Process in chunks of 100 (Gmail batch limit)
-    for chunk_start in range(0, len(thread_ids), 100):
-        chunk_ids = thread_ids[chunk_start : chunk_start + 100]
+    # Process in smaller chunks to prevent SSL connection exhaustion
+    for chunk_start in range(0, len(thread_ids), GMAIL_BATCH_SIZE):
+        chunk_ids = thread_ids[chunk_start : chunk_start + GMAIL_BATCH_SIZE]
         results: Dict[str, Dict] = {}
 
         # Try to use batch API
@@ -621,31 +672,44 @@ async def get_gmail_threads_content_batch(
             await asyncio.to_thread(batch.execute)
 
         except Exception as batch_error:
-            # Fallback to asyncio.gather if batch API fails
+            # Fallback to sequential processing instead of parallel to prevent SSL exhaustion
             logger.warning(
-                f"[get_gmail_threads_content_batch] Batch API failed, falling back to asyncio.gather: {batch_error}"
+                f"[get_gmail_threads_content_batch] Batch API failed, falling back to sequential processing: {batch_error}"
             )
 
-            async def fetch_thread(tid: str):
-                try:
-                    thread = await asyncio.to_thread(
-                        service.users()
-                        .threads()
-                        .get(userId="me", id=tid, format="full")
-                        .execute
-                    )
-                    return tid, thread, None
-                except Exception as e:
-                    return tid, None, e
+            async def fetch_thread_with_retry(tid: str, max_retries: int = 3):
+                """Fetch a single thread with exponential backoff retry for SSL errors"""
+                for attempt in range(max_retries):
+                    try:
+                        thread = await asyncio.to_thread(
+                            service.users()
+                            .threads()
+                            .get(userId="me", id=tid, format="full")
+                            .execute
+                        )
+                        return tid, thread, None
+                    except ssl.SSLError as ssl_error:
+                        if attempt < max_retries - 1:
+                            # Exponential backoff: 1s, 2s, 4s
+                            delay = 2 ** attempt
+                            logger.warning(
+                                f"[get_gmail_threads_content_batch] SSL error for thread {tid} on attempt {attempt + 1}: {ssl_error}. Retrying in {delay}s..."
+                            )
+                            await asyncio.sleep(delay)
+                        else:
+                            logger.error(
+                                f"[get_gmail_threads_content_batch] SSL error for thread {tid} on final attempt: {ssl_error}"
+                            )
+                            return tid, None, ssl_error
+                    except Exception as e:
+                        return tid, None, e
 
-            # Fetch all threads in parallel
-            fetch_results = await asyncio.gather(
-                *[fetch_thread(tid) for tid in chunk_ids], return_exceptions=False
-            )
-
-            # Convert to results format
-            for tid, thread, error in fetch_results:
-                results[tid] = {"data": thread, "error": error}
+            # Process threads sequentially with small delays to prevent connection exhaustion
+            for tid in chunk_ids:
+                tid_result, thread_data, error = await fetch_thread_with_retry(tid)
+                results[tid_result] = {"data": thread_data, "error": error}
+                # Brief delay between requests to allow connection cleanup
+                await asyncio.sleep(GMAIL_REQUEST_DELAY)
 
         # Process results for this chunk
         for tid in chunk_ids:
@@ -667,7 +731,7 @@ async def get_gmail_threads_content_batch(
 
 
 @server.tool()
-@handle_http_errors("list_gmail_labels", is_read_only=True)
+@handle_http_errors("list_gmail_labels", is_read_only=True, service_type="gmail")
 @require_google_service("gmail", "gmail_read")
 async def list_gmail_labels(service, user_google_email: str) -> str:
     """
@@ -715,7 +779,7 @@ async def list_gmail_labels(service, user_google_email: str) -> str:
 
 
 @server.tool()
-@handle_http_errors("manage_gmail_label")
+@handle_http_errors("manage_gmail_label", service_type="gmail")
 @require_google_service("gmail", GMAIL_LABELS_SCOPE)
 async def manage_gmail_label(
     service,
@@ -794,7 +858,7 @@ async def manage_gmail_label(
 
 
 @server.tool()
-@handle_http_errors("modify_gmail_message_labels")
+@handle_http_errors("modify_gmail_message_labels", service_type="gmail")
 @require_google_service("gmail", GMAIL_MODIFY_SCOPE)
 async def modify_gmail_message_labels(
     service,
@@ -805,6 +869,8 @@ async def modify_gmail_message_labels(
 ) -> str:
     """
     Adds or removes labels from a Gmail message.
+    To archive an email, remove the INBOX label.
+    To delete an email, add the TRASH label.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
@@ -841,3 +907,53 @@ async def modify_gmail_message_labels(
         actions.append(f"Removed labels: {', '.join(remove_label_ids)}")
 
     return f"Message labels updated successfully!\nMessage ID: {message_id}\n{'; '.join(actions)}"
+
+
+@server.tool()
+@handle_http_errors("batch_modify_gmail_message_labels", service_type="gmail")
+@require_google_service("gmail", GMAIL_MODIFY_SCOPE)
+async def batch_modify_gmail_message_labels(
+    service,
+    user_google_email: str,
+    message_ids: List[str],
+    add_label_ids: Optional[List[str]] = None,
+    remove_label_ids: Optional[List[str]] = None,
+) -> str:
+    """
+    Adds or removes labels from multiple Gmail messages in a single batch request.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        message_ids (List[str]): A list of message IDs to modify.
+        add_label_ids (Optional[List[str]]): List of label IDs to add to the messages.
+        remove_label_ids (Optional[List[str]]): List of label IDs to remove from the messages.
+
+    Returns:
+        str: Confirmation message of the label changes applied to the messages.
+    """
+    logger.info(
+        f"[batch_modify_gmail_message_labels] Invoked. Email: '{user_google_email}', Message IDs: '{message_ids}'"
+    )
+
+    if not add_label_ids and not remove_label_ids:
+        raise Exception(
+            "At least one of add_label_ids or remove_label_ids must be provided."
+        )
+
+    body = {"ids": message_ids}
+    if add_label_ids:
+        body["addLabelIds"] = add_label_ids
+    if remove_label_ids:
+        body["removeLabelIds"] = remove_label_ids
+
+    await asyncio.to_thread(
+        service.users().messages().batchModify(userId="me", body=body).execute
+    )
+
+    actions = []
+    if add_label_ids:
+        actions.append(f"Added labels: {', '.join(add_label_ids)}")
+    if remove_label_ids:
+        actions.append(f"Removed labels: {', '.join(remove_label_ids)}")
+
+    return f"Labels updated for {len(message_ids)} messages: {'; '.join(actions)}"

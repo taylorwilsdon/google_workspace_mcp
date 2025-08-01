@@ -7,10 +7,7 @@ All Google Workspace apps (Docs, Sheets, Slides) use the Drive API for comment o
 
 import logging
 import asyncio
-from typing import Dict, Any
 
-from mcp import types
-from googleapiclient.errors import HttpError
 
 from auth.service_decorator import require_google_service
 from core.server import server
@@ -40,75 +37,75 @@ def create_comment_tools(app_name: str, file_id_param: str):
     # Create functions without decorators first, then apply decorators with proper names
     if file_id_param == "document_id":
         @require_google_service("drive", "drive_read")
-        @handle_http_errors(read_func_name)
+        @handle_http_errors(read_func_name, service_type="drive")
         async def read_comments(service, user_google_email: str, document_id: str) -> str:
             """Read all comments from a Google Document."""
             return await _read_comments_impl(service, app_name, document_id)
 
         @require_google_service("drive", "drive_file")
-        @handle_http_errors(create_func_name)
+        @handle_http_errors(create_func_name, service_type="drive")
         async def create_comment(service, user_google_email: str, document_id: str, comment_content: str) -> str:
             """Create a new comment on a Google Document."""
             return await _create_comment_impl(service, app_name, document_id, comment_content)
 
         @require_google_service("drive", "drive_file")
-        @handle_http_errors(reply_func_name)
+        @handle_http_errors(reply_func_name, service_type="drive")
         async def reply_to_comment(service, user_google_email: str, document_id: str, comment_id: str, reply_content: str) -> str:
             """Reply to a specific comment in a Google Document."""
             return await _reply_to_comment_impl(service, app_name, document_id, comment_id, reply_content)
 
         @require_google_service("drive", "drive_file")
-        @handle_http_errors(resolve_func_name)
+        @handle_http_errors(resolve_func_name, service_type="drive")
         async def resolve_comment(service, user_google_email: str, document_id: str, comment_id: str) -> str:
             """Resolve a comment in a Google Document."""
             return await _resolve_comment_impl(service, app_name, document_id, comment_id)
 
     elif file_id_param == "spreadsheet_id":
         @require_google_service("drive", "drive_read")
-        @handle_http_errors(read_func_name)
+        @handle_http_errors(read_func_name, service_type="drive")
         async def read_comments(service, user_google_email: str, spreadsheet_id: str) -> str:
             """Read all comments from a Google Spreadsheet."""
             return await _read_comments_impl(service, app_name, spreadsheet_id)
 
         @require_google_service("drive", "drive_file")
-        @handle_http_errors(create_func_name)
+        @handle_http_errors(create_func_name, service_type="drive")
         async def create_comment(service, user_google_email: str, spreadsheet_id: str, comment_content: str) -> str:
             """Create a new comment on a Google Spreadsheet."""
             return await _create_comment_impl(service, app_name, spreadsheet_id, comment_content)
 
         @require_google_service("drive", "drive_file")
-        @handle_http_errors(reply_func_name)
+        @handle_http_errors(reply_func_name, service_type="drive")
         async def reply_to_comment(service, user_google_email: str, spreadsheet_id: str, comment_id: str, reply_content: str) -> str:
             """Reply to a specific comment in a Google Spreadsheet."""
             return await _reply_to_comment_impl(service, app_name, spreadsheet_id, comment_id, reply_content)
 
         @require_google_service("drive", "drive_file")
-        @handle_http_errors(resolve_func_name)
+        @handle_http_errors(resolve_func_name, service_type="drive")
         async def resolve_comment(service, user_google_email: str, spreadsheet_id: str, comment_id: str) -> str:
             """Resolve a comment in a Google Spreadsheet."""
             return await _resolve_comment_impl(service, app_name, spreadsheet_id, comment_id)
 
     elif file_id_param == "presentation_id":
         @require_google_service("drive", "drive_read")
-        @handle_http_errors(read_func_name)
+        @handle_http_errors(read_func_name, service_type="drive")
         async def read_comments(service, user_google_email: str, presentation_id: str) -> str:
             """Read all comments from a Google Presentation."""
             return await _read_comments_impl(service, app_name, presentation_id)
 
         @require_google_service("drive", "drive_file")
-        @handle_http_errors(create_func_name)
+        @handle_http_errors(create_func_name, service_type="drive")
         async def create_comment(service, user_google_email: str, presentation_id: str, comment_content: str) -> str:
             """Create a new comment on a Google Presentation."""
             return await _create_comment_impl(service, app_name, presentation_id, comment_content)
 
         @require_google_service("drive", "drive_file")
-        @handle_http_errors(reply_func_name)
+        @handle_http_errors(reply_func_name, service_type="drive")
         async def reply_to_comment(service, user_google_email: str, presentation_id: str, comment_id: str, reply_content: str) -> str:
             """Reply to a specific comment in a Google Presentation."""
             return await _reply_to_comment_impl(service, app_name, presentation_id, comment_id, reply_content)
 
         @require_google_service("drive", "drive_file")
-        @handle_http_errors(resolve_func_name)
+        @handle_http_errors(resolve_func_name, service_type="drive")
         async def resolve_comment(service, user_google_email: str, presentation_id: str, comment_id: str) -> str:
             """Resolve a comment in a Google Presentation."""
             return await _resolve_comment_impl(service, app_name, presentation_id, comment_id)

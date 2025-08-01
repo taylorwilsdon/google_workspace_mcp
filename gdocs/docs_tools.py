@@ -6,9 +6,7 @@ This module provides MCP tools for interacting with Google Docs API and managing
 import logging
 import asyncio
 import io
-from typing import List
 
-from mcp import types
 from googleapiclient.http import MediaIoBaseDownload
 
 # Auth & server utilities
@@ -20,7 +18,7 @@ from core.comments import create_comment_tools
 logger = logging.getLogger(__name__)
 
 @server.tool()
-@handle_http_errors("search_docs", is_read_only=True)
+@handle_http_errors("search_docs", is_read_only=True, service_type="docs")
 @require_google_service("drive", "drive_read")
 async def search_docs(
     service,
@@ -57,7 +55,7 @@ async def search_docs(
     return "\n".join(output)
 
 @server.tool()
-@handle_http_errors("get_doc_content", is_read_only=True)
+@handle_http_errors("get_doc_content", is_read_only=True, service_type="docs")
 @require_multiple_services([
     {"service_type": "drive", "scopes": "drive_read", "param_name": "drive_service"},
     {"service_type": "docs", "scopes": "docs_read", "param_name": "docs_service"}
@@ -94,24 +92,83 @@ async def get_doc_content(
 
     # Step 3: Process based on mimeType
     if mime_type == "application/vnd.google-apps.document":
-        logger.info(f"[get_doc_content] Processing as native Google Doc.")
+        logger.info("[get_doc_content] Processing as native Google Doc.")
         doc_data = await asyncio.to_thread(
-            docs_service.documents().get(documentId=document_id).execute
+            docs_service.documents().get(
+                documentId=document_id,
+                includeTabsContent=True
+            ).execute
         )
-        body_elements = doc_data.get('body', {}).get('content', [])
+        # Tab header format constant
+        TAB_HEADER_FORMAT = "\n--- TAB: {tab_name} ---\n"
+        
+        def extract_text_from_elements(elements, tab_name=None, depth=0):
+            """Extract text from document elements (paragraphs, tables, etc.)"""
+            # Prevent infinite recursion by limiting depth
+            if depth > 5:
+                return ""
+            text_lines = []
+            if tab_name:
+                text_lines.append(TAB_HEADER_FORMAT.format(tab_name=tab_name))
 
-        processed_text_lines: List[str] = []
-        for element in body_elements:
-            if 'paragraph' in element:
-                paragraph = element.get('paragraph', {})
-                para_elements = paragraph.get('elements', [])
-                current_line_text = ""
-                for pe in para_elements:
-                    text_run = pe.get('textRun', {})
-                    if text_run and 'content' in text_run:
-                        current_line_text += text_run['content']
-                if current_line_text.strip():
-                        processed_text_lines.append(current_line_text)
+            for element in elements:
+                if 'paragraph' in element:
+                    paragraph = element.get('paragraph', {})
+                    para_elements = paragraph.get('elements', [])
+                    current_line_text = ""
+                    for pe in para_elements:
+                        text_run = pe.get('textRun', {})
+                        if text_run and 'content' in text_run:
+                            current_line_text += text_run['content']
+                    if current_line_text.strip():
+                        text_lines.append(current_line_text)
+                elif 'table' in element:
+                    # Handle table content
+                    table = element.get('table', {})
+                    table_rows = table.get('tableRows', [])
+                    for row in table_rows:
+                        row_cells = row.get('tableCells', [])
+                        for cell in row_cells:
+                            cell_content = cell.get('content', [])
+                            cell_text = extract_text_from_elements(cell_content, depth=depth + 1)
+                            if cell_text.strip():
+                                text_lines.append(cell_text)
+            return "".join(text_lines)
+
+        def process_tab_hierarchy(tab, level=0):
+            """Process a tab and its nested child tabs recursively"""
+            tab_text = ""
+
+            if 'documentTab' in tab:
+                tab_title = tab.get('documentTab', {}).get('title', 'Untitled Tab')
+                # Add indentation for nested tabs to show hierarchy
+                if level > 0:
+                    tab_title = "    " * level + tab_title
+                tab_body = tab.get('documentTab', {}).get('body', {}).get('content', [])
+                tab_text += extract_text_from_elements(tab_body, tab_title)
+
+            # Process child tabs (nested tabs)
+            child_tabs = tab.get('childTabs', [])
+            for child_tab in child_tabs:
+                tab_text += process_tab_hierarchy(child_tab, level + 1)
+
+            return tab_text
+
+        processed_text_lines = []
+
+        # Process main document body
+        body_elements = doc_data.get('body', {}).get('content', [])
+        main_content = extract_text_from_elements(body_elements)
+        if main_content.strip():
+            processed_text_lines.append(main_content)
+
+        # Process all tabs
+        tabs = doc_data.get('tabs', [])
+        for tab in tabs:
+            tab_content = process_tab_hierarchy(tab)
+            if tab_content.strip():
+                processed_text_lines.append(tab_content)
+
         body_text = "".join(processed_text_lines)
     else:
         logger.info(f"[get_doc_content] Processing as Drive file (e.g., .docx, other). MimeType: {mime_type}")
@@ -157,7 +214,7 @@ async def get_doc_content(
     return header + body_text
 
 @server.tool()
-@handle_http_errors("list_docs_in_folder", is_read_only=True)
+@handle_http_errors("list_docs_in_folder", is_read_only=True, service_type="docs")
 @require_google_service("drive", "drive_read")
 async def list_docs_in_folder(
     service,
@@ -189,7 +246,7 @@ async def list_docs_in_folder(
     return "\n".join(out)
 
 @server.tool()
-@handle_http_errors("create_doc")
+@handle_http_errors("create_doc", service_type="docs")
 @require_google_service("docs", "docs_write")
 async def create_doc(
     service,

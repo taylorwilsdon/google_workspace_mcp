@@ -15,7 +15,7 @@ from google.auth.transport.requests import Request
 from google.auth.exceptions import RefreshError
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from auth.scopes import OAUTH_STATE_TO_SESSION_ID_MAP, SCOPES
+from auth.scopes import SCOPES
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -346,7 +346,6 @@ def create_oauth_flow(
 
 
 async def start_auth_flow(
-    mcp_session_id: Optional[str],
     user_google_email: Optional[str],
     service_name: str,  # e.g., "Google Calendar", "Gmail" for user messages
     redirect_uri: str,  # Added redirect_uri as a required parameter
@@ -355,7 +354,6 @@ async def start_auth_flow(
     Initiates the Google OAuth flow and returns an actionable message for the user.
 
     Args:
-        mcp_session_id: The active MCP session ID.
         user_google_email: The user's specified Google email, if provided.
         service_name: The name of the Google service requiring auth (for user messages).
         redirect_uri: The URI Google will redirect to after authorization.
@@ -378,8 +376,18 @@ async def start_auth_flow(
     )
 
     logger.info(
-        f"[start_auth_flow] Initiating auth for {user_display_name} (session: {mcp_session_id}) with global SCOPES."
+        f"[start_auth_flow] Initiating auth for {user_display_name} with global SCOPES."
     )
+
+    # Import here to avoid circular imports
+    from auth.oauth_callback_server import ensure_oauth_callback_available
+    from core.server import _current_transport_mode, WORKSPACE_MCP_PORT, WORKSPACE_MCP_BASE_URI
+
+    # Ensure OAuth callback server is available before generating URLs
+    success, error_msg = ensure_oauth_callback_available(_current_transport_mode, WORKSPACE_MCP_PORT, WORKSPACE_MCP_BASE_URI)
+    if not success:
+        error_detail = f" ({error_msg})" if error_msg else ""
+        raise Exception(f"Cannot initiate OAuth flow - callback server unavailable{error_detail}. Please ensure the OAuth callback server can start before attempting authentication.")
 
     try:
         if "OAUTHLIB_INSECURE_TRANSPORT" not in os.environ and (
@@ -391,11 +399,6 @@ async def start_auth_flow(
             os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 
         oauth_state = os.urandom(16).hex()
-        if mcp_session_id:
-            OAUTH_STATE_TO_SESSION_ID_MAP[oauth_state] = mcp_session_id
-            logger.info(
-                f"[start_auth_flow] Stored mcp_session_id '{mcp_session_id}' for oauth_state '{oauth_state}'."
-            )
 
         flow = create_oauth_flow(
             scopes=SCOPES,  # Use global SCOPES
@@ -417,11 +420,7 @@ async def start_auth_flow(
             "**LLM, after presenting the link, instruct the user as follows:**",
             "1. Click the link and complete the authorization in their browser.",
         ]
-        session_info_for_llm = (
-            f" (this will link to your current session {mcp_session_id})"
-            if mcp_session_id
-            else ""
-        )
+        session_info_for_llm = ""
 
         if not initial_email_provided:
             message_lines.extend(
@@ -555,7 +554,7 @@ def get_credentials(
     # Check for single-user mode
     if os.getenv("MCP_SINGLE_USER_MODE") == "1":
         logger.info(
-            f"[get_credentials] Single-user mode: bypassing session mapping, finding any credentials"
+            "[get_credentials] Single-user mode: bypassing session mapping, finding any credentials"
         )
         credentials = _find_any_credentials(credentials_base_dir)
         if not credentials:
@@ -773,7 +772,6 @@ async def get_authenticated_google_service(
 
         # Generate auth URL and raise exception with it
         auth_response = await start_auth_flow(
-            mcp_session_id=None,  # Session ID not available in service layer
             user_google_email=user_google_email,
             service_name=f"Google {service_name.title()}",
             redirect_uri=redirect_uri,

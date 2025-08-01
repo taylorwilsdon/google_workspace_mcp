@@ -6,10 +6,8 @@ This module provides MCP tools for interacting with Google Slides API.
 
 import logging
 import asyncio
-from typing import List, Optional, Dict, Any
+from typing import List, Dict, Any
 
-from mcp import types
-from googleapiclient.errors import HttpError
 
 from auth.service_decorator import require_google_service
 from core.server import server
@@ -20,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 @server.tool()
-@handle_http_errors("create_presentation")
+@handle_http_errors("create_presentation", service_type="slides")
 @require_google_service("slides", "slides")
 async def create_presentation(
     service,
@@ -61,7 +59,7 @@ async def create_presentation(
 
 
 @server.tool()
-@handle_http_errors("get_presentation", is_read_only=True)
+@handle_http_errors("get_presentation", is_read_only=True, service_type="slides")
 @require_google_service("slides", "slides_read")
 async def get_presentation(
     service,
@@ -109,7 +107,7 @@ Slides Breakdown:
 
 
 @server.tool()
-@handle_http_errors("batch_update_presentation")
+@handle_http_errors("batch_update_presentation", service_type="slides")
 @require_google_service("slides", "slides")
 async def batch_update_presentation(
     service,
@@ -166,7 +164,7 @@ async def batch_update_presentation(
 
 
 @server.tool()
-@handle_http_errors("get_page", is_read_only=True)
+@handle_http_errors("get_page", is_read_only=True, service_type="slides")
 @require_google_service("slides", "slides_read")
 async def get_page(
     service,
@@ -228,7 +226,7 @@ Page Elements:
 
 
 @server.tool()
-@handle_http_errors("get_page_thumbnail", is_read_only=True)
+@handle_http_errors("get_page_thumbnail", is_read_only=True, service_type="slides")
 @require_google_service("slides", "slides_read")
 async def get_page_thumbnail(
     service,

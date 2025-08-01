@@ -214,7 +214,7 @@ def main():
         with open(config_path, 'w') as f:
             json.dump(existing_config, f, indent=2)
 
-        print(f"\n✅ Successfully configured Google Workspace MCP!")
+        print("\n✅ Successfully configured Google Workspace MCP!")
         print(f"📁 Config file: {config_path}")
 
         print("\n📋 Configuration Summary:")
