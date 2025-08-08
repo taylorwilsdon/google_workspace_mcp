@@ -8,7 +8,10 @@ import logging
 import asyncio
 import base64
 import ssl
-from typing import Optional, List, Dict, Literal
+from typing import Optional, List, Dict, Literal , Any , Tuple
+from pathlib import Path
+import json
+import io
 
 from email.mime.text import MIMEText
 
@@ -26,8 +29,48 @@ from core.server import (
 
 logger = logging.getLogger(__name__)
 
+try:
+    import pdfplumber
+    PDF_AVAILABLE = True
+    PDF_LIBRARY = "pdfplumber"
+except ImportError:
+    PDF_AVAILABLE = False
+    PDF_LIBRARY = None
+
+try:
+    import mammoth
+    DOCX_AVAILABLE = True
+    DOCX_LIBRARY = "mammoth"
+except ImportError:
+    DOCX_AVAILABLE = False
+    DOCX_LIBRARY = None
+
+try:
+    import pyxlsb
+    import pandas as pd
+    EXCEL_AVAILABLE = True
+    EXCEL_LIBRARY = "pyxlsb"
+except ImportError:
+    EXCEL_AVAILABLE = False
+    EXCEL_LIBRARY = None
+
+try:
+    from bs4 import BeautifulSoup
+    HTML_AVAILABLE = True
+except ImportError:
+    HTML_AVAILABLE = False
+
+try:
+    import csv
+    CSV_AVAILABLE = True
+except ImportError:
+    CSV_AVAILABLE = False
+
+
+
 GMAIL_BATCH_SIZE = 25
 GMAIL_REQUEST_DELAY = 0.1
+
 
 
 def _extract_message_body(payload):
@@ -65,6 +108,858 @@ def _extract_message_body(payload):
     return body_data
 
 
+def _extract_message_body(payload):
+    """
+    Helper function to extract plain text body from a Gmail message payload.
+
+    Args:
+        payload (dict): The message payload from Gmail API
+
+    Returns:
+        str: The plain text body content, or empty string if not found
+    """
+    body_data = ""
+    parts = [payload] if "parts" not in payload else payload.get("parts", [])
+
+    part_queue = list(parts)  # Use a queue for BFS traversal of parts
+    while part_queue:
+        part = part_queue.pop(0)
+        if part.get("mimeType") == "text/plain" and part.get("body", {}).get("data"):
+            data = base64.urlsafe_b64decode(part["body"]["data"])
+            body_data = data.decode("utf-8", errors="ignore")
+            break  # Found plain text body
+        elif part.get("mimeType", "").startswith("multipart/") and "parts" in part:
+            part_queue.extend(part.get("parts", []))  # Add sub-parts to the queue
+
+    # If no plain text found, check the main payload body if it exists
+    if (
+        not body_data
+        and payload.get("mimeType") == "text/plain"
+        and payload.get("body", {}).get("data")
+    ):
+        data = base64.urlsafe_b64decode(payload["body"]["data"])
+        body_data = data.decode("utf-8", errors="ignore")
+
+    return body_data
+
+
+def _extract_attachments(payload: Dict, message_id: str) -> List[Dict[str, Any]]:
+    """Extract attachment information from message payload"""
+    attachments = []
+   
+    def extract_from_part(part):
+        filename = part.get('filename', '')
+        body = part.get('body', {})
+        
+        if filename and body.get('attachmentId'):  # This part has an attachment
+            attachment_id = body.get('attachmentId')
+            attachments.append({
+                'attachment_id': attachment_id,
+                'filename': filename,
+                'mime_type': part.get('mimeType', ''),
+                'size': body.get('size', 0),
+                'message_id': message_id
+            })
+               
+        if 'parts' in part:
+            for subpart in part['parts']:
+                extract_from_part(subpart)
+               
+    extract_from_part(payload)
+    return attachments
+
+
+
+def _extract_body_content(payload: Dict) -> Tuple[str, str]:
+    """Extract text and HTML body content from message payload"""
+    text_content = ""
+    html_content = ""
+   
+    def extract_from_part(part):
+        nonlocal text_content, html_content
+        mime_type = part.get('mimeType', '')
+        body = part.get('body', {})
+       
+        if mime_type == 'text/plain' and body.get('data'):
+            text_content = base64.urlsafe_b64decode(body['data']).decode('utf-8', errors='ignore')
+        elif mime_type == 'text/html' and body.get('data'):
+            html_content = base64.urlsafe_b64decode(body['data']).decode('utf-8', errors='ignore')
+        elif 'parts' in part:
+            for subpart in part['parts']:
+                extract_from_part(subpart)
+               
+    extract_from_part(payload)
+    return text_content, html_content
+
+
+@server.tool()
+@handle_http_errors("get_gmail_message_content_with_attachments", is_read_only=True, service_type="gmail")
+@require_google_service("gmail", "gmail_read")
+async def get_gmail_message_content_with_attachments(
+    service, message_id: str, user_google_email: str
+) -> Dict[str, Any]:
+    """
+    Retrieves the full content of a Gmail message including attachments info.
+
+    Args:
+        service: The Gmail API service object
+        message_id (str): The unique ID of the Gmail message to retrieve.
+        user_google_email (str): The user's Google email address. Required.
+
+    Returns:
+        dict: Message details including subject, sender, body content, and attachments list.
+    """
+    logger.info(
+        f"[get_gmail_message_content_with_attachments] Message ID: '{message_id}', Email: '{user_google_email}'"
+    )
+
+    # Fetch the full message to get headers, body, and attachments
+    message_full = await asyncio.to_thread(
+        service.users()
+        .messages()
+        .get(
+            userId="me",
+            id=message_id,
+            format="full",  # Request full payload
+        )
+        .execute
+    )
+
+    # Extract headers
+    headers = {
+        h["name"]: h["value"]
+        for h in message_full.get("payload", {}).get("headers", [])
+    }
+    subject = headers.get("Subject", "(no subject)")
+    sender = headers.get("From", "(unknown sender)")
+    recipient = headers.get("To", "(unknown recipient)")
+
+    # Extract body content (both text and HTML)
+    payload = message_full.get("payload", {})
+    text_body, html_body = _extract_body_content(payload)
+   
+    # Fallback to old method if new method doesn't find text
+    if not text_body:
+        text_body = _extract_message_body(payload)
+
+    # Extract attachments
+    attachments = _extract_attachments(payload, message_id)
+
+    return {
+        "message_id": message_id,
+        "subject": subject,
+        "sender": sender,
+        "recipient": recipient,
+        "text_body": text_body or '[No text body found]',
+        "html_body": html_body,
+        "attachments": attachments,
+        "attachment_count": len(attachments),
+        "snippet": message_full.get("snippet", ""),
+        "thread_id": message_full.get("threadId", "")
+    }
+
+
+@server.tool()
+@handle_http_errors("get_gmail_message_content", is_read_only=True, service_type="gmail")
+@require_google_service("gmail", "gmail_read")
+async def get_gmail_message_content(
+    service, message_id: str, user_google_email: str
+) -> str:
+    """
+    Retrieves the full content (subject, sender, plain text body) of a specific Gmail message.
+    This is your original function, kept for backward compatibility.
+
+    Args:
+        message_id (str): The unique ID of the Gmail message to retrieve.
+        user_google_email (str): The user's Google email address. Required.
+
+    Returns:
+        str: The message details including subject, sender, and body content.
+    """
+    logger.info(
+        f"[get_gmail_message_content] Invoked. Message ID: '{message_id}', Email: '{user_google_email}'"
+    )
+
+    logger.info(f"[get_gmail_message_content] Using service for: {user_google_email}")
+
+    # Fetch message metadata first to get headers
+    message_metadata = await asyncio.to_thread(
+        service.users()
+        .messages()
+        .get(
+            userId="me",
+            id=message_id,
+            format="metadata",
+            metadataHeaders=["Subject", "From"],
+        )
+        .execute
+    )
+
+    headers = {
+        h["name"]: h["value"]
+        for h in message_metadata.get("payload", {}).get("headers", [])
+    }
+    subject = headers.get("Subject", "(no subject)")
+    sender = headers.get("From", "(unknown sender)")
+
+    # Now fetch the full message to get the body parts
+    message_full = await asyncio.to_thread(
+        service.users()
+        .messages()
+        .get(
+            userId="me",
+            id=message_id,
+            format="full",  # Request full payload for body
+        )
+        .execute
+    )
+
+    # Extract the plain text body using helper function
+    payload = message_full.get("payload", {})
+    body_data = _extract_message_body(payload)
+
+    content_text = "\n".join(
+        [
+            f"Subject: {subject}",
+            f"From:    {sender}",
+            f"\n--- BODY ---\n{body_data or '[No text/plain body found]'}",
+        ]
+    )
+    return content_text
+
+
+@server.tool()
+@handle_http_errors("download_gmail_attachment", is_read_only=False, service_type="gmail")
+@require_google_service("gmail", "gmail_read")
+async def download_gmail_attachment(
+    service,
+    message_id: str,
+    attachment_id: str,
+    user_google_email: str,
+    save_path: Optional[str] = None,
+    max_size_mb: int = 100
+) -> Dict[str, Any]:
+    """
+    Download an email attachment from Gmail.
+
+    Args:
+        service: The Gmail API service object
+        message_id (str): The message ID containing the attachment
+        attachment_id (str): The attachment ID to download
+        user_google_email (str): The user's Google email address
+        save_path (str, optional): Path to save the attachment file
+        max_size_mb (int): Maximum attachment size in MB (default: 100)
+
+    Returns:
+        dict: Dictionary containing attachment info and data
+    """
+    logger.info(
+        f"[download_gmail_attachment] Message ID: '{message_id}', Attachment ID: '{attachment_id}'"
+    )
+
+    try:
+        # Get the attachment
+        attachment = await asyncio.to_thread(
+            service.users()
+            .messages()
+            .attachments()
+            .get(
+                userId="me",
+                messageId=message_id,
+                id=attachment_id
+            )
+            .execute
+        )
+
+        # Validate file size before downloading
+        attachment_size = int(attachment.get('size', 0))
+        max_size_bytes = max_size_mb * 1024 * 1024
+
+        if attachment_size > max_size_bytes:
+            raise Exception(f"Attachment too large: {attachment_size / (1024*1024):.1f}MB exceeds limit of {max_size_mb}MB")
+
+        # Decode the attachment data
+        file_data = base64.urlsafe_b64decode(attachment['data'])
+
+        result = {
+            'attachment_id': attachment_id,
+            'message_id': message_id,
+            'size': attachment['size'],
+            'data_base64': base64.b64encode(file_data).decode('utf-8')  # Encode as base64 string for JSON serialization
+        }
+
+        if save_path:
+            # Save to file with path traversal protection
+            save_path = Path(save_path).resolve()
+           
+            # Ensure the path doesn't escape the intended directory
+            base_dir = Path.cwd().resolve()
+            try:
+                save_path.relative_to(base_dir)
+            except ValueError:
+                raise Exception("Invalid file path - path traversal not allowed")
+           
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+           
+            with open(save_path, 'wb') as f:
+                f.write(file_data)
+               
+            result['saved_path'] = str(save_path)
+            logger.info(f"Attachment saved to {save_path}")
+
+        logger.info(f"Successfully downloaded attachment: {attachment_size} bytes")
+        return result
+
+    except Exception as e:
+        logger.error(f"Failed to download attachment: {str(e)}")
+        raise Exception(f"Unable to download attachment: {str(e)}")
+
+
+@server.tool()
+@handle_http_errors("list_gmail_message_attachments", is_read_only=True, service_type="gmail")
+@require_google_service("gmail", "gmail_read")
+async def list_gmail_message_attachments(
+    service,
+    message_id: str,
+    user_google_email: str
+) -> List[Dict[str, Any]]:
+    """
+    List all attachments in a Gmail message.
+
+    Args:
+        service: The Gmail API service object
+        message_id (str): The message ID to check for attachments
+        user_google_email (str): The user's Google email address
+
+    Returns:
+        list: List of attachment dictionaries with metadata
+    """
+    logger.info(f"[list_gmail_message_attachments] Message ID: '{message_id}'")
+
+    # Get the full message
+    message_full = await asyncio.to_thread(
+        service.users()
+        .messages()
+        .get(
+            userId="me",
+            id=message_id,
+            format="full",
+        )
+        .execute
+    )
+
+    # Extract attachments
+    payload = message_full.get("payload", {})
+    attachments = _extract_attachments(payload, message_id)
+
+    logger.info(f"Found {len(attachments)} attachments in message {message_id}")
+    return attachments
+
+
+def _read_pdf_content(file_data: bytes) -> str:
+    """Extract text content from PDF bytes using pdfplumber"""
+    if not PDF_AVAILABLE:
+        return "PDF reading not available. Please install: pip install pdfplumber"
+   
+    try:
+        pdf_file = io.BytesIO(file_data)
+        text_content = []
+       
+        with pdfplumber.open(pdf_file) as pdf:
+            for page_num, page in enumerate(pdf.pages):
+                try:
+                    page_text = page.extract_text()
+                    if page_text and page_text.strip():
+                        text_content.append(f"--- Page {page_num + 1} ---\n{page_text}")
+                    
+                    # Also extract tables if present
+                    tables = page.extract_tables()
+                    if tables:
+                        for table_num, table in enumerate(tables):
+                            if table:
+                                text_content.append(f"--- Page {page_num + 1} Table {table_num + 1} ---")
+                                for row in table:
+                                    if row:
+                                        text_content.append(" | ".join(str(cell) if cell else "" for cell in row))
+                except Exception as e:
+                    text_content.append(f"--- Page {page_num + 1} (Error reading page) ---\nError: {str(e)}")
+       
+        return "\n\n".join(text_content) if text_content else "No text content found in PDF"
+       
+    except Exception as e:
+        return f"Error reading PDF: {str(e)}"
+
+
+def _read_docx_content(file_data: bytes) -> str:
+    """Extract text content from DOCX bytes using mammoth"""
+    if not DOCX_AVAILABLE:
+        return "DOCX reading not available. Please install: pip install mammoth"
+   
+    try:
+        docx_file = io.BytesIO(file_data)
+        
+        # Extract raw text
+        result = mammoth.extract_raw_text(docx_file)
+        text_content = result.value.strip() if result.value else ""
+        
+        # Check for conversion messages/warnings
+        if result.messages:
+            warnings = [msg.message for msg in result.messages]
+            if warnings:
+                text_content += "\n\n--- Conversion Notes ---\n" + "\n".join(warnings)
+        
+        return text_content if text_content else "No text content found in DOCX"
+       
+    except Exception as e:
+        return f"Error reading DOCX: {str(e)}"
+
+
+def _read_xlsx_content(file_data: bytes) -> str:
+    """Extract text content from Excel files using pyxlsb and pandas"""
+    if not EXCEL_AVAILABLE:
+        return "Excel reading not available. Please install: pip install pyxlsb pandas"
+   
+    try:
+        xlsx_file = io.BytesIO(file_data)
+        
+        # Try to detect file format
+        xlsx_file.seek(0)
+        header = xlsx_file.read(8)
+        xlsx_file.seek(0)
+        
+        content = []
+        
+        # Handle .xlsb files with pyxlsb
+        if b'Microsoft' in header or file_data.startswith(b'\x09\x08\x04\x00'):
+            try:
+                # Read XLSB file using pyxlsb
+                with pyxlsb.open_workbook(xlsx_file) as wb:
+                    for sheet_name in wb.sheets:
+                        content.append(f"--- Sheet: {sheet_name} ---")
+                        
+                        rows = []
+                        with wb.get_sheet(sheet_name) as sheet:
+                            for row in sheet.rows():
+                                if row:
+                                    row_text = "\t".join(str(cell.v) if cell and cell.v is not None else "" for cell in row)
+                                    if row_text.strip():
+                                        rows.append(row_text)
+                        
+                        if rows:
+                            content.append("\n".join(rows))
+                        else:
+                            content.append("No data in this sheet")
+                            
+            except Exception as e:
+                # Fallback to pandas for regular Excel files
+                content = []
+                excel_data = pd.read_excel(xlsx_file, sheet_name=None, engine='openpyxl')
+                
+                for sheet_name, df in excel_data.items():
+                    content.append(f"--- Sheet: {sheet_name} ---")
+                    
+                    if not df.empty:
+                        sheet_content = df.to_string(index=False, na_rep='')
+                        content.append(sheet_content)
+                    else:
+                        content.append("No data in this sheet")
+        else:
+            # Handle regular Excel files with pandas
+            excel_data = pd.read_excel(xlsx_file, sheet_name=None, engine='openpyxl')
+            
+            for sheet_name, df in excel_data.items():
+                content.append(f"--- Sheet: {sheet_name} ---")
+                
+                if not df.empty:
+                    sheet_content = df.to_string(index=False, na_rep='')
+                    content.append(sheet_content)
+                else:
+                    content.append("No data in this sheet")
+           
+        return "\n\n".join(content) if content else "No content found in Excel file"
+       
+    except Exception as e:
+        return f"Error reading Excel file: {str(e)}"
+
+
+def _read_csv_content(file_data: bytes) -> str:
+    """Extract text content from CSV bytes"""
+    if not CSV_AVAILABLE:
+        return "CSV reading not available"
+   
+    try:
+        csv_text = file_data.decode('utf-8', errors='ignore')
+        csv_file = io.StringIO(csv_text)
+       
+        # Try to detect CSV dialect
+        sample = csv_text[:1024]
+        sniffer = csv.Sniffer()
+        delimiter = ','
+       
+        try:
+            dialect = sniffer.sniff(sample)
+            delimiter = dialect.delimiter
+        except:
+            pass  # Use default comma delimiter
+       
+        csv_file.seek(0)
+        reader = csv.reader(csv_file, delimiter=delimiter)
+       
+        rows = []
+        for row_num, row in enumerate(reader, 1):
+            if row:  # Skip empty rows
+                rows.append(f"Row {row_num}: {' | '.join(row)}")
+            if row_num > 1000:  # Limit to first 1000 rows
+                rows.append("... (truncated, showing first 1000 rows)")
+                break
+       
+        return "\n".join(rows) if rows else "No content found in CSV"
+       
+    except Exception as e:
+        return f"Error reading CSV: {str(e)}"
+
+
+def _read_html_content(file_data: bytes) -> str:
+    """Extract text content from HTML using beautifulsoup4"""
+    if not HTML_AVAILABLE:
+        return "HTML reading not available. Please install: pip install beautifulsoup4"
+    
+    try:
+        html_text = file_data.decode('utf-8', errors='ignore')
+        soup = BeautifulSoup(html_text, 'html.parser')
+        
+        # Remove script and style elements
+        for script in soup(["script", "style"]):
+            script.decompose()
+        
+        # Get text content
+        text = soup.get_text()
+        
+        # Clean up whitespace
+        lines = (line.strip() for line in text.splitlines())
+        chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+        text = ' '.join(chunk for chunk in chunks if chunk)
+        
+        return text if text else "No text content found in HTML"
+        
+    except Exception as e:
+        return f"Error reading HTML: {str(e)}"
+
+
+def _read_text_content(file_data: bytes, encoding: str = 'utf-8') -> str:
+    """Extract text content from plain text files"""
+    try:
+        # Try UTF-8 first, then other common encodings
+        encodings = [encoding, 'utf-8', 'latin-1', 'cp1252']
+       
+        for enc in encodings:
+            try:
+                return file_data.decode(enc)
+            except UnicodeDecodeError:
+                continue
+       
+        # If all encodings fail, decode with errors ignored
+        return file_data.decode('utf-8', errors='ignore')
+       
+    except Exception as e:
+        return f"Error reading text file: {str(e)}"
+
+
+def _read_json_content(file_data: bytes) -> str:
+    """Extract and format JSON content"""
+    try:
+        json_text = file_data.decode('utf-8', errors='ignore')
+        json_data = json.loads(json_text)
+        return json.dumps(json_data, indent=2, ensure_ascii=False)
+    except Exception as e:
+        return f"Error reading JSON: {str(e)}"
+
+
+@server.tool()
+@handle_http_errors("read_gmail_attachment_content", is_read_only=True, service_type="gmail")
+@require_google_service("gmail", "gmail_read")
+async def read_gmail_attachment_content(
+    service,
+    message_id: str,
+    attachment_name: str,
+    user_google_email: str,
+    max_size_mb: int = 50
+) -> Dict[str, Any]:
+    """
+    Download and read the content of a Gmail attachment.
+   
+    Supports: PDF, DOCX, XLSX, XLSB, CSV, HTML, TXT, JSON, and other text-based files.
+
+    Args:
+        service: The Gmail API service object
+        message_id (str): The message ID containing the attachment
+        attachment_name (str): The attachment name to read
+        user_google_email (str): The user's Google email address
+        max_size_mb (int): Maximum attachment size in MB (default: 50)
+
+    Returns:
+        dict: Dictionary containing attachment metadata and extracted content
+    """
+    logger.info(
+        f"[read_gmail_attachment_content] Message ID: '{message_id}', Attachment name: '{attachment_name}'"
+    )
+
+    try:
+        # First, get attachment metadata from the message
+        message_full = await asyncio.to_thread(
+            service.users()
+            .messages()
+            .get(
+                userId="me",
+                id=message_id,
+                format="full",
+            )
+            .execute
+        )
+        logger.info(f"Retrieved full message for ID: {message_id} with attachment name '{attachment_name}'")
+        # Find the attachment metadata
+        payload = message_full.get("payload", {})
+        attachments = _extract_attachments(payload, message_id)
+       
+        attachment_info = None
+        for att in attachments:
+            if att['filename'] == attachment_name:
+                attachment_info = att
+                break
+
+        logger.info(f"Found {attachment_info} attachments in message {message_id}")
+        
+        attachment_id = attachment_info['attachment_id'] #if attachment_info else attachment_name
+
+        if not attachment_info:
+            logger.error(f"Attachment {attachment_id} not found. Available attachments: {[att['attachment_id'] for att in attachments]}")
+            # Try to find by filename if attachment_id doesn't match
+            if attachments:
+                logger.info(f"Using first available attachment: {attachments[0]['filename']}")
+                attachment_info = attachments[0]
+                attachment_id = attachment_info['attachment_id']  # Update to correct ID
+            else:
+                raise Exception(f"Attachment {attachment_id} not found in message {message_id}")
+
+        # Download the attachment
+        attachment = await asyncio.to_thread(
+            service.users()
+            .messages()
+            .attachments()
+            .get(
+                userId="me",
+                messageId=message_id,
+                id=attachment_id
+            )
+            .execute
+        )
+
+        # Validate file size
+        attachment_size = int(attachment.get('size', 0))
+        max_size_bytes = max_size_mb * 1024 * 1024
+
+        if attachment_size > max_size_bytes:
+            raise Exception(f"Attachment too large: {attachment_size / (1024*1024):.1f}MB exceeds limit of {max_size_mb}MB")
+
+        # Decode the attachment data
+        file_data = base64.urlsafe_b64decode(attachment['data'])
+
+        # Extract content based on file type
+        filename = attachment_info['filename'].lower()
+        mime_type = attachment_info['mime_type'].lower()
+        content = ""
+        file_type = "unknown"
+
+        # Determine file type and extract content
+        if filename.endswith('.pdf') or 'pdf' in mime_type:
+            file_type = "pdf"
+            content = _read_pdf_content(file_data)
+           
+        elif filename.endswith('.docx') or 'wordprocessingml' in mime_type:
+            file_type = "docx"
+            content = _read_docx_content(file_data)
+           
+        elif filename.endswith(('.xlsx', '.xls', '.xlsb')) or 'spreadsheetml' in mime_type:
+            file_type = "xlsx"
+            content = _read_xlsx_content(file_data)
+           
+        elif filename.endswith('.csv') or mime_type == 'text/csv':
+            file_type = "csv"
+            content = _read_csv_content(file_data)
+           
+        elif filename.endswith(('.html', '.htm')) or mime_type == 'text/html':
+            file_type = "html"
+            content = _read_html_content(file_data)
+           
+        elif filename.endswith('.json') or mime_type == 'application/json':
+            file_type = "json"
+            content = _read_json_content(file_data)
+           
+        elif (filename.endswith(('.txt', '.log', '.md', '.py', '.js', '.css', '.xml')) or
+              mime_type.startswith('text/')):
+            file_type = "text"
+            content = _read_text_content(file_data)
+           
+        else:
+            # Try to read as text if it's not a known binary format
+            if not any(ext in filename for ext in ['.jpg', '.jpeg', '.png', '.gif', '.bmp',
+                                                   '.exe', '.zip', '.rar', '.7z']):
+                file_type = "text"
+                content = _read_text_content(file_data)
+            else:
+                content = f"Cannot read content from {filename}. File type not supported for content extraction."
+                file_type = "binary"
+
+        result = {
+            'message_id': message_id,
+            'attachment_id': attachment_id,
+            'filename': attachment_info['filename'],
+            'mime_type': attachment_info['mime_type'],
+            'size': attachment_size,
+            'size_mb': round(attachment_size / (1024 * 1024), 2),
+            'file_type': file_type,
+            'content': content,
+            'content_length': len(content),
+            'success': True
+        }
+
+        logger.info(f"Successfully extracted content from {attachment_info['filename']} ({file_type}): {len(content)} characters")
+        return result
+
+    except Exception as e:
+        logger.error(f"Failed to read attachment content: {str(e)}")
+        return {
+            'message_id': message_id,
+            'attachment_id': attachment_id,
+            'error': str(e),
+            'success': False
+        }
+
+
+@server.tool()
+@handle_http_errors("read_all_gmail_message_attachments", is_read_only=True, service_type="gmail")
+@require_google_service("gmail", "gmail_read")
+async def read_all_gmail_message_attachments(
+    service,
+    message_id: str,
+    user_google_email: str,
+    max_size_mb: int = 50
+) -> List[Dict[str, Any]]:
+    """
+    Read the content of all attachments in a Gmail message.
+
+    Args:
+        service: The Gmail API service object
+        message_id (str): The message ID to read attachments from
+        user_google_email (str): The user's Google email address
+        max_size_mb (int): Maximum attachment size in MB per file (default: 50)
+
+    Returns:
+        list: List of dictionaries containing attachment content and metadata
+    """
+    logger.info(f"[read_all_gmail_message_attachments] Message ID: '{message_id}'")
+
+    try:
+        # Get list of attachments
+        attachments = await list_gmail_message_attachments(service, message_id, user_google_email)
+       
+        if not attachments:
+            logger.info(f"No attachments found in message {message_id}")
+            return []
+
+        results = []
+        for attachment in attachments:
+            try:
+                result = await read_gmail_attachment_content(
+                    service=service,
+                    message_id=message_id,
+                    attachment_id=attachment['attachment_id'],
+                    user_google_email=user_google_email,
+                    max_size_mb=max_size_mb
+                )
+                results.append(result)
+               
+            except Exception as e:
+                logger.error(f"Failed to read attachment {attachment['filename']}: {str(e)}")
+                results.append({
+                    'message_id': message_id,
+                    'attachment_id': attachment['attachment_id'],
+                    'filename': attachment['filename'],
+                    'error': str(e),
+                    'success': False
+                })
+
+        return results
+
+    except Exception as e:
+        logger.error(f"Failed to read message attachments: {str(e)}")
+        raise Exception(f"Unable to read message attachments: {str(e)}")
+
+
+# Usage example functions
+@server.tool()
+@handle_http_errors("download_all_attachments_from_message", is_read_only=False, service_type="gmail")
+@require_google_service("gmail", "gmail_read")
+async def download_all_attachments_from_message(
+    service,
+    message_id: str,
+    user_google_email: str,
+    download_dir: str = "downloads",
+    max_size_mb: int = 100
+) -> List[Dict[str, Any]]:
+    """
+    Download all attachments from a Gmail message.
+
+    Args:
+        service: The Gmail API service object
+        message_id (str): The message ID
+        user_google_email (str): The user's email
+        download_dir (str): Directory to save attachments
+        max_size_mb (int): Max size per attachment in MB
+
+    Returns:
+        list: List of download results
+    """
+    # Get list of attachments
+    attachments = await list_gmail_message_attachments(service, message_id, user_google_email)
+   
+    if not attachments:
+        logger.info(f"No attachments found in message {message_id}")
+        return []
+
+    # Create download directory
+    download_path = Path(download_dir)
+    download_path.mkdir(exist_ok=True)
+
+    results = []
+    for attachment in attachments:
+        try:
+            filename = attachment['filename']
+            safe_filename = "".join(c for c in filename if c.isalnum() or c in (' ', '.', '_', '-')).strip()
+            file_path = download_path / safe_filename
+           
+            result = await download_gmail_attachment(
+                service=service,
+                message_id=message_id,
+                attachment_id=attachment['attachment_id'],
+                user_google_email=user_google_email,
+                save_path=str(file_path),
+                max_size_mb=max_size_mb
+            )
+           
+            result['original_filename'] = filename
+            results.append(result)
+           
+        except Exception as e:
+            logger.error(f"Failed to download attachment {attachment['filename']}: {str(e)}")
+            results.append({
+                'attachment_id': attachment['attachment_id'],
+                'original_filename': attachment['filename'],
+                'error': str(e)
+            })
+
+    return results
+        
 def _extract_headers(payload: dict, header_names: List[str]) -> Dict[str, str]:
     """
     Extract specified headers from a Gmail message payload.
