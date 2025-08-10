@@ -241,6 +241,18 @@ class AuthInfoMiddleware(Middleware):
         
         try:
             await self._process_request_for_auth(context)
+
+            # if authenticated_user_email exists in fastmcp_context and authenticated_via is jwt_token,
+            # uses authenticated_user_email as the value of the argument "user_google_email"
+            authenticated_user_email = context.fastmcp_context.get_state("authenticated_user_email")
+            authenticated_via = context.fastmcp_context.get_state("authenticated_via")
+
+            if authenticated_user_email and authenticated_via == "jwt_token":
+                # Check if this is a tool call with arguments
+                if hasattr(context, 'message') and hasattr(context.message, "arguments") and "user_google_email" in context.message.arguments:
+                    # Replace user_google_email argument with authenticated email
+                    logger.debug("Replacing user_google_email argument with email from jwt token")
+                    context.message.arguments['user_google_email'] = authenticated_user_email
             
             logger.debug("Passing to next handler")
             result = await call_next(context)
