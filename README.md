@@ -8,6 +8,8 @@
 [![PyPI Downloads](https://static.pepy.tech/badge/workspace-mcp/month)](https://pepy.tech/projects/workspace-mcp)
 [![Website](https://img.shields.io/badge/Website-workspacemcp.com-green.svg)](https://workspacemcp.com)
 
+[![Trust Score](https://archestra.ai/mcp-catalog/api/badge/quality/taylorwilsdon/google_workspace_mcp)](https://archestra.ai/mcp-catalog/taylorwilsdon__google_workspace_mcp)
+
 *Full natural language control over Google Calendar, Drive, Gmail, Docs, Sheets, Slides, Forms, Tasks, and Chat through all MCP clients, AI assistants and developer tools.*
 
 **The most feature-complete Google Workspace MCP server**, now with Remote OAuth2.1 multi-user support and 1-click Claude installation.
