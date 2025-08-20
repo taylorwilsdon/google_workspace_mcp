@@ -244,6 +244,97 @@ async def get_doc_content(
     return header + body_text
 
 @server.tool()
+@handle_http_errors("get_doc_markdown", is_read_only=True, service_type="docs")
+@require_google_service("drive", "drive_read")
+async def get_doc_markdown(
+    service,
+    user_google_email: str,
+    document_id: str,
+    include_metadata: bool = True,
+) -> str:
+    """
+    Retrieves a Google Doc in Markdown format, preserving formatting like headers, 
+    bold, italic, links, lists, and tables.
+    
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        document_id (str): The ID of the Google Doc to export. Required.
+        include_metadata (bool): Whether to include document metadata header. Defaults to True.
+    
+    Returns:
+        str: The document content in Markdown format.
+    """
+    logger.info(f"[get_doc_markdown] Exporting document '{document_id}' as Markdown for user '{user_google_email}'")
+    
+    try:
+        # Get file metadata first
+        file_metadata = await asyncio.to_thread(
+            service.files().get(
+                fileId=document_id, 
+                fields="id, name, mimeType, webViewLink, modifiedTime"
+            ).execute
+        )
+        
+        mime_type = file_metadata.get("mimeType", "")
+        file_name = file_metadata.get("name", "Unknown Document")
+        web_view_link = file_metadata.get("webViewLink", "#")
+        modified_time = file_metadata.get("modifiedTime", "Unknown")
+        
+        # Check if it's a Google Doc
+        if mime_type != "application/vnd.google-apps.document":
+            return f"Error: File '{file_name}' is not a Google Doc (MIME type: {mime_type}). This tool only works with native Google Docs."
+        
+        # Export as Markdown using Drive API
+        request = service.files().export_media(
+            fileId=document_id,
+            mimeType='text/markdown'  # Native Markdown export
+        )
+        
+        # Download the exported content
+        fh = io.BytesIO()
+        downloader = MediaIoBaseDownload(fh, request)
+        loop = asyncio.get_event_loop()
+        done = False
+        
+        while not done:
+            status, done = await loop.run_in_executor(None, downloader.next_chunk)
+            if status:
+                logger.debug(f"Download progress: {int(status.progress() * 100)}%")
+        
+        # Get the Markdown content
+        markdown_content = fh.getvalue().decode('utf-8')
+        
+        # Prepare output
+        if include_metadata:
+            header = f"""---
+title: {file_name}
+document_id: {document_id}
+modified: {modified_time}
+link: {web_view_link}
+---
+
+"""
+            return header + markdown_content
+        else:
+            return markdown_content
+            
+    except Exception as e:
+        # If Markdown export fails, provide helpful error message
+        if "Invalid mime type" in str(e) or "Export only supports" in str(e):
+            error_msg = (
+                f"Markdown export failed for document '{file_name}'. "
+                "This might be because:\n"
+                "1. The document has complex formatting not supported in Markdown\n"
+                "2. Your Google Workspace version doesn't support Markdown export yet\n\n"
+                "Alternative: Use 'get_doc_content' to get plain text, or try 'text/plain' export."
+            )
+            logger.error(f"Markdown export not supported: {e}")
+            return error_msg
+        else:
+            logger.error(f"Failed to export document as Markdown: {e}")
+            raise
+
+@server.tool()
 @handle_http_errors("list_docs_in_folder", is_read_only=True, service_type="docs")
 @require_google_service("drive", "drive_read")
 async def list_docs_in_folder(
