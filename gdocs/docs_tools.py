@@ -6,6 +6,7 @@ This module provides MCP tools for interacting with Google Docs API and managing
 import logging
 import asyncio
 import io
+import re
 
 from googleapiclient.http import MediaIoBaseDownload
 
@@ -46,6 +47,71 @@ from gdocs.managers import (
 )
 
 logger = logging.getLogger(__name__)
+
+def _replace_base64_images_with_placeholders(markdown_content: str) -> str:
+    """
+    Replace base64 encoded images with readable placeholders.
+    
+    Converts:
+        [image1]: <data:image/png;base64,iVBORw0KGgoAAAANS...>
+    To:
+        [image1]: [PNG image, ~2.5MB]
+    
+    Also handles inline images:
+        ![alt text](data:image/jpeg;base64,/9j/4AAQSkZJRg...)
+    To:
+        ![alt text]([JPEG image, ~1.2MB])
+    """
+    
+    def calculate_size(base64_str: str) -> str:
+        """Calculate approximate size of base64 encoded data."""
+        # Base64 encoding increases size by ~33%, so reverse that
+        # Each base64 char represents 6 bits, so 4 chars = 3 bytes
+        num_chars = len(base64_str)
+        size_bytes = (num_chars * 3) // 4
+        
+        if size_bytes < 1024:
+            return f"{size_bytes}B"
+        elif size_bytes < 1024 * 1024:
+            return f"{size_bytes / 1024:.1f}KB"
+        else:
+            return f"{size_bytes / (1024 * 1024):.1f}MB"
+    
+    def replace_reference_image(match):
+        """Replace reference-style image with placeholder."""
+        image_ref = match.group(1)
+        image_type = match.group(2)
+        base64_data = match.group(3)
+        
+        size = calculate_size(base64_data)
+        return f"[{image_ref}]: [{image_type.upper()} image, ~{size}]"
+    
+    def replace_inline_image(match):
+        """Replace inline image with placeholder."""
+        alt_text = match.group(1)
+        image_type = match.group(2)
+        base64_data = match.group(3)
+        
+        size = calculate_size(base64_data)
+        return f"![{alt_text}]([{image_type.upper()} image, ~{size}])"
+    
+    # Pattern for reference-style images: [image1]: <data:image/png;base64,...>
+    reference_pattern = r'\[([^\]]+)\]:\s*<data:image/([^;]+);base64,([^>]+)>'
+    markdown_content = re.sub(reference_pattern, replace_reference_image, markdown_content)
+    
+    # Pattern for inline images: ![alt text](data:image/jpeg;base64,...)
+    inline_pattern = r'!\[([^\]]*)\]\(data:image/([^;]+);base64,([^)]+)\)'
+    markdown_content = re.sub(inline_pattern, replace_inline_image, markdown_content)
+    
+    # Also handle images without angle brackets (some variations)
+    reference_pattern_no_brackets = r'\[([^\]]+)\]:\s*data:image/([^;]+);base64,(\S+)'
+    markdown_content = re.sub(reference_pattern_no_brackets, replace_reference_image, markdown_content)
+    
+    # Log if we found and replaced images
+    if 'data:image' in markdown_content:
+        logger.warning("Found remaining base64 images that couldn't be processed")
+    
+    return markdown_content
 
 @server.tool()
 @handle_http_errors("search_docs", is_read_only=True, service_type="docs")
@@ -251,6 +317,7 @@ async def get_doc_markdown(
     user_google_email: str,
     document_id: str,
     include_metadata: bool = True,
+    process_images: bool = True,
 ) -> str:
     """
     Retrieves a Google Doc in Markdown format, preserving formatting like headers, 
@@ -260,6 +327,9 @@ async def get_doc_markdown(
         user_google_email (str): The user's Google email address. Required.
         document_id (str): The ID of the Google Doc to export. Required.
         include_metadata (bool): Whether to include document metadata header. Defaults to True.
+        process_images (bool): Whether to replace base64 images with placeholders. Defaults to True.
+            If True, replaces large base64 encoded images with readable placeholders like [PNG image, ~2.5MB].
+            If False, keeps original base64 encoded images (warning: may consume significant context).
     
     Returns:
         str: The document content in Markdown format.
@@ -303,6 +373,15 @@ async def get_doc_markdown(
         
         # Get the Markdown content
         markdown_content = fh.getvalue().decode('utf-8')
+        
+        # Process base64 images and replace with placeholders (if requested)
+        if process_images:
+            original_size = len(markdown_content)
+            markdown_content = _replace_base64_images_with_placeholders(markdown_content)
+            new_size = len(markdown_content)
+            if new_size < original_size:
+                size_reduction_mb = (original_size - new_size) / (1024 * 1024)
+                logger.info(f"[get_doc_markdown] Replaced base64 images with placeholders, reduced size by ~{size_reduction_mb:.1f}MB")
         
         # Prepare output
         if include_metadata:
