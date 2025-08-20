@@ -6,7 +6,7 @@ This module provides MCP tools for interacting with Google Tasks API.
 
 import logging
 import asyncio
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 from googleapiclient.errors import HttpError
 
@@ -269,12 +269,12 @@ async def list_tasks(
     service,
     user_google_email: str,
     task_list_id: str,
-    max_results: Optional[int] = None,
+    max_results: Optional[Union[int, str]] = None,
     page_token: Optional[str] = None,
-    show_completed: Optional[bool] = None,
-    show_deleted: Optional[bool] = None,
-    show_hidden: Optional[bool] = None,
-    show_assigned: Optional[bool] = None,
+    show_completed: Optional[Union[bool, str]] = None,
+    show_deleted: Optional[Union[bool, str]] = None,
+    show_hidden: Optional[Union[bool, str]] = None,
+    show_assigned: Optional[Union[bool, str]] = None,
     completed_max: Optional[str] = None,
     completed_min: Optional[str] = None,
     due_max: Optional[str] = None,
@@ -306,18 +306,25 @@ async def list_tasks(
 
     try:
         params = {"tasklist": task_list_id}
+        max_results_int = LIST_TASKS_MAX_RESULTS_DEFAULT
         if max_results is not None:
-            params["maxResults"] = max_results
+            max_results_int = int(max_results)
+            max_results_int = min(max_results_int, LIST_TASKS_MAX_RESULTS_MAX)
+        params["maxResults"] = max_results_int
         if page_token:
             params["pageToken"] = page_token
         if show_completed is not None:
-            params["showCompleted"] = show_completed
+            show_completed_bool = show_completed if isinstance(show_completed, bool) else show_completed == "true"
+            params["showCompleted"] = show_completed_bool
         if show_deleted is not None:
-            params["showDeleted"] = show_deleted
+            show_deleted_bool = show_deleted if isinstance(show_deleted, bool) else show_deleted == "true"
+            params["showDeleted"] = show_deleted_bool
         if show_hidden is not None:
-            params["showHidden"] = show_hidden
+            show_hidden_bool = show_hidden if isinstance(show_hidden, bool) else show_hidden == "true"
+            params["showHidden"] = show_hidden_bool
         if show_assigned is not None:
-            params["showAssigned"] = show_assigned
+            show_assigned_bool = show_assigned if isinstance(show_assigned, bool) else show_assigned == "true"
+            params["showAssigned"] = show_assigned_bool
         if completed_max:
             params["completedMax"] = completed_max
         if completed_min:
@@ -338,9 +345,7 @@ async def list_tasks(
 
         # In order to return a sorted and organized list of tasks all at once, we support retrieving more than a single
         # page from the Google tasks API.
-        results_remaining = (
-            min(max_results, LIST_TASKS_MAX_RESULTS_MAX) if max_results else LIST_TASKS_MAX_RESULTS_DEFAULT
-        )
+        results_remaining = max_results_int
         results_remaining -= len(tasks)
         while results_remaining > 0 and next_page_token:
             params["pageToken"] = next_page_token
