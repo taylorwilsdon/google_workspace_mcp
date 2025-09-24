@@ -6,6 +6,7 @@ This module provides MCP tools for interacting with Google Docs API and managing
 import logging
 import asyncio
 import io
+import re
 
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 
@@ -46,6 +47,71 @@ from gdocs.managers import (
 )
 
 logger = logging.getLogger(__name__)
+
+def _replace_base64_images_with_placeholders(markdown_content: str) -> str:
+    """
+    Replace base64 encoded images with readable placeholders.
+    
+    Converts:
+        [image1]: <data:image/png;base64,iVBORw0KGgoAAAANS...>
+    To:
+        [image1]: [PNG image, ~2.5MB]
+    
+    Also handles inline images:
+        ![alt text](data:image/jpeg;base64,/9j/4AAQSkZJRg...)
+    To:
+        ![alt text]([JPEG image, ~1.2MB])
+    """
+    
+    def calculate_size(base64_str: str) -> str:
+        """Calculate approximate size of base64 encoded data."""
+        # Base64 encoding increases size by ~33%, so reverse that
+        # Each base64 char represents 6 bits, so 4 chars = 3 bytes
+        num_chars = len(base64_str)
+        size_bytes = (num_chars * 3) // 4
+        
+        if size_bytes < 1024:
+            return f"{size_bytes}B"
+        elif size_bytes < 1024 * 1024:
+            return f"{size_bytes / 1024:.1f}KB"
+        else:
+            return f"{size_bytes / (1024 * 1024):.1f}MB"
+    
+    def replace_reference_image(match):
+        """Replace reference-style image with placeholder."""
+        image_ref = match.group(1)
+        image_type = match.group(2)
+        base64_data = match.group(3)
+        
+        size = calculate_size(base64_data)
+        return f"[{image_ref}]: [{image_type.upper()} image, ~{size}]"
+    
+    def replace_inline_image(match):
+        """Replace inline image with placeholder."""
+        alt_text = match.group(1)
+        image_type = match.group(2)
+        base64_data = match.group(3)
+        
+        size = calculate_size(base64_data)
+        return f"![{alt_text}]([{image_type.upper()} image, ~{size}])"
+    
+    # Pattern for reference-style images: [image1]: <data:image/png;base64,...>
+    reference_pattern = r'\[([^\]]+)\]:\s*<data:image/([^;]+);base64,([^>]+)>'
+    markdown_content = re.sub(reference_pattern, replace_reference_image, markdown_content)
+    
+    # Pattern for inline images: ![alt text](data:image/jpeg;base64,...)
+    inline_pattern = r'!\[([^\]]*)\]\(data:image/([^;]+);base64,([^)]+)\)'
+    markdown_content = re.sub(inline_pattern, replace_inline_image, markdown_content)
+    
+    # Also handle images without angle brackets (some variations)
+    reference_pattern_no_brackets = r'\[([^\]]+)\]:\s*data:image/([^;]+);base64,(\S+)'
+    markdown_content = re.sub(reference_pattern_no_brackets, replace_reference_image, markdown_content)
+    
+    # Log if we found and replaced images
+    if 'data:image' in markdown_content:
+        logger.warning("Found remaining base64 images that couldn't be processed")
+    
+    return markdown_content
 
 @server.tool()
 @handle_http_errors("search_docs", is_read_only=True, service_type="docs")
@@ -242,6 +308,110 @@ async def get_doc_content(
         f'Link: {web_view_link}\n\n--- CONTENT ---\n'
     )
     return header + body_text
+
+@server.tool()
+@handle_http_errors("get_doc_markdown", is_read_only=True, service_type="docs")
+@require_google_service("drive", "drive_read")
+async def get_doc_markdown(
+    service,
+    user_google_email: str,
+    document_id: str,
+    include_metadata: bool = True,
+    process_images: bool = True,
+) -> str:
+    """
+    Retrieves a Google Doc in Markdown format, preserving formatting like headers, 
+    bold, italic, links, lists, and tables.
+    
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        document_id (str): The ID of the Google Doc to export. Required.
+        include_metadata (bool): Whether to include document metadata header. Defaults to True.
+        process_images (bool): Whether to replace base64 images with placeholders. Defaults to True.
+            If True, replaces large base64 encoded images with readable placeholders like [PNG image, ~2.5MB].
+            If False, keeps original base64 encoded images (warning: may consume significant context).
+    
+    Returns:
+        str: The document content in Markdown format.
+    """
+    logger.info(f"[get_doc_markdown] Exporting document '{document_id}' as Markdown for user '{user_google_email}'")
+    
+    try:
+        # Get file metadata first
+        file_metadata = await asyncio.to_thread(
+            service.files().get(
+                fileId=document_id, 
+                fields="id, name, mimeType, webViewLink, modifiedTime"
+            ).execute
+        )
+        
+        mime_type = file_metadata.get("mimeType", "")
+        file_name = file_metadata.get("name", "Unknown Document")
+        web_view_link = file_metadata.get("webViewLink", "#")
+        modified_time = file_metadata.get("modifiedTime", "Unknown")
+        
+        # Check if it's a Google Doc
+        if mime_type != "application/vnd.google-apps.document":
+            return f"Error: File '{file_name}' is not a Google Doc (MIME type: {mime_type}). This tool only works with native Google Docs."
+        
+        # Export as Markdown using Drive API
+        request = service.files().export_media(
+            fileId=document_id,
+            mimeType='text/markdown'  # Native Markdown export
+        )
+        
+        # Download the exported content
+        fh = io.BytesIO()
+        downloader = MediaIoBaseDownload(fh, request)
+        loop = asyncio.get_event_loop()
+        done = False
+        
+        while not done:
+            status, done = await loop.run_in_executor(None, downloader.next_chunk)
+            if status:
+                logger.debug(f"Download progress: {int(status.progress() * 100)}%")
+        
+        # Get the Markdown content
+        markdown_content = fh.getvalue().decode('utf-8')
+        
+        # Process base64 images and replace with placeholders (if requested)
+        if process_images:
+            original_size = len(markdown_content)
+            markdown_content = _replace_base64_images_with_placeholders(markdown_content)
+            new_size = len(markdown_content)
+            if new_size < original_size:
+                size_reduction_mb = (original_size - new_size) / (1024 * 1024)
+                logger.info(f"[get_doc_markdown] Replaced base64 images with placeholders, reduced size by ~{size_reduction_mb:.1f}MB")
+        
+        # Prepare output
+        if include_metadata:
+            header = f"""---
+title: {file_name}
+document_id: {document_id}
+modified: {modified_time}
+link: {web_view_link}
+---
+
+"""
+            return header + markdown_content
+        else:
+            return markdown_content
+            
+    except Exception as e:
+        # If Markdown export fails, provide helpful error message
+        if "Invalid mime type" in str(e) or "Export only supports" in str(e):
+            error_msg = (
+                f"Markdown export failed for document '{file_name}'. "
+                "This might be because:\n"
+                "1. The document has complex formatting not supported in Markdown\n"
+                "2. Your Google Workspace version doesn't support Markdown export yet\n\n"
+                "Alternative: Use 'get_doc_content' to get plain text, or try 'text/plain' export."
+            )
+            logger.error(f"Markdown export not supported: {e}")
+            return error_msg
+        else:
+            logger.error(f"Failed to export document as Markdown: {e}")
+            raise
 
 @server.tool()
 @handle_http_errors("list_docs_in_folder", is_read_only=True, service_type="docs")
