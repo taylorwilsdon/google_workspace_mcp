@@ -782,3 +782,55 @@ async def delete_event(service, user_google_email: str, event_id: str, calendar_
     return confirmation_message
 
 
+@server.tool()
+@handle_http_errors("create_out_of_office_event", service_type="calendar")
+@require_google_service("calendar", "calendar_events")
+async def create_out_of_office_event(
+    service,
+    user_google_email: str,
+    start_time: str,
+    end_time: str,
+    decline_message: Optional[str] = "Declined because I am out of office.",
+    calendar_id: str = "primary",
+) -> str:
+    """
+    Creates a new 'out of office' event.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        start_time (str): Start time (RFC3339, e.g., "2023-10-27T10:00:00-07:00").
+        end_time (str): End time (RFC3339, e.g., "2023-10-27T11:00:00-07:00").
+        decline_message (Optional[str]): The message to send when declining invitations.
+        calendar_id (str): Calendar ID (default: 'primary').
+
+    Returns:
+        str: Confirmation message of the successful event creation with event link.
+    """
+    logger.info(
+        f"[create_out_of_office_event] Invoked. Email: '{user_google_email}'"
+    )
+
+    event_body = {
+        "start": {"dateTime": start_time},
+        "end": {"dateTime": end_time},
+        "eventType": "outOfOffice",
+        "outOfOfficeProperties": {
+            "autoDeclineMode": "declineOnlyNewConflictingInvitations",
+            "declineMessage": decline_message,
+        },
+        "transparency": "opaque",
+    }
+
+    created_event = await asyncio.to_thread(
+        lambda: service.events()
+        .insert(calendarId=calendar_id, body=event_body)
+        .execute()
+    )
+
+    link = created_event.get("htmlLink", "No link available")
+    confirmation_message = f"Successfully created out of office event for {user_google_email}. Link: {link}"
+
+    logger.info(
+        f"Out of office event created successfully for {user_google_email}. ID: {created_event.get('id')}, Link: {link}"
+    )
+    return confirmation_message

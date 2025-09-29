@@ -23,6 +23,7 @@ from auth.scopes import (
     GMAIL_COMPOSE_SCOPE,
     GMAIL_MODIFY_SCOPE,
     GMAIL_LABELS_SCOPE,
+    GMAIL_SETTINGS_BASIC_SCOPE,
 )
 
 logger = logging.getLogger(__name__)
@@ -1174,3 +1175,102 @@ async def batch_modify_gmail_message_labels(
 
     return f"Labels updated for {len(message_ids)} messages: {'; '.join(actions)}"
 
+
+@server.tool()
+@handle_http_errors("get_vacation_settings", is_read_only=True, service_type="gmail")
+@require_google_service("gmail", GMAIL_SETTINGS_BASIC_SCOPE)
+async def get_vacation_settings(service, user_google_email: str) -> str:
+    """
+    Retrieves the current vacation responder settings for the user's Gmail account.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+
+    Returns:
+        str: A formatted string containing the vacation responder settings.
+    """
+    logger.info(f"[get_vacation_settings] Invoked for email: '{user_google_email}'")
+
+    vacation_settings = await asyncio.to_thread(
+        service.users().settings().getVacation(userId="me").execute
+    )
+
+    enabled = vacation_settings.get("enableAutoReply", False)
+    subject = vacation_settings.get("responseSubject", "")
+    body = vacation_settings.get("responseBodyHtml", "")
+    restrict_to_contacts = vacation_settings.get("restrictToContacts", False)
+    restrict_to_domain = vacation_settings.get("restrictToDomain", False)
+    start_time = vacation_settings.get("startTime")
+    end_time = vacation_settings.get("endTime")
+
+    lines = [
+        "Vacation Responder Settings:",
+        f"  Enabled: {enabled}",
+        f"  Subject: {subject}",
+        f"  Body: {body}",
+        f"  Restrict to Contacts: {restrict_to_contacts}",
+        f"  Restrict to Domain: {restrict_to_domain}",
+    ]
+
+    if start_time:
+        lines.append(f"  Start Time: {start_time}")
+    if end_time:
+        lines.append(f"  End Time: {end_time}")
+
+    return "\n".join(lines)
+
+
+@server.tool()
+@handle_http_errors("set_vacation_settings", service_type="gmail")
+@require_google_service("gmail", GMAIL_SETTINGS_BASIC_SCOPE)
+async def set_vacation_settings(
+    service,
+    user_google_email: str,
+    enable: bool,
+    subject: Optional[str] = None,
+    body: Optional[str] = None,
+    restrict_to_contacts: Optional[bool] = None,
+    restrict_to_domain: Optional[bool] = None,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+) -> str:
+    """
+    Updates the vacation responder settings for the user's Gmail account.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        enable (bool): Whether to enable or disable the vacation responder.
+        subject (Optional[str]): The subject of the vacation response.
+        body (Optional[str]): The body of the vacation response, in HTML format.
+        restrict_to_contacts (Optional[bool]): Whether to restrict the response to contacts.
+        restrict_to_domain (Optional[bool]): Whether to restrict the response to the user's domain.
+        start_time (Optional[str]): The start time for the vacation responder, in RFC 3339 format.
+        end_time (Optional[str]): The end time for the vacation responder, in RFC 3339 format.
+
+    Returns:
+        str: A confirmation message.
+    """
+    logger.info(f"[set_vacation_settings] Invoked for email: '{user_google_email}'")
+
+    vacation_settings = {"enableAutoReply": enable}
+
+    if subject is not None:
+        vacation_settings["responseSubject"] = subject
+    if body is not None:
+        vacation_settings["responseBodyHtml"] = body
+    if restrict_to_contacts is not None:
+        vacation_settings["restrictToContacts"] = restrict_to_contacts
+    if restrict_to_domain is not None:
+        vacation_settings["restrictToDomain"] = restrict_to_domain
+    if start_time is not None:
+        vacation_settings["startTime"] = start_time
+    if end_time is not None:
+        vacation_settings["endTime"] = end_time
+
+    await asyncio.to_thread(
+        service.users().settings().updateVacation(
+            userId="me", body=vacation_settings
+        ).execute
+    )
+
+    return "Vacation settings updated successfully."
