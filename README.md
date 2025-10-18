@@ -700,6 +700,7 @@ cp .env.oauth21 .env
 | `get_drive_file_content` | **Core** | Read file content (Office formats) |
 | `list_drive_items` | Extended | List folder contents |
 | `create_drive_file` | **Core** | Create files or fetch from URLs |
+| `move_drive_file` | Extended | Move files between folders |
 
 </td>
 </tr>
