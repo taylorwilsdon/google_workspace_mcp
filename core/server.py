@@ -15,7 +15,7 @@ from auth.google_auth import handle_auth_callback, start_auth_flow, check_client
 from auth.mcp_session_middleware import MCPSessionMiddleware
 from auth.oauth_responses import create_error_response, create_success_response, create_server_error_response
 from auth.auth_info_middleware import AuthInfoMiddleware
-from auth.scopes import SCOPES, get_current_scopes # noqa
+from auth.scopes import SCOPES, BASE_SCOPES, get_current_scopes  # noqa
 from core.config import (
     USER_GOOGLE_EMAIL,
     get_transport_mode,
@@ -82,7 +82,7 @@ def configure_server_for_http():
         return
 
     # Use centralized OAuth configuration
-    from auth.oauth_config import get_oauth_config
+    from auth.oauth_config import get_oauth_config, is_stateless_mode
     config = get_oauth_config()
 
     # Check if OAuth 2.1 is enabled via centralized config
@@ -94,7 +94,15 @@ def configure_server_for_http():
             return
 
         try:
-            required_scopes: List[str] = sorted(get_current_scopes())
+            # Determine validation scope strategy based on mode
+            if is_stateless_mode():
+                # Stateless: Only validate base scopes (identity)
+                # Per-tool validation will check service-specific scopes
+                required_scopes = BASE_SCOPES
+            else:
+                # Non-stateless: Validate all service scopes upfront
+                required_scopes = sorted(get_current_scopes())
+
             provider = GoogleProvider(
                 client_id=config.client_id,
                 client_secret=config.client_secret,
