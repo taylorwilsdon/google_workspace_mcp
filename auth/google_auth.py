@@ -623,9 +623,21 @@ def get_credentials(
         if session_id:
             credentials = load_credentials_from_session(session_id)
             if credentials:
-                logger.debug(
-                    f"[get_credentials] Loaded credentials from session for session_id '{session_id}'."
-                )
+                # Validate cached credentials match requested user to support multi-user scenarios
+                store = get_oauth21_session_store()
+                cached_user = store.get_user_by_mcp_session(session_id)
+
+                if cached_user and user_google_email and cached_user != user_google_email:
+                    logger.warning(
+                        f"[get_credentials] Session {session_id} cached credentials for "
+                        f"{cached_user} but {user_google_email} was requested. "
+                        f"Bypassing session cache to load correct credentials."
+                    )
+                    credentials = None  # Force reload from credential store
+                else:
+                    logger.debug(
+                        f"[get_credentials] Loaded credentials from session for session_id '{session_id}' (user: {cached_user})."
+                    )
 
         if not credentials and user_google_email:
             if not is_stateless_mode():
