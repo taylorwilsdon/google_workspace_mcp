@@ -8,9 +8,14 @@ import logging
 import asyncio
 import base64
 import ssl
+import os
+import mimetypes
 from typing import Optional, List, Dict, Literal
 
 from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email import encoders
 
 from fastapi import Body
 from pydantic import Field
@@ -149,9 +154,15 @@ def _prepare_gmail_message(
     in_reply_to: Optional[str] = None,
     references: Optional[str] = None,
     body_format: Literal["plain", "html"] = "plain",
+    from_email: Optional[str] = None,
+    attachments: Optional[List[str]] = None,
+    use_public_links: bool = False,
 ) -> tuple[str, Optional[str]]:
     """
-    Prepare a Gmail message with threading support.
+    Prepare a Gmail message with threading and optional attachment support.
+
+    This function routes to the appropriate message preparation handler based on
+    whether attachments are provided and what type they are (file paths vs URLs).
 
     Args:
         subject: Email subject
@@ -163,10 +174,50 @@ def _prepare_gmail_message(
         in_reply_to: Optional Message-ID of the message being replied to
         references: Optional chain of Message-IDs for proper threading
         body_format: Content type for the email body ('plain' or 'html')
+        from_email: Optional sender email address
+        attachments: Optional list of file paths (default) or URLs (if use_public_links=True)
+        use_public_links: If True, treat attachments as URLs; if False, treat as file paths
 
     Returns:
-        Tuple of (raw_message, thread_id) where raw_message is base64 encoded
+        Tuple of (raw_message, thread_id) where raw_message is base64url encoded
+
+    Raises:
+        ValueError: If body_format is not 'plain' or 'html'
     """
+    # Route to appropriate handler based on attachments
+    if attachments and len(attachments) > 0:
+        if use_public_links:
+            # Handle URL attachments (embedded as HTML links)
+            return _prepare_gmail_message_with_url_attachments(
+                subject=subject,
+                body=body,
+                attachments=attachments,
+                to=to,
+                cc=cc,
+                bcc=bcc,
+                thread_id=thread_id,
+                in_reply_to=in_reply_to,
+                references=references,
+                body_format=body_format,
+                from_email=from_email,
+            )
+        else:
+            # Handle file attachments (multipart MIME)
+            return _prepare_gmail_message_with_file_attachments(
+                subject=subject,
+                body=body,
+                attachments=attachments,
+                to=to,
+                cc=cc,
+                bcc=bcc,
+                thread_id=thread_id,
+                in_reply_to=in_reply_to,
+                references=references,
+                body_format=body_format,
+                from_email=from_email,
+            )
+
+    # No attachments - use simple message preparation
     # Handle reply subject formatting
     reply_subject = subject
     if in_reply_to and not subject.lower().startswith('re:'):
@@ -178,15 +229,19 @@ def _prepare_gmail_message(
         raise ValueError("body_format must be either 'plain' or 'html'.")
 
     message = MIMEText(body, normalized_format)
-    message["subject"] = reply_subject
+    message["Subject"] = reply_subject
+
+    # Add sender if provided
+    if from_email:
+        message["From"] = from_email
 
     # Add recipients if provided
     if to:
-        message["to"] = to
+        message["To"] = to
     if cc:
-        message["cc"] = cc
+        message["Cc"] = cc
     if bcc:
-        message["bcc"] = bcc
+        message["Bcc"] = bcc
 
     # Add reply headers for threading
     if in_reply_to:
@@ -196,6 +251,236 @@ def _prepare_gmail_message(
         message["References"] = references
 
     # Encode message
+    raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
+
+    return raw_message, thread_id
+
+
+def _prepare_gmail_message_with_file_attachments(
+    subject: str,
+    body: str,
+    attachments: List[str],
+    to: Optional[str] = None,
+    cc: Optional[str] = None,
+    bcc: Optional[str] = None,
+    thread_id: Optional[str] = None,
+    in_reply_to: Optional[str] = None,
+    references: Optional[str] = None,
+    body_format: Literal["plain", "html"] = "plain",
+    from_email: Optional[str] = None,
+) -> tuple[str, Optional[str]]:
+    """
+    Prepare a Gmail message with file attachments using multipart MIME.
+
+    This function creates a proper multipart/mixed MIME message with file attachments
+    read from the local filesystem. Files are base64-encoded and attached with
+    appropriate MIME types auto-detected from file extensions.
+
+    Args:
+        subject: Email subject
+        body: Email body content
+        attachments: List of absolute file paths to attach
+        to: Optional recipient email address
+        cc: Optional CC email address
+        bcc: Optional BCC email address
+        thread_id: Optional Gmail thread ID to reply within
+        in_reply_to: Optional Message-ID of the message being replied to
+        references: Optional chain of Message-IDs for proper threading
+        body_format: Content type for the email body ('plain' or 'html')
+        from_email: Optional sender email address
+
+    Returns:
+        Tuple of (raw_message, thread_id) where raw_message is base64url encoded
+
+    Raises:
+        ValueError: If body_format is not 'plain' or 'html'
+
+    Note:
+        - Files that cannot be read are logged as warnings and skipped
+        - MIME types are auto-detected; defaults to 'application/octet-stream'
+        - All file data is base64-encoded for email transmission
+    """
+    # Handle reply subject formatting
+    reply_subject = subject
+    if in_reply_to and not subject.lower().startswith('re:'):
+        reply_subject = f"Re: {subject}"
+
+    # Validate body format
+    normalized_format = body_format.lower()
+    if normalized_format not in {"plain", "html"}:
+        raise ValueError("body_format must be either 'plain' or 'html'.")
+
+    # Create multipart message
+    message = MIMEMultipart()
+    message["Subject"] = reply_subject
+
+    # Add sender if provided
+    if from_email:
+        message["From"] = from_email
+
+    # Add recipients if provided
+    if to:
+        message["To"] = to
+    if cc:
+        message["Cc"] = cc
+    if bcc:
+        message["Bcc"] = bcc
+
+    # Add reply headers for threading
+    if in_reply_to:
+        message["In-Reply-To"] = in_reply_to
+    if references:
+        message["References"] = references
+
+    # Attach body as first part
+    body_part = MIMEText(body, normalized_format)
+    message.attach(body_part)
+
+    # Attach files
+    for file_path in attachments:
+        try:
+            # Validate file exists and is readable
+            if not os.path.isfile(file_path):
+                logger.warning(f"Attachment file not found: {file_path}")
+                continue
+
+            # Read file data
+            with open(file_path, 'rb') as f:
+                file_data = f.read()
+
+            # Detect MIME type from file extension
+            mime_type, _ = mimetypes.guess_type(file_path)
+            if mime_type is None:
+                mime_type = 'application/octet-stream'
+
+            # Split MIME type into main and sub types
+            main_type, sub_type = mime_type.split('/', 1)
+
+            # Create MIME attachment part
+            attachment_part = MIMEBase(main_type, sub_type)
+            attachment_part.set_payload(file_data)
+
+            # Encode in base64 for email transmission
+            encoders.encode_base64(attachment_part)
+
+            # Add content disposition header with filename
+            filename = os.path.basename(file_path)
+            attachment_part.add_header(
+                'Content-Disposition',
+                f'attachment; filename="{filename}"'
+            )
+
+            # Attach to message
+            message.attach(attachment_part)
+
+            logger.info(f"Successfully attached file: {filename} ({mime_type})")
+
+        except Exception as e:
+            logger.warning(f"Failed to attach {file_path}: {e}")
+            # Continue processing other attachments
+
+    # Encode complete message as base64url for Gmail API
+    raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
+
+    return raw_message, thread_id
+
+
+def _prepare_gmail_message_with_url_attachments(
+    subject: str,
+    body: str,
+    attachments: List[str],
+    to: Optional[str] = None,
+    cc: Optional[str] = None,
+    bcc: Optional[str] = None,
+    thread_id: Optional[str] = None,
+    in_reply_to: Optional[str] = None,
+    references: Optional[str] = None,
+    body_format: Literal["plain", "html"] = "plain",
+    from_email: Optional[str] = None,
+) -> tuple[str, Optional[str]]:
+    """
+    Prepare a Gmail message with URL attachments as embedded HTML links.
+
+    This function creates an HTML email with clickable download links instead of
+    actual file attachments. Useful when files are already hosted publicly (e.g.,
+    shared via Google Drive, Dropbox, or other file sharing services).
+
+    Args:
+        subject: Email subject
+        body: Email body content (will be wrapped with attachment links)
+        attachments: List of public URLs to include as download links
+        to: Optional recipient email address
+        cc: Optional CC email address
+        bcc: Optional BCC email address
+        thread_id: Optional Gmail thread ID to reply within
+        in_reply_to: Optional Message-ID of the message being replied to
+        references: Optional chain of Message-IDs for proper threading
+        body_format: Content type for the email body ('plain' or 'html')
+        from_email: Optional sender email address
+
+    Returns:
+        Tuple of (raw_message, thread_id) where raw_message is base64url encoded
+
+    Raises:
+        ValueError: If body_format is not 'plain' or 'html'
+
+    Note:
+        - Filenames are extracted from URLs (last path segment)
+        - Body format is automatically set to 'html' to support links
+        - Original body content is preserved and links are appended
+    """
+    # Handle reply subject formatting
+    reply_subject = subject
+    if in_reply_to and not subject.lower().startswith('re:'):
+        reply_subject = f"Re: {subject}"
+
+    # Build HTML links for each URL
+    links_html = []
+    for url in attachments:
+        # Extract filename from URL (last path segment)
+        filename = url.split('/')[-1] if '/' in url else 'Download File'
+        links_html.append(f'<li><a href="{url}">{filename}</a></li>')
+
+    # Construct enhanced body with attachment links
+    # If original body is plain text, wrap it in <p> tags
+    if body_format == "plain":
+        body_html = f"<p>{body.replace(chr(10), '<br>')}</p>"
+    else:
+        body_html = body
+
+    enhanced_body = f"""{body_html}
+
+<p><strong>Attachments:</strong></p>
+<ul>
+{chr(10).join(links_html)}
+</ul>"""
+
+    # Validate format (force to html since we're adding HTML links)
+    normalized_format = "html"
+
+    # Create simple HTML message
+    message = MIMEText(enhanced_body, normalized_format)
+    message["Subject"] = reply_subject
+
+    # Add sender if provided
+    if from_email:
+        message["From"] = from_email
+
+    # Add recipients if provided
+    if to:
+        message["To"] = to
+    if cc:
+        message["Cc"] = cc
+    if bcc:
+        message["Bcc"] = bcc
+
+    # Add reply headers for threading
+    if in_reply_to:
+        message["In-Reply-To"] = in_reply_to
+    if references:
+        message["References"] = references
+
+    # Encode message as base64url for Gmail API
     raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
 
     return raw_message, thread_id
@@ -588,9 +873,17 @@ async def send_gmail_message(
     thread_id: Optional[str] = Body(None, description="Optional Gmail thread ID to reply within."),
     in_reply_to: Optional[str] = Body(None, description="Optional Message-ID of the message being replied to."),
     references: Optional[str] = Body(None, description="Optional chain of Message-IDs for proper threading."),
+    attachments: Optional[List[str]] = Body(
+        None,
+        description="Optional list of file paths (default) or public URLs (if use_public_links=True) to attach."
+    ),
+    use_public_links: bool = Body(
+        False,
+        description="If True, treat attachments as public URLs and embed as HTML links. If False (default), treat as local file paths and attach as multipart MIME."
+    ),
 ) -> str:
     """
-    Sends an email using the user's Gmail account. Supports both new emails and replies.
+    Sends an email using the user's Gmail account. Supports both new emails and replies with optional attachments.
 
     Args:
         to (str): Recipient email address.
@@ -603,6 +896,8 @@ async def send_gmail_message(
         thread_id (Optional[str]): Optional Gmail thread ID to reply within. When provided, sends a reply.
         in_reply_to (Optional[str]): Optional Message-ID of the message being replied to. Used for proper threading.
         references (Optional[str]): Optional chain of Message-IDs for proper threading. Should include all previous Message-IDs.
+        attachments (Optional[List[str]]): Optional list of attachments. Can be local file paths (default) or public URLs (if use_public_links=True).
+        use_public_links (bool): If True, treat attachments as URLs and embed as clickable links in HTML email. If False (default), treat as file paths and attach files using multipart MIME.
 
     Returns:
         str: Confirmation message with the sent email's message ID.
@@ -637,10 +932,41 @@ async def send_gmail_message(
             in_reply_to="<message123@gmail.com>",
             references="<original@gmail.com> <message123@gmail.com>"
         )
+
+        # Send email with local file attachments
+        send_gmail_message(
+            to="user@example.com",
+            subject="Report Attached",
+            body="Please review the attached quarterly report and analysis.",
+            attachments=["/path/to/report.pdf", "/path/to/data.xlsx"]
+        )
+
+        # Send email with public URL attachments (embedded as links)
+        send_gmail_message(
+            to="user@example.com",
+            subject="Shared Files",
+            body="Please download the files using the links below.",
+            attachments=["https://example.com/file1.pdf", "https://drive.google.com/file/d/abc123/view"],
+            use_public_links=True
+        )
+
+        # Send email with multiple attachments and HTML body
+        send_gmail_message(
+            to="team@example.com",
+            subject="Q4 Deliverables",
+            body="<h2>Q4 Report Ready</h2><p>Attached are the final deliverables.</p>",
+            body_format="html",
+            attachments=["/reports/q4_summary.pdf", "/reports/financials.xlsx", "/images/chart.png"]
+        )
     """
     logger.info(
         f"[send_gmail_message] Invoked. Email: '{user_google_email}', Subject: '{subject}'"
     )
+
+    # Log attachment info if present
+    if attachments:
+        attachment_type = "URLs" if use_public_links else "file paths"
+        logger.info(f"[send_gmail_message] Including {len(attachments)} {attachment_type} as attachments")
 
     # Prepare the email message
     raw_message, thread_id_final = _prepare_gmail_message(
@@ -653,6 +979,9 @@ async def send_gmail_message(
         in_reply_to=in_reply_to,
         references=references,
         body_format=body_format,
+        from_email=user_google_email,
+        attachments=attachments,
+        use_public_links=use_public_links,
     )
 
     send_body = {"raw": raw_message}
@@ -764,6 +1093,7 @@ async def draft_gmail_message(
         thread_id=thread_id,
         in_reply_to=in_reply_to,
         references=references,
+        from_email=user_google_email,
     )
 
     # Create a draft instead of sending
