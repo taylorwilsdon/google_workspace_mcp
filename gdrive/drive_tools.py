@@ -479,6 +479,101 @@ async def get_drive_file_permissions(
 
 
 @server.tool()
+@handle_http_errors("save_drive_file_to_disk", service_type="drive")
+@require_google_service("drive", "drive_read")
+async def save_drive_file_to_disk(
+    service,
+    user_google_email: str,
+    file_id: str,
+    local_file_path: str,
+) -> str:
+    """
+    Downloads a Google Drive file and saves it directly to disk without streaming content to AI.
+    Perfect for large files, binary files, or any file you want to save locally.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        file_id (str): The ID of the Google Drive file to download.
+        local_file_path (str): The local file path where the file should be saved.
+
+    Returns:
+        str: Success message with file details and saved location.
+    """
+    import os
+    logger.info(f"[save_drive_file_to_disk] Downloading file {file_id} to {local_file_path} for user {user_google_email}")
+
+    # Convert relative paths to be relative from workspace root instead of server directory
+    if not os.path.isabs(local_file_path):
+        # Server runs from google-workspace-mcp-dev/google_workspace_mcp
+        # This file is in gdrive/drive_tools.py, so workspace root is ../../../ from here
+        workspace_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+        local_file_path = os.path.join(workspace_root, local_file_path)
+        logger.info(f"[save_drive_file_to_disk] Converted relative path to: {local_file_path}")
+
+    # Get file metadata first
+    file_metadata = await asyncio.to_thread(
+        service.files().get(
+            fileId=file_id, 
+            fields="id, name, mimeType, size, webViewLink", 
+            supportsAllDrives=True
+        ).execute
+    )
+    
+    mime_type = file_metadata.get("mimeType", "")
+    file_name = file_metadata.get("name", "Unknown File")
+    file_size = file_metadata.get("size", "Unknown")
+    
+    # Check if it's a Google native file that needs export
+    export_mime_type = {
+        "application/vnd.google-apps.document": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.google-apps.spreadsheet": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
+        "application/vnd.google-apps.presentation": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    }.get(mime_type)
+
+    # Create directory if it doesn't exist
+    os.makedirs(os.path.dirname(local_file_path) if os.path.dirname(local_file_path) else ".", exist_ok=True)
+
+    # Determine request method
+    if export_mime_type:
+        request_obj = service.files().export_media(fileId=file_id, mimeType=export_mime_type)
+        download_type = f"exported as {export_mime_type}"
+    else:
+        request_obj = service.files().get_media(fileId=file_id)
+        download_type = "downloaded as original file"
+
+    # Download directly to file
+    with open(local_file_path, 'wb') as fh:
+        downloader = MediaIoBaseDownload(fh, request_obj)
+        loop = asyncio.get_event_loop()
+        done = False
+        while not done:
+            status, done = await loop.run_in_executor(None, downloader.next_chunk)
+            if status:
+                logger.info(f"Download progress: {int(status.progress() * 100)}%")
+
+    # Get actual file size after download
+    actual_size = os.path.getsize(local_file_path)
+    
+    success_message = (
+        f"✅ Successfully saved Google Drive file to disk!\n\n"
+        f"File Details:\n"
+        f"  Name: '{file_name}'\n"
+        f"  ID: {file_id}\n"
+        f"  Original Type: {mime_type}\n"
+        f"  Google Drive Size: {file_size} bytes\n"
+        f"  Downloaded Size: {actual_size:,} bytes\n"
+        f"  Method: {download_type}\n\n"
+        f"Local File:\n"
+        f"  Saved to: {local_file_path}\n"
+        f"  Full path: {os.path.abspath(local_file_path)}\n\n"
+        f"Link: {file_metadata.get('webViewLink', 'N/A')}"
+    )
+    
+    logger.info(f"Successfully saved file to {local_file_path} ({actual_size:,} bytes)")
+    return success_message
+
+
+@server.tool()
 @handle_http_errors("check_drive_file_public_access", is_read_only=True, service_type="drive")
 @require_google_service("drive", "drive_read")
 async def check_drive_file_public_access(
