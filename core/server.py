@@ -110,6 +110,8 @@ def configure_server_for_http():
                 )
                 # Disable protocol-level auth, expect bearer tokens in tool calls
                 server.auth = None
+                # Register legacy callback route for external OAuth mode
+                _ensure_legacy_callback_route()
                 logger.info("OAuth 2.1 enabled with EXTERNAL provider mode - protocol-level auth disabled")
                 logger.info("Expecting Authorization bearer tokens in tool call headers")
             else:

@@ -1,11 +1,13 @@
 services:
-  gws_mcp:
+  gws_mcp_original:
     build: .
-    container_name: gws_mcp
+    container_name: gws_mcp_original
     ports:
       - "8000:8000"
     environment:
       - GOOGLE_MCP_CREDENTIALS_DIR=/app/store_creds
+      - TOOLS=sheets drive calendar
+      - OAUTHLIB_INSECURE_TRANSPORT=1
     volumes:
       - ./client_secret.json:/app/client_secret.json:ro
       - store_creds:/app/store_creds:rw

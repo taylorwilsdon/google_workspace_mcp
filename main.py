@@ -213,6 +213,9 @@ def main():
     safe_print(f"   📝 Log Level: {logging.getLogger().getEffectiveLevel()}")
     safe_print("")
 
+    # import pdb
+    # pdb.set_trace()
+
     # Set global single-user mode flag
     if args.single_user:
         if is_stateless_mode():

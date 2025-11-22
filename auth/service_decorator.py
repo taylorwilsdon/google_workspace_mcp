@@ -285,13 +285,22 @@ async def get_authenticated_google_service_oauth21(
     return service, user_google_email
 
 
-def _extract_oauth21_user_email(authenticated_user: Optional[str], func_name: str) -> str:
+def _extract_oauth21_user_email(
+    authenticated_user: Optional[str],
+    func_name: str,
+    args: tuple = (),
+    kwargs: dict = {},
+    wrapper_sig: Optional[inspect.Signature] = None
+) -> str:
     """
     Extract user email for OAuth 2.1 mode.
 
     Args:
         authenticated_user: The authenticated user from context
         func_name: Name of the function being decorated (for error messages)
+        args: Positional arguments (for external OAuth mode)
+        kwargs: Keyword arguments (for external OAuth mode)
+        wrapper_sig: Function signature (for external OAuth mode)
 
     Returns:
         User email string
@@ -299,6 +308,21 @@ def _extract_oauth21_user_email(authenticated_user: Optional[str], func_name: st
     Raises:
         Exception: If no authenticated user found in OAuth 2.1 mode
     """
+    # When using external OAuth provider, authenticated_user comes from protocol-level auth
+    # But if protocol-level auth is disabled, we need to extract from function parameters
+    config = get_oauth_config()
+    if config.is_external_oauth21_provider() and not authenticated_user:
+        # External OAuth mode without protocol-level auth - extract from parameters
+        if wrapper_sig:
+            return _extract_oauth20_user_email(args, kwargs, wrapper_sig)
+        # Fallback: try to get from kwargs directly
+        if "user_google_email" in kwargs:
+            return kwargs["user_google_email"]
+        raise Exception(
+            f"OAuth 2.1 external provider mode requires user_google_email parameter for {func_name}"
+        )
+    
+    # Standard OAuth 2.1 mode - requires authenticated user from context
     if not authenticated_user:
         raise Exception(
             f"OAuth 2.1 mode requires an authenticated user for {func_name}, but none was found."
@@ -522,16 +546,17 @@ def require_google_service(
             )
 
         # Create a new signature for the wrapper that excludes the 'service' parameter.
-        # In OAuth 2.1 mode, also exclude 'user_google_email' since it's automatically determined.
-        if is_oauth21_enabled():
-            # Remove both 'service' and 'user_google_email' parameters
+        # In OAuth 2.1 mode with external provider, keep user_google_email parameter
+        config = get_oauth_config()
+        if is_oauth21_enabled() and not config.is_external_oauth21_provider():
+            # Standard OAuth 2.1: Remove both 'service' and 'user_google_email' parameters
             filtered_params = [
                 p for p in params[1:]
                 if p.name != 'user_google_email'
             ]
             wrapper_sig = original_sig.replace(parameters=filtered_params)
         else:
-            # Only remove 'service' parameter for OAuth 2.0 mode
+            # OAuth 2.0 or External OAuth 2.1: Only remove 'service' parameter
             wrapper_sig = original_sig.replace(parameters=params[1:])
 
         @wraps(func)
@@ -546,7 +571,9 @@ def require_google_service(
 
             # Extract user_google_email based on OAuth mode
             if is_oauth21_enabled():
-                user_google_email = _extract_oauth21_user_email(authenticated_user, func.__name__)
+                user_google_email = _extract_oauth21_user_email(
+                    authenticated_user, func.__name__, args, kwargs, wrapper_sig
+                )
             else:
                 user_google_email = _extract_oauth20_user_email(args, kwargs, wrapper_sig)
 
@@ -658,8 +685,10 @@ def require_multiple_services(service_configs: List[Dict[str, Any]]):
     def decorator(func: Callable) -> Callable:
         original_sig = inspect.signature(func)
 
-        # In OAuth 2.1 mode, remove user_google_email from the signature
-        if is_oauth21_enabled():
+        # In OAuth 2.1 mode with external provider, keep user_google_email parameter
+        config = get_oauth_config()
+        if is_oauth21_enabled() and not config.is_external_oauth21_provider():
+            # Standard OAuth 2.1: Remove user_google_email from signature
             params = list(original_sig.parameters.values())
             filtered_params = [
                 p for p in params
@@ -667,6 +696,7 @@ def require_multiple_services(service_configs: List[Dict[str, Any]]):
             ]
             wrapper_sig = original_sig.replace(parameters=filtered_params)
         else:
+            # OAuth 2.0 or External OAuth 2.1: Keep original signature
             wrapper_sig = original_sig
 
         @wraps(func)
@@ -677,7 +707,9 @@ def require_multiple_services(service_configs: List[Dict[str, Any]]):
 
             # Extract user_google_email based on OAuth mode
             if is_oauth21_enabled():
-                user_google_email = _extract_oauth21_user_email(authenticated_user, tool_name)
+                user_google_email = _extract_oauth21_user_email(
+                    authenticated_user, tool_name, args, kwargs, wrapper_sig
+                )
             else:
                 # OAuth 2.0 mode: extract from arguments (original logic)
                 param_names = list(original_sig.parameters.keys())
@@ -778,6 +810,3 @@ def require_multiple_services(service_configs: List[Dict[str, Any]]):
         return wrapper
 
     return decorator
-
-
-
