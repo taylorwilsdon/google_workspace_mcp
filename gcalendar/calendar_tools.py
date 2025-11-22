@@ -633,8 +633,7 @@ async def create_event(
             ).execute()
         )
     link = created_event.get("htmlLink", "No link available")
-    event_id = created_event.get('id', 'No ID')
-    confirmation_message = f"Successfully created event '{created_event.get('summary', summary)}' for {user_google_email}.\nEvent ID: {event_id}\nLink: {link}"
+    confirmation_message = f"Successfully created event '{created_event.get('summary', summary)}' for {user_google_email}. Link: {link}"
 
     # Add Google Meet information if conference was created
     if add_google_meet and "conferenceData" in created_event:
@@ -644,11 +643,11 @@ async def create_event(
                 if entry_point.get("entryPointType") == "video":
                     meet_link = entry_point.get("uri", "")
                     if meet_link:
-                        confirmation_message += f"\nGoogle Meet: {meet_link}"
+                        confirmation_message += f" Google Meet: {meet_link}"
                         break
 
     logger.info(
-            f"Event created successfully for {user_google_email}. ID: {event_id}, Link: {link}"
+            f"Event created successfully for {user_google_email}. ID: {created_event.get('id')}, Link: {link}"
         )
     return confirmation_message
 
