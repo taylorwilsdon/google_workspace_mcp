@@ -134,3 +134,14 @@ search:
     - search_custom_siterestrict
   complete:
     - get_search_engine_info
+
+contacts:
+  core:
+    - list_contacts
+    - search_contacts
+    - get_contact
+  extended:
+    - create_contact
+    - update_contact
+  complete:
+    - delete_contact
