@@ -4,6 +4,7 @@ External OAuth Provider for Google Workspace MCP
 Extends FastMCP's GoogleProvider to support external OAuth flows where
 access tokens (ya29.*) are issued by external systems and need validation.
 """
+
 import logging
 import time
 from typing import Optional
@@ -55,7 +56,7 @@ class ExternalOAuthProvider(GoogleProvider):
                     token=token,
                     token_uri="https://oauth2.googleapis.com/token",
                     client_id=self._client_id,
-                    client_secret=self._client_secret
+                    client_secret=self._client_secret,
                 )
 
                 # Validate token by calling userinfo API
@@ -63,20 +64,27 @@ class ExternalOAuthProvider(GoogleProvider):
 
                 if user_info and user_info.get("email"):
                     # Token is valid - create AccessToken object
-                    logger.info(f"Validated external access token for: {user_info['email']}")
+                    logger.info(
+                        f"Validated external access token for: {user_info['email']}"
+                    )
 
                     # Create a mock AccessToken that the middleware expects
                     # This matches the structure that FastMCP's AccessToken would have
                     from types import SimpleNamespace
+
                     scope_list = list(getattr(self, "required_scopes", []) or [])
                     access_token = SimpleNamespace(
                         token=token,
                         scopes=scope_list,
-                        expires_at=int(time.time()) + 3600,  # Default to 1-hour validity
-                        claims={"email": user_info["email"], "sub": user_info.get("id")},
+                        expires_at=int(time.time())
+                        + 3600,  # Default to 1-hour validity
+                        claims={
+                            "email": user_info["email"],
+                            "sub": user_info.get("id"),
+                        },
                         client_id=self._client_id,
                         email=user_info["email"],
-                        sub=user_info.get("id")
+                        sub=user_info.get("id"),
                     )
                     return access_token
                 else:

@@ -698,8 +698,9 @@ cp .env.oauth21 .env
 |------|------|-------------|
 | `search_drive_files` | **Core** | Search files with query syntax |
 | `get_drive_file_content` | **Core** | Read file content (Office formats) |
-| `list_drive_items` | Extended | List folder contents |
 | `create_drive_file` | **Core** | Create files or fetch from URLs |
+| `list_drive_items` | Extended | List folder contents |
+| `update_drive_file` | Extended | Update file metadata, move between folders |
 
 </td>
 </tr>
@@ -992,7 +993,7 @@ This mode is ideal for:
 
 **MCP Inspector**: No additional configuration needed with desktop OAuth client.
 
-**Claude Code Inspector**: No additional configuration needed with desktop OAuth client.
+**Claude Code**: No additional configuration needed with desktop OAuth client.
 
 ### External OAuth 2.1 Provider Mode
 
@@ -1051,6 +1052,15 @@ uv run main.py --transport streamable-http
 ```
 </details>
 
+### Claude Code MCP Client Support
+
+<details>
+<summary>🆚 <b>Claude Code Configuration</b> <sub><sup>← Setup for Claude Code MCP support</sup></sub></summary>
+
+```json
+claude mcp add --transport http workspace-mcp http://localhost:8000/mcp
+```
+</details>
 
 #### Reverse Proxy Setup
 

@@ -45,15 +45,17 @@ INTERNAL_SERVICE_TO_API: Dict[str, str] = {
 }
 
 
-def extract_api_info_from_error(error_details: str) -> Tuple[Optional[str], Optional[str]]:
+def extract_api_info_from_error(
+    error_details: str,
+) -> Tuple[Optional[str], Optional[str]]:
     """
     Extract API service and project ID from error details.
 
     Returns:
         Tuple of (api_service, project_id) or (None, None) if not found
     """
-    api_pattern = r'https://console\.developers\.google\.com/apis/api/([^/]+)/overview'
-    project_pattern = r'project[=\s]+([a-zA-Z0-9-]+)'
+    api_pattern = r"https://console\.developers\.google\.com/apis/api/([^/]+)/overview"
+    project_pattern = r"project[=\s]+([a-zA-Z0-9-]+)"
 
     api_match = re.search(api_pattern, error_details)
     project_match = re.search(project_pattern, error_details)
@@ -64,7 +66,9 @@ def extract_api_info_from_error(error_details: str) -> Tuple[Optional[str], Opti
     return api_service, project_id
 
 
-def get_api_enablement_message(error_details: str, service_type: Optional[str] = None) -> str:
+def get_api_enablement_message(
+    error_details: str, service_type: Optional[str] = None
+) -> str:
     """
     Generate a helpful error message with direct API enablement link.
 
@@ -88,7 +92,7 @@ def get_api_enablement_message(error_details: str, service_type: Optional[str] =
         enable_link = API_ENABLEMENT_LINKS[api_service]
         service_display_name = next(
             (name for name, api in SERVICE_NAME_TO_API.items() if api == api_service),
-            api_service
+            api_service,
         )
 
         message = (

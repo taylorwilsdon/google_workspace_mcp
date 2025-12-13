@@ -36,19 +36,31 @@ class OAuthConfig:
         self.client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET")
 
         # OAuth 2.1 configuration
-        self.oauth21_enabled = os.getenv("MCP_ENABLE_OAUTH21", "false").lower() == "true"
+        self.oauth21_enabled = (
+            os.getenv("MCP_ENABLE_OAUTH21", "false").lower() == "true"
+        )
         self.pkce_required = self.oauth21_enabled  # PKCE is mandatory in OAuth 2.1
-        self.supported_code_challenge_methods = ["S256", "plain"] if not self.oauth21_enabled else ["S256"]
+        self.supported_code_challenge_methods = (
+            ["S256", "plain"] if not self.oauth21_enabled else ["S256"]
+        )
 
         # External OAuth 2.1 provider configuration
-        self.external_oauth21_provider = os.getenv("EXTERNAL_OAUTH21_PROVIDER", "false").lower() == "true"
+        self.external_oauth21_provider = (
+            os.getenv("EXTERNAL_OAUTH21_PROVIDER", "false").lower() == "true"
+        )
         if self.external_oauth21_provider and not self.oauth21_enabled:
-            raise ValueError("EXTERNAL_OAUTH21_PROVIDER requires MCP_ENABLE_OAUTH21=true")
+            raise ValueError(
+                "EXTERNAL_OAUTH21_PROVIDER requires MCP_ENABLE_OAUTH21=true"
+            )
 
         # Stateless mode configuration
-        self.stateless_mode = os.getenv("WORKSPACE_MCP_STATELESS_MODE", "false").lower() == "true"
+        self.stateless_mode = (
+            os.getenv("WORKSPACE_MCP_STATELESS_MODE", "false").lower() == "true"
+        )
         if self.stateless_mode and not self.oauth21_enabled:
-            raise ValueError("WORKSPACE_MCP_STATELESS_MODE requires MCP_ENABLE_OAUTH21=true")
+            raise ValueError(
+                "WORKSPACE_MCP_STATELESS_MODE requires MCP_ENABLE_OAUTH21=true"
+            )
 
         # Transport mode (will be set at runtime)
         self._transport_mode = "stdio"  # Default
@@ -95,7 +107,12 @@ class OAuthConfig:
         # Don't set FASTMCP_SERVER_AUTH if using external OAuth provider
         # (external OAuth means protocol-level auth is disabled, only tool-level auth)
         if not self.external_oauth21_provider:
-            _set_if_absent("FASTMCP_SERVER_AUTH", "fastmcp.server.auth.providers.google.GoogleProvider" if self.oauth21_enabled else None)
+            _set_if_absent(
+                "FASTMCP_SERVER_AUTH",
+                "fastmcp.server.auth.providers.google.GoogleProvider"
+                if self.oauth21_enabled
+                else None,
+            )
 
         _set_if_absent("FASTMCP_SERVER_AUTH_GOOGLE_CLIENT_ID", self.client_id)
         _set_if_absent("FASTMCP_SERVER_AUTH_GOOGLE_CLIENT_SECRET", self.client_secret)
@@ -135,11 +152,13 @@ class OAuthConfig:
         origins.append(self.base_url)
 
         # VS Code and development origins
-        origins.extend([
-            "vscode-webview://",
-            "https://vscode.dev",
-            "https://github.dev",
-        ])
+        origins.extend(
+            [
+                "vscode-webview://",
+                "https://vscode.dev",
+                "https://github.dev",
+            ]
+        )
 
         # Custom origins from environment
         custom_origins = os.getenv("OAUTH_ALLOWED_ORIGINS")
@@ -266,6 +285,7 @@ class OAuthConfig:
 
         # Use the structured type for cleaner detection logic
         from auth.oauth_types import OAuthVersionDetectionParams
+
         params = OAuthVersionDetectionParams.from_request(request_params)
 
         # Clear OAuth 2.1 indicator: PKCE is present
@@ -278,6 +298,7 @@ class OAuthConfig:
         if authenticated_user:
             try:
                 from auth.oauth21_session_store import get_oauth21_session_store
+
                 store = get_oauth21_session_store()
                 if store.has_session(authenticated_user):
                     return "oauth21"
@@ -291,7 +312,9 @@ class OAuthConfig:
         # Default to OAuth 2.0 for maximum compatibility
         return "oauth20"
 
-    def get_authorization_server_metadata(self, scopes: Optional[List[str]] = None) -> Dict[str, Any]:
+    def get_authorization_server_metadata(
+        self, scopes: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
         """
         Get OAuth authorization server metadata per RFC 8414.
 
@@ -311,7 +334,10 @@ class OAuthConfig:
             "userinfo_endpoint": "https://openidconnect.googleapis.com/v1/userinfo",
             "response_types_supported": ["code", "token"],
             "grant_types_supported": ["authorization_code", "refresh_token"],
-            "token_endpoint_auth_methods_supported": ["client_secret_post", "client_secret_basic"],
+            "token_endpoint_auth_methods_supported": [
+                "client_secret_post",
+                "client_secret_basic",
+            ],
             "code_challenge_methods_supported": self.supported_code_challenge_methods,
         }
 

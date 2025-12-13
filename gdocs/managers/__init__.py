@@ -11,8 +11,8 @@ from .validation_manager import ValidationManager
 from .batch_operation_manager import BatchOperationManager
 
 __all__ = [
-    'TableOperationManager',
-    'HeaderFooterManager', 
-    'ValidationManager',
-    'BatchOperationManager'
+    "TableOperationManager",
+    "HeaderFooterManager",
+    "ValidationManager",
+    "BatchOperationManager",
 ]

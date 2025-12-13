@@ -15,7 +15,7 @@ from .sheets_tools import (
 
 __all__ = [
     "list_spreadsheets",
-    "get_spreadsheet_info", 
+    "get_spreadsheet_info",
     "read_sheet_values",
     "modify_sheet_values",
     "create_spreadsheet",
