@@ -19,6 +19,7 @@ dependencies = [
  "pyjwt>=2.10.1",
  "python-dotenv>=1.1.0",
  "pyyaml>=6.0.2",
+ "uvicorn>=0.35",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
