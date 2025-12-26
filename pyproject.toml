@@ -11,7 +11,7 @@ keywords = [ "mcp", "google", "workspace", "llm", "ai", "claude", "model", "cont
 requires-python = ">=3.10"
 dependencies = [
  "fastapi>=0.115.12",
- "fastmcp==2.12.5",
+ "fastmcp==2.14.0",
  "google-api-python-client>=2.168.0",
  "google-auth-httplib2>=0.2.0",
  "google-auth-oauthlib>=1.2.2",
