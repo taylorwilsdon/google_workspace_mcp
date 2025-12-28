@@ -10,6 +10,8 @@ from typing import Optional, Dict, Any
 
 
 from auth.service_decorator import require_google_service
+from mcp.types import ToolAnnotations
+
 from core.server import server
 from core.utils import handle_http_errors
 
