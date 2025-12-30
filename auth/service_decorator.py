@@ -213,10 +213,40 @@ async def get_authenticated_google_service_oauth21(
 ) -> tuple[Any, str]:
     """
     OAuth 2.1 authentication using the session store with security validation.
+
+    IMPORTANT: When user_google_email is explicitly provided, we prioritize looking up
+    credentials for that specific user. This enables multi-account support where a single
+    MCP session can access multiple pre-authenticated Google accounts.
     """
     provider = get_auth_provider()
     access_token = get_access_token()
 
+    # PRIORITY 1: If user_google_email is explicitly provided, use it
+    # This is the key fix for multi-account support - the explicitly requested
+    # account takes priority over the session's authenticated account
+    if user_google_email:
+        store = get_oauth21_session_store()
+
+        # Try to get credentials for the explicitly requested user
+        credentials = store.get_credentials(user_google_email)
+        if credentials:
+            logger.info(
+                f"[{tool_name}] Found credentials for explicitly requested user {user_google_email}"
+            )
+
+            # Validate scopes
+            scopes_available = set(credentials.scopes or [])
+            if not all(scope in scopes_available for scope in required_scopes):
+                raise GoogleAuthenticationError(
+                    f"OAuth credentials for {user_google_email} lack required scopes. "
+                    f"Need: {required_scopes}, Have: {sorted(scopes_available)}"
+                )
+
+            service = build(service_name, version, credentials=credentials)
+            logger.info(f"[{tool_name}] Authenticated {service_name} for {user_google_email}")
+            return service, user_google_email
+
+    # PRIORITY 2: Fall back to access token from provider (for single-account scenarios)
     if provider and access_token:
         token_email = None
         if getattr(access_token, "claims", None):
@@ -233,10 +263,9 @@ async def get_authenticated_google_service_oauth21(
                 "Access token email does not match authenticated session context."
             )
 
-        if token_email and user_google_email and token_email != user_google_email:
-            raise GoogleAuthenticationError(
-                f"Authenticated account {token_email} does not match requested user {user_google_email}."
-            )
+        # Note: We removed the strict check that blocked access when token_email != user_google_email
+        # because in multi-account scenarios, the session token may be for one account while
+        # accessing credentials for another pre-authenticated account
 
         credentials = ensure_session_from_access_token(
             access_token, resolved_email, session_id
@@ -259,6 +288,7 @@ async def get_authenticated_google_service_oauth21(
         logger.info(f"[{tool_name}] Authenticated {service_name} for {resolved_email}")
         return service, resolved_email
 
+    # PRIORITY 3: Fall back to session store validation
     store = get_oauth21_session_store()
 
     # Use the validation method to ensure session can only access its own credentials
@@ -545,10 +575,22 @@ def require_google_service(
             )
 
             # Extract user_google_email based on OAuth mode
+            # MULTI-ACCOUNT FIX: Check if user_google_email was explicitly provided
+            # If so, honor the explicit request instead of using session's authenticated user
+            explicit_user_email = kwargs.get("user_google_email")
+
             if is_oauth21_enabled():
-                user_google_email = _extract_oauth21_user_email(
-                    authenticated_user, func.__name__
-                )
+                if explicit_user_email:
+                    # Honor explicitly provided user_google_email for multi-account support
+                    logger.debug(
+                        f"[{func.__name__}] Multi-account: Using explicit user_google_email '{explicit_user_email}' "
+                        f"instead of session user '{authenticated_user}'"
+                    )
+                    user_google_email = explicit_user_email
+                else:
+                    user_google_email = _extract_oauth21_user_email(
+                        authenticated_user, func.__name__
+                    )
             else:
                 user_google_email = _extract_oauth20_user_email(
                     args, kwargs, wrapper_sig
@@ -684,10 +726,21 @@ def require_multiple_services(service_configs: List[Dict[str, Any]]):
             authenticated_user, _, mcp_session_id = _get_auth_context(tool_name)
 
             # Extract user_google_email based on OAuth mode
+            # MULTI-ACCOUNT FIX: Check if user_google_email was explicitly provided
+            explicit_user_email = kwargs.get("user_google_email")
+
             if is_oauth21_enabled():
-                user_google_email = _extract_oauth21_user_email(
-                    authenticated_user, tool_name
-                )
+                if explicit_user_email:
+                    # Honor explicitly provided user_google_email for multi-account support
+                    logger.debug(
+                        f"[{tool_name}] Multi-account: Using explicit user_google_email '{explicit_user_email}' "
+                        f"instead of session user '{authenticated_user}'"
+                    )
+                    user_google_email = explicit_user_email
+                else:
+                    user_google_email = _extract_oauth21_user_email(
+                        authenticated_user, tool_name
+                    )
             else:
                 user_google_email = _extract_oauth20_user_email(
                     args, kwargs, wrapper_sig

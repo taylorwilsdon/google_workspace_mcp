@@ -544,8 +544,55 @@ def get_credentials(
     Returns:
         Valid Credentials object or None.
     """
-    # First, try OAuth 2.1 session store if we have a session_id (FastMCP session)
-    if session_id:
+    # PRIORITY 1: If user_google_email is specified, always try to get credentials for that user first
+    # This ensures multi-account support works correctly in streamable-http mode
+    if user_google_email:
+        try:
+            store = get_oauth21_session_store()
+            # Try to get credentials directly for the requested user email
+            credentials = store.get_credentials(user_google_email)
+            if credentials:
+                logger.info(
+                    f"[get_credentials] Found credentials for requested user {user_google_email}"
+                )
+                # Check scopes
+                if not all(scope in credentials.scopes for scope in required_scopes):
+                    logger.warning(
+                        f"[get_credentials] Credentials for {user_google_email} lack required scopes. Need: {required_scopes}, Have: {credentials.scopes}"
+                    )
+                    # Don't return None yet - fall through to try file-based credentials
+                else:
+                    # Return if valid
+                    if credentials.valid:
+                        return credentials
+                    elif credentials.expired and credentials.refresh_token:
+                        # Try to refresh
+                        try:
+                            credentials.refresh(Request())
+                            logger.info(
+                                f"[get_credentials] Refreshed credentials for {user_google_email}"
+                            )
+                            # Update stored credentials
+                            store.store_session(
+                                user_email=user_google_email,
+                                access_token=credentials.token,
+                                refresh_token=credentials.refresh_token,
+                                scopes=credentials.scopes,
+                                expiry=credentials.expiry,
+                                mcp_session_id=session_id,
+                            )
+                            return credentials
+                        except Exception as e:
+                            logger.error(
+                                f"[get_credentials] Failed to refresh credentials for {user_google_email}: {e}"
+                            )
+                            # Fall through to try file-based credentials
+        except Exception as e:
+            logger.debug(f"[get_credentials] Error checking OAuth 2.1 store for {user_google_email}: {e}")
+
+    # PRIORITY 2: Only use session-based lookup if no user_google_email was specified
+    # This is the fallback for single-user scenarios
+    if not user_google_email and session_id:
         try:
             store = get_oauth21_session_store()
 
@@ -633,10 +680,28 @@ def get_credentials(
         )
 
         if session_id:
-            credentials = load_credentials_from_session(session_id)
-            if credentials:
+            # MULTI-ACCOUNT FIX: Only use session credentials if they match the requested user
+            # Check who the session is bound to before loading credentials
+            session_bound_user = None
+            try:
+                store = get_oauth21_session_store()
+                session_bound_user = store.get_user_by_mcp_session(session_id)
+            except Exception as e:
+                logger.debug(f"[get_credentials] Could not check session binding: {e}")
+
+            # Only load from session if:
+            # 1. No specific user was requested (user_google_email is None), OR
+            # 2. The session is bound to the requested user
+            if not user_google_email or session_bound_user == user_google_email:
+                credentials = load_credentials_from_session(session_id)
+                if credentials:
+                    logger.debug(
+                        f"[get_credentials] Loaded credentials from session for session_id '{session_id}'."
+                    )
+            elif session_bound_user:
                 logger.debug(
-                    f"[get_credentials] Loaded credentials from session for session_id '{session_id}'."
+                    f"[get_credentials] Skipping session credentials: session bound to '{session_bound_user}' "
+                    f"but requested user is '{user_google_email}'"
                 )
 
         if not credentials and user_google_email:
