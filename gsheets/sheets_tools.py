@@ -962,7 +962,7 @@ async def create_spreadsheet(
 @server.tool(
     annotations=ToolAnnotations(
         title="Create Sheet",
-        destructiveHint=True,
+        destructiveHint=False,
     ),
 )
 @handle_http_errors("create_sheet", service_type="sheets")

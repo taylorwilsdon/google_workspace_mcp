@@ -913,7 +913,7 @@ async def get_gmail_attachment_content(
 @server.tool(
     annotations=ToolAnnotations(
         title="Send Gmail Message",
-        destructiveHint=True,
+        destructiveHint=False,
     ),
 )
 @handle_http_errors("send_gmail_message", service_type="gmail")
@@ -1024,7 +1024,7 @@ async def send_gmail_message(
 @server.tool(
     annotations=ToolAnnotations(
         title="Draft Gmail Message",
-        destructiveHint=True,
+        destructiveHint=False,
     ),
 )
 @handle_http_errors("draft_gmail_message", service_type="gmail")
@@ -1591,7 +1591,7 @@ async def list_gmail_filters(service, user_google_email: str) -> str:
 @server.tool(
     annotations=ToolAnnotations(
         title="Create Gmail Filter",
-        destructiveHint=True,
+        destructiveHint=False,
     ),
 )
 @handle_http_errors("create_gmail_filter", service_type="gmail")
@@ -1680,7 +1680,7 @@ async def delete_gmail_filter(
 @server.tool(
     annotations=ToolAnnotations(
         title="Modify Gmail Message Labels",
-        destructiveHint=True,
+        destructiveHint=False,
     ),
 )
 @handle_http_errors("modify_gmail_message_labels", service_type="gmail")
@@ -1741,7 +1741,7 @@ async def modify_gmail_message_labels(
 @server.tool(
     annotations=ToolAnnotations(
         title="Batch Modify Gmail Labels",
-        destructiveHint=True,
+        destructiveHint=False,
     ),
 )
 @handle_http_errors("batch_modify_gmail_message_labels", service_type="gmail")

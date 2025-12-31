@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 @server.tool(
     annotations=ToolAnnotations(
         title="Create Presentation",
-        destructiveHint=True,
+        destructiveHint=False,
     ),
 )
 @handle_http_errors("create_presentation", service_type="slides")

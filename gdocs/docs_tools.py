@@ -334,7 +334,7 @@ async def list_docs_in_folder(
 @server.tool(
     annotations=ToolAnnotations(
         title="Create Doc",
-        destructiveHint=True,
+        destructiveHint=False,
     ),
 )
 @handle_http_errors("create_doc", service_type="docs")
@@ -375,7 +375,7 @@ async def create_doc(
 @server.tool(
     annotations=ToolAnnotations(
         title="Modify Doc Text",
-        destructiveHint=True,
+        destructiveHint=False,
     ),
 )
 @handle_http_errors("modify_doc_text", service_type="docs")
@@ -589,7 +589,7 @@ async def modify_doc_text(
 @server.tool(
     annotations=ToolAnnotations(
         title="Find and Replace in Doc",
-        destructiveHint=True,
+        destructiveHint=False,
     ),
 )
 @handle_http_errors("find_and_replace_doc", service_type="docs")
@@ -641,7 +641,7 @@ async def find_and_replace_doc(
 @server.tool(
     annotations=ToolAnnotations(
         title="Insert Doc Elements",
-        destructiveHint=True,
+        destructiveHint=False,
     ),
 )
 @handle_http_errors("insert_doc_elements", service_type="docs")
@@ -728,7 +728,7 @@ async def insert_doc_elements(
 @server.tool(
     annotations=ToolAnnotations(
         title="Insert Doc Image",
-        destructiveHint=True,
+        destructiveHint=False,
     ),
 )
 @handle_http_errors("insert_doc_image", service_type="docs")
@@ -825,7 +825,7 @@ async def insert_doc_image(
 @server.tool(
     annotations=ToolAnnotations(
         title="Update Doc Headers/Footers",
-        destructiveHint=True,
+        destructiveHint=False,
     ),
 )
 @handle_http_errors("update_doc_headers_footers", service_type="docs")
@@ -887,7 +887,7 @@ async def update_doc_headers_footers(
 @server.tool(
     annotations=ToolAnnotations(
         title="Batch Update Doc",
-        destructiveHint=True,
+        destructiveHint=False,
     ),
 )
 @handle_http_errors("batch_update_doc", service_type="docs")
@@ -1082,7 +1082,7 @@ async def inspect_doc_structure(
 @server.tool(
     annotations=ToolAnnotations(
         title="Create Table with Data",
-        destructiveHint=True,
+        destructiveHint=False,
     ),
 )
 @handle_http_errors("create_table_with_data", service_type="docs")
@@ -1277,7 +1277,7 @@ async def debug_table_structure(
 @server.tool(
     annotations=ToolAnnotations(
         title="Export Doc to PDF",
-        destructiveHint=True,
+        destructiveHint=False,
     ),
 )
 @handle_http_errors("export_doc_to_pdf", service_type="drive")
