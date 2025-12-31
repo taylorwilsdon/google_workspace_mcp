@@ -1680,7 +1680,7 @@ async def delete_gmail_filter(
 @server.tool(
     annotations=ToolAnnotations(
         title="Modify Gmail Message Labels",
-        destructiveHint=False,
+        destructiveHint=True,
     ),
 )
 @handle_http_errors("modify_gmail_message_labels", service_type="gmail")
@@ -1741,7 +1741,7 @@ async def modify_gmail_message_labels(
 @server.tool(
     annotations=ToolAnnotations(
         title="Batch Modify Gmail Labels",
-        destructiveHint=False,
+        destructiveHint=True,
     ),
 )
 @handle_http_errors("batch_modify_gmail_message_labels", service_type="gmail")

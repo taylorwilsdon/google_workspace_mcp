@@ -926,7 +926,7 @@ async def check_drive_file_public_access(
 @server.tool(
     annotations=ToolAnnotations(
         title="Update Drive File",
-        destructiveHint=False,
+        destructiveHint=True,
     ),
 )
 @handle_http_errors("update_drive_file", is_read_only=False, service_type="drive")
@@ -1422,7 +1422,7 @@ async def batch_share_drive_file(
 @server.tool(
     annotations=ToolAnnotations(
         title="Update Drive Permission",
-        destructiveHint=False,
+        destructiveHint=True,
     ),
 )
 @handle_http_errors("update_drive_permission", is_read_only=False, service_type="drive")
@@ -1557,7 +1557,7 @@ async def remove_drive_permission(
 @server.tool(
     annotations=ToolAnnotations(
         title="Transfer Drive Ownership",
-        destructiveHint=False,
+        destructiveHint=True,
     ),
 )
 @handle_http_errors(
