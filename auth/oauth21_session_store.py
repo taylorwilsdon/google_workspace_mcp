@@ -7,7 +7,9 @@ session context management and credential conversion functionality.
 """
 
 import contextvars
+import json
 import logging
+import os
 from typing import Dict, Optional, Any, Tuple
 from threading import RLock
 from datetime import datetime, timedelta, timezone
@@ -17,6 +19,26 @@ from fastmcp.server.auth import AccessToken
 from google.oauth2.credentials import Credentials
 
 logger = logging.getLogger(__name__)
+
+
+def _get_oauth_states_file_path() -> str:
+    """Get the file path for persisting OAuth states."""
+    # Use the same directory as credentials
+    env_dir = os.getenv("GOOGLE_MCP_CREDENTIALS_DIR")
+    if env_dir:
+        base_dir = env_dir
+    else:
+        home_dir = os.path.expanduser("~")
+        if home_dir and home_dir != "~":
+            base_dir = os.path.join(home_dir, ".google_workspace_mcp")
+        else:
+            base_dir = os.path.join(os.getcwd(), ".google_workspace_mcp")
+
+    # Ensure directory exists
+    if not os.path.exists(base_dir):
+        os.makedirs(base_dir, exist_ok=True)
+
+    return os.path.join(base_dir, "oauth_states.json")
 
 
 def _normalize_expiry_to_naive_utc(expiry: Optional[Any]) -> Optional[datetime]:
@@ -187,6 +209,9 @@ class OAuth21SessionStore:
 
     Security: Sessions are bound to specific users and can only access
     their own credentials.
+
+    OAuth states are persisted to disk to survive server restarts during
+    the OAuth flow.
     """
 
     def __init__(self):
@@ -199,6 +224,10 @@ class OAuth21SessionStore:
         ] = {}  # Maps session ID -> authenticated user email (immutable)
         self._oauth_states: Dict[str, Dict[str, Any]] = {}
         self._lock = RLock()
+        self._states_file_path = _get_oauth_states_file_path()
+
+        # Load persisted OAuth states on initialization
+        self._load_oauth_states_from_disk()
 
     def _cleanup_expired_oauth_states_locked(self):
         """Remove expired OAuth state entries. Caller must hold lock."""
@@ -215,13 +244,91 @@ class OAuth21SessionStore:
                 state[:8] if len(state) > 8 else state,
             )
 
+    def _load_oauth_states_from_disk(self):
+        """Load persisted OAuth states from disk on initialization."""
+        try:
+            if not os.path.exists(self._states_file_path):
+                logger.debug(
+                    "No persisted OAuth states file found at %s", self._states_file_path
+                )
+                return
+
+            with open(self._states_file_path, "r") as f:
+                persisted_data = json.load(f)
+
+            if not isinstance(persisted_data, dict):
+                logger.warning("Invalid OAuth states file format, ignoring")
+                return
+
+            # Convert ISO format strings back to datetime objects
+            loaded_count = 0
+            for state, data in persisted_data.items():
+                try:
+                    if "expires_at" in data and data["expires_at"]:
+                        data["expires_at"] = datetime.fromisoformat(data["expires_at"])
+                    if "created_at" in data and data["created_at"]:
+                        data["created_at"] = datetime.fromisoformat(data["created_at"])
+                    self._oauth_states[state] = data
+                    loaded_count += 1
+                except (ValueError, TypeError) as e:
+                    logger.warning(
+                        "Failed to parse OAuth state %s: %s",
+                        state[:8] if len(state) > 8 else state,
+                        e,
+                    )
+
+            # Clean up expired states after loading
+            self._cleanup_expired_oauth_states_locked()
+
+            logger.info(
+                "Loaded %d OAuth states from disk (%d after cleanup)",
+                loaded_count,
+                len(self._oauth_states),
+            )
+
+        except json.JSONDecodeError as e:
+            logger.warning("Failed to parse OAuth states file: %s", e)
+        except IOError as e:
+            logger.warning("Failed to read OAuth states file: %s", e)
+        except Exception as e:
+            logger.error("Unexpected error loading OAuth states: %s", e)
+
+    def _save_oauth_states_to_disk(self):
+        """Persist OAuth states to disk. Caller must hold lock."""
+        try:
+            # Convert datetime objects to ISO format strings for JSON serialization
+            serializable_data = {}
+            for state, data in self._oauth_states.items():
+                serializable_data[state] = {
+                    "session_id": data.get("session_id"),
+                    "expires_at": data["expires_at"].isoformat()
+                    if data.get("expires_at")
+                    else None,
+                    "created_at": data["created_at"].isoformat()
+                    if data.get("created_at")
+                    else None,
+                }
+
+            with open(self._states_file_path, "w") as f:
+                json.dump(serializable_data, f, indent=2)
+
+            logger.debug("Persisted %d OAuth states to disk", len(serializable_data))
+
+        except IOError as e:
+            logger.error("Failed to persist OAuth states to disk: %s", e)
+        except Exception as e:
+            logger.error("Unexpected error persisting OAuth states: %s", e)
+
     def store_oauth_state(
         self,
         state: str,
         session_id: Optional[str] = None,
         expires_in_seconds: int = 600,
     ) -> None:
-        """Persist an OAuth state value for later validation."""
+        """Persist an OAuth state value for later validation.
+
+        States are stored both in memory and on disk to survive server restarts.
+        """
         if not state:
             raise ValueError("OAuth state must be provided")
         if expires_in_seconds < 0:
@@ -236,6 +343,10 @@ class OAuth21SessionStore:
                 "expires_at": expiry,
                 "created_at": now,
             }
+
+            # Persist to disk to survive server restarts
+            self._save_oauth_states_to_disk()
+
             logger.debug(
                 "Stored OAuth state %s (expires at %s)",
                 state[:8] if len(state) > 8 else state,
@@ -277,6 +388,7 @@ class OAuth21SessionStore:
             if bound_session and session_id and bound_session != session_id:
                 # Consume the state to prevent replay attempts
                 del self._oauth_states[state]
+                self._save_oauth_states_to_disk()
                 logger.error(
                     "SECURITY: OAuth state session mismatch (expected %s, got %s)",
                     bound_session,
@@ -286,6 +398,7 @@ class OAuth21SessionStore:
 
             # State is valid – consume it to prevent reuse
             del self._oauth_states[state]
+            self._save_oauth_states_to_disk()
             logger.debug(
                 "Validated OAuth state %s",
                 state[:8] if len(state) > 8 else state,
