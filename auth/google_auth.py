@@ -46,7 +46,7 @@ def get_default_credentials_dir():
     # Use user home directory for credentials storage
     home_dir = os.path.expanduser("~")
     if home_dir and home_dir != "~":  # Valid home directory found
-        return os.path.join(home_dir, ".google_workspace_mcp", "credentials")
+        return os.path.join(home_dir, ".config", "google-workspace-mcp", "credentials")
 
     # Fallback to current working directory if home directory is not accessible
     return os.path.join(os.getcwd(), ".credentials")

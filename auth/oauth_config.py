@@ -25,7 +25,7 @@ class OAuthConfig:
     def __init__(self):
         # Base server configuration
         self.base_uri = os.getenv("WORKSPACE_MCP_BASE_URI", "http://localhost")
-        self.port = int(os.getenv("PORT", os.getenv("WORKSPACE_MCP_PORT", "8000")))
+        self.port = int(os.getenv("PORT", os.getenv("WORKSPACE_MCP_PORT", "9876")))
         self.base_url = f"{self.base_uri}:{self.port}"
 
         # External URL for reverse proxy scenarios

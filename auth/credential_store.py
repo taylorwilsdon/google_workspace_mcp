@@ -80,7 +80,7 @@ class LocalDirectoryCredentialStore(CredentialStore):
         Args:
             base_dir: Base directory for credential files. If None, uses the directory
                      configured by the GOOGLE_MCP_CREDENTIALS_DIR environment variable,
-                     or defaults to ~/.google_workspace_mcp/credentials if the environment
+                     or defaults to ~/.config/google-workspace-mcp/credentials if the environment
                      variable is not set.
         """
         if base_dir is None:
@@ -90,7 +90,7 @@ class LocalDirectoryCredentialStore(CredentialStore):
                 home_dir = os.path.expanduser("~")
                 if home_dir and home_dir != "~":
                     base_dir = os.path.join(
-                        home_dir, ".google_workspace_mcp", "credentials"
+                        home_dir, ".config", "google-workspace-mcp", "credentials"
                     )
                 else:
                     base_dir = os.path.join(os.getcwd(), ".credentials")
