@@ -871,21 +871,15 @@ async def get_authenticated_google_service(
             f"[{tool_name}] Valid email '{user_google_email}' provided, initiating auth flow."
         )
 
-        # Ensure OAuth callback is available
-        from auth.oauth_callback_server import ensure_oauth_callback_available
+        from auth.oauth_callback_server import start_oauth_callback_server
 
-        redirect_uri = get_oauth_redirect_uri()
-        config = get_oauth_config()
-        success, error_msg = ensure_oauth_callback_available(
-            get_transport_mode(), config.port, config.base_uri
-        )
+        success, error_msg, redirect_uri = start_oauth_callback_server()
         if not success:
             error_detail = f" ({error_msg})" if error_msg else ""
             raise GoogleAuthenticationError(
                 f"Cannot initiate OAuth flow - callback server unavailable{error_detail}"
             )
 
-        # Generate auth URL and raise exception with it
         auth_response = await start_auth_flow(
             user_google_email=user_google_email,
             service_name=f"Google {service_name.title()}",
