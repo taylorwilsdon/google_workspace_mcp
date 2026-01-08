@@ -35,6 +35,9 @@ except ImportError:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Static token mode state (set during startup validation)
+_static_token_user_email: Optional[str] = None
+
 
 # Constants
 def get_default_credentials_dir():
@@ -323,6 +326,15 @@ async def start_auth_flow(
     Raises:
         Exception: If the OAuth flow cannot be initiated.
     """
+    # Static token mode - OAuth flow not available
+    config = get_oauth_config()
+    if config.is_static_token_mode():
+        raise GoogleAuthenticationError(
+            "OAuth flow not available in static token mode. "
+            "The configured GOOGLE_ACCESS_TOKEN may be invalid or expired. "
+            "Please provide a fresh token via the environment variable."
+        )
+
     initial_email_provided = bool(
         user_google_email
         and user_google_email.strip()
@@ -544,6 +556,12 @@ def get_credentials(
     Returns:
         Valid Credentials object or None.
     """
+    # Static token mode - return pre-validated credentials
+    config = get_oauth_config()
+    if config.is_static_token_mode():
+        logger.debug("[get_credentials] Static token mode - using pre-validated token")
+        return _build_static_credentials()
+
     # First, try OAuth 2.1 session store if we have a session_id (FastMCP session)
     if session_id:
         try:
@@ -764,6 +782,56 @@ def get_user_info(credentials: Credentials) -> Optional[Dict[str, Any]]:
     except Exception as e:
         logger.error(f"Unexpected error fetching user info: {e}")
         return None
+
+
+async def validate_static_token() -> str:
+    """
+    Validate the static access token and return the user's email.
+    Called once at startup when GOOGLE_ACCESS_TOKEN is set.
+
+    Returns:
+        The user's email address from the token.
+
+    Raises:
+        ValueError: If token is invalid or user info cannot be fetched.
+    """
+    global _static_token_user_email
+
+    config = get_oauth_config()
+    token = config.static_access_token
+
+    if not token:
+        raise ValueError("No static access token configured")
+
+    logger.info("[static-token] Validating static access token...")
+
+    # Create credentials object from the token
+    credentials = Credentials(token=token)
+
+    # Fetch user info to validate the token
+    user_info = get_user_info(credentials)
+
+    if not user_info or "email" not in user_info:
+        raise ValueError(
+            "Static access token is invalid or lacks required scopes. "
+            "Ensure the token has userinfo.email scope."
+        )
+
+    _static_token_user_email = user_info["email"]
+    logger.info(f"[static-token] Token validated for user: {_static_token_user_email}")
+
+    return _static_token_user_email
+
+
+def get_static_token_user_email() -> Optional[str]:
+    """Get the email associated with the static access token."""
+    return _static_token_user_email
+
+
+def _build_static_credentials() -> Credentials:
+    """Build a Credentials object from the static access token."""
+    config = get_oauth_config()
+    return Credentials(token=config.static_access_token)
 
 
 # --- Centralized Google Service Authentication ---

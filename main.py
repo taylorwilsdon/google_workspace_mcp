@@ -6,7 +6,7 @@ import sys
 from importlib import metadata, import_module
 from dotenv import load_dotenv
 
-from auth.oauth_config import reload_oauth_config, is_stateless_mode
+from auth.oauth_config import reload_oauth_config, is_stateless_mode, get_oauth_config
 from core.log_formatter import EnhancedLogFormatter, configure_file_logging
 from core.utils import check_credentials_directory_permissions
 from core.server import server, set_transport_mode, configure_server_for_http
@@ -153,20 +153,27 @@ def main():
         else "Invalid or too short"
     )
 
-    config_vars = {
-        "GOOGLE_OAUTH_CLIENT_ID": os.getenv("GOOGLE_OAUTH_CLIENT_ID", "Not Set"),
-        "GOOGLE_OAUTH_CLIENT_SECRET": redacted_secret,
-        "USER_GOOGLE_EMAIL": os.getenv("USER_GOOGLE_EMAIL", "Not Set"),
-        "MCP_SINGLE_USER_MODE": os.getenv("MCP_SINGLE_USER_MODE", "false"),
-        "MCP_ENABLE_OAUTH21": os.getenv("MCP_ENABLE_OAUTH21", "false"),
-        "WORKSPACE_MCP_STATELESS_MODE": os.getenv(
-            "WORKSPACE_MCP_STATELESS_MODE", "false"
-        ),
-        "OAUTHLIB_INSECURE_TRANSPORT": os.getenv(
-            "OAUTHLIB_INSECURE_TRANSPORT", "false"
-        ),
-        "GOOGLE_CLIENT_SECRET_PATH": os.getenv("GOOGLE_CLIENT_SECRET_PATH", "Not Set"),
-    }
+    # Show different config vars based on mode
+    oauth_config = get_oauth_config()
+    if oauth_config.is_static_token_mode():
+        config_vars = {
+            "GOOGLE_ACCESS_TOKEN": "***SET***",
+        }
+    else:
+        config_vars = {
+            "GOOGLE_OAUTH_CLIENT_ID": os.getenv("GOOGLE_OAUTH_CLIENT_ID", "Not Set"),
+            "GOOGLE_OAUTH_CLIENT_SECRET": redacted_secret,
+            "USER_GOOGLE_EMAIL": os.getenv("USER_GOOGLE_EMAIL", "Not Set"),
+            "MCP_SINGLE_USER_MODE": os.getenv("MCP_SINGLE_USER_MODE", "false"),
+            "MCP_ENABLE_OAUTH21": os.getenv("MCP_ENABLE_OAUTH21", "false"),
+            "WORKSPACE_MCP_STATELESS_MODE": os.getenv(
+                "WORKSPACE_MCP_STATELESS_MODE", "false"
+            ),
+            "OAUTHLIB_INSECURE_TRANSPORT": os.getenv(
+                "OAUTHLIB_INSECURE_TRANSPORT", "false"
+            ),
+            "GOOGLE_CLIENT_SECRET_PATH": os.getenv("GOOGLE_CLIENT_SECRET_PATH", "Not Set"),
+        }
 
     for key, value in config_vars.items():
         safe_print(f"   - {key}: {value}")
@@ -274,8 +281,8 @@ def main():
         safe_print("🔐 Single-user mode enabled")
         safe_print("")
 
-    # Check credentials directory permissions before starting (skip in stateless mode)
-    if not is_stateless_mode():
+    # Check credentials directory permissions before starting (skip in stateless/static token mode)
+    if not is_stateless_mode() and not oauth_config.is_static_token_mode():
         try:
             safe_print("🔍 Checking credentials directory permissions...")
             check_credentials_directory_permissions()
@@ -288,8 +295,28 @@ def main():
             )
             logger.error(f"Failed credentials directory permission check: {e}")
             sys.exit(1)
+    elif oauth_config.is_static_token_mode():
+        safe_print("🔍 Skipping credentials directory check (static token mode)")
+        safe_print("")
     else:
         safe_print("🔍 Skipping credentials directory check (stateless mode)")
+        safe_print("")
+
+    # Validate static token at startup
+    if oauth_config.is_static_token_mode():
+        safe_print("🔑 Static token mode enabled")
+        safe_print("   Validating access token...")
+        try:
+            import asyncio
+            from auth.google_auth import validate_static_token
+
+            user_email = asyncio.run(validate_static_token())
+            safe_print(f"   ✅ Token validated for: {user_email}")
+            safe_print("   ⚠️  Note: Token refresh is handled externally")
+        except Exception as e:
+            safe_print(f"   ❌ Token validation failed: {e}")
+            logger.error(f"Static token validation failed: {e}")
+            sys.exit(1)
         safe_print("")
 
     try:
@@ -306,21 +333,24 @@ def main():
         else:
             safe_print("")
             safe_print("🚀 Starting STDIO server")
-            # Start minimal OAuth callback server for stdio mode
-            from auth.oauth_callback_server import ensure_oauth_callback_available
+            # Start minimal OAuth callback server for stdio mode (skip in static token mode)
+            if not oauth_config.is_static_token_mode():
+                from auth.oauth_callback_server import ensure_oauth_callback_available
 
-            success, error_msg = ensure_oauth_callback_available(
-                "stdio", port, base_uri
-            )
-            if success:
-                safe_print(
-                    f"   OAuth callback server started on {display_url}/oauth2callback"
+                success, error_msg = ensure_oauth_callback_available(
+                    "stdio", port, base_uri
                 )
+                if success:
+                    safe_print(
+                        f"   OAuth callback server started on {display_url}/oauth2callback"
+                    )
+                else:
+                    warning_msg = "   ⚠️  Warning: Failed to start OAuth callback server"
+                    if error_msg:
+                        warning_msg += f": {error_msg}"
+                    safe_print(warning_msg)
             else:
-                warning_msg = "   ⚠️  Warning: Failed to start OAuth callback server"
-                if error_msg:
-                    warning_msg += f": {error_msg}"
-                safe_print(warning_msg)
+                safe_print("   OAuth callback server skipped (static token mode)")
 
         safe_print("✅ Ready for MCP connections")
         safe_print("")
