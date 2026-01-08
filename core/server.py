@@ -359,13 +359,14 @@ def configure_server_for_http():
                     redirect_path=config.redirect_path,
                     required_scopes=required_scopes,
                 )
-                # Disable protocol-level auth, expect bearer tokens in tool calls
-                server.auth = None
+                # Enable protocol-level auth for 401 responses on unauthenticated requests
+                # ExternalOAuthProvider.verify_token() will accept ya29.* tokens from external OAuth
+                server.auth = provider
                 logger.info(
-                    "OAuth 2.1 enabled with EXTERNAL provider mode - protocol-level auth disabled"
+                    "OAuth 2.1 enabled with EXTERNAL provider mode - protocol-level auth ENABLED"
                 )
                 logger.info(
-                    "Expecting Authorization bearer tokens in tool call headers"
+                    "Server returns 401 for unauthenticated requests, accepts ya29.* tokens"
                 )
             else:
                 # Standard OAuth 2.1 mode: use FastMCP's GoogleProvider
