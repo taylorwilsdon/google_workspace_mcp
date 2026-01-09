@@ -11,6 +11,8 @@ from typing import List, Dict, Any
 
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 
+from mcp.types import ToolAnnotations
+
 # Auth & server utilities
 from auth.service_decorator import require_google_service, require_multiple_services
 from core.utils import extract_office_xml_text, handle_http_errors
@@ -49,7 +51,12 @@ import json
 logger = logging.getLogger(__name__)
 
 
-@server.tool()
+@server.tool(
+    annotations=ToolAnnotations(
+        title="Search Docs",
+        readOnlyHint=True,
+    ),
+)
 @handle_http_errors("search_docs", is_read_only=True, service_type="docs")
 @require_google_service("drive", "drive_read")
 async def search_docs(
@@ -91,7 +98,12 @@ async def search_docs(
     return "\n".join(output)
 
 
-@server.tool()
+@server.tool(
+    annotations=ToolAnnotations(
+        title="Get Doc Content",
+        readOnlyHint=True,
+    ),
+)
 @handle_http_errors("get_doc_content", is_read_only=True, service_type="docs")
 @require_multiple_services(
     [
@@ -276,7 +288,12 @@ async def get_doc_content(
     return header + body_text
 
 
-@server.tool()
+@server.tool(
+    annotations=ToolAnnotations(
+        title="List Docs in Folder",
+        readOnlyHint=True,
+    ),
+)
 @handle_http_errors("list_docs_in_folder", is_read_only=True, service_type="docs")
 @require_google_service("drive", "drive_read")
 async def list_docs_in_folder(
@@ -314,7 +331,12 @@ async def list_docs_in_folder(
     return "\n".join(out)
 
 
-@server.tool()
+@server.tool(
+    annotations=ToolAnnotations(
+        title="Create Doc",
+        destructiveHint=False,
+    ),
+)
 @handle_http_errors("create_doc", service_type="docs")
 @require_google_service("docs", "docs_write")
 async def create_doc(
@@ -350,7 +372,12 @@ async def create_doc(
     return msg
 
 
-@server.tool()
+@server.tool(
+    annotations=ToolAnnotations(
+        title="Modify Doc Text",
+        destructiveHint=True,
+    ),
+)
 @handle_http_errors("modify_doc_text", service_type="docs")
 @require_google_service("docs", "docs_write")
 async def modify_doc_text(
@@ -559,7 +586,12 @@ async def modify_doc_text(
     return f"{operation_summary} in document {document_id}.{text_info} Link: {link}"
 
 
-@server.tool()
+@server.tool(
+    annotations=ToolAnnotations(
+        title="Find and Replace in Doc",
+        destructiveHint=True,
+    ),
+)
 @handle_http_errors("find_and_replace_doc", service_type="docs")
 @require_google_service("docs", "docs_write")
 async def find_and_replace_doc(
@@ -606,7 +638,12 @@ async def find_and_replace_doc(
     return f"Replaced {replacements} occurrence(s) of '{find_text}' with '{replace_text}' in document {document_id}. Link: {link}"
 
 
-@server.tool()
+@server.tool(
+    annotations=ToolAnnotations(
+        title="Insert Doc Elements",
+        destructiveHint=True,
+    ),
+)
 @handle_http_errors("insert_doc_elements", service_type="docs")
 @require_google_service("docs", "docs_write")
 async def insert_doc_elements(
@@ -688,7 +725,12 @@ async def insert_doc_elements(
     return f"Inserted {description} at index {index} in document {document_id}. Link: {link}"
 
 
-@server.tool()
+@server.tool(
+    annotations=ToolAnnotations(
+        title="Insert Doc Image",
+        destructiveHint=True,
+    ),
+)
 @handle_http_errors("insert_doc_image", service_type="docs")
 @require_multiple_services(
     [
@@ -780,7 +822,12 @@ async def insert_doc_image(
     return f"Inserted {source_description}{size_info} at index {index} in document {document_id}. Link: {link}"
 
 
-@server.tool()
+@server.tool(
+    annotations=ToolAnnotations(
+        title="Update Doc Headers/Footers",
+        destructiveHint=True,
+    ),
+)
 @handle_http_errors("update_doc_headers_footers", service_type="docs")
 @require_google_service("docs", "docs_write")
 async def update_doc_headers_footers(
@@ -837,7 +884,12 @@ async def update_doc_headers_footers(
         return f"Error: {message}"
 
 
-@server.tool()
+@server.tool(
+    annotations=ToolAnnotations(
+        title="Batch Update Doc",
+        destructiveHint=True,
+    ),
+)
 @handle_http_errors("batch_update_doc", service_type="docs")
 @require_google_service("docs", "docs_write")
 async def batch_update_doc(
@@ -894,7 +946,12 @@ async def batch_update_doc(
         return f"Error: {message}"
 
 
-@server.tool()
+@server.tool(
+    annotations=ToolAnnotations(
+        title="Inspect Doc Structure",
+        readOnlyHint=True,
+    ),
+)
 @handle_http_errors("inspect_doc_structure", is_read_only=True, service_type="docs")
 @require_google_service("docs", "docs_read")
 async def inspect_doc_structure(
@@ -1022,7 +1079,12 @@ async def inspect_doc_structure(
     return f"Document structure analysis for {document_id}:\n\n{json.dumps(result, indent=2)}\n\nLink: {link}"
 
 
-@server.tool()
+@server.tool(
+    annotations=ToolAnnotations(
+        title="Create Table with Data",
+        destructiveHint=False,
+    ),
+)
 @handle_http_errors("create_table_with_data", service_type="docs")
 @require_google_service("docs", "docs_write")
 async def create_table_with_data(
@@ -1120,7 +1182,12 @@ async def create_table_with_data(
         return f"ERROR: {message}"
 
 
-@server.tool()
+@server.tool(
+    annotations=ToolAnnotations(
+        title="Debug Table Structure",
+        readOnlyHint=True,
+    ),
+)
 @handle_http_errors("debug_table_structure", is_read_only=True, service_type="docs")
 @require_google_service("docs", "docs_read")
 async def debug_table_structure(
@@ -1207,7 +1274,12 @@ async def debug_table_structure(
     return f"Table structure debug for table {table_index}:\n\n{json.dumps(debug_info, indent=2)}\n\nLink: {link}"
 
 
-@server.tool()
+@server.tool(
+    annotations=ToolAnnotations(
+        title="Export Doc to PDF",
+        destructiveHint=False,
+    ),
+)
 @handle_http_errors("export_doc_to_pdf", service_type="drive")
 @require_google_service("drive", "drive_file")
 async def export_doc_to_pdf(

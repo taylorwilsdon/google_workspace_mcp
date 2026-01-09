@@ -13,6 +13,8 @@ from googleapiclient.errors import HttpError  # type: ignore
 from mcp import Resource
 
 from auth.service_decorator import require_google_service
+from mcp.types import ToolAnnotations
+
 from core.server import server
 from core.utils import handle_http_errors
 
@@ -67,9 +69,14 @@ def _adjust_due_max_for_tasks_api(due_max: str) -> str:
     return adjusted.isoformat()
 
 
-@server.tool()  # type: ignore
-@require_google_service("tasks", "tasks_read")  # type: ignore
-@handle_http_errors("list_task_lists", service_type="tasks")  # type: ignore
+@server.tool(
+    annotations=ToolAnnotations(
+        title="List Task Lists",
+        readOnlyHint=True,
+    ),
+)
+@require_google_service("tasks", "tasks_read")
+@handle_http_errors("list_task_lists", service_type="tasks")
 async def list_task_lists(
     service: Resource,
     user_google_email: str,

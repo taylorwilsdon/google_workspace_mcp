@@ -11,6 +11,8 @@ import copy
 from typing import List, Optional, Union
 
 from auth.service_decorator import require_google_service
+from mcp.types import ToolAnnotations
+
 from core.server import server
 from core.utils import handle_http_errors, UserInputError
 from core.comments import create_comment_tools
@@ -957,7 +959,12 @@ async def create_spreadsheet(
     return text_output
 
 
-@server.tool()
+@server.tool(
+    annotations=ToolAnnotations(
+        title="Create Sheet",
+        destructiveHint=False,
+    ),
+)
 @handle_http_errors("create_sheet", service_type="sheets")
 @require_google_service("sheets", "sheets_write")
 async def create_sheet(

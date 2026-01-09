@@ -10,6 +10,8 @@ from typing import List, Dict, Any
 
 
 from auth.service_decorator import require_google_service
+from mcp.types import ToolAnnotations
+
 from core.server import server
 from core.utils import handle_http_errors
 from core.comments import create_comment_tools
@@ -17,7 +19,12 @@ from core.comments import create_comment_tools
 logger = logging.getLogger(__name__)
 
 
-@server.tool()
+@server.tool(
+    annotations=ToolAnnotations(
+        title="Create Presentation",
+        destructiveHint=False,
+    ),
+)
 @handle_http_errors("create_presentation", service_type="slides")
 @require_google_service("slides", "slides")
 async def create_presentation(

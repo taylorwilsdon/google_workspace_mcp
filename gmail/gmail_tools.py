@@ -16,6 +16,8 @@ from email.mime.text import MIMEText
 from fastapi import Body
 from pydantic import Field
 
+from mcp.types import ToolAnnotations
+
 from auth.service_decorator import require_google_service
 from core.utils import handle_http_errors
 from core.server import server
@@ -381,7 +383,12 @@ def _format_gmail_results_plain(
     return "\n".join(lines)
 
 
-@server.tool()
+@server.tool(
+    annotations=ToolAnnotations(
+        title="Search Gmail Messages",
+        readOnlyHint=True,
+    ),
+)
 @handle_http_errors("search_gmail_messages", is_read_only=True, service_type="gmail")
 @require_google_service("gmail", "gmail_read")
 async def search_gmail_messages(
@@ -445,7 +452,12 @@ async def search_gmail_messages(
     return formatted_output
 
 
-@server.tool()
+@server.tool(
+    annotations=ToolAnnotations(
+        title="Get Gmail Message Content",
+        readOnlyHint=True,
+    ),
+)
 @handle_http_errors(
     "get_gmail_message_content", is_read_only=True, service_type="gmail"
 )
@@ -545,7 +557,12 @@ async def get_gmail_message_content(
     return "\n".join(content_lines)
 
 
-@server.tool()
+@server.tool(
+    annotations=ToolAnnotations(
+        title="Get Gmail Messages Batch",
+        readOnlyHint=True,
+    ),
+)
 @handle_http_errors(
     "get_gmail_messages_content_batch", is_read_only=True, service_type="gmail"
 )
@@ -744,7 +761,12 @@ async def get_gmail_messages_content_batch(
     return final_output
 
 
-@server.tool()
+@server.tool(
+    annotations=ToolAnnotations(
+        title="Get Gmail Attachment",
+        readOnlyHint=True,
+    ),
+)
 @handle_http_errors(
     "get_gmail_attachment_content", is_read_only=True, service_type="gmail"
 )
@@ -891,7 +913,12 @@ async def get_gmail_attachment_content(
         return "\n".join(result_lines)
 
 
-@server.tool()
+@server.tool(
+    annotations=ToolAnnotations(
+        title="Send Gmail Message",
+        destructiveHint=False,
+    ),
+)
 @handle_http_errors("send_gmail_message", service_type="gmail")
 @require_google_service("gmail", GMAIL_SEND_SCOPE)
 async def send_gmail_message(
@@ -997,7 +1024,12 @@ async def send_gmail_message(
     return f"Email sent! Message ID: {message_id}"
 
 
-@server.tool()
+@server.tool(
+    annotations=ToolAnnotations(
+        title="Draft Gmail Message",
+        destructiveHint=False,
+    ),
+)
 @handle_http_errors("draft_gmail_message", service_type="gmail")
 @require_google_service("gmail", GMAIL_COMPOSE_SCOPE)
 async def draft_gmail_message(
@@ -1192,7 +1224,12 @@ def _format_thread_content(thread_data: dict, thread_id: str) -> str:
     return "\n".join(content_lines)
 
 
-@server.tool()
+@server.tool(
+    annotations=ToolAnnotations(
+        title="Get Gmail Thread Content",
+        readOnlyHint=True,
+    ),
+)
 @require_google_service("gmail", "gmail_read")
 @handle_http_errors("get_gmail_thread_content", is_read_only=True, service_type="gmail")
 async def get_gmail_thread_content(
@@ -1220,7 +1257,12 @@ async def get_gmail_thread_content(
     return _format_thread_content(thread_response, thread_id)
 
 
-@server.tool()
+@server.tool(
+    annotations=ToolAnnotations(
+        title="Get Gmail Threads Batch",
+        readOnlyHint=True,
+    ),
+)
 @require_google_service("gmail", "gmail_read")
 @handle_http_errors(
     "get_gmail_threads_content_batch", is_read_only=True, service_type="gmail"
@@ -1329,7 +1371,12 @@ async def get_gmail_threads_content_batch(
     return header + "\n\n" + "\n---\n\n".join(output_threads)
 
 
-@server.tool()
+@server.tool(
+    annotations=ToolAnnotations(
+        title="List Gmail Labels",
+        readOnlyHint=True,
+    ),
+)
 @handle_http_errors("list_gmail_labels", is_read_only=True, service_type="gmail")
 @require_google_service("gmail", "gmail_read")
 async def list_gmail_labels(service, user_google_email: str) -> str:
@@ -1377,7 +1424,12 @@ async def list_gmail_labels(service, user_google_email: str) -> str:
     return "\n".join(lines)
 
 
-@server.tool()
+@server.tool(
+    annotations=ToolAnnotations(
+        title="Manage Gmail Label",
+        destructiveHint=True,
+    ),
+)
 @handle_http_errors("manage_gmail_label", service_type="gmail")
 @require_google_service("gmail", GMAIL_LABELS_SCOPE)
 async def manage_gmail_label(
@@ -1456,7 +1508,12 @@ async def manage_gmail_label(
         return f"Label '{label_name}' (ID: {label_id}) deleted successfully!"
 
 
-@server.tool()
+@server.tool(
+    annotations=ToolAnnotations(
+        title="List Gmail Filters",
+        readOnlyHint=True,
+    ),
+)
 @handle_http_errors("list_gmail_filters", is_read_only=True, service_type="gmail")
 @require_google_service("gmail", "gmail_settings_basic")
 async def list_gmail_filters(service, user_google_email: str) -> str:
@@ -1534,7 +1591,12 @@ async def list_gmail_filters(service, user_google_email: str) -> str:
     return "\n".join(lines).rstrip()
 
 
-@server.tool()
+@server.tool(
+    annotations=ToolAnnotations(
+        title="Create Gmail Filter",
+        destructiveHint=False,
+    ),
+)
 @handle_http_errors("create_gmail_filter", service_type="gmail")
 @require_google_service("gmail", "gmail_settings_basic")
 async def create_gmail_filter(
@@ -1574,7 +1636,12 @@ async def create_gmail_filter(
     return f"Filter created successfully!\nFilter ID: {filter_id}"
 
 
-@server.tool()
+@server.tool(
+    annotations=ToolAnnotations(
+        title="Delete Gmail Filter",
+        destructiveHint=True,
+    ),
+)
 @handle_http_errors("delete_gmail_filter", service_type="gmail")
 @require_google_service("gmail", "gmail_settings_basic")
 async def delete_gmail_filter(
@@ -1613,7 +1680,12 @@ async def delete_gmail_filter(
     )
 
 
-@server.tool()
+@server.tool(
+    annotations=ToolAnnotations(
+        title="Modify Gmail Message Labels",
+        destructiveHint=True,
+    ),
+)
 @handle_http_errors("modify_gmail_message_labels", service_type="gmail")
 @require_google_service("gmail", GMAIL_MODIFY_SCOPE)
 async def modify_gmail_message_labels(
@@ -1669,7 +1741,12 @@ async def modify_gmail_message_labels(
     return f"Message labels updated successfully!\nMessage ID: {message_id}\n{'; '.join(actions)}"
 
 
-@server.tool()
+@server.tool(
+    annotations=ToolAnnotations(
+        title="Batch Modify Gmail Labels",
+        destructiveHint=True,
+    ),
+)
 @handle_http_errors("batch_modify_gmail_message_labels", service_type="gmail")
 @require_google_service("gmail", GMAIL_MODIFY_SCOPE)
 async def batch_modify_gmail_message_labels(
