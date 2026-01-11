@@ -681,6 +681,63 @@ async def create_drive_file(
 
 
 @server.tool()
+@handle_http_errors("create_drive_folder", service_type="drive")
+@require_google_service("drive", "drive_file")
+async def create_drive_folder(
+    service,
+    user_google_email: str,
+    folder_name: str,
+    parent_folder_id: str = "root",
+    description: Optional[str] = None,
+) -> str:
+    """
+    Creates a new folder in Google Drive, supporting creation within shared drives.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        folder_name (str): The name for the new folder.
+        parent_folder_id (str): The ID of the parentfolder. Defaults to 'root'. For shared drives, this must be a folder ID within the shared drive.
+        description (Optional[str]): Optional description for the folder.
+
+    Returns:
+        str: Confirmation message of the successful folder creation with folder link.
+    """
+    logger.info(
+        f"[create_drive_folder] Invoked. Email: '{user_google_email}', Folder Name: '{folder_name}', Parent ID: '{parent_folder_id}'"
+    )
+
+    resolved_parent_id = await resolve_folder_id(service, parent_folder_id)
+
+    folder_metadata = {
+        "name": folder_name,
+        "mimeType": "application/vnd.google-apps.folder",
+        "parents": [resolved_parent_id],
+    }
+
+    if description:
+        folder_metadata["description"] = description
+
+    created_folder = await asyncio.to_thread(
+        service.files()
+        .create(
+            body=folder_metadata,
+            fields="id, name, webViewLink",
+            supportsAllDrives=True,
+        )
+        .execute
+    )
+
+    link = created_folder.get("webViewLink", "No link available")
+    confirmation_message = (
+        f"Successfully created folder '{created_folder.get('name', folder_name)}' "
+        f"(ID: {created_folder.get('id', 'N/A')}) "
+        f"in parent folder '{parent_folder_id}' for {user_google_email}. Link: {link}"
+    )
+    logger.info(f"Successfully created folder. Link: {link}")
+    return confirmation_message
+
+
+@server.tool()
 @handle_http_errors(
     "get_drive_file_permissions", is_read_only=True, service_type="drive"
 )
