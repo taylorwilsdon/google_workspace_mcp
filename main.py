@@ -302,21 +302,10 @@ def main():
         safe_print("🔍 Skipping credentials directory check (stateless mode)")
         safe_print("")
 
-    # Validate static token at startup
+    # Static token mode notification
     if oauth_config.is_static_token_mode():
         safe_print("🔑 Static token mode enabled")
-        safe_print("   Validating access token...")
-        try:
-            import asyncio
-            from auth.google_auth import validate_static_token
-
-            user_email = asyncio.run(validate_static_token())
-            safe_print(f"   ✅ Token validated for: {user_email}")
-            safe_print("   ⚠️  Note: Token refresh is handled externally")
-        except Exception as e:
-            safe_print(f"   ❌ Token validation failed: {e}")
-            logger.error(f"Static token validation failed: {e}")
-            sys.exit(1)
+        safe_print("   ⚠️  Note: Token refresh is handled externally")
         safe_print("")
 
     try:

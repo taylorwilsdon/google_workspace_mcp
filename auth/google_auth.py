@@ -35,10 +35,6 @@ except ImportError:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Static token mode state (set during startup validation)
-_static_token_user_email: Optional[str] = None
-
-
 # Constants
 def get_default_credentials_dir():
     """Get the default credentials directory path, preferring user-specific locations."""
@@ -782,50 +778,6 @@ def get_user_info(credentials: Credentials) -> Optional[Dict[str, Any]]:
     except Exception as e:
         logger.error(f"Unexpected error fetching user info: {e}")
         return None
-
-
-async def validate_static_token() -> str:
-    """
-    Validate the static access token and return the user's email.
-    Called once at startup when GOOGLE_ACCESS_TOKEN is set.
-
-    Returns:
-        The user's email address from the token.
-
-    Raises:
-        ValueError: If token is invalid or user info cannot be fetched.
-    """
-    global _static_token_user_email
-
-    config = get_oauth_config()
-    token = config.static_access_token
-
-    if not token:
-        raise ValueError("No static access token configured")
-
-    logger.info("[static-token] Validating static access token...")
-
-    # Create credentials object from the token
-    credentials = Credentials(token=token)
-
-    # Fetch user info to validate the token
-    user_info = get_user_info(credentials)
-
-    if not user_info or "email" not in user_info:
-        raise ValueError(
-            "Static access token is invalid or lacks required scopes. "
-            "Ensure the token has userinfo.email scope."
-        )
-
-    _static_token_user_email = user_info["email"]
-    logger.info(f"[static-token] Token validated for user: {_static_token_user_email}")
-
-    return _static_token_user_email
-
-
-def get_static_token_user_email() -> Optional[str]:
-    """Get the email associated with the static access token."""
-    return _static_token_user_email
 
 
 def _build_static_credentials() -> Credentials:
