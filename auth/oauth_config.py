@@ -62,6 +62,20 @@ class OAuthConfig:
                 "WORKSPACE_MCP_STATELESS_MODE requires MCP_ENABLE_OAUTH21=true"
             )
 
+        # Static access token mode (bypasses OAuth entirely)
+        self._static_access_token = os.environ.get("GOOGLE_ACCESS_TOKEN")
+
+        # Validate mutual exclusivity
+        if self._static_access_token:
+            if self.oauth21_enabled:
+                raise ValueError(
+                    "GOOGLE_ACCESS_TOKEN cannot be used with MCP_ENABLE_OAUTH21=true"
+                )
+            if self.external_oauth21_provider:
+                raise ValueError(
+                    "GOOGLE_ACCESS_TOKEN cannot be used with EXTERNAL_OAUTH21_PROVIDER=true"
+                )
+
         # Transport mode (will be set at runtime)
         self._transport_mode = "stdio"  # Default
 
@@ -264,6 +278,15 @@ class OAuthConfig:
         """
         return self.external_oauth21_provider
 
+    @property
+    def static_access_token(self) -> Optional[str]:
+        """Google access token provided via environment (bypasses OAuth)."""
+        return self._static_access_token
+
+    def is_static_token_mode(self) -> bool:
+        """Check if static token mode is enabled."""
+        return self._static_access_token is not None
+
     def detect_oauth_version(self, request_params: Dict[str, Any]) -> str:
         """
         Detect OAuth version based on request parameters.
@@ -436,3 +459,8 @@ def is_stateless_mode() -> bool:
 def is_external_oauth21_provider() -> bool:
     """Check if external OAuth 2.1 provider mode is enabled."""
     return get_oauth_config().is_external_oauth21_provider()
+
+
+def is_static_token_mode() -> bool:
+    """Check if static token mode is enabled."""
+    return get_oauth_config().is_static_token_mode()

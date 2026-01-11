@@ -35,7 +35,6 @@ except ImportError:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
 # Constants
 def get_default_credentials_dir():
     """Get the default credentials directory path, preferring user-specific locations."""
@@ -323,6 +322,15 @@ async def start_auth_flow(
     Raises:
         Exception: If the OAuth flow cannot be initiated.
     """
+    # Static token mode - OAuth flow not available
+    config = get_oauth_config()
+    if config.is_static_token_mode():
+        raise GoogleAuthenticationError(
+            "OAuth flow not available in static token mode. "
+            "The configured GOOGLE_ACCESS_TOKEN may be invalid or expired. "
+            "Please provide a fresh token via the environment variable."
+        )
+
     initial_email_provided = bool(
         user_google_email
         and user_google_email.strip()
@@ -544,6 +552,12 @@ def get_credentials(
     Returns:
         Valid Credentials object or None.
     """
+    # Static token mode - return pre-validated credentials
+    config = get_oauth_config()
+    if config.is_static_token_mode():
+        logger.debug("[get_credentials] Static token mode - using pre-validated token")
+        return _build_static_credentials()
+
     # First, try OAuth 2.1 session store if we have a session_id (FastMCP session)
     if session_id:
         try:
@@ -764,6 +778,12 @@ def get_user_info(credentials: Credentials) -> Optional[Dict[str, Any]]:
     except Exception as e:
         logger.error(f"Unexpected error fetching user info: {e}")
         return None
+
+
+def _build_static_credentials() -> Credentials:
+    """Build a Credentials object from the static access token."""
+    config = get_oauth_config()
+    return Credentials(token=config.static_access_token)
 
 
 # --- Centralized Google Service Authentication ---
