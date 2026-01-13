@@ -5,6 +5,7 @@ import json
 import jwt
 import logging
 import os
+import webbrowser
 
 from typing import List, Optional, Tuple, Dict, Any
 from urllib.parse import parse_qs, urlparse
@@ -304,13 +305,139 @@ def create_oauth_flow(
 # --- Core OAuth Logic ---
 
 
+def _is_auto_browser_disabled() -> bool:
+    """Check if browser auto-open is disabled via environment variable."""
+    return os.getenv("GOOGLE_MCP_DISABLE_AUTO_BROWSER", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
+def _try_open_browser(auth_url: str, user_display_name: str, oauth_state: str) -> bool:
+    """
+    Attempt to open the browser for OAuth authentication.
+
+    Args:
+        auth_url: The OAuth authorization URL to open.
+        user_display_name: Display name for logging.
+        oauth_state: OAuth state for logging (first 8 chars used).
+
+    Returns:
+        True if browser was successfully opened, False otherwise.
+    """
+    if _is_auto_browser_disabled():
+        logger.info(
+            f"Auth flow started for {user_display_name}. "
+            f"State: {oauth_state[:8]}... Browser auto-open disabled. "
+            f"User should visit: {auth_url}"
+        )
+        return False
+
+    try:
+        opened = webbrowser.open(auth_url)
+        if opened:
+            logger.info(
+                f"Auth flow started for {user_display_name}. "
+                f"State: {oauth_state[:8]}... Browser auto-opened for authentication."
+            )
+        else:
+            logger.warning(
+                f"Auth flow started for {user_display_name}. "
+                f"State: {oauth_state[:8]}... Failed to auto-open browser."
+            )
+        return opened
+    except Exception as e:
+        logger.warning(
+            f"Auth flow started for {user_display_name}. "
+            f"State: {oauth_state[:8]}... Could not auto-open browser: {e}"
+        )
+        return False
+
+
+def _build_browser_opened_message(
+    user_display_name: str,
+    service_name: str,
+    auth_url: str,
+    email_provided: bool,
+    user_google_email: Optional[str],
+) -> str:
+    """Build the auth message when browser was successfully auto-opened."""
+    lines = [
+        f"**Google Authentication Required for {user_display_name}**\n",
+        "A browser window has been automatically opened for you to authorize this application.",
+        f"If the browser didn't open, [click here to authorize {service_name} access]({auth_url})\n",
+        "**After completing authorization in your browser:**",
+    ]
+
+    if email_provided:
+        lines.append(
+            "1. Complete the authorization in your browser, then **retry your original command**."
+        )
+    else:
+        lines.extend(
+            [
+                "1. Complete the authorization in your browser.",
+                "2. The browser page will display your authenticated email address.",
+                "3. **Provide that email address here**, then retry the original command with `user_google_email`.",
+            ]
+        )
+
+    lines.append(
+        f"\nThe application will use the new credentials. "
+        f"If '{user_google_email}' was provided, it must match the authenticated account."
+    )
+    return "\n".join(lines)
+
+
+def _build_manual_auth_message(
+    user_display_name: str,
+    service_name: str,
+    auth_url: str,
+    email_provided: bool,
+    user_google_email: Optional[str],
+) -> str:
+    """Build the auth message when browser was not auto-opened (manual flow)."""
+    lines = [
+        f"**ACTION REQUIRED: Google Authentication Needed for {user_display_name}**\n",
+        f"To proceed, the user must authorize this application for {service_name} access using all required permissions.",
+        "**LLM, please present this exact authorization URL to the user as a clickable hyperlink:**",
+        f"Authorization URL: {auth_url}",
+        f"Markdown for hyperlink: [Click here to authorize {service_name} access]({auth_url})\n",
+        "**LLM, after presenting the link, instruct the user as follows:**",
+        "1. Click the link and complete the authorization in their browser.",
+    ]
+
+    if email_provided:
+        lines.append(
+            "2. After successful authorization, **retry their original command**."
+        )
+    else:
+        lines.extend(
+            [
+                "2. After successful authorization, the browser page will display the authenticated email address.",
+                "   **LLM: Instruct the user to provide you with this email address.**",
+                "3. Once you have the email, **retry their original command, ensuring you include this `user_google_email`.**",
+            ]
+        )
+
+    lines.append(
+        f"\nThe application will use the new credentials. "
+        f"If '{user_google_email}' was provided, it must match the authenticated account."
+    )
+    return "\n".join(lines)
+
+
 async def start_auth_flow(
     user_google_email: Optional[str],
-    service_name: str,  # e.g., "Google Calendar", "Gmail" for user messages
-    redirect_uri: str,  # Added redirect_uri as a required parameter
+    service_name: str,
+    redirect_uri: str,
 ) -> str:
     """
     Initiates the Google OAuth flow and returns an actionable message for the user.
+
+    Automatically opens the user's browser to the OAuth consent page unless disabled
+    via the GOOGLE_MCP_DISABLE_AUTO_BROWSER environment variable.
 
     Args:
         user_google_email: The user's specified Google email, if provided.
@@ -323,42 +450,39 @@ async def start_auth_flow(
     Raises:
         Exception: If the OAuth flow cannot be initiated.
     """
-    initial_email_provided = bool(
+    email_provided = bool(
         user_google_email
         and user_google_email.strip()
         and user_google_email.lower() != "default"
     )
     user_display_name = (
-        f"{service_name} for '{user_google_email}'"
-        if initial_email_provided
-        else service_name
+        f"{service_name} for '{user_google_email}'" if email_provided else service_name
     )
 
     logger.info(
         f"[start_auth_flow] Initiating auth for {user_display_name} with scopes for enabled tools."
     )
 
-    # Note: Caller should ensure OAuth callback is available before calling this function
-
     try:
+        # Enable insecure transport for localhost development
         if "OAUTHLIB_INSECURE_TRANSPORT" not in os.environ and (
             "localhost" in redirect_uri or "127.0.0.1" in redirect_uri
-        ):  # Use passed redirect_uri
+        ):
             logger.warning(
                 "OAUTHLIB_INSECURE_TRANSPORT not set. Setting it for localhost/local development."
             )
             os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 
+        # Create OAuth flow and generate auth URL
         oauth_state = os.urandom(16).hex()
-
         flow = create_oauth_flow(
-            scopes=get_current_scopes(),  # Use scopes for enabled tools only
-            redirect_uri=redirect_uri,  # Use passed redirect_uri
+            scopes=get_current_scopes(),
+            redirect_uri=redirect_uri,
             state=oauth_state,
         )
-
         auth_url, _ = flow.authorization_url(access_type="offline", prompt="consent")
 
+        # Store OAuth state for callback validation
         session_id = None
         try:
             session_id = get_fastmcp_session_id()
@@ -370,41 +494,32 @@ async def start_auth_flow(
         store = get_oauth21_session_store()
         store.store_oauth_state(oauth_state, session_id=session_id)
 
-        logger.info(
-            f"Auth flow started for {user_display_name}. State: {oauth_state[:8]}... Advise user to visit: {auth_url}"
-        )
+        # Try to open browser and build appropriate message
+        browser_opened = _try_open_browser(auth_url, user_display_name, oauth_state)
 
-        message_lines = [
-            f"**ACTION REQUIRED: Google Authentication Needed for {user_display_name}**\n",
-            f"To proceed, the user must authorize this application for {service_name} access using all required permissions.",
-            "**LLM, please present this exact authorization URL to the user as a clickable hyperlink:**",
-            f"Authorization URL: {auth_url}",
-            f"Markdown for hyperlink: [Click here to authorize {service_name} access]({auth_url})\n",
-            "**LLM, after presenting the link, instruct the user as follows:**",
-            "1. Click the link and complete the authorization in their browser.",
-        ]
-        session_info_for_llm = ""
-
-        if not initial_email_provided:
-            message_lines.extend(
-                [
-                    f"2. After successful authorization{session_info_for_llm}, the browser page will display the authenticated email address.",
-                    "   **LLM: Instruct the user to provide you with this email address.**",
-                    "3. Once you have the email, **retry their original command, ensuring you include this `user_google_email`.**",
-                ]
+        if browser_opened:
+            return _build_browser_opened_message(
+                user_display_name,
+                service_name,
+                auth_url,
+                email_provided,
+                user_google_email,
             )
         else:
-            message_lines.append(
-                f"2. After successful authorization{session_info_for_llm}, **retry their original command**."
+            return _build_manual_auth_message(
+                user_display_name,
+                service_name,
+                auth_url,
+                email_provided,
+                user_google_email,
             )
 
-        message_lines.append(
-            f"\nThe application will use the new credentials. If '{user_google_email}' was provided, it must match the authenticated account."
-        )
-        return "\n".join(message_lines)
-
     except FileNotFoundError as e:
-        error_text = f"OAuth client credentials not found: {e}. Please either:\n1. Set environment variables: GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET\n2. Ensure '{CONFIG_CLIENT_SECRETS_PATH}' file exists"
+        error_text = (
+            f"OAuth client credentials not found: {e}. Please either:\n"
+            f"1. Set environment variables: GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET\n"
+            f"2. Ensure '{CONFIG_CLIENT_SECRETS_PATH}' file exists"
+        )
         logger.error(error_text, exc_info=True)
         raise Exception(error_text)
     except Exception as e:

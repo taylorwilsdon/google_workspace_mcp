@@ -171,6 +171,7 @@ uv run main.py --tools gmail drive
 | `MCP_ENABLE_OAUTH21` | Set to `true` for OAuth 2.1 support |
 | `EXTERNAL_OAUTH21_PROVIDER` | Set to `true` for external OAuth flow with bearer tokens (requires OAuth 2.1) |
 | `WORKSPACE_MCP_STATELESS_MODE` | Set to `true` for stateless operation (requires OAuth 2.1) |
+| `GOOGLE_MCP_DISABLE_AUTO_BROWSER` | Set to `true` to disable auto-opening browser for OAuth |
 
 </td></tr>
 </table>
