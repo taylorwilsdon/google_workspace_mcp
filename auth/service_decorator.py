@@ -315,29 +315,80 @@ def _extract_oauth21_user_email(
 
 
 def _extract_oauth20_user_email(
-    args: tuple, kwargs: dict, wrapper_sig: inspect.Signature
+    args: tuple, kwargs: dict, wrapper_sig: inspect.Signature, func_name: str = ""
 ) -> str:
     """
-    Extract user email for OAuth 2.0 mode from function arguments.
+    Extract user email for OAuth 2.0 mode with automatic detection.
+
+    BACKWARD COMPATIBILITY: The user_google_email parameter is kept for compatibility
+    with existing configurations, but is now effectively optional in single-account
+    setups. When only one Google account is authenticated, the email is auto-detected
+    and the provided parameter value is ignored.
+
+    Detection priority:
+    1. Auto-detect from credentials (if unambiguous - single account)
+    2. Fall back to provided user_google_email parameter (for multi-account setups)
+    3. Error with helpful message if neither works
+
+    This approach ensures:
+    - Existing tool configurations continue to work without modification
+    - New users don't need to configure USER_GOOGLE_EMAIL for single-account usage
+    - Multi-account users can still specify which account to use
 
     Args:
         args: Positional arguments passed to wrapper
         kwargs: Keyword arguments passed to wrapper
         wrapper_sig: Function signature for parameter binding
+        func_name: Name of the function being decorated (for error messages)
 
     Returns:
         User email string
 
     Raises:
-        Exception: If user_google_email parameter not found
+        Exception: If email cannot be determined (no credentials or ambiguous)
     """
+    from core.config import get_auto_detected_email, list_authenticated_emails
+
     bound_args = wrapper_sig.bind(*args, **kwargs)
     bound_args.apply_defaults()
 
     user_google_email = bound_args.arguments.get("user_google_email")
-    if not user_google_email:
-        raise Exception("'user_google_email' parameter is required but was not found.")
-    return user_google_email
+
+    # Priority 1: Attempt auto-detection first (works for single-account setups)
+    auto_detected = get_auto_detected_email()
+    if auto_detected:
+        if user_google_email and user_google_email != auto_detected and "@" in user_google_email:
+            logger.warning(
+                f"[{func_name}] User provided email '{user_google_email}' but using auto-detected "
+                f"single account '{auto_detected}' instead."
+            )
+        logger.info(f"[{func_name}] Auto-detected user email: {auto_detected}")
+        return auto_detected
+
+    # Priority 2: Fall back to provided email (for multi-account or explicit override)
+    if user_google_email and "@" in user_google_email:
+        logger.debug(
+            f"[{func_name}] Using provided user_google_email: {user_google_email}"
+        )
+        return user_google_email
+
+    # Neither worked - provide actionable error message
+    available_emails = list_authenticated_emails()
+
+    if not available_emails:
+        raise Exception(
+            f"'{func_name}' requires authentication. No stored credentials found.\n\n"
+            "To authenticate, use the 'start_google_auth' tool with your Google email address.\n"
+            "Example: start_google_auth(user_google_email='your.email@gmail.com', service_name='Gmail')"
+        )
+    else:
+        # Multiple credentials exist - user must specify which one
+        raise Exception(
+            f"'{func_name}' requires a 'user_google_email' parameter.\n\n"
+            f"Multiple authenticated accounts found: {', '.join(available_emails)}\n\n"
+            "Please specify which account to use by providing the 'user_google_email' parameter.\n"
+            f"Example: {func_name}(..., user_google_email='{available_emails[0]}')"
+        )
 
 
 def _remove_user_email_arg_from_docstring(docstring: str) -> str:
@@ -551,7 +602,7 @@ def require_google_service(
                 )
             else:
                 user_google_email = _extract_oauth20_user_email(
-                    args, kwargs, wrapper_sig
+                    args, kwargs, wrapper_sig, func.__name__
                 )
 
             # Get service configuration from the decorator's arguments
@@ -690,7 +741,7 @@ def require_multiple_services(service_configs: List[Dict[str, Any]]):
                 )
             else:
                 user_google_email = _extract_oauth20_user_email(
-                    args, kwargs, wrapper_sig
+                    args, kwargs, wrapper_sig, tool_name
                 )
 
             # Authenticate all services

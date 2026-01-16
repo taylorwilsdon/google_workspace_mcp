@@ -398,7 +398,7 @@ async def search_gmail_messages(
 
     Args:
         query (str): The search query. Supports standard Gmail search operators.
-        user_google_email (str): The user's Google email address. Required.
+        user_google_email (str): The user's Google email address. Required (but ignored if a single account is auto-detected).
         page_size (int): The maximum number of messages to return. Defaults to 10.
         page_token (Optional[str]): Token for retrieving the next page of results. Use the next_page_token from a previous response.
 
@@ -458,7 +458,7 @@ async def get_gmail_message_content(
 
     Args:
         message_id (str): The unique ID of the Gmail message to retrieve.
-        user_google_email (str): The user's Google email address. Required.
+        user_google_email (str): The user's Google email address. Required (but ignored if a single account is auto-detected).
 
     Returns:
         str: The message details including subject, sender, date, Message-ID, recipients (To, Cc), and body content.
@@ -562,7 +562,7 @@ async def get_gmail_messages_content_batch(
 
     Args:
         message_ids (List[str]): List of Gmail message IDs to retrieve (max 25 per batch).
-        user_google_email (str): The user's Google email address. Required.
+        user_google_email (str): The user's Google email address. Required (but ignored if a single account is auto-detected).
         format (Literal["full", "metadata"]): Message format. "full" includes body, "metadata" only headers.
 
     Returns:
@@ -761,7 +761,7 @@ async def get_gmail_attachment_content(
     Args:
         message_id (str): The ID of the Gmail message containing the attachment.
         attachment_id (str): The ID of the attachment to download.
-        user_google_email (str): The user's Google email address. Required.
+        user_google_email (str): The user's Google email address. Required (but ignored if a single account is auto-detected).
 
     Returns:
         str: Attachment metadata and base64-encoded content that can be decoded and saved.
@@ -926,7 +926,7 @@ async def send_gmail_message(
         body_format (Literal['plain', 'html']): Email body format. Defaults to 'plain'.
         cc (Optional[str]): Optional CC email address.
         bcc (Optional[str]): Optional BCC email address.
-        user_google_email (str): The user's Google email address. Required.
+        user_google_email (str): The user's Google email address. Required (but ignored if a single account is auto-detected).
         thread_id (Optional[str]): Optional Gmail thread ID to reply within. When provided, sends a reply.
         in_reply_to (Optional[str]): Optional Message-ID of the message being replied to. Used for proper threading.
         references (Optional[str]): Optional chain of Message-IDs for proper threading. Should include all previous Message-IDs.
@@ -1026,7 +1026,7 @@ async def draft_gmail_message(
     Creates a draft email in the user's Gmail account. Supports both new drafts and reply drafts.
 
     Args:
-        user_google_email (str): The user's Google email address. Required.
+        user_google_email (str): The user's Google email address. Required (but ignored if a single account is auto-detected).
         subject (str): Email subject.
         body (str): Email body (plain text).
         body_format (Literal['plain', 'html']): Email body format. Defaults to 'plain'.
@@ -1077,7 +1077,7 @@ async def draft_gmail_message(
         draft_gmail_message(
             subject="Re: Meeting tomorrow",
             body="<strong>Thanks for the update!</strong>",
-            body_format="html,
+            body_format="html",
             to="user@example.com",
             thread_id="thread_123",
             in_reply_to="<message123@gmail.com>",
@@ -1203,7 +1203,7 @@ async def get_gmail_thread_content(
 
     Args:
         thread_id (str): The unique ID of the Gmail thread to retrieve.
-        user_google_email (str): The user's Google email address. Required.
+        user_google_email (str): The user's Google email address. Required (but ignored if a single account is auto-detected).
 
     Returns:
         str: The complete thread content with all messages formatted for reading.
@@ -1236,7 +1236,7 @@ async def get_gmail_threads_content_batch(
 
     Args:
         thread_ids (List[str]): A list of Gmail thread IDs to retrieve. The function will automatically batch requests in chunks of 25.
-        user_google_email (str): The user's Google email address. Required.
+        user_google_email (str): The user's Google email address. Required (but ignored if a single account is auto-detected).
 
     Returns:
         str: A formatted list of thread contents with separators.
@@ -1337,7 +1337,7 @@ async def list_gmail_labels(service, user_google_email: str) -> str:
     Lists all labels in the user's Gmail account.
 
     Args:
-        user_google_email (str): The user's Google email address. Required.
+        user_google_email (str): The user's Google email address. Required (but ignored if a single account is auto-detected).
 
     Returns:
         str: A formatted list of all labels with their IDs, names, and types.
@@ -1393,7 +1393,7 @@ async def manage_gmail_label(
     Manages Gmail labels: create, update, or delete labels.
 
     Args:
-        user_google_email (str): The user's Google email address. Required.
+        user_google_email (str): The user's Google email address. Required (but ignored if a single account is auto-detected).
         action (Literal["create", "update", "delete"]): Action to perform on the label.
         name (Optional[str]): Label name. Required for create, optional for update.
         label_id (Optional[str]): Label ID. Required for update and delete operations.
@@ -1464,7 +1464,7 @@ async def list_gmail_filters(service, user_google_email: str) -> str:
     Lists all Gmail filters configured in the user's mailbox.
 
     Args:
-        user_google_email (str): The user's Google email address. Required.
+        user_google_email (str): The user's Google email address. Required (but ignored if a single account is auto-detected).
 
     Returns:
         str: A formatted list of filters with their criteria and actions.
@@ -1551,7 +1551,7 @@ async def create_gmail_filter(
     Creates a Gmail filter using the users.settings.filters API.
 
     Args:
-        user_google_email (str): The user's Google email address. Required.
+        user_google_email (str): The user's Google email address. Required (but ignored if a single account is auto-detected).
         criteria (Dict[str, Any]): Criteria for matching messages.
         action (Dict[str, Any]): Actions to apply to matched messages.
 
@@ -1586,7 +1586,7 @@ async def delete_gmail_filter(
     Deletes a Gmail filter by ID.
 
     Args:
-        user_google_email (str): The user's Google email address. Required.
+        user_google_email (str): The user's Google email address. Required (but ignored if a single account is auto-detected).
         filter_id (str): The ID of the filter to delete.
 
     Returns:
@@ -1633,7 +1633,7 @@ async def modify_gmail_message_labels(
     To delete an email, add the TRASH label.
 
     Args:
-        user_google_email (str): The user's Google email address. Required.
+        user_google_email (str): The user's Google email address. Required (but ignored if a single account is auto-detected).
         message_id (str): The ID of the message to modify.
         add_label_ids (Optional[List[str]]): List of label IDs to add to the message.
         remove_label_ids (Optional[List[str]]): List of label IDs to remove from the message.
@@ -1687,7 +1687,7 @@ async def batch_modify_gmail_message_labels(
     Adds or removes labels from multiple Gmail messages in a single batch request.
 
     Args:
-        user_google_email (str): The user's Google email address. Required.
+        user_google_email (str): The user's Google email address. Required (but ignored if a single account is auto-detected).
         message_ids (List[str]): A list of message IDs to modify.
         add_label_ids (Optional[List[str]]): List of label IDs to add to the messages.
         remove_label_ids (Optional[List[str]]): List of label IDs to remove from the messages.
