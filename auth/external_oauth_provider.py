@@ -5,6 +5,7 @@ Extends FastMCP's GoogleProvider to support external OAuth flows where
 access tokens (ya29.*) are issued by external systems and need validation.
 """
 
+import asyncio
 import logging
 import time
 from typing import Optional
@@ -19,15 +20,18 @@ logger = logging.getLogger(__name__)
 # Google's userinfo endpoint for token validation
 _GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
 
-# Reusable HTTP client — avoids creating a new SSL context per request
-_http_client: Optional[httpx.Client] = None
+# Reusable async HTTP client — avoids creating a new SSL context per request
+_http_client: Optional[httpx.AsyncClient] = None
+_http_client_lock = asyncio.Lock()
 
 
-def _get_http_client() -> httpx.Client:
-    """Get or create a reusable httpx client for token validation."""
+async def _get_http_client() -> httpx.AsyncClient:
+    """Get or create a reusable async httpx client for token validation."""
     global _http_client
     if _http_client is None or _http_client.is_closed:
-        _http_client = httpx.Client(timeout=10.0)
+        async with _http_client_lock:
+            if _http_client is None or _http_client.is_closed:
+                _http_client = httpx.AsyncClient(timeout=10.0)
     return _http_client
 
 
@@ -70,8 +74,8 @@ class ExternalOAuthProvider(GoogleProvider):
                 # Previously this used googleapiclient.discovery.build("oauth2", "v2")
                 # which created heavy httplib2.Http + SSL context + discovery doc
                 # objects on every call that were never closed, causing memory leaks.
-                client = _get_http_client()
-                response = client.get(
+                client = await _get_http_client()
+                response = await client.get(
                     _GOOGLE_USERINFO_URL,
                     headers={"Authorization": f"Bearer {token}"},
                 )
