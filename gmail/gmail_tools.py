@@ -1179,6 +1179,107 @@ async def manage_gmail_label(
 
 
 @server.tool()
+@handle_http_errors("manage_gmail_message", service_type="gmail")
+@require_google_service("gmail", GMAIL_MODIFY_SCOPE)
+async def manage_gmail_message(
+    service,
+    user_google_email: str,
+    action: Literal["trash", "untrash", "delete"],
+    target_type: Literal["message", "thread"] = "message",
+    message_id: Optional[str] = None,
+    thread_id: Optional[str] = None,
+) -> str:
+    """
+    Manages Gmail message/thread lifecycle: trash, untrash, and permanent delete operations.
+
+    Note: For label operations (archive, spam, important, star, read/unread), use modify_gmail_labels instead.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        action (Literal["trash", "untrash", "delete"]): Action to perform:
+            - "trash": Move to trash (recoverable within 30 days)
+            - "untrash": Restore from trash
+            - "delete": Permanently delete (WARNING: cannot be undone!)
+        target_type (Literal["message", "thread"]): Whether to operate on a message or thread. Defaults to "message".
+        message_id (Optional[str]): Message ID (required when target_type="message").
+        thread_id (Optional[str]): Thread ID (required when target_type="thread").
+
+    Returns:
+        str: Confirmation message of the action performed.
+
+    Examples:
+        # Move message to trash
+        manage_gmail_message(action="trash", target_type="message", message_id="msg123")
+
+        # Restore message from trash
+        manage_gmail_message(action="untrash", target_type="message", message_id="msg123")
+
+        # Permanently delete a message (use with caution!)
+        manage_gmail_message(action="delete", target_type="message", message_id="msg123")
+
+        # Trash entire thread
+        manage_gmail_message(action="trash", target_type="thread", thread_id="thread123")
+
+    Note:
+        For other operations, use modify_gmail_labels:
+        - Archive: modify_gmail_labels(operation="single", message_id="...", remove_label_ids=["INBOX"])
+        - Mark spam: modify_gmail_labels(operation="single", message_id="...", add_label_ids=["SPAM"])
+        - Star: modify_gmail_labels(operation="single", message_id="...", add_label_ids=["STARRED"])
+        - Mark important: modify_gmail_labels(operation="single", message_id="...", add_label_ids=["IMPORTANT"])
+        - Mark read: modify_gmail_labels(operation="single", message_id="...", remove_label_ids=["UNREAD"])
+    """
+    logger.info(
+        f"[manage_gmail_message] Action: {action}, Target: {target_type}, Email: '{user_google_email}'"
+    )
+
+    # Validate inputs
+    if target_type == "message" and not message_id:
+        raise ValueError("'message_id' is required when target_type='message'")
+    if target_type == "thread" and not thread_id:
+        raise ValueError("'thread_id' is required when target_type='thread'")
+
+    # Trash/untrash/delete actions use dedicated API endpoints
+    if action == "trash":
+        if target_type == "message":
+            await asyncio.to_thread(
+                service.users().messages().trash(userId="me", id=message_id).execute
+            )
+            return f"Message moved to trash successfully!\nMessage ID: {message_id}\nNote: Messages in trash are permanently deleted after 30 days."
+        else:  # thread
+            await asyncio.to_thread(
+                service.users().threads().trash(userId="me", id=thread_id).execute
+            )
+            return f"Thread moved to trash successfully!\nThread ID: {thread_id}\nNote: Threads in trash are permanently deleted after 30 days."
+
+    elif action == "untrash":
+        if target_type == "message":
+            await asyncio.to_thread(
+                service.users().messages().untrash(userId="me", id=message_id).execute
+            )
+            return f"Message restored from trash successfully!\nMessage ID: {message_id}"
+        else:  # thread
+            await asyncio.to_thread(
+                service.users().threads().untrash(userId="me", id=thread_id).execute
+            )
+            return f"Thread restored from trash successfully!\nThread ID: {thread_id}"
+
+    elif action == "delete":
+        if target_type == "message":
+            await asyncio.to_thread(
+                service.users().messages().delete(userId="me", id=message_id).execute
+            )
+            return f"⚠️ Message PERMANENTLY deleted!\nMessage ID: {message_id}\nWARNING: This action cannot be undone."
+        else:  # thread
+            await asyncio.to_thread(
+                service.users().threads().delete(userId="me", id=thread_id).execute
+            )
+            return f"⚠️ Thread PERMANENTLY deleted!\nThread ID: {thread_id}\nWARNING: This action cannot be undone."
+
+    else:
+        raise ValueError(f"Invalid action: {action}")
+
+
+@server.tool()
 @handle_http_errors("modify_gmail_labels", service_type="gmail")
 @require_google_service("gmail", GMAIL_MODIFY_SCOPE)
 async def modify_gmail_labels(
@@ -1192,8 +1293,14 @@ async def modify_gmail_labels(
 ) -> str:
     """
     Adds or removes labels from Gmail messages (single or batch).
-    To archive an email, remove the INBOX label.
-    To delete an email, add the TRASH label.
+
+    Common operations using system labels:
+    - Archive: Remove INBOX label (message stays in All Mail)
+    - Mark as spam: Add SPAM label
+    - Mark as important: Add IMPORTANT label
+    - Star: Add STARRED label
+    - Mark as read: Remove UNREAD label
+    - Mark as unread: Add UNREAD label
 
     Args:
         user_google_email (str): The user's Google email address. Required.
@@ -1207,19 +1314,47 @@ async def modify_gmail_labels(
         str: Confirmation message of the label changes applied.
 
     Examples:
-        # Modify labels on single message
+        # Archive a message (remove from inbox)
         modify_gmail_labels(
             operation="single",
             message_id="msg123",
-            add_label_ids=["Label_1"],
             remove_label_ids=["INBOX"]
         )
 
-        # Modify labels on multiple messages
+        # Mark as spam
+        modify_gmail_labels(
+            operation="single",
+            message_id="msg123",
+            add_label_ids=["SPAM"]
+        )
+
+        # Star and mark as important
+        modify_gmail_labels(
+            operation="single",
+            message_id="msg123",
+            add_label_ids=["STARRED", "IMPORTANT"]
+        )
+
+        # Mark as read
+        modify_gmail_labels(
+            operation="single",
+            message_id="msg123",
+            remove_label_ids=["UNREAD"]
+        )
+
+        # Archive multiple messages (batch operation)
         modify_gmail_labels(
             operation="batch",
-            message_ids=["msg1", "msg2"],
-            add_label_ids=["Label_1"]
+            message_ids=["msg1", "msg2", "msg3"],
+            remove_label_ids=["INBOX"]
+        )
+
+        # Add custom label and remove from inbox
+        modify_gmail_labels(
+            operation="single",
+            message_id="msg123",
+            add_label_ids=["Label_12345"],
+            remove_label_ids=["INBOX"]
         )
     """
     logger.info(

@@ -712,17 +712,12 @@ cp .env.oauth21 .env
 | Tool | Tier | Description |
 |------|------|-------------|
 | `search_gmail_messages` | **Core** | Search with Gmail operators |
-| `get_gmail_message_content` | **Core** | Retrieve message content |
-| `get_gmail_messages_content_batch` | **Core** | Batch retrieve message content |
-| `send_gmail_message` | **Core** | Send emails |
-| `get_gmail_thread_content` | Extended | Get full thread content |
-| `modify_gmail_message_labels` | Extended | Modify message labels |
-| `list_gmail_labels` | Extended | List available labels |
+| `get_gmail_content` | **Core** | Retrieve messages, threads, or attachments |
+| `send_gmail_message` | **Core** | Send emails with threading support |
+| `manage_gmail_message` | **Core** | Trash/untrash/delete messages & threads |
+| `modify_gmail_labels` | Extended | Archive, spam, star, read, labels (single/batch) |
 | `manage_gmail_label` | Extended | Create/update/delete labels |
-| `draft_gmail_message` | Extended | Create drafts |
-| `get_gmail_threads_content_batch` | Complete | Batch retrieve thread content |
-| `batch_modify_gmail_message_labels` | Complete | Batch modify labels |
-| `start_google_auth` | Complete | Initialize authentication |
+| `draft_gmail_message` | Extended | Create drafts with threading |
 
 </td>
 <td width="50%" valign="top">
