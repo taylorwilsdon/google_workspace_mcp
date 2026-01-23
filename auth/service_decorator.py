@@ -51,6 +51,23 @@ from auth.scopes import (
 logger = logging.getLogger(__name__)
 
 
+def _close_service(service: Any) -> None:
+    """Close a googleapiclient Resource's underlying httplib2 transport.
+
+    googleapiclient.discovery.build() creates an httplib2.Http instance with
+    SSL contexts and connection pools that are never explicitly released.
+    httplib2 has known reference cycles that prevent timely garbage collection,
+    causing memory to accumulate over the lifetime of the process. This helper
+    ensures the transport is closed after each tool invocation.
+    """
+    try:
+        http = getattr(service, "_http", None)
+        if http is not None and hasattr(http, "close"):
+            http.close()
+    except Exception:
+        pass
+
+
 # Authentication helper functions
 def _get_auth_context(
     tool_name: str,
@@ -634,6 +651,8 @@ def require_google_service(
                     e, actual_user_email, service_name
                 )
                 raise Exception(error_message)
+            finally:
+                _close_service(service)
 
         # Set the wrapper's signature to the one without 'service'
         wrapper.__signature__ = wrapper_sig
@@ -772,6 +791,11 @@ def require_multiple_services(service_configs: List[Dict[str, Any]]):
                     e, user_google_email, "Multiple Services"
                 )
                 raise Exception(error_message)
+            finally:
+                for config in service_configs:
+                    svc = kwargs.get(config["param_name"])
+                    if svc is not None:
+                        _close_service(svc)
 
         # Set the wrapper's signature
         wrapper.__signature__ = wrapper_sig

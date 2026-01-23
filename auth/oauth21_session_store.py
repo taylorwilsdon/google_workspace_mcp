@@ -744,23 +744,32 @@ def ensure_session_from_access_token(
         store_expiry = credentials.expiry
 
     if email:
-        try:
-            store = get_oauth21_session_store()
-            store.store_session(
-                user_email=email,
-                access_token=credentials.token,
-                refresh_token=credentials.refresh_token,
-                token_uri=credentials.token_uri,
-                client_id=credentials.client_id,
-                client_secret=credentials.client_secret,
-                scopes=credentials.scopes,
-                expiry=store_expiry,
-                session_id=f"google_{email}",
-                mcp_session_id=mcp_session_id,
-                issuer="https://accounts.google.com",
-            )
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.debug(f"Failed to cache credentials for {email}: {exc}")
+        # In external OAuth 2.1 mode, skip session storage entirely.
+        # The access token arrives fresh with every request from the external
+        # provider, there's no refresh_token, and the mcp_session_id is
+        # ephemeral (new UUID per request in stateless mode). Storing these
+        # transient tokens creates unbounded dict growth (memory leak) with
+        # entries that are never cleaned up or reused.
+        from auth.oauth_config import is_external_oauth21_provider
+
+        if not is_external_oauth21_provider():
+            try:
+                store = get_oauth21_session_store()
+                store.store_session(
+                    user_email=email,
+                    access_token=credentials.token,
+                    refresh_token=credentials.refresh_token,
+                    token_uri=credentials.token_uri,
+                    client_id=credentials.client_id,
+                    client_secret=credentials.client_secret,
+                    scopes=credentials.scopes,
+                    expiry=store_expiry,
+                    session_id=f"google_{email}",
+                    mcp_session_id=mcp_session_id,
+                    issuer="https://accounts.google.com",
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug(f"Failed to cache credentials for {email}: {exc}")
 
     return credentials
 
