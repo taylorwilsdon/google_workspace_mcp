@@ -64,8 +64,8 @@ def _close_service(service: Any) -> None:
         http = getattr(service, "_http", None)
         if http is not None and hasattr(http, "close"):
             http.close()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Failed to close google service HTTP transport: %s", exc)
 
 
 # Authentication helper functions
