@@ -681,6 +681,73 @@ async def create_drive_file(
 
 
 @server.tool()
+@handle_http_errors("copy_drive_file", is_read_only=False, service_type="drive")
+@require_google_service("drive", "drive_file")
+async def copy_drive_file(
+    service,
+    user_google_email: str,
+    file_id: str,
+    new_name: Optional[str] = None,
+    folder_id: Optional[str] = None,
+) -> str:
+    """
+    Creates a copy of a file in Google Drive.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        file_id (str): The ID of the file to copy. Required.
+        new_name (Optional[str]): Name for the copied file. If not provided, Google Drive will use "Copy of [original name]".
+        folder_id (Optional[str]): Destination folder ID. If not provided, the copy is placed in the same folder as the original.
+
+    Returns:
+        str: Confirmation with the new file's ID, name, and link.
+    """
+    logger.info(
+        f"[copy_drive_file] Invoked. Email: '{user_google_email}', File ID: '{file_id}', New name: '{new_name}', Folder ID: '{folder_id}'"
+    )
+
+    # Resolve the source file (handles shortcuts)
+    resolved_file_id, file_metadata = await resolve_drive_item(
+        service, file_id, extra_fields="name, parents"
+    )
+
+    original_name = file_metadata.get("name", "Unknown")
+
+    # Build copy metadata
+    copy_metadata = {}
+    if new_name:
+        copy_metadata["name"] = new_name
+    if folder_id:
+        resolved_folder_id = await resolve_folder_id(service, folder_id)
+        copy_metadata["parents"] = [resolved_folder_id]
+
+    # Execute the copy
+    copied_file = await asyncio.to_thread(
+        service.files()
+        .copy(
+            fileId=resolved_file_id,
+            body=copy_metadata if copy_metadata else None,
+            supportsAllDrives=True,
+            fields="id, name, webViewLink, parents",
+        )
+        .execute
+    )
+
+    output_parts = [
+        f"Successfully copied file for {user_google_email}.",
+        "",
+        f"Original: {original_name} (ID: {resolved_file_id})",
+        f"New file: {copied_file.get('name', 'Unknown')} (ID: {copied_file.get('id', 'N/A')})",
+        f"Link: {copied_file.get('webViewLink', 'N/A')}",
+    ]
+
+    logger.info(
+        f"[copy_drive_file] Successfully copied file. New ID: {copied_file.get('id')}"
+    )
+    return "\n".join(output_parts)
+
+
+@server.tool()
 @handle_http_errors(
     "get_drive_file_permissions", is_read_only=True, service_type="drive"
 )

@@ -27,6 +27,7 @@ drive:
     - get_drive_file_content
     - get_drive_file_download_url
     - create_drive_file
+    - copy_drive_file
     - share_drive_file
     - get_drive_shareable_link
   extended:
