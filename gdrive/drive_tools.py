@@ -225,7 +225,7 @@ async def get_drive_file_download_url(
 
     For Google native files (Docs, Sheets, Slides), exports to a useful format:
     • Google Docs → PDF (default) or DOCX if export_format='docx'
-    • Google Sheets → XLSX (default) or CSV if export_format='csv'
+    • Google Sheets → XLSX (default), PDF if export_format='pdf', or CSV if export_format='csv'
     • Google Slides → PDF (default) or PPTX if export_format='pptx'
 
     For other files, downloads the original file format.
@@ -236,6 +236,7 @@ async def get_drive_file_download_url(
         export_format: Optional export format for Google native files.
                       Options: 'pdf', 'docx', 'xlsx', 'csv', 'pptx'.
                       If not specified, uses sensible defaults (PDF for Docs/Slides, XLSX for Sheets).
+                      For Sheets: supports 'csv', 'pdf', or 'xlsx' (default).
 
     Returns:
         str: Download URL and file metadata. The file is available at the URL for 1 hour.
@@ -280,6 +281,11 @@ async def get_drive_file_download_url(
             output_mime_type = export_mime_type
             if not output_filename.endswith(".csv"):
                 output_filename = f"{Path(output_filename).stem}.csv"
+        elif export_format == "pdf":
+            export_mime_type = "application/pdf"
+            output_mime_type = export_mime_type
+            if not output_filename.endswith(".pdf"):
+                output_filename = f"{Path(output_filename).stem}.pdf"
         else:
             # Default to XLSX
             export_mime_type = (
@@ -1482,6 +1488,78 @@ async def remove_drive_permission(
         f"Successfully removed permission from '{file_metadata.get('name', 'Unknown')}'",
         "",
         f"Permission ID '{permission_id}' has been revoked.",
+    ]
+
+    return "\n".join(output_parts)
+
+
+@server.tool()
+@handle_http_errors("copy_drive_file", is_read_only=False, service_type="drive")
+@require_google_service("drive", "drive_file")
+async def copy_drive_file(
+    service,
+    user_google_email: str,
+    file_id: str,
+    new_name: Optional[str] = None,
+    parent_folder_id: str = "root",
+) -> str:
+    """
+    Creates a copy of an existing Google Drive file.
+
+    This tool copies the template document to a new location with an optional new name.
+    The copy maintains all formatting and content from the original file.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        file_id (str): The ID of the file to copy. Required.
+        new_name (Optional[str]): New name for the copied file. If not provided, uses "Copy of [original name]".
+        parent_folder_id (str): The ID of the folder where the copy should be created. Defaults to 'root' (My Drive).
+
+    Returns:
+        str: Confirmation message with details of the copied file and its link.
+    """
+    logger.info(
+        f"[copy_drive_file] Invoked. Email: '{user_google_email}', File ID: '{file_id}', New name: '{new_name}', Parent folder: '{parent_folder_id}'"
+    )
+
+    resolved_file_id, file_metadata = await resolve_drive_item(
+        service, file_id, extra_fields="name, webViewLink, mimeType"
+    )
+    file_id = resolved_file_id
+    original_name = file_metadata.get("name", "Unknown File")
+
+    resolved_folder_id = await resolve_folder_id(service, parent_folder_id)
+
+    copy_body = {}
+    if new_name:
+        copy_body["name"] = new_name
+    else:
+        copy_body["name"] = f"Copy of {original_name}"
+
+    if resolved_folder_id != "root":
+        copy_body["parents"] = [resolved_folder_id]
+
+    copied_file = await asyncio.to_thread(
+        service.files()
+        .copy(
+            fileId=file_id,
+            body=copy_body,
+            supportsAllDrives=True,
+            fields="id, name, webViewLink, mimeType, parents",
+        )
+        .execute
+    )
+
+    output_parts = [
+        f"Successfully copied '{original_name}'",
+        "",
+        f"Original file ID: {file_id}",
+        f"New file ID: {copied_file.get('id', 'N/A')}",
+        f"New file name: {copied_file.get('name', 'Unknown')}",
+        f"File type: {copied_file.get('mimeType', 'Unknown')}",
+        f"Location: {parent_folder_id}",
+        "",
+        f"View copied file: {copied_file.get('webViewLink', 'N/A')}",
     ]
 
     return "\n".join(output_parts)

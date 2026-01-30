@@ -1,0 +1,50 @@
+name: Check Maintainer Edits Enabled
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+jobs:
+  check-maintainer-edits:
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.head.repo.fork == true || github.event.pull_request.head.repo.full_name != github.repository
+
+    steps:
+      - name: Check if maintainer edits are enabled
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number
+            });
+
+            if (!pr.maintainer_can_modify) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: '⚠️ **Maintainer edits not enabled**\n\n' +
+                      'This repository requires that you enable "Allow edits from maintainers" for your pull request. This allows maintainers to make small fixes and improvements directly to your branch, which speeds up the review process.\n\n' +
+                      '**To enable this setting:**\n' +
+                      '1. Go to your pull request page\n' +
+                      '2. In the right sidebar, look for "Allow edits from maintainers"\n' +
+                      '3. Check the checkbox to enable it\n\n' +
+                      'Once you\'ve enabled this setting, this check will automatically pass. Thank you! 🙏'
+              });
+
+              core.setFailed('Maintainer edits must be enabled for this pull request');
+            } else {
+              console.log('✅ Maintainer edits are enabled');
+            }
+
+  check-maintainer-edits-internal:
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.head.repo.fork == false && github.event.pull_request.head.repo.full_name == github.repository
+
+    steps:
+      - name: Skip check for internal PRs
+        run: |
+          echo "✅ Skipping maintainer edits check for internal pull request"
+          echo "This check only applies to external contributors and forks"

@@ -141,7 +141,7 @@ export OAUTHLIB_INSECURE_TRANSPORT=1  # Development only
 
 **Comments:** `read_presentation_comments`, `create_presentation_comment`, `reply_to_presentation_comment`, `resolve_presentation_comment`
 
-### Google Forms (5 tools)
+### Google Forms (6 tools)
 
 | Tool | Tier | Description |
 |------|------|-------------|
@@ -150,6 +150,7 @@ export OAUTHLIB_INSECURE_TRANSPORT=1  # Development only
 | `list_form_responses` | Extended | List responses with pagination |
 | `set_publish_settings` | Complete | Configure template and authentication settings |
 | `get_form_response` | Complete | Get individual response details |
+| `batch_update_form` | Complete | Execute batch updates to forms (questions, items, settings) |
 
 ### Google Tasks (12 tools)
 

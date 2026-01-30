@@ -12,6 +12,7 @@ from typing import List, Optional
 from googleapiclient.errors import HttpError
 from .api_enablement import get_api_enablement_message
 from auth.google_auth import GoogleAuthenticationError
+from auth.oauth_config import is_oauth21_enabled, is_external_oauth21_provider
 
 logger = logging.getLogger(__name__)
 
@@ -314,10 +315,26 @@ def handle_http_errors(
                             )
                     elif error.resp.status in [401, 403]:
                         # Authentication/authorization errors
+                        if is_oauth21_enabled():
+                            if is_external_oauth21_provider():
+                                auth_hint = (
+                                    "LLM: Ask the user to provide a valid OAuth 2.1 "
+                                    "bearer token in the Authorization header and retry."
+                                )
+                            else:
+                                auth_hint = (
+                                    "LLM: Ask the user to authenticate via their MCP "
+                                    "client's OAuth 2.1 flow and retry."
+                                )
+                        else:
+                            auth_hint = (
+                                "LLM: Try 'start_google_auth' with the user's email "
+                                "and the appropriate service_name."
+                            )
                         message = (
                             f"API error in {tool_name}: {error}. "
                             f"You might need to re-authenticate for user '{user_google_email}'. "
-                            f"LLM: Try 'start_google_auth' with the user's email and the appropriate service_name."
+                            f"{auth_hint}"
                         )
                     else:
                         # Other HTTP errors (400 Bad Request, etc.) - don't suggest re-auth

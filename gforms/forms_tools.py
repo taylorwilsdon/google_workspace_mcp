@@ -6,7 +6,7 @@ This module provides MCP tools for interacting with Google Forms API.
 
 import logging
 import asyncio
-from typing import Optional, Dict, Any
+from typing import List, Optional, Dict, Any
 
 
 from auth.service_decorator import require_google_service
@@ -282,4 +282,98 @@ async def list_form_responses(
     logger.info(
         f"Successfully retrieved {len(responses)} responses for {user_google_email}. Form ID: {form_id}"
     )
+    return result
+
+
+# Internal implementation function for testing
+async def _batch_update_form_impl(
+    service: Any,
+    form_id: str,
+    requests: List[Dict[str, Any]],
+) -> str:
+    """Internal implementation for batch_update_form.
+
+    Applies batch updates to a Google Form using the Forms API batchUpdate method.
+
+    Args:
+        service: Google Forms API service client.
+        form_id: The ID of the form to update.
+        requests: List of update request dictionaries.
+
+    Returns:
+        Formatted string with batch update results.
+    """
+    body = {"requests": requests}
+
+    result = await asyncio.to_thread(
+        service.forms().batchUpdate(formId=form_id, body=body).execute
+    )
+
+    replies = result.get("replies", [])
+
+    confirmation_message = f"""Batch Update Completed:
+- Form ID: {form_id}
+- URL: https://docs.google.com/forms/d/{form_id}/edit
+- Requests Applied: {len(requests)}
+- Replies Received: {len(replies)}"""
+
+    if replies:
+        confirmation_message += "\n\nUpdate Results:"
+        for i, reply in enumerate(replies, 1):
+            if "createItem" in reply:
+                item_id = reply["createItem"].get("itemId", "Unknown")
+                question_ids = reply["createItem"].get("questionId", [])
+                question_info = (
+                    f" (Question IDs: {', '.join(question_ids)})"
+                    if question_ids
+                    else ""
+                )
+                confirmation_message += (
+                    f"\n  Request {i}: Created item {item_id}{question_info}"
+                )
+            else:
+                confirmation_message += f"\n  Request {i}: Operation completed"
+
+    return confirmation_message
+
+
+@server.tool()
+@handle_http_errors("batch_update_form", service_type="forms")
+@require_google_service("forms", "forms")
+async def batch_update_form(
+    service,
+    user_google_email: str,
+    form_id: str,
+    requests: List[Dict[str, Any]],
+) -> str:
+    """
+    Apply batch updates to a Google Form.
+
+    Supports adding, updating, and deleting form items, as well as updating
+    form metadata and settings. This is the primary method for modifying form
+    content after creation.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        form_id (str): The ID of the form to update.
+        requests (List[Dict[str, Any]]): List of update requests to apply.
+            Supported request types:
+            - createItem: Add a new question or content item
+            - updateItem: Modify an existing item
+            - deleteItem: Remove an item
+            - moveItem: Reorder an item
+            - updateFormInfo: Update form title/description
+            - updateSettings: Modify form settings (e.g., quiz mode)
+
+    Returns:
+        str: Details about the batch update operation results.
+    """
+    logger.info(
+        f"[batch_update_form] Invoked. Email: '{user_google_email}', "
+        f"Form ID: '{form_id}', Requests: {len(requests)}"
+    )
+
+    result = await _batch_update_form_impl(service, form_id, requests)
+
+    logger.info(f"Batch update completed successfully for {user_google_email}")
     return result

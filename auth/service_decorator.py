@@ -14,7 +14,11 @@ from auth.oauth21_session_store import (
     get_oauth21_session_store,
     ensure_session_from_access_token,
 )
-from auth.oauth_config import is_oauth21_enabled, get_oauth_config
+from auth.oauth_config import (
+    is_oauth21_enabled,
+    get_oauth_config,
+    is_external_oauth21_provider,
+)
 from core.context import set_fastmcp_session_id
 from auth.scopes import (
     GMAIL_READONLY_SCOPE,
@@ -90,8 +94,8 @@ def _get_auth_context(
         if mcp_session_id:
             set_fastmcp_session_id(mcp_session_id)
 
-        logger.debug(
-            f"[{tool_name}] Auth from middleware: {authenticated_user} via {auth_method}"
+        logger.info(
+            f"[{tool_name}] Auth from middleware: authenticated_user={authenticated_user}, auth_method={auth_method}, session_id={mcp_session_id}"
         )
         return authenticated_user, auth_method, mcp_session_id
 
@@ -118,6 +122,19 @@ def _detect_oauth_version(
             f"[{tool_name}] OAuth 2.1 mode: Using OAuth 2.1 for authenticated user '{authenticated_user}'"
         )
         return True
+
+    # If FastMCP protocol-level auth is enabled, a validated access token should
+    # be available even if middleware state wasn't populated.
+    try:
+        if get_access_token() is not None:
+            logger.info(
+                f"[{tool_name}] OAuth 2.1 mode: Using OAuth 2.1 based on validated access token"
+            )
+            return True
+    except Exception as e:
+        logger.debug(
+            f"[{tool_name}] Could not inspect access token for OAuth mode: {e}"
+        )
 
     # Only use version detection for unauthenticated requests
     config = get_oauth_config()
@@ -497,6 +514,26 @@ def _handle_token_refresh_error(
         )
 
         service_display_name = f"Google {service_name.title()}"
+        if is_oauth21_enabled():
+            if is_external_oauth21_provider():
+                oauth21_step = (
+                    "Provide a valid OAuth 2.1 bearer token in the Authorization header"
+                )
+            else:
+                oauth21_step = "Sign in through your MCP client's OAuth 2.1 flow"
+
+            return (
+                f"**Authentication Required: Token Expired/Revoked for {service_display_name}**\n\n"
+                f"Your Google authentication token for {user_email} has expired or been revoked. "
+                f"This commonly happens when:\n"
+                f"- The token has been unused for an extended period\n"
+                f"- You've changed your Google account password\n"
+                f"- You've revoked access to the application\n\n"
+                f"**To resolve this, please:**\n"
+                f"1. {oauth21_step}\n"
+                f"2. Retry your original command\n\n"
+                f"The application will automatically use the new credentials once authentication is complete."
+            )
 
         return (
             f"**Authentication Required: Token Expired/Revoked for {service_display_name}**\n\n"
@@ -514,6 +551,16 @@ def _handle_token_refresh_error(
     else:
         # Handle other types of refresh errors
         logger.error(f"Unexpected refresh error for user {user_email}: {error}")
+        if is_oauth21_enabled():
+            if is_external_oauth21_provider():
+                return (
+                    f"Authentication error occurred for {user_email}. "
+                    "Please provide a valid OAuth 2.1 bearer token and retry."
+                )
+            return (
+                f"Authentication error occurred for {user_email}. "
+                "Please sign in via your MCP client's OAuth 2.1 flow and retry."
+            )
         return (
             f"Authentication error occurred for {user_email}. "
             f"Please try running `start_google_auth` with your email and the appropriate service name to reauthenticate."
@@ -650,7 +697,7 @@ def require_google_service(
                 error_message = _handle_token_refresh_error(
                     e, actual_user_email, service_name
                 )
-                raise Exception(error_message)
+                raise GoogleAuthenticationError(error_message)
             finally:
                 _close_service(service)
 
@@ -790,7 +837,7 @@ def require_multiple_services(service_configs: List[Dict[str, Any]]):
                 error_message = _handle_token_refresh_error(
                     e, user_google_email, "Multiple Services"
                 )
-                raise Exception(error_message)
+                raise GoogleAuthenticationError(error_message)
             finally:
                 for config in service_configs:
                     svc = kwargs.get(config["param_name"])

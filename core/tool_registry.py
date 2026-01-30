@@ -8,6 +8,8 @@ based on tier configuration, replacing direct @server.tool() decorators.
 import logging
 from typing import Set, Optional, Callable
 
+from auth.oauth_config import is_oauth21_enabled
+
 logger = logging.getLogger(__name__)
 
 # Global registry of enabled tools
@@ -79,7 +81,8 @@ def wrap_server_tool_method(server):
 def filter_server_tools(server):
     """Remove disabled tools from the server after registration."""
     enabled_tools = get_enabled_tools()
-    if enabled_tools is None:
+    oauth21_enabled = is_oauth21_enabled()
+    if enabled_tools is None and not oauth21_enabled:
         return
 
     tools_removed = 0
@@ -90,16 +93,25 @@ def filter_server_tools(server):
         if hasattr(tool_manager, "_tools"):
             tool_registry = tool_manager._tools
 
-            tools_to_remove = []
-            for tool_name in list(tool_registry.keys()):
-                if not is_tool_enabled(tool_name):
-                    tools_to_remove.append(tool_name)
+            tools_to_remove = set()
+            if enabled_tools is not None:
+                for tool_name in list(tool_registry.keys()):
+                    if not is_tool_enabled(tool_name):
+                        tools_to_remove.add(tool_name)
+
+            if oauth21_enabled and "start_google_auth" in tool_registry:
+                tools_to_remove.add("start_google_auth")
 
             for tool_name in tools_to_remove:
                 del tool_registry[tool_name]
                 tools_removed += 1
+                if tool_name == "start_google_auth":
+                    logger.info("OAuth 2.1 enabled: disabling start_google_auth tool")
 
     if tools_removed > 0:
+        enabled_count = len(enabled_tools) if enabled_tools is not None else "all"
         logger.info(
-            f"Tool tier filtering: removed {tools_removed} tools, {len(enabled_tools)} enabled"
+            "Tool filtering: removed %s tools, %s enabled",
+            tools_removed,
+            enabled_count,
         )

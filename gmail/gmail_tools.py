@@ -8,10 +8,15 @@ import logging
 import asyncio
 import base64
 import ssl
+import mimetypes
+from pathlib import Path
 from html.parser import HTMLParser
 from typing import Optional, List, Dict, Literal, Any
 
 from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email import encoders
 
 from fastapi import Body
 from pydantic import Field
@@ -235,9 +240,10 @@ def _prepare_gmail_message(
     references: Optional[str] = None,
     body_format: Literal["plain", "html"] = "plain",
     from_email: Optional[str] = None,
+    attachments: Optional[List[Dict[str, str]]] = None,
 ) -> tuple[str, Optional[str]]:
     """
-    Prepare a Gmail message with threading support.
+    Prepare a Gmail message with threading and attachment support.
 
     Args:
         subject: Email subject
@@ -250,6 +256,7 @@ def _prepare_gmail_message(
         references: Optional chain of Message-IDs for proper threading
         body_format: Content type for the email body ('plain' or 'html')
         from_email: Optional sender email address
+        attachments: Optional list of attachments. Each can have 'path' (file path) OR 'content' (base64) + 'filename'
 
     Returns:
         Tuple of (raw_message, thread_id) where raw_message is base64 encoded
@@ -264,7 +271,82 @@ def _prepare_gmail_message(
     if normalized_format not in {"plain", "html"}:
         raise ValueError("body_format must be either 'plain' or 'html'.")
 
-    message = MIMEText(body, normalized_format)
+    # Use multipart if attachments are provided
+    if attachments:
+        message = MIMEMultipart()
+        message.attach(MIMEText(body, normalized_format))
+
+        # Process attachments
+        for attachment in attachments:
+            file_path = attachment.get("path")
+            filename = attachment.get("filename")
+            content_base64 = attachment.get("content")
+            mime_type = attachment.get("mime_type")
+
+            try:
+                # If path is provided, read and encode the file
+                if file_path:
+                    path_obj = Path(file_path)
+                    if not path_obj.exists():
+                        logger.error(f"File not found: {file_path}")
+                        continue
+
+                    # Read file content
+                    with open(path_obj, "rb") as f:
+                        file_data = f.read()
+
+                    # Use provided filename or extract from path
+                    if not filename:
+                        filename = path_obj.name
+
+                    # Auto-detect MIME type if not provided
+                    if not mime_type:
+                        mime_type, _ = mimetypes.guess_type(str(path_obj))
+                        if not mime_type:
+                            mime_type = "application/octet-stream"
+
+                # If content is provided (base64), decode it
+                elif content_base64:
+                    if not filename:
+                        logger.warning("Skipping attachment: missing filename")
+                        continue
+
+                    file_data = base64.b64decode(content_base64)
+
+                    if not mime_type:
+                        mime_type = "application/octet-stream"
+
+                else:
+                    logger.warning("Skipping attachment: missing both path and content")
+                    continue
+
+                # Create MIME attachment
+                main_type, sub_type = mime_type.split("/", 1)
+                part = MIMEBase(main_type, sub_type)
+                part.set_payload(file_data)
+                encoders.encode_base64(part)
+
+                # Sanitize filename to prevent header injection and ensure valid quoting
+                safe_filename = (
+                    (filename or "")
+                    .replace("\r", "")
+                    .replace("\n", "")
+                    .replace("\\", "\\\\")
+                    .replace('"', r"\"")
+                )
+
+                part.add_header(
+                    "Content-Disposition", f'attachment; filename="{safe_filename}"'
+                )
+
+                message.attach(part)
+                logger.info(f"Attached file: {filename} ({len(file_data)} bytes)")
+            except Exception as e:
+                logger.error(f"Failed to attach {filename or file_path}: {e}")
+                continue
+    else:
+        message = MIMEText(body, normalized_format)
+
     message["Subject"] = reply_subject
 
     # Add sender if provided
@@ -906,6 +988,10 @@ async def send_gmail_message(
     ),
     cc: Optional[str] = Body(None, description="Optional CC email address."),
     bcc: Optional[str] = Body(None, description="Optional BCC email address."),
+    from_email: Optional[str] = Body(
+        None,
+        description="Optional 'Send As' alias email address. Must be configured in Gmail settings (Settings > Accounts > Send mail as). If not provided, uses the authenticated user's email.",
+    ),
     thread_id: Optional[str] = Body(
         None, description="Optional Gmail thread ID to reply within."
     ),
@@ -915,18 +1001,35 @@ async def send_gmail_message(
     references: Optional[str] = Body(
         None, description="Optional chain of Message-IDs for proper threading."
     ),
+    attachments: Optional[List[Dict[str, str]]] = Body(
+        None,
+        description='Optional list of attachments. Each can have: "path" (file path, auto-encodes), OR "content" (standard base64, not urlsafe) + "filename". Optional "mime_type". Example: [{"path": "/path/to/file.pdf"}] or [{"filename": "doc.pdf", "content": "base64data", "mime_type": "application/pdf"}]',
+    ),
 ) -> str:
     """
-    Sends an email using the user's Gmail account. Supports both new emails and replies.
+    Sends an email using the user's Gmail account. Supports both new emails and replies with optional attachments.
+    Supports Gmail's "Send As" feature to send from configured alias addresses.
 
     Args:
         to (str): Recipient email address.
         subject (str): Email subject.
         body (str): Email body content.
         body_format (Literal['plain', 'html']): Email body format. Defaults to 'plain'.
+        attachments (Optional[List[Dict[str, str]]]): Optional list of attachments. Each dict can contain:
+            Option 1 - File path (auto-encodes):
+              - 'path' (required): File path to attach
+              - 'filename' (optional): Override filename
+              - 'mime_type' (optional): Override MIME type (auto-detected if not provided)
+            Option 2 - Base64 content:
+              - 'content' (required): Standard base64-encoded file content (not urlsafe)
+              - 'filename' (required): Name of the file
+              - 'mime_type' (optional): MIME type (defaults to 'application/octet-stream')
         cc (Optional[str]): Optional CC email address.
         bcc (Optional[str]): Optional BCC email address.
-        user_google_email (str): The user's Google email address. Required.
+        from_email (Optional[str]): Optional 'Send As' alias email address. The alias must be
+            configured in Gmail settings (Settings > Accounts > Send mail as). If not provided,
+            the email will be sent from the authenticated user's primary email address.
+        user_google_email (str): The user's Google email address. Required for authentication.
         thread_id (Optional[str]): Optional Gmail thread ID to reply within. When provided, sends a reply.
         in_reply_to (Optional[str]): Optional Message-ID of the message being replied to. Used for proper threading.
         references (Optional[str]): Optional chain of Message-IDs for proper threading. Should include all previous Message-IDs.
@@ -946,6 +1049,14 @@ async def send_gmail_message(
             body_format="html"
         )
 
+        # Send from a configured alias (Send As)
+        send_gmail_message(
+            to="user@example.com",
+            subject="Business Inquiry",
+            body="Hello from my business address...",
+            from_email="business@mydomain.com"
+        )
+
         # Send an email with CC and BCC
         send_gmail_message(
             to="user@example.com",
@@ -953,6 +1064,28 @@ async def send_gmail_message(
             bcc="archive@example.com",
             subject="Project Update",
             body="Here's the latest update..."
+        )
+
+        # Send an email with attachments (using file path)
+        send_gmail_message(
+            to="user@example.com",
+            subject="Report",
+            body="Please see attached report.",
+            attachments=[{
+                "path": "/path/to/report.pdf"
+            }]
+        )
+
+        # Send an email with attachments (using base64 content)
+        send_gmail_message(
+            to="user@example.com",
+            subject="Report",
+            body="Please see attached report.",
+            attachments=[{
+                "filename": "report.pdf",
+                "content": "JVBERi0xLjQK...",  # base64 encoded PDF
+                "mime_type": "application/pdf"
+            }]
         )
 
         # Send a reply
@@ -966,10 +1099,12 @@ async def send_gmail_message(
         )
     """
     logger.info(
-        f"[send_gmail_message] Invoked. Email: '{user_google_email}', Subject: '{subject}'"
+        f"[send_gmail_message] Invoked. Email: '{user_google_email}', Subject: '{subject}', Attachments: {len(attachments) if attachments else 0}"
     )
 
     # Prepare the email message
+    # Use from_email (Send As alias) if provided, otherwise default to authenticated user
+    sender_email = from_email or user_google_email
     raw_message, thread_id_final = _prepare_gmail_message(
         subject=subject,
         body=body,
@@ -980,7 +1115,8 @@ async def send_gmail_message(
         in_reply_to=in_reply_to,
         references=references,
         body_format=body_format,
-        from_email=user_google_email,
+        from_email=sender_email,
+        attachments=attachments if attachments else None,
     )
 
     send_body = {"raw": raw_message}
@@ -994,6 +1130,9 @@ async def send_gmail_message(
         service.users().messages().send(userId="me", body=send_body).execute
     )
     message_id = sent_message.get("id")
+
+    if attachments:
+        return f"Email sent with {len(attachments)} attachment(s)! Message ID: {message_id}"
     return f"Email sent! Message ID: {message_id}"
 
 
@@ -1012,6 +1151,10 @@ async def draft_gmail_message(
     to: Optional[str] = Body(None, description="Optional recipient email address."),
     cc: Optional[str] = Body(None, description="Optional CC email address."),
     bcc: Optional[str] = Body(None, description="Optional BCC email address."),
+    from_email: Optional[str] = Body(
+        None,
+        description="Optional 'Send As' alias email address. Must be configured in Gmail settings (Settings > Accounts > Send mail as). If not provided, uses the authenticated user's email.",
+    ),
     thread_id: Optional[str] = Body(
         None, description="Optional Gmail thread ID to reply within."
     ),
@@ -1021,21 +1164,38 @@ async def draft_gmail_message(
     references: Optional[str] = Body(
         None, description="Optional chain of Message-IDs for proper threading."
     ),
+    attachments: Optional[List[Dict[str, str]]] = Body(
+        None,
+        description="Optional list of attachments. Each can have: 'path' (file path, auto-encodes), OR 'content' (standard base64, not urlsafe) + 'filename'. Optional 'mime_type' (auto-detected from path if not provided).",
+    ),
 ) -> str:
     """
-    Creates a draft email in the user's Gmail account. Supports both new drafts and reply drafts.
+    Creates a draft email in the user's Gmail account. Supports both new drafts and reply drafts with optional attachments.
+    Supports Gmail's "Send As" feature to draft from configured alias addresses.
 
     Args:
-        user_google_email (str): The user's Google email address. Required.
+        user_google_email (str): The user's Google email address. Required for authentication.
         subject (str): Email subject.
         body (str): Email body (plain text).
         body_format (Literal['plain', 'html']): Email body format. Defaults to 'plain'.
         to (Optional[str]): Optional recipient email address. Can be left empty for drafts.
         cc (Optional[str]): Optional CC email address.
         bcc (Optional[str]): Optional BCC email address.
+        from_email (Optional[str]): Optional 'Send As' alias email address. The alias must be
+            configured in Gmail settings (Settings > Accounts > Send mail as). If not provided,
+            the draft will be from the authenticated user's primary email address.
         thread_id (Optional[str]): Optional Gmail thread ID to reply within. When provided, creates a reply draft.
         in_reply_to (Optional[str]): Optional Message-ID of the message being replied to. Used for proper threading.
         references (Optional[str]): Optional chain of Message-IDs for proper threading. Should include all previous Message-IDs.
+        attachments (List[Dict[str, str]]): Optional list of attachments. Each dict can contain:
+            Option 1 - File path (auto-encodes):
+              - 'path' (required): File path to attach
+              - 'filename' (optional): Override filename
+              - 'mime_type' (optional): Override MIME type (auto-detected if not provided)
+            Option 2 - Base64 content:
+              - 'content' (required): Standard base64-encoded file content (not urlsafe)
+              - 'filename' (required): Name of the file
+              - 'mime_type' (optional): MIME type (defaults to 'application/octet-stream')
 
     Returns:
         str: Confirmation message with the created draft's ID.
@@ -1043,6 +1203,14 @@ async def draft_gmail_message(
     Examples:
         # Create a new draft
         draft_gmail_message(subject="Hello", body="Hi there!", to="user@example.com")
+
+        # Create a draft from a configured alias (Send As)
+        draft_gmail_message(
+            subject="Business Inquiry",
+            body="Hello from my business address...",
+            to="user@example.com",
+            from_email="business@mydomain.com"
+        )
 
         # Create a plaintext draft with CC and BCC
         draft_gmail_message(
@@ -1077,7 +1245,7 @@ async def draft_gmail_message(
         draft_gmail_message(
             subject="Re: Meeting tomorrow",
             body="<strong>Thanks for the update!</strong>",
-            body_format="html,
+            body_format="html",
             to="user@example.com",
             thread_id="thread_123",
             in_reply_to="<message123@gmail.com>",
@@ -1089,6 +1257,8 @@ async def draft_gmail_message(
     )
 
     # Prepare the email message
+    # Use from_email (Send As alias) if provided, otherwise default to authenticated user
+    sender_email = from_email or user_google_email
     raw_message, thread_id_final = _prepare_gmail_message(
         subject=subject,
         body=body,
@@ -1099,7 +1269,8 @@ async def draft_gmail_message(
         thread_id=thread_id,
         in_reply_to=in_reply_to,
         references=references,
-        from_email=user_google_email,
+        from_email=sender_email,
+        attachments=attachments,
     )
 
     # Create a draft instead of sending
@@ -1114,7 +1285,8 @@ async def draft_gmail_message(
         service.users().drafts().create(userId="me", body=draft_body).execute
     )
     draft_id = created_draft.get("id")
-    return f"Draft created! Draft ID: {draft_id}"
+    attachment_info = f" with {len(attachments)} attachment(s)" if attachments else ""
+    return f"Draft created{attachment_info}! Draft ID: {draft_id}"
 
 
 def _format_thread_content(thread_data: dict, thread_id: str) -> str:

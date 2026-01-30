@@ -100,7 +100,7 @@
     "USER_GOOGLE_EMAIL": {
       "type": "string",
       "title": "User Google Email",
-      "description": "Optional default email for authentication flows. If set, the LLM won't need to specify your email when calling start_google_auth",
+      "description": "Optional default email for legacy OAuth 2.0 authentication flows. If set, the LLM won't need to specify your email when calling start_google_auth. Ignored when OAuth 2.1 is enabled.",
       "required": false
     },
     "GOOGLE_OAUTH_REDIRECT_URI": {

@@ -481,6 +481,8 @@ export GOOGLE_PSE_ENGINE_ID=\
 
 ### Start the Server
 
+> **📌 Transport Mode Guidance**: Use **streamable HTTP mode** (`--transport streamable-http`) for all modern MCP clients including Claude Code, VS Code MCP, and MCP Inspector. Stdio mode is only for clients with incomplete MCP specification support.
+
 <details open>
 <summary>▶ <b>Launch Commands</b> <sub><sup>← Choose your startup mode</sup></sub></summary>
 
@@ -488,21 +490,21 @@ export GOOGLE_PSE_ENGINE_ID=\
 <tr>
 <td width="33%" align="center">
 
-**▶ Quick Start**
+**▶ Legacy Mode**
 ```bash
 uv run main.py
 ```
-<sub>Default stdio mode</sub>
+<sub>⚠️ Stdio mode (incomplete MCP clients only)</sub>
 
 </td>
 <td width="33%" align="center">
 
-**◆ HTTP Mode**
+**◆ HTTP Mode (Recommended)**
 ```bash
 uv run main.py \
   --transport streamable-http
 ```
-<sub>Web interfaces & debugging</sub>
+<sub>✅ Full MCP spec compliance & OAuth 2.1</sub>
 
 </td>
 <td width="34%" align="center">
@@ -513,6 +515,7 @@ uv run main.py \
   --single-user
 ```
 <sub>Simplified authentication</sub>
+<sub>⚠️ Cannot be used with OAuth 2.1 mode</sub>
 
 </td>
 </tr>
@@ -713,6 +716,7 @@ cp .env.oauth21 .env
 | `share_drive_file` | **Core** | Share file with users/groups/domains/anyone |
 | `get_drive_shareable_link` | **Core** | Get shareable links for a file |
 | `list_drive_items` | Extended | List folder contents |
+| `copy_drive_file` | Extended | Copy existing files (templates) with optional renaming |
 | `update_drive_file` | Extended | Update file metadata, move between folders |
 | `batch_share_drive_file` | Extended | Share file with multiple recipients |
 | `update_drive_permission` | Extended | Modify permission role |
@@ -743,7 +747,31 @@ cp .env.oauth21 .env
 | `draft_gmail_message` | Extended | Create drafts |
 | `get_gmail_threads_content_batch` | Complete | Batch retrieve thread content |
 | `batch_modify_gmail_message_labels` | Complete | Batch modify labels |
-| `start_google_auth` | Complete | Initialize authentication |
+| `start_google_auth` | Complete | Legacy OAuth 2.0 auth (disabled when OAuth 2.1 is enabled) |
+
+<details>
+<summary><b>📎 Email Attachments</b> <sub><sup>← Send emails with files</sup></sub></summary>
+
+Both `send_gmail_message` and `draft_gmail_message` support attachments via two methods:
+
+**Option 1: File Path** (local server only)
+```python
+attachments=[{"path": "/path/to/report.pdf"}]
+```
+Reads file from disk, auto-detects MIME type. Optional `filename` override.
+
+**Option 2: Base64 Content** (works everywhere)
+```python
+attachments=[{
+    "filename": "report.pdf",
+    "content": "JVBERi0xLjQK...",  # base64-encoded
+    "mime_type": "application/pdf"   # optional
+}]
+```
+
+**⚠️ Centrally Hosted Servers**: When the MCP server runs remotely (cloud, shared instance), it cannot access your local filesystem. Use **Option 2** with base64-encoded content. Your MCP client must encode files before sending.
+
+</details>
 
 </td>
 <td width="50%" valign="top">
@@ -814,6 +842,7 @@ cp .env.oauth21 .env
 | `set_publish_settings` | Complete | Configure form settings |
 | `get_form_response` | Complete | Get individual responses |
 | `list_form_responses` | Extended | List all responses with pagination |
+| `batch_update_form` | Complete | Apply batch updates (questions, settings) |
 
 </td>
 <td width="50%" valign="top">
@@ -893,7 +922,9 @@ cp .env.oauth21 .env
 
 The server supports two transport modes:
 
-#### Stdio Mode (Default - Recommended for Claude Desktop)
+#### Stdio Mode (Legacy - For Clients with Incomplete MCP Support)
+
+> **⚠️ Important**: Stdio mode is a **legacy fallback** for clients that don't properly implement the MCP specification with OAuth 2.1 and streamable HTTP support. **Claude Code and other modern MCP clients should use streamable HTTP mode** (`--transport streamable-http`) for proper OAuth flow and multi-user support.
 
 In general, you should use the one-click DXT installer package for Claude Desktop.
 If you are unable to for some reason, you can configure it manually via `claude_desktop_config.json`
@@ -997,6 +1028,14 @@ The server includes OAuth 2.1 support for bearer token authentication, enabling 
 - Building web applications or APIs on top of the MCP server
 - Production environments requiring secure session management
 - Browser-based clients requiring CORS support
+
+**⚠️ Important: OAuth 2.1 and Single-User Mode are mutually exclusive**
+
+OAuth 2.1 mode (`MCP_ENABLE_OAUTH21=true`) cannot be used together with the `--single-user` flag:
+- **Single-user mode**: For legacy clients that pass user emails in tool calls
+- **OAuth 2.1 mode**: For modern multi-user scenarios with bearer token authentication
+
+Choose one authentication method - using both will result in a startup error.
 
 **Enabling OAuth 2.1:**
 To enable OAuth 2.1, set the `MCP_ENABLE_OAUTH21` environment variable to `true`.
@@ -1147,6 +1186,8 @@ uv run main.py --transport streamable-http
 
 ### VS Code MCP Client Support
 
+> **✅ Recommended**: VS Code MCP extension properly supports the full MCP specification. **Always use HTTP transport mode** for proper OAuth 2.1 authentication.
+
 <details>
 <summary>🆚 <b>VS Code Configuration</b> <sub><sup>← Setup for VS Code MCP extension</sup></sub></summary>
 
@@ -1160,14 +1201,22 @@ uv run main.py --transport streamable-http
     }
 }
 ```
+
+*Note: Make sure to start the server with `--transport streamable-http` when using VS Code MCP.*
 </details>
 
 ### Claude Code MCP Client Support
 
+> **✅ Recommended**: Claude Code is a modern MCP client that properly supports the full MCP specification. **Always use HTTP transport mode** with Claude Code for proper OAuth 2.1 authentication and multi-user support.
+
 <details>
 <summary>🆚 <b>Claude Code Configuration</b> <sub><sup>← Setup for Claude Code MCP support</sup></sub></summary>
 
-```json
+```bash
+# Start the server in HTTP mode first
+uv run main.py --transport streamable-http
+
+# Then add to Claude Code
 claude mcp add --transport http workspace-mcp http://localhost:8000/mcp
 ```
 </details>

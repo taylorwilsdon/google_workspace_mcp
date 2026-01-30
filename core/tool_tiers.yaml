@@ -31,6 +31,7 @@ drive:
     - get_drive_shareable_link
   extended:
     - list_drive_items
+    - copy_drive_file
     - update_drive_file
     - update_drive_permission
     - remove_drive_permission
@@ -48,6 +49,7 @@ calendar:
     - modify_event
   extended:
     - delete_event
+    - query_freebusy
   complete: []
 
 docs:
@@ -106,6 +108,7 @@ forms:
   complete:
     - set_publish_settings
     - get_form_response
+    - batch_update_form
 
 slides:
   core:
