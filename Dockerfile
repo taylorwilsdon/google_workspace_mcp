@@ -1,5 +1,10 @@
 FROM python:3.11-slim
 
+# Create non-root user and app directory
+RUN useradd --create-home --shell /bin/bash app \
+    && mkdir -p /app \
+    && chown app:app /app
+
 WORKDIR /app
 
 # Install system dependencies
@@ -10,21 +15,17 @@ RUN apt-get update && apt-get install -y \
 # Install uv for faster dependency management
 RUN pip install --no-cache-dir uv
 
-COPY . .
+# Copy with correct ownership (avoids expensive chown -R later)
+COPY --chown=app:app . .
+
+# Create store_creds directory
+RUN mkdir -p /app/store_creds && chmod 755 /app/store_creds
+
+# Switch to non-root user before installing deps
+USER app
 
 # Install Python dependencies using uv sync
 RUN uv sync --frozen --no-dev
-
-# Create non-root user for security
-RUN useradd --create-home --shell /bin/bash app \
-    && chown -R app:app /app
-
-# Give read and write access to the store_creds volume
-RUN mkdir -p /app/store_creds \
-    && chown -R app:app /app/store_creds \
-    && chmod 755 /app/store_creds
-
-USER app
 
 # Expose port (use default of 8000 if PORT not set)
 EXPOSE 8000

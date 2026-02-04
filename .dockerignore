@@ -23,6 +23,11 @@ dist/
 mcp_server_debug.log
 .credentials/
 
+# Virtual environment
+.venv/
+venv/
+env/
+
 # Cache and temporary files
 __pycache__/
 *.pyc
