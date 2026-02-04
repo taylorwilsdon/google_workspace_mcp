@@ -437,9 +437,16 @@ async def health_check(request: Request):
 
 
 @server.custom_route("/attachments/{file_id}", methods=["GET"])
-async def serve_attachment(file_id: str):
+async def serve_attachment(request: Request):
     """Serve a stored attachment file."""
     from core.attachment_storage import get_attachment_storage
+
+    # Extract file_id from path parameters
+    # Note: FastMCP's custom_route passes the Request object as the first argument,
+    # unlike FastAPI's @app.get() which extracts path parameters directly.
+    file_id = request.path_params.get("file_id")
+    if not file_id:
+        return JSONResponse({"error": "Missing file_id parameter"}, status_code=400)
 
     storage = get_attachment_storage()
     metadata = storage.get_attachment_metadata(file_id)
