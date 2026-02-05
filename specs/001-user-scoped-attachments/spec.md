@@ -72,7 +72,7 @@ As a server administrator, I want to optionally configure a persistent signing k
 
 ### Edge Cases
 
-- What happens when a URL is accessed after file expiry but before signature expiry? The file is deleted but signature is valid, resulting in a 404 (not 403).
+- What happens when a URL is accessed after expiry? Both file deletion and URL signature share the same 1-hour expiry, so an expired URL will receive 403 (signature expired); if file cleanup runs first, 404 is possible but rare.
 - What happens when a user's email address changes? Old URLs signed with the previous email become invalid.
 - What happens when clock skew exists between signing and verification? A small tolerance (e.g., 60 seconds) should be allowed for expiry checks.
 - What happens when the signing key is rotated? All existing URLs become invalid; this is acceptable behavior documented for administrators.
@@ -81,20 +81,21 @@ As a server administrator, I want to optionally configure a persistent signing k
 
 ### Functional Requirements
 
-- **FR-001**: System MUST store the owner identifier with each saved attachment
+- **FR-001**: System MUST store the owner's email address with each saved attachment
 - **FR-002**: System MUST generate cryptographically signed URLs when creating attachment download links
 - **FR-003**: System MUST include expiry timestamp in signed URLs
-- **FR-004**: System MUST include a hash of the owner identifier in signed URLs for verification
+- **FR-004**: System MUST include the owner identifier as a SHA-256 hash of the email, base64url-encoded, in signed URLs for verification
 - **FR-005**: System MUST verify the signature before serving any attachment
 - **FR-006**: System MUST deny access with HTTP 403 when signature verification fails
-- **FR-007**: System MUST deny access with HTTP 403 when the requesting user does not match the attachment owner
+- **FR-007**: System MUST deny access with HTTP 403 when the SHA-256 hash of the requesting user's email does not match the owner hash in the URL
 - **FR-008**: System MUST deny access with HTTP 401 when signature parameters are missing
 - **FR-009**: System MUST use HMAC-SHA256 for signature generation and verification
-- **FR-010**: System MUST support configurable signing key via environment variable `ATTACHMENT_SIGNING_KEY`
+- **FR-010**: System MUST support configurable signing key via environment variable `ATTACHMENT_SIGNING_KEY` (minimum 32 bytes; reject shorter keys at startup)
 - **FR-011**: System MUST auto-generate a random signing key when no environment variable is provided
 - **FR-012**: System MUST log a warning when using an auto-generated signing key
 - **FR-013**: System MUST apply the same security to both Gmail attachments and Drive file downloads
 - **FR-014**: System MUST never log complete signature values (only first 8 characters for debugging)
+- **FR-015**: System MUST allow 60-second tolerance for URL expiry verification to accommodate clock skew
 
 ### Key Entities
 
@@ -112,6 +113,16 @@ As a server administrator, I want to optionally configure a persistent signing k
 - **SC-004**: All existing Gmail and Drive download functionality continues to work for legitimate users
 - **SC-005**: URL expiry enforced within 1 minute of configured expiry time
 - **SC-006**: Server logs never contain complete signature values (security audit requirement)
+
+## Clarifications
+
+### Session 2026-02-04
+
+- Q: What is the minimum signing key length for ATTACHMENT_SIGNING_KEY? → A: 32 bytes minimum (256-bit, matches SHA-256 output)
+- Q: Should the URL expose the raw email or a hashed version? → A: SHA-256 hash of email, base64url-encoded (privacy-preserving)
+- Q: Should clock skew tolerance be formalized as a requirement? → A: Yes, 60 seconds tolerance (formalized as FR-015)
+- Q: Are file deletion time and URL expiry time the same? → A: Yes, both are 1 hour (same expiry simplifies implementation)
+- Q: How should user verification work given hashed owner in URL? → A: Hash requesting user's email, compare to URL hash parameter
 
 ## Assumptions
 
