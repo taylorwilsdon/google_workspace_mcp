@@ -572,6 +572,17 @@ def get_credentials(
             # Try to get credentials by MCP session
             credentials = store.get_credentials_by_mcp_session(session_id)
             if credentials:
+                # Validate that session credentials match the requested user
+                if user_google_email:
+                    session_user = store.get_user_by_mcp_session(session_id)
+                    if session_user and session_user != user_google_email:
+                        logger.info(
+                            f"[get_credentials] Session {session_id} is bound to {session_user}, "
+                            f"but credentials requested for {user_google_email}. Skipping session credentials."
+                        )
+                        credentials = None
+
+            if credentials:
                 logger.info(
                     f"[get_credentials] Found OAuth 2.1 credentials for MCP session {session_id}"
                 )
@@ -658,6 +669,16 @@ def get_credentials(
                 logger.debug(
                     f"[get_credentials] Loaded credentials from session for session_id '{session_id}'."
                 )
+                # Validate that session credentials match the requested user
+                if user_google_email:
+                    store = get_oauth21_session_store()
+                    session_user = store.get_user_by_mcp_session(session_id)
+                    if session_user and session_user != user_google_email:
+                        logger.debug(
+                            f"[get_credentials] Session credentials for {session_user} "
+                            f"don't match requested {user_google_email}. Trying file store."
+                        )
+                        credentials = None
 
         if not credentials and user_google_email:
             if not is_stateless_mode():
