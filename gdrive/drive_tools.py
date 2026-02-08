@@ -29,6 +29,7 @@ from core.server import server
 from core.config import get_transport_mode
 from gdrive.drive_helpers import (
     DRIVE_QUERY_PATTERNS,
+    FOLDER_MIME_TYPE,
     build_drive_list_params,
     check_public_link_permission,
     format_permission_info,
@@ -451,6 +452,61 @@ async def list_drive_items(
         )
     text_output = "\n".join(formatted_items_text_parts)
     return text_output
+
+
+@server.tool()
+@handle_http_errors("create_drive_folder", service_type="drive")
+@require_google_service("drive", "drive_file")
+async def create_drive_folder(
+    service,
+    user_google_email: str,
+    folder_name: str,
+    parent_folder_id: str = "root",
+) -> str:
+    """
+    Creates a new folder in Google Drive, supporting creation within shared drives.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        folder_name (str): The name for the new folder.
+        parent_folder_id (str): The ID of the parent folder. Defaults to 'root' (My Drive root). For shared drives, this must be a folder ID within the shared drive.
+
+    Returns:
+        str: Confirmation message with the new folder's ID and link.
+    """
+    logger.info(
+        f"[create_drive_folder] Invoked. Email: '{user_google_email}', "
+        f"Folder Name: '{folder_name}', Parent: '{parent_folder_id}'"
+    )
+
+    resolved_parent_id = await resolve_folder_id(service, parent_folder_id)
+
+    file_metadata = {
+        "name": folder_name,
+        "mimeType": FOLDER_MIME_TYPE,
+        "parents": [resolved_parent_id],
+    }
+
+    created_folder = await asyncio.to_thread(
+        service.files()
+        .create(
+            body=file_metadata,
+            fields="id, name, webViewLink",
+            supportsAllDrives=True,
+        )
+        .execute
+    )
+
+    link = created_folder.get("webViewLink", "No link available")
+    folder_id = created_folder.get("id", "N/A")
+
+    confirmation = (
+        f"Successfully created folder '{created_folder.get('name', folder_name)}' "
+        f"(ID: {folder_id}) in parent folder '{parent_folder_id}' "
+        f"for {user_google_email}. Link: {link}"
+    )
+    logger.info(f"[create_drive_folder] Success. Link: {link}")
+    return confirmation
 
 
 @server.tool()
