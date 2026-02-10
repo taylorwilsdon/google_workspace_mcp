@@ -118,11 +118,26 @@ def main():
         default="stdio",
         help="Transport mode: stdio (default) or streamable-http",
     )
+    parser.add_argument(
+        "--ssl-cert",
+        help="Path to SSL certificate file for HTTPS (requires --ssl-key)",
+    )
+    parser.add_argument(
+        "--ssl-key",
+        help="Path to SSL key file for HTTPS (requires --ssl-cert)",
+    )
     args = parser.parse_args()
+
+    # Validate SSL args
+    if (args.ssl_cert and not args.ssl_key) or (args.ssl_key and not args.ssl_cert):
+        parser.error("--ssl-cert and --ssl-key must be used together")
+    if (args.ssl_cert or args.ssl_key) and args.transport != "streamable-http":
+        parser.error("--ssl-cert/--ssl-key require --transport streamable-http")
 
     # Set port and base URI once for reuse throughout the function
     port = int(os.getenv("PORT", os.getenv("WORKSPACE_MCP_PORT", 8000)))
-    base_uri = os.getenv("WORKSPACE_MCP_BASE_URI", "http://localhost")
+    default_scheme = "https" if args.ssl_cert else "http"
+    base_uri = os.getenv("WORKSPACE_MCP_BASE_URI", f"{default_scheme}://localhost")
     external_url = os.getenv("WORKSPACE_EXTERNAL_URL")
     display_url = external_url if external_url else f"{base_uri}:{port}"
 
@@ -134,7 +149,8 @@ def main():
     except metadata.PackageNotFoundError:
         version = "dev"
     safe_print(f"   📦 Version: {version}")
-    safe_print(f"   🌐 Transport: {args.transport}")
+    transport_label = args.transport + (" (HTTPS)" if args.ssl_cert else "")
+    safe_print(f"   🌐 Transport: {transport_label}")
     if args.transport == "streamable-http":
         safe_print(f"   🔗 URL: {display_url}")
         safe_print(f"   🔐 OAuth Callback: {display_url}/oauth2callback")
@@ -337,7 +353,13 @@ def main():
                 )
                 sys.exit(1)
 
-            server.run(transport="streamable-http", host="0.0.0.0", port=port)
+            run_kwargs = {"transport": "streamable-http", "host": "0.0.0.0", "port": port}
+            if args.ssl_cert:
+                run_kwargs["uvicorn_config"] = {
+                    "ssl_keyfile": args.ssl_key,
+                    "ssl_certfile": args.ssl_cert,
+                }
+            server.run(**run_kwargs)
         else:
             server.run()
     except KeyboardInterrupt:
