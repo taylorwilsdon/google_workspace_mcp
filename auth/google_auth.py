@@ -5,6 +5,9 @@ import json
 import jwt
 import logging
 import os
+import subprocess
+import sys
+import webbrowser
 
 from typing import List, Optional, Tuple, Dict, Any
 from urllib.parse import parse_qs, urlparse
@@ -87,6 +90,111 @@ else:
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
         "client_secret.json",
     )
+
+def _copy_to_clipboard(text: str) -> bool:
+    """
+    Attempts to copy text to the system clipboard.
+    Returns True if successful, False otherwise.
+    """
+    try:
+        # macOS
+        if sys.platform == "darwin":
+            process = subprocess.Popen(
+                ["pbcopy"], stdin=subprocess.PIPE, stderr=subprocess.DEVNULL
+            )
+            process.communicate(text.encode("utf-8"))
+            return process.returncode == 0
+        # Linux with xclip
+        elif sys.platform.startswith("linux"):
+            process = subprocess.Popen(
+                ["xclip", "-selection", "clipboard"],
+                stdin=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            )
+            process.communicate(text.encode("utf-8"))
+            return process.returncode == 0
+        # Windows
+        elif sys.platform == "win32":
+            process = subprocess.Popen(
+                ["clip"], stdin=subprocess.PIPE, stderr=subprocess.DEVNULL
+            )
+            process.communicate(text.encode("utf-8"))
+            return process.returncode == 0
+    except Exception as e:
+        logger.debug(f"Failed to copy to clipboard: {e}")
+    return False
+
+
+def _has_tty() -> bool:
+    """Check if we're running with a TTY (interactive terminal)."""
+    try:
+        return sys.stdin.isatty() and sys.stdout.isatty()
+    except Exception:
+        return False
+
+
+def _open_browser_incognito(url: str) -> bool:
+    """
+    Opens a URL in an incognito/private browser window.
+    Tries Chrome first, then Firefox, then falls back to regular browser.
+    Returns True if successful, False otherwise.
+    """
+    try:
+        if sys.platform == "darwin":
+            # Try Chrome incognito first
+            result = subprocess.run(
+                ["open", "-na", "Google Chrome", "--args", "--incognito", url],
+                capture_output=True,
+            )
+            if result.returncode == 0:
+                logger.info("Opened Chrome incognito window")
+                return True
+
+            # Try Firefox private window
+            result = subprocess.run(
+                ["open", "-na", "Firefox", "--args", "-private-window", url],
+                capture_output=True,
+            )
+            if result.returncode == 0:
+                logger.info("Opened Firefox private window")
+                return True
+
+        elif sys.platform.startswith("linux"):
+            # Try Chrome incognito
+            for chrome in ["google-chrome", "chromium-browser", "chromium"]:
+                result = subprocess.run(
+                    [chrome, "--incognito", url],
+                    capture_output=True,
+                )
+                if result.returncode == 0:
+                    logger.info(f"Opened {chrome} incognito window")
+                    return True
+
+            # Try Firefox private
+            result = subprocess.run(
+                ["firefox", "-private-window", url],
+                capture_output=True,
+            )
+            if result.returncode == 0:
+                logger.info("Opened Firefox private window")
+                return True
+
+        elif sys.platform == "win32":
+            # Try Chrome incognito
+            result = subprocess.run(
+                ["start", "chrome", "--incognito", url],
+                shell=True,
+                capture_output=True,
+            )
+            if result.returncode == 0:
+                logger.info("Opened Chrome incognito window")
+                return True
+
+    except Exception as e:
+        logger.debug(f"Failed to open incognito browser: {e}")
+
+    return False
+
 
 # --- Helper Functions ---
 
@@ -392,31 +500,84 @@ async def start_auth_flow(
         store.store_oauth_state(oauth_state, session_id=session_id)
 
         logger.info(
-            f"Auth flow started for {user_display_name}. Advise user to visit: {auth_url}"
+            f"Auth flow started for {user_display_name}. Auth URL: {auth_url}"
         )
 
-        message_lines = [
-            f"**ACTION REQUIRED: Google Authentication Needed for {user_display_name}**\n",
-            f"To proceed, the user must authorize this application for {service_name} access using all required permissions.",
-            "**LLM, please present this exact authorization URL to the user as a clickable hyperlink:**",
-            f"Authorization URL: {auth_url}",
-            f"Markdown for hyperlink: [Click here to authorize {service_name} access]({auth_url})\n",
-            "**LLM, after presenting the link, instruct the user as follows:**",
-            "1. Click the link and complete the authorization in their browser.",
-        ]
-        session_info_for_llm = ""
+        # Try to open browser, then clipboard as fallback
+        # AUTH_BROWSER_TYPE: "normal" (default) or "incognito"
+        browser_opened = False
+        incognito_opened = False
+        clipboard_copied = False
+        browser_type = os.getenv("AUTH_BROWSER_TYPE", "normal").lower()
+
+        if browser_type == "incognito":
+            # Try incognito/private window (helps when user has multiple Google accounts)
+            incognito_opened = _open_browser_incognito(auth_url)
+            if incognito_opened:
+                browser_opened = True
+
+        if not browser_opened:
+            # Open regular browser window
+            try:
+                browser_opened = webbrowser.open(auth_url)
+                if browser_opened:
+                    logger.info("Successfully opened browser for OAuth flow")
+                else:
+                    logger.warning("webbrowser.open returned False - browser may not have opened")
+            except Exception as browser_error:
+                logger.warning(f"Failed to open browser automatically: {browser_error}")
+
+        # If browser didn't open, try clipboard as fallback
+        if not browser_opened:
+            clipboard_copied = _copy_to_clipboard(auth_url)
+            if clipboard_copied:
+                logger.info("Successfully copied auth URL to clipboard")
+            else:
+                logger.warning("Failed to copy auth URL to clipboard")
+
+        # Build message based on what action was taken
+        if incognito_opened:
+            message_lines = [
+                f"**ACTION REQUIRED: Google Authentication Needed for {user_display_name}**\n",
+                "An incognito browser window has been opened for you to authorize access.",
+                "Please complete the authorization in your browser.",
+            ]
+        elif browser_opened:
+            message_lines = [
+                f"**ACTION REQUIRED: Google Authentication Needed for {user_display_name}**\n",
+                "A browser window has been opened for you to authorize access.",
+                "Please complete the authorization in your browser.",
+            ]
+        elif clipboard_copied:
+            message_lines = [
+                f"**ACTION REQUIRED: Google Authentication Needed for {user_display_name}**\n",
+                "The authorization URL has been copied to your clipboard.",
+                "Please paste it in a browser and complete the authorization.",
+            ]
+        else:
+            # Fallback - provide the URL directly
+            message_lines = [
+                f"**ACTION REQUIRED: Google Authentication Needed for {user_display_name}**\n",
+                f"To proceed, the user must authorize this application for {service_name} access using all required permissions.",
+                "**LLM, please present this exact authorization URL to the user as a clickable hyperlink:**",
+                f"Authorization URL: {auth_url}",
+                f"Markdown for hyperlink: [Click here to authorize {service_name} access]({auth_url})\n",
+                "**LLM, after presenting the link, instruct the user as follows:**",
+                "1. Click the link and complete the authorization in their browser.",
+            ]
 
         if not initial_email_provided:
             message_lines.extend(
                 [
-                    f"2. After successful authorization{session_info_for_llm}, the browser page will display the authenticated email address.",
-                    "   **LLM: Instruct the user to provide you with this email address.**",
-                    "3. Once you have the email, **retry their original command, ensuring you include this `user_google_email`.**",
+                    "",
+                    "After successful authorization, the browser page will display the authenticated email address.",
+                    "**LLM: Instruct the user to provide you with this email address.**",
+                    "Once you have the email, **retry their original command, ensuring you include this `user_google_email`.**",
                 ]
             )
         else:
             message_lines.append(
-                f"2. After successful authorization{session_info_for_llm}, **retry their original command**."
+                "\nAfter successful authorization, **retry your original command**."
             )
 
         message_lines.append(

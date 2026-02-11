@@ -412,6 +412,39 @@ def main():
                     warning_msg += f": {error_msg}"
                 safe_print(warning_msg)
 
+            # Proactive auth check if USER_GOOGLE_EMAIL is configured
+            user_email = os.getenv("USER_GOOGLE_EMAIL")
+            if user_email and success:
+                from auth.google_auth import get_credentials
+                from auth.scopes import get_current_scopes
+
+                safe_print(f"   Checking credentials for {user_email}...")
+                creds = get_credentials(
+                    user_google_email=user_email,
+                    required_scopes=get_current_scopes(),
+                )
+                if not creds or not creds.valid:
+                    safe_print("   ⚠️  No valid credentials found - initiating auth flow...")
+                    import asyncio
+                    from auth.google_auth import start_auth_flow
+                    from core.config import get_oauth_redirect_uri
+
+                    redirect_uri = get_oauth_redirect_uri()
+                    try:
+                        auth_message = asyncio.get_event_loop().run_until_complete(
+                            start_auth_flow(
+                                user_google_email=user_email,
+                                service_name="Google Workspace",
+                                redirect_uri=redirect_uri,
+                            )
+                        )
+                        # The browser should have opened automatically
+                        safe_print("   🔐 Browser opened for authentication")
+                    except Exception as auth_err:
+                        safe_print(f"   ⚠️  Auth flow error: {auth_err}")
+                else:
+                    safe_print("   ✅ Valid credentials found")
+
         safe_print("✅ Ready for MCP connections")
         safe_print("")
 

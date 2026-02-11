@@ -184,6 +184,7 @@ uv run main.py --tools gmail drive
 | `MCP_ENABLE_OAUTH21` | Set to `true` for OAuth 2.1 support |
 | `EXTERNAL_OAUTH21_PROVIDER` | Set to `true` for external OAuth flow with bearer tokens (requires OAuth 2.1) |
 | `WORKSPACE_MCP_STATELESS_MODE` | Set to `true` for stateless operation (requires OAuth 2.1) |
+| `AUTH_BROWSER_TYPE` | Browser mode for OAuth: `normal` (default) or `incognito` |
 
 </td></tr>
 </table>
