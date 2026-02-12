@@ -20,6 +20,7 @@ from email import encoders
 from email.utils import formataddr
 
 from fastapi import Body as BodyParam
+from fastapi.params import Body as FastApiBody
 from pydantic import Field
 
 from auth.service_decorator import require_google_service
@@ -38,6 +39,64 @@ GMAIL_BATCH_SIZE = 25
 GMAIL_REQUEST_DELAY = 0.1
 HTML_BODY_TRUNCATE_LIMIT = 20000
 GMAIL_METADATA_HEADERS = ["Subject", "From", "To", "Cc", "Message-ID", "Date"]
+
+
+def _unwrap_body_param(value: Any, fallback: Any = None) -> Any:
+    """
+    Unwrap FastAPI Body defaults when a tool is invoked without proper param coercion.
+
+    Some runtimes can pass `fastapi.params.Body` objects directly instead of the
+    underlying value. This helper normalizes those to concrete runtime values.
+    """
+    if isinstance(value, FastApiBody):
+        if value.default is ...:
+            return fallback
+        return value.default
+    return value
+
+
+def _normalize_compose_inputs(
+    *,
+    to: Any,
+    subject: Any,
+    body: Any,
+    body_format: Any,
+    cc: Any,
+    bcc: Any,
+    from_name: Any,
+    from_email: Any,
+    thread_id: Any,
+    in_reply_to: Any,
+    references: Any,
+    attachments: Any,
+    require_to: bool,
+) -> Dict[str, Any]:
+    """Normalize compose tool inputs and unwrap FastAPI Body defaults."""
+    cleaned = {
+        "to": _unwrap_body_param(to, "" if require_to else None),
+        "subject": _unwrap_body_param(subject, ""),
+        "body": _unwrap_body_param(body, ""),
+        "body_format": _unwrap_body_param(body_format, "plain"),
+        "cc": _unwrap_body_param(cc, None),
+        "bcc": _unwrap_body_param(bcc, None),
+        "from_name": _unwrap_body_param(from_name, None),
+        "from_email": _unwrap_body_param(from_email, None),
+        "thread_id": _unwrap_body_param(thread_id, None),
+        "in_reply_to": _unwrap_body_param(in_reply_to, None),
+        "references": _unwrap_body_param(references, None),
+        "attachments": _unwrap_body_param(attachments, None),
+    }
+
+    if require_to and (not isinstance(cleaned["to"], str) or not cleaned["to"].strip()):
+        raise ValueError("Recipient email address is required.")
+    if not isinstance(cleaned["subject"], str) or not cleaned["subject"].strip():
+        raise ValueError("Email subject is required.")
+    if not isinstance(cleaned["body"], str):
+        raise ValueError("Email body must be a string.")
+    if cleaned["attachments"] is not None and not isinstance(cleaned["attachments"], list):
+        raise ValueError("attachments must be a list when provided.")
+
+    return cleaned
 
 
 class _HTMLTextExtractor(HTMLParser):
@@ -1116,6 +1175,34 @@ async def send_gmail_message(
             references="<original@gmail.com> <message123@gmail.com>"
         )
     """
+    normalized = _normalize_compose_inputs(
+        to=to,
+        subject=subject,
+        body=body,
+        body_format=body_format,
+        cc=cc,
+        bcc=bcc,
+        from_name=from_name,
+        from_email=from_email,
+        thread_id=thread_id,
+        in_reply_to=in_reply_to,
+        references=references,
+        attachments=attachments,
+        require_to=True,
+    )
+    to = normalized["to"]
+    subject = normalized["subject"]
+    body = normalized["body"]
+    body_format = normalized["body_format"]
+    cc = normalized["cc"]
+    bcc = normalized["bcc"]
+    from_name = normalized["from_name"]
+    from_email = normalized["from_email"]
+    thread_id = normalized["thread_id"]
+    in_reply_to = normalized["in_reply_to"]
+    references = normalized["references"]
+    attachments = normalized["attachments"]
+
     logger.info(
         f"[send_gmail_message] Invoked. Email: '{user_google_email}', Subject: '{subject}', Attachments: {len(attachments) if attachments else 0}"
     )
@@ -1278,6 +1365,34 @@ async def draft_gmail_message(
             references="<original@gmail.com> <message123@gmail.com>"
         )
     """
+    normalized = _normalize_compose_inputs(
+        to=to,
+        subject=subject,
+        body=body,
+        body_format=body_format,
+        cc=cc,
+        bcc=bcc,
+        from_name=from_name,
+        from_email=from_email,
+        thread_id=thread_id,
+        in_reply_to=in_reply_to,
+        references=references,
+        attachments=attachments,
+        require_to=False,
+    )
+    to = normalized["to"]
+    subject = normalized["subject"]
+    body = normalized["body"]
+    body_format = normalized["body_format"]
+    cc = normalized["cc"]
+    bcc = normalized["bcc"]
+    from_name = normalized["from_name"]
+    from_email = normalized["from_email"]
+    thread_id = normalized["thread_id"]
+    in_reply_to = normalized["in_reply_to"]
+    references = normalized["references"]
+    attachments = normalized["attachments"]
+
     logger.info(
         f"[draft_gmail_message] Invoked. Email: '{user_google_email}', Subject: '{subject}'"
     )
