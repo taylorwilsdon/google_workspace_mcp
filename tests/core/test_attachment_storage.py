@@ -45,10 +45,12 @@ class TestAttachmentStorage:
         """Test that get_attachment_metadata returns None for unknown file_id."""
         from core.attachment_storage import AttachmentStorage
 
-        storage = AttachmentStorage()
-        metadata = storage.get_attachment_metadata("nonexistent-uuid")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("core.attachment_storage.STORAGE_DIR", Path(tmpdir)):
+                storage = AttachmentStorage()
+                metadata = storage.get_attachment_metadata("nonexistent-uuid")
 
-        assert metadata is None
+                assert metadata is None
 
     def test_get_attachment_path_returns_path_for_valid_id(self):
         """Test that get_attachment_path returns correct path."""
