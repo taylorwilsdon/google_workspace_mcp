@@ -9,6 +9,8 @@ from unittest.mock import Mock, patch
 import base64
 import tempfile
 from pathlib import Path
+
+
 class TestAttachmentStorage:
     """Tests for the AttachmentStorage class."""
 
