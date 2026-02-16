@@ -1,0 +1,8 @@
+# Auto-generated .gitattributes for cross-platform line ending consistency
+# Default: LF for all text files
+* text=auto eol=lf
+
+# Windows scripts require CRLF
+*.ps1 text eol=crlf
+*.psm1 text eol=crlf
+
