@@ -2003,3 +2003,339 @@ async def batch_modify_gmail_message_labels(
         actions.append(f"Removed labels: {', '.join(remove_label_ids)}")
 
     return f"Labels updated for {len(message_ids)} messages: {'; '.join(actions)}"
+
+
+# ---------------------------------------------------------------------------
+# purge_spam — Permanently delete spam with optional domain whitelist
+# ---------------------------------------------------------------------------
+
+SPAM_PAGE_SIZE = 500
+SPAM_BATCH_DELETE_SIZE = 1000
+SPAM_METADATA_CHUNK_SIZE = 50
+
+
+def _extract_sender_domain(from_header: str) -> Optional[str]:
+    """Extract domain from a From header like 'Name <user@example.com>'."""
+    import re
+
+    angle_match = re.search(r"<[^@]+@([^>]+)>", from_header)
+    if angle_match:
+        return angle_match.group(1).lower()
+    bare_match = re.search(r"[\w.+-]+@([\w.-]+)", from_header)
+    if bare_match:
+        return bare_match.group(1).lower()
+    return None
+
+
+def _matches_keep_domain(sender_domain: str, pattern: str) -> bool:
+    """Check if sender_domain matches a keep_domains pattern with dot-boundary matching."""
+    p = pattern if pattern.startswith(".") else f".{pattern}"
+    return sender_domain.endswith(p) or sender_domain == pattern.lstrip(".")
+
+
+async def _collect_spam_message_ids(service, query: str) -> List[str]:
+    """Paginate through Gmail search results and collect all message IDs."""
+    ids: List[str] = []
+    page_token = None
+    while True:
+        params = {"userId": "me", "q": query, "maxResults": SPAM_PAGE_SIZE}
+        if page_token:
+            params["pageToken"] = page_token
+        response = await asyncio.to_thread(
+            service.users().messages().list(**params).execute
+        )
+        for msg in response.get("messages", []):
+            if msg.get("id"):
+                ids.append(msg["id"])
+        page_token = response.get("nextPageToken")
+        if not page_token:
+            break
+    return ids
+
+
+async def _fetch_spam_metadata(
+    service, message_ids: List[str]
+) -> List[Dict[str, Any]]:
+    """Fetch From/Subject metadata for messages in chunks."""
+    metadata: List[Dict[str, Any]] = []
+    for i in range(0, len(message_ids), SPAM_METADATA_CHUNK_SIZE):
+        chunk = message_ids[i : i + SPAM_METADATA_CHUNK_SIZE]
+        for mid in chunk:
+            try:
+                res = await asyncio.to_thread(
+                    service.users()
+                    .messages()
+                    .get(
+                        userId="me",
+                        id=mid,
+                        format="metadata",
+                        metadataHeaders=["From", "Subject"],
+                    )
+                    .execute
+                )
+                headers = {
+                    h["name"]: h["value"]
+                    for h in res.get("payload", {}).get("headers", [])
+                }
+                from_header = headers.get("From", "")
+                metadata.append(
+                    {
+                        "id": mid,
+                        "from": from_header,
+                        "subject": headers.get("Subject", ""),
+                        "domain": _extract_sender_domain(from_header),
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"[purge_spam] Failed to fetch metadata for {mid}: {e}")
+                metadata.append(
+                    {"id": mid, "from": "", "subject": "", "domain": None}
+                )
+    return metadata
+
+
+def _partition_by_keep_domains(
+    metadata: List[Dict[str, Any]], keep_domains: Optional[List[str]]
+) -> tuple:
+    """Split messages into (to_keep, to_delete) based on domain whitelist."""
+    if not keep_domains:
+        return [], metadata
+
+    to_keep = []
+    to_delete = []
+    for msg in metadata:
+        if msg["domain"] and any(
+            _matches_keep_domain(msg["domain"], pattern) for pattern in keep_domains
+        ):
+            to_keep.append(msg)
+        else:
+            to_delete.append(msg)
+    return to_keep, to_delete
+
+
+async def _execute_spam_purge(
+    service,
+    to_keep: List[Dict[str, Any]],
+    to_delete: List[Dict[str, Any]],
+) -> Dict[str, int]:
+    """Move kept messages to inbox and batch-delete the rest."""
+    # Move kept messages out of spam
+    for msg in to_keep:
+        await asyncio.to_thread(
+            service.users()
+            .messages()
+            .modify(
+                userId="me",
+                id=msg["id"],
+                body={"removeLabelIds": ["SPAM"], "addLabelIds": ["INBOX"]},
+            )
+            .execute
+        )
+
+    # Batch-delete
+    delete_ids = [m["id"] for m in to_delete]
+    for i in range(0, len(delete_ids), SPAM_BATCH_DELETE_SIZE):
+        batch = delete_ids[i : i + SPAM_BATCH_DELETE_SIZE]
+        await asyncio.to_thread(
+            service.users()
+            .messages()
+            .batchDelete(userId="me", body={"ids": batch})
+            .execute
+        )
+
+    return {"deleted": len(to_delete), "kept": len(to_keep)}
+
+
+@server.tool()
+@handle_http_errors("purge_gmail_spam", service_type="gmail")
+@require_google_service("gmail", GMAIL_MODIFY_SCOPE)
+async def purge_gmail_spam(
+    service,
+    user_google_email: str,
+    dry_run: Annotated[
+        bool,
+        Field(
+            description="Preview what would be deleted (default true). Set false to actually delete.",
+        ),
+    ] = True,
+    keep_domains: Annotated[
+        Optional[List[str]],
+        Field(
+            description="Domain suffixes to whitelist, e.g. ['.gov', 'microsoft.com']. Emails from matching senders are kept.",
+        ),
+    ] = None,
+    patterns: Annotated[
+        Optional[str],
+        Field(
+            description="Path to a patterns file (one Gmail search query per line). If provided, only delete spam matching these patterns. If omitted, delete all spam.",
+        ),
+    ] = None,
+) -> str:
+    """
+    Permanently delete spam emails. Defaults to dry-run mode (preview only).
+    Supports domain whitelist to protect misclassified emails.
+    If a patterns file is provided, only delete spam matching those patterns.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        dry_run (bool): Preview what would be deleted (default true). Set false to actually delete.
+        keep_domains (Optional[List[str]]): Domain suffixes to whitelist. Emails from matching senders are kept.
+        patterns (Optional[str]): Path to a patterns file (one Gmail search query per line).
+
+    Returns:
+        str: Summary of spam purge results.
+    """
+    logger.info(
+        f"[purge_gmail_spam] Invoked. Email: '{user_google_email}', dry_run={dry_run}"
+    )
+
+    # -----------------------------------------------------------------------
+    # Pattern mode: only delete spam matching patterns from a file
+    # -----------------------------------------------------------------------
+    if patterns:
+        patterns_path = validate_file_path(patterns)
+        if not patterns_path.exists():
+            return f"Error: Patterns file not found: {patterns}"
+
+        pattern_lines = [
+            line.strip()
+            for line in patterns_path.read_text().splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ]
+
+        if not pattern_lines:
+            return (
+                f"Patterns file is empty or all lines are comments: {patterns}\n"
+                "No spam deleted."
+            )
+
+        # Search for each pattern scoped to spam
+        all_id_set: set = set()
+        pattern_results = []
+        for pattern_query in pattern_lines:
+            query = f"in:spam {pattern_query}"
+            ids = await _collect_spam_message_ids(service, query)
+            pattern_results.append(
+                {"query": pattern_query, "matched": len(ids), "ids": ids}
+            )
+            all_id_set.update(ids)
+
+        total_matched = sum(p["matched"] for p in pattern_results)
+        unique_ids = list(all_id_set)
+
+        has_keep = keep_domains and len(keep_domains) > 0
+
+        if has_keep:
+            metadata = await _fetch_spam_metadata(service, unique_ids)
+            to_keep, to_delete = _partition_by_keep_domains(metadata, keep_domains)
+        else:
+            to_keep = []
+            to_delete = [{"id": uid} for uid in unique_ids]
+
+        if not dry_run:
+            if has_keep:
+                result = await _execute_spam_purge(service, to_keep, to_delete)
+                return (
+                    f"Spam purge complete (pattern mode).\n"
+                    f"Patterns file: {patterns}\n"
+                    f"Deleted: {result['deleted']}\n"
+                    f"Kept (whitelisted): {result['kept']}"
+                )
+            else:
+                # No keep_domains — delete all matched
+                for i in range(0, len(unique_ids), SPAM_BATCH_DELETE_SIZE):
+                    batch = unique_ids[i : i + SPAM_BATCH_DELETE_SIZE]
+                    await asyncio.to_thread(
+                        service.users()
+                        .messages()
+                        .batchDelete(userId="me", body={"ids": batch})
+                        .execute
+                    )
+                return (
+                    f"Spam purge complete (pattern mode).\n"
+                    f"Patterns file: {patterns}\n"
+                    f"Deleted: {len(unique_ids)}\n"
+                    f"Kept: 0"
+                )
+
+        # Dry-run summary
+        lines = [
+            "DRY RUN — Pattern mode spam purge preview:",
+            f"Patterns file: {patterns}",
+            "",
+            "Pattern results:",
+        ]
+        for p in pattern_results:
+            lines.append(f"  '{p['query']}' → {p['matched']} matches")
+        lines.append("")
+        lines.append(f"Total matched: {total_matched}")
+        lines.append(f"Unique messages: {len(unique_ids)}")
+        lines.append(f"To delete: {len(to_delete)}")
+        lines.append(f"To keep (whitelisted): {len(to_keep)}")
+
+        if to_keep:
+            lines.append("")
+            lines.append("Kept sample (up to 20):")
+            for msg in to_keep[:20]:
+                lines.append(f"  From: {msg.get('from', '?')}  Subject: {msg.get('subject', '?')}")
+
+        return "\n".join(lines)
+
+    # -----------------------------------------------------------------------
+    # All-spam mode: delete everything in spam (with optional keep_domains)
+    # -----------------------------------------------------------------------
+    all_ids = await _collect_spam_message_ids(service, "in:spam")
+
+    if not all_ids:
+        return "No spam messages found."
+
+    has_keep = keep_domains and len(keep_domains) > 0
+
+    # Fast path: no keep_domains, not dry-run → skip metadata and delete all
+    if not dry_run and not has_keep:
+        for i in range(0, len(all_ids), SPAM_BATCH_DELETE_SIZE):
+            batch = all_ids[i : i + SPAM_BATCH_DELETE_SIZE]
+            await asyncio.to_thread(
+                service.users()
+                .messages()
+                .batchDelete(userId="me", body={"ids": batch})
+                .execute
+            )
+        return f"Spam purge complete.\nDeleted: {len(all_ids)}\nKept: 0"
+
+    # Fetch metadata (needed for keep_domains filtering or dry-run summary)
+    metadata = await _fetch_spam_metadata(service, all_ids)
+    to_keep, to_delete = _partition_by_keep_domains(metadata, keep_domains)
+
+    if not dry_run:
+        result = await _execute_spam_purge(service, to_keep, to_delete)
+        return (
+            f"Spam purge complete.\n"
+            f"Deleted: {result['deleted']}\n"
+            f"Kept (whitelisted): {result['kept']}"
+        )
+
+    # Dry-run summary
+    from collections import Counter
+
+    domain_counts = Counter(msg.get("domain", "(unknown)") for msg in to_delete)
+    top_domains = domain_counts.most_common(10)
+
+    lines = [
+        "DRY RUN — All-spam purge preview:",
+        f"Total spam: {len(all_ids)}",
+        f"To delete: {len(to_delete)}",
+        f"To keep (whitelisted): {len(to_keep)}",
+        "",
+        "Top sender domains:",
+    ]
+    for domain, count in top_domains:
+        lines.append(f"  {domain}: {count}")
+
+    if to_keep:
+        lines.append("")
+        lines.append("Kept sample (up to 20):")
+        for msg in to_keep[:20]:
+            lines.append(f"  From: {msg.get('from', '?')}  Subject: {msg.get('subject', '?')}")
+
+    return "\n".join(lines)
