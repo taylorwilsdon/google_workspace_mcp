@@ -488,7 +488,10 @@ async def create_drive_folder(
         f"Folder Name: '{folder_name}', Parent: '{parent_folder_id}'"
     )
 
-    resolved_parent_id = await resolve_folder_id(service, parent_folder_id)
+    if parent_folder_id == "root":
+        resolved_parent_id = "root"
+    else:
+        resolved_parent_id = await resolve_folder_id(service, parent_folder_id)
 
     file_metadata = {
         "name": folder_name,
@@ -511,7 +514,7 @@ async def create_drive_folder(
 
     confirmation = (
         f"Successfully created folder '{created_folder.get('name', folder_name)}' "
-        f"(ID: {folder_id}) in parent folder '{parent_folder_id}' "
+        f"(ID: {folder_id}) in parent folder '{resolved_parent_id}' "
         f"for {user_google_email}. Link: {link}"
     )
     logger.info(f"[create_drive_folder] Success. Link: {link}")

@@ -841,6 +841,7 @@ cp .env.oauth21 .env
 | `get_drive_file_content` | **Core** | Read file content (Office formats) |
 | `get_drive_file_download_url` | **Core** | Download Drive files to local disk |
 | `create_drive_file` | **Core** | Create files or fetch from URLs |
+| `create_drive_folder` | **Core** | Create folders in Drive or shared drives |
 | `import_to_google_doc` | **Core** | Import files (MD, DOCX, HTML, etc.) as Google Docs |
 | `share_drive_file` | **Core** | Share file with users/groups/domains/anyone |
 | `get_drive_shareable_link` | **Core** | Get shareable links for a file |
