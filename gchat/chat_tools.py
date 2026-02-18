@@ -25,7 +25,7 @@ _sender_name_cache: Dict[str, str] = {}
 def _cache_sender(user_id: str, name: str) -> None:
     """Store a resolved sender name, evicting oldest entries if cache is full."""
     if len(_sender_name_cache) >= _SENDER_CACHE_MAX_SIZE:
-        to_remove = list(_sender_name_cache.keys())[:_SENDER_CACHE_MAX_SIZE // 2]
+        to_remove = list(_sender_name_cache.keys())[: _SENDER_CACHE_MAX_SIZE // 2]
         for k in to_remove:
             del _sender_name_cache[k]
     _sender_name_cache[user_id] = name
@@ -204,7 +204,9 @@ async def get_messages(
     for msg in messages:
         sender_obj = msg.get("sender", {})
         sender_key = sender_obj.get("name", "")
-        sender = sender_map.get(sender_key) or await _resolve_sender(people_service, sender_obj)
+        sender = sender_map.get(sender_key) or await _resolve_sender(
+            people_service, sender_obj
+        )
         create_time = msg.get("createTime", "Unknown Time")
         text_content = msg.get("text", "No text content")
         msg_name = msg.get("name", "")
@@ -347,7 +349,9 @@ async def search_messages(
                     msg["_space_name"] = space.get("displayName", "Unknown")
                 messages.extend(space_msgs)
             except HttpError as e:
-                logger.debug("Skipping space %s during search: %s", space.get("name"), e)
+                logger.debug(
+                    "Skipping space %s during search: %s", space.get("name"), e
+                )
                 continue
         context = "all accessible spaces"
 
@@ -370,7 +374,9 @@ async def search_messages(
     for msg in messages:
         sender_obj = msg.get("sender", {})
         sender_key = sender_obj.get("name", "")
-        sender = sender_map.get(sender_key) or await _resolve_sender(people_service, sender_obj)
+        sender = sender_map.get(sender_key) or await _resolve_sender(
+            people_service, sender_obj
+        )
         create_time = msg.get("createTime", "Unknown Time")
         text_content = msg.get("text", "No text content")
         space_name = msg.get("_space_name", "Unknown Space")
