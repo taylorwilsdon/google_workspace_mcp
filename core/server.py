@@ -420,6 +420,7 @@ def get_auth_provider() -> Optional[GoogleProvider]:
     return _auth_provider
 
 
+@server.custom_route("/", methods=["GET"])
 @server.custom_route("/health", methods=["GET"])
 async def health_check(request: Request):
     try:
@@ -482,7 +483,7 @@ async def legacy_oauth2_callback(request: Request) -> HTMLResponse:
         if error_message:
             return create_server_error_response(error_message)
 
-        logger.info(f"OAuth callback: Received code (state: {state}).")
+        logger.info("OAuth callback: Received authorization code.")
 
         mcp_session_id = None
         if hasattr(request, "state") and hasattr(request.state, "session_id"):

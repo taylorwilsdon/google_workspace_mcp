@@ -81,7 +81,7 @@ class AuthInfoMiddleware(Middleware):
                     auth_header = headers.get("authorization", "")
                     if auth_header.startswith("Bearer "):
                         token_str = auth_header[7:]  # Remove "Bearer " prefix
-                        logger.info(f"Found Bearer token: {token_str[:20]}...")
+                        logger.info("Found Bearer token in request")
 
                         # For Google OAuth tokens (ya29.*), we need to verify them differently
                         if token_str.startswith("ya29."):

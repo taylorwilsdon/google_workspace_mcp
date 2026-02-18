@@ -215,10 +215,13 @@ class LocalDirectoryCredentialStore(CredentialStore):
             return []
 
         users = []
+        non_credential_files = {"oauth_states"}
         try:
             for filename in os.listdir(self.base_dir):
                 if filename.endswith(".json"):
                     user_email = filename[:-5]  # Remove .json extension
+                    if user_email in non_credential_files or "@" not in user_email:
+                        continue
                     users.append(user_email)
             logger.debug(
                 f"Found {len(users)} users with credentials in {self.base_dir}"

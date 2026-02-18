@@ -15,13 +15,16 @@ from core.server import server
 from core.utils import handle_http_errors, UserInputError
 from core.comments import create_comment_tools
 from gsheets.sheets_helpers import (
+    _a1_range_cell_count,
     CONDITION_TYPES,
     _a1_range_for_values,
     _build_boolean_rule,
     _build_gradient_rule,
     _fetch_detailed_sheet_errors,
+    _fetch_sheet_hyperlinks,
     _fetch_sheets_with_rules,
     _format_conditional_rules_section,
+    _format_sheet_hyperlink_section,
     _format_sheet_error_section,
     _parse_a1_range,
     _parse_condition_values,
@@ -33,6 +36,7 @@ from gsheets.sheets_helpers import (
 
 # Configure module logger
 logger = logging.getLogger(__name__)
+MAX_HYPERLINK_FETCH_CELLS = 5000
 
 
 @server.tool()
@@ -174,6 +178,7 @@ async def read_sheet_values(
     user_google_email: str,
     spreadsheet_id: str,
     range_name: str = "A1:Z1000",
+    include_hyperlinks: bool = False,
 ) -> str:
     """
     Reads values from a specific range in a Google Sheet.
@@ -182,6 +187,8 @@ async def read_sheet_values(
         user_google_email (str): The user's Google email address. Required.
         spreadsheet_id (str): The ID of the spreadsheet. Required.
         range_name (str): The range to read (e.g., "Sheet1!A1:D10", "A1:D10"). Defaults to "A1:Z1000".
+        include_hyperlinks (bool): If True, also fetch hyperlink metadata for the range.
+            Defaults to False to avoid expensive includeGridData requests.
 
     Returns:
         str: The formatted values from the specified range.
@@ -201,10 +208,47 @@ async def read_sheet_values(
     if not values:
         return f"No data found in range '{range_name}' for {user_google_email}."
 
+    resolved_range = result.get("range", range_name)
+    detailed_range = _a1_range_for_values(resolved_range, values) or resolved_range
+
+    hyperlink_section = ""
+    if include_hyperlinks:
+        # Use a tight A1 range for includeGridData fetches to avoid expensive
+        # open-ended requests (e.g., A:Z).
+        hyperlink_range = _a1_range_for_values(resolved_range, values)
+        if not hyperlink_range:
+            logger.info(
+                "[read_sheet_values] Skipping hyperlink fetch for range '%s': unable to determine tight bounds",
+                resolved_range,
+            )
+        else:
+            cell_count = _a1_range_cell_count(hyperlink_range) or sum(
+                len(row) for row in values
+            )
+            if cell_count <= MAX_HYPERLINK_FETCH_CELLS:
+                try:
+                    hyperlinks = await _fetch_sheet_hyperlinks(
+                        service, spreadsheet_id, hyperlink_range
+                    )
+                    hyperlink_section = _format_sheet_hyperlink_section(
+                        hyperlinks=hyperlinks, range_label=hyperlink_range
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "[read_sheet_values] Failed fetching hyperlinks for range '%s': %s",
+                        hyperlink_range,
+                        exc,
+                    )
+            else:
+                logger.info(
+                    "[read_sheet_values] Skipping hyperlink fetch for large range '%s' (%d cells > %d limit)",
+                    hyperlink_range,
+                    cell_count,
+                    MAX_HYPERLINK_FETCH_CELLS,
+                )
+
     detailed_errors_section = ""
     if _values_contain_sheets_errors(values):
-        resolved_range = result.get("range", range_name)
-        detailed_range = _a1_range_for_values(resolved_range, values) or resolved_range
         try:
             errors = await _fetch_detailed_sheet_errors(
                 service, spreadsheet_id, detailed_range
@@ -233,7 +277,7 @@ async def read_sheet_values(
     )
 
     logger.info(f"Successfully read {len(values)} rows for {user_google_email}.")
-    return text_output + detailed_errors_section
+    return text_output + hyperlink_section + detailed_errors_section
 
 
 @server.tool()

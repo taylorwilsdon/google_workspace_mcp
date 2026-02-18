@@ -58,6 +58,11 @@ _fastmcp_cloud_overrides = enforce_fastmcp_cloud_defaults()
 # Suppress googleapiclient discovery cache warning
 logging.getLogger("googleapiclient.discovery_cache").setLevel(logging.ERROR)
 
+# Suppress httpx/httpcore INFO logs that leak access tokens in URLs
+# (e.g. tokeninfo?access_token=ya29.xxx)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
 # Reload OAuth configuration after env vars loaded
 reload_oauth_config()
 

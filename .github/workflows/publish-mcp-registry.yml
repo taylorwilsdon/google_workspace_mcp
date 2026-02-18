@@ -1,0 +1,104 @@
+name: Publish PyPI + MCP Registry
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Resolve version from tag
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
+      - name: Verify tag matches pyproject version
+        run: |
+          PYPROJECT_VERSION="$(python - <<'PY'
+          import tomllib
+          with open("pyproject.toml", "rb") as f:
+              data = tomllib.load(f)
+          print(data["project"]["version"])
+          PY
+          )"
+          if [ "$PYPROJECT_VERSION" != "$VERSION" ]; then
+            echo "Tag version ($VERSION) does not match pyproject version ($PYPROJECT_VERSION)."
+            exit 1
+          fi
+
+      - name: Sync server.json version with release
+        run: |
+          tmp="$(mktemp)"
+          jq --arg version "$VERSION" '
+            .version = $version
+            | .packages = (
+                (.packages // [])
+                | map(
+                    if ((.registryType // .registry_type // "") == "pypi")
+                    then .version = $version
+                    else .
+                    end
+                  )
+              )
+          ' server.json > "$tmp"
+          mv "$tmp" server.json
+
+      - name: Validate server.json against schema
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install jsonschema requests
+          python - <<'PY'
+          import json
+          import requests
+          from jsonschema import Draft202012Validator
+
+          with open("server.json", "r", encoding="utf-8") as f:
+              instance = json.load(f)
+
+          schema_url = instance["$schema"]
+          schema = requests.get(schema_url, timeout=30).json()
+
+          Draft202012Validator.check_schema(schema)
+          Draft202012Validator(schema).validate(instance)
+          print("server.json schema validation passed")
+          PY
+
+      - name: Build distribution
+        run: |
+          python -m pip install build
+          python -m build
+
+      - name: Check package metadata
+        run: |
+          python -m pip install twine
+          twine check dist/*
+
+      - name: Publish package to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
+
+      - name: Install mcp-publisher
+        run: |
+          OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+          ARCH="$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/')"
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_${OS}_${ARCH}.tar.gz" | tar xz mcp-publisher
+          chmod +x mcp-publisher
+
+      - name: Login to MCP Registry with GitHub OIDC
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish server to MCP Registry
+        run: ./mcp-publisher publish

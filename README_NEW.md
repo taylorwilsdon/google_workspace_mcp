@@ -97,7 +97,7 @@ export OAUTHLIB_INSECURE_TRANSPORT=1  # Development only
 |------|------|-------------|
 | `get_doc_content` | Core | Extract text from Docs or .docx files (supports tabs) |
 | `create_doc` | Core | Create new documents with optional initial content |
-| `modify_doc_text` | Core | Insert, replace, format text (bold, italic, colors, fonts) |
+| `modify_doc_text` | Core | Insert, replace, format text (bold, italic, colors, fonts, links) |
 | `search_docs` | Extended | Find documents by name |
 | `find_and_replace_doc` | Extended | Global find/replace with case matching |
 | `list_docs_in_folder` | Extended | List Docs in a specific folder |

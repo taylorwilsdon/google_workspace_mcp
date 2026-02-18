@@ -1,3 +1,5 @@
+<!-- mcp-name: io.github.taylorwilsdon/workspace-mcp -->
+
 <div align="center">
 
 # <span style="color:#cad8d9">Google Workspace MCP Server</span> <img src="https://github.com/user-attachments/assets/b89524e4-6e6e-49e6-ba77-00d6df0c6e5c" width="80" align="right" />
@@ -53,6 +55,8 @@
 A production-ready MCP server that integrates all major Google Workspace services with AI assistants. It supports both single-user operation and multi-user authentication via OAuth 2.1, making it a powerful backend for custom applications. Built with FastMCP for optimal performance, featuring advanced authentication handling, service caching, and streamlined development patterns.
 
 **Simplified Setup**: Now uses Google Desktop OAuth clients - no redirect URIs or port configuration needed!
+
+**Maintainer Docs**: Automated release and registry publishing guide at [`docs/mcp_registry_publishing_guide.md`](docs/mcp_registry_publishing_guide.md).
 
 ## <span style="color:#adbcbc">Features</span>
 
@@ -396,6 +400,7 @@ export USER_GOOGLE_EMAIL=\
 | `WORKSPACE_MCP_PORT` | Server listening port | `8000` |
 | `WORKSPACE_MCP_HOST` | Server bind host | `0.0.0.0` |
 | `WORKSPACE_EXTERNAL_URL` | External URL for reverse proxy setups | None |
+| `WORKSPACE_ATTACHMENT_DIR` | Directory for downloaded attachments | `~/.workspace-mcp/attachments/` |
 | `GOOGLE_OAUTH_REDIRECT_URI` | Override OAuth callback URL | Auto-constructed |
 | `USER_GOOGLE_EMAIL` | Default auth email | None |
 
@@ -834,7 +839,7 @@ cp .env.oauth21 .env
 |------|------|-------------|
 | `search_drive_files` | **Core** | Search files with query syntax |
 | `get_drive_file_content` | **Core** | Read file content (Office formats) |
-| `get_drive_file_download_url` | **Core** | Get download URL for Drive files |
+| `get_drive_file_download_url` | **Core** | Download Drive files to local disk |
 | `create_drive_file` | **Core** | Create files or fetch from URLs |
 | `import_to_google_doc` | **Core** | Import files (MD, DOCX, HTML, etc.) as Google Docs |
 | `share_drive_file` | **Core** | Share file with users/groups/domains/anyone |
@@ -898,6 +903,24 @@ attachments=[{
 
 </details>
 
+<details>
+<summary><b>📥 Downloaded Attachment Storage</b> <sub><sup>← Where downloaded files are saved</sup></sub></summary>
+
+When downloading Gmail attachments (`get_gmail_attachment_content`) or Drive files (`get_drive_file_download_url`), files are saved to a persistent local directory rather than a temporary folder in the working directory.
+
+**Default location:** `~/.workspace-mcp/attachments/`
+
+Files are saved with their original filename plus a short UUID suffix for uniqueness (e.g., `invoice_a1b2c3d4.pdf`). In **stdio mode**, the tool returns the absolute file path for direct filesystem access. In **HTTP mode**, it returns a download URL via the `/attachments/{file_id}` endpoint.
+
+To customize the storage directory:
+```bash
+export WORKSPACE_ATTACHMENT_DIR="/path/to/custom/dir"
+```
+
+Saved files expire after 1 hour and are cleaned up automatically.
+
+</details>
+
 </td>
 <td width="50%" valign="top">
 
@@ -907,12 +930,12 @@ attachments=[{
 |------|------|-------------|
 | `get_doc_content` | **Core** | Extract document text |
 | `create_doc` | **Core** | Create new documents |
-| `modify_doc_text` | **Core** | Modify document text |
+| `modify_doc_text` | **Core** | Modify document text (formatting + links) |
 | `search_docs` | Extended | Find documents by name |
 | `find_and_replace_doc` | Extended | Find and replace text |
 | `list_docs_in_folder` | Extended | List docs in folder |
 | `insert_doc_elements` | Extended | Add tables, lists, page breaks |
-| `update_paragraph_style` | Extended | Apply heading styles (H1-H6) and paragraph formatting |
+| `update_paragraph_style` | Extended | Apply heading styles, lists (bulleted/numbered with nesting), and paragraph formatting |
 | `insert_doc_image` | Complete | Insert images from Drive/URLs |
 | `update_doc_headers_footers` | Complete | Modify headers and footers |
 | `batch_update_doc` | Complete | Execute multiple operations |
@@ -1572,6 +1595,12 @@ The credential store automatically handles credential serialization, expiry pars
 - **Transport-Aware Callbacks**: Stdio mode starts a minimal HTTP server only for OAuth, ensuring callbacks work in all modes
 - **Production**: Use HTTPS & OAuth 2.1 and configure accordingly
 - **Scope Minimization**: Tools request only necessary permissions
+- **Local File Access Control**: Tools that read local files (e.g., attachments, `file://` uploads) are restricted to the user's home directory by default. Override this with the `ALLOWED_FILE_DIRS` environment variable:
+  ```bash
+  # Colon-separated list of directories (semicolon on Windows) from which local file reads are permitted
+  export ALLOWED_FILE_DIRS="/home/user/documents:/data/shared"
+  ```
+  Regardless of the allowlist, access to sensitive paths (`.env`, `.ssh/`, `.aws/`, `/etc/shadow`, credential files, etc.) is always blocked.
 
 ---
 

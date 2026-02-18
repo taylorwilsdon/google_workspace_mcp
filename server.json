@@ -1,0 +1,17 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.taylorwilsdon/workspace-mcp",
+  "description": "Google Workspace MCP server for Gmail, Drive, Calendar, Docs, Sheets, Slides, Forms, Tasks, Chat.",
+  "status": "active",
+  "version": "1.11.5",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "workspace-mcp",
+      "transport": {
+        "type": "stdio"
+      },
+      "version": "1.11.5"
+    }
+  ]
+}

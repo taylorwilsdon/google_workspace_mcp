@@ -1,4 +1,4 @@
-name: Ruff Check
+name: Ruff
 
 on:
   pull_request:
@@ -6,17 +6,39 @@ on:
   push:
     branches: [ main ]
 
+permissions:
+  contents: write
+
 jobs:
   ruff:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-python@v5
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.head_ref || github.ref }}
+        token: ${{ secrets.GITHUB_TOKEN }}
+    - uses: actions/setup-python@v6
       with:
         python-version: '3.11'
     - name: Install uv
-      uses: astral-sh/setup-uv@v4
+      uses: astral-sh/setup-uv@v7
     - name: Install dependencies
       run: uv sync
-    - name: Run ruff check
-      run: uv run ruff check
+    - name: Auto-fix ruff lint and format
+      if: github.event_name == 'pull_request'
+      run: |
+        uv run ruff check --fix
+        uv run ruff format
+    - name: Commit and push fixes
+      if: github.event_name == 'pull_request'
+      run: |
+        git diff --quiet && exit 0
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git add -A
+        git commit -m "style: auto-fix ruff lint and format"
+        git push || echo "::warning::Could not push auto-fixes — fork PRs require 'Allow edits from maintainers' enabled"
+    - name: Validate
+      run: |
+        uv run ruff check
+        uv run ruff format --check

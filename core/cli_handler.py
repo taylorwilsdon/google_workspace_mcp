@@ -233,14 +233,18 @@ async def run_tool(server, tool_name: str, args: Dict[str, Any]) -> str:
     if fn is None:
         raise ValueError(f"Tool '{tool_name}' has no callable function")
 
-    logger.debug(f"[CLI] Executing tool: {tool_name} with args: {list(args.keys())}")
+    call_args = dict(args)
 
     try:
+        logger.debug(
+            f"[CLI] Executing tool: {tool_name} with args: {list(call_args.keys())}"
+        )
+
         # Call the tool function
         if asyncio.iscoroutinefunction(fn):
-            result = await fn(**args)
+            result = await fn(**call_args)
         else:
-            result = fn(**args)
+            result = fn(**call_args)
 
         # Convert result to string if needed
         if isinstance(result, str):
@@ -257,7 +261,7 @@ async def run_tool(server, tool_name: str, args: Dict[str, Any]) -> str:
         return (
             f"Error calling {tool_name}: {error_msg}\n\n"
             f"Required parameters: {required}\n"
-            f"Provided parameters: {list(args.keys())}"
+            f"Provided parameters: {list(call_args.keys())}"
         )
     except Exception as e:
         logger.error(f"[CLI] Error executing {tool_name}: {e}", exc_info=True)

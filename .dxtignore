@@ -1,42 +1,58 @@
-# ---- Python artefacts --------------------------------------------------
-__pycache__/
+# =============================================================================
+# .dxtignore — defense-in-depth denylist for dxt pack
+#
+# IMPORTANT: Always use dxt-safe-pack.sh instead of bare `dxt pack`.
+# The script guarantees only git-tracked files are packaged.
+# This file exists as a safety net in case someone runs `dxt pack` directly.
+# =============================================================================
+
+# ---- Caches ----------------------------------------------------------------
+.mypy_cache
+__pycache__
 *.py[cod]
 *.so
+.pytest_cache
+.ruff_cache
 
-# ---- Packaging ---------------------------------------------------------
-*.egg-info/
+# ---- Build / packaging -----------------------------------------------------
+*.egg-info
 build/
 dist/
 
-# ---- Environments & tooling -------------------------------------------
+# ---- Environments & tooling ------------------------------------------------
 .env
-.venv/
+.venv
 venv/
 .idea/
 .vscode/
 .claude/
+.serena/
+node_modules/
 
-# ---- macOS clutter -----------------------------------------------------
+# ---- macOS -----------------------------------------------------------------
 .DS_Store
 
-# ---- Secrets & Credentials --------------------------------------------
+# ---- Secrets & credentials — CRITICAL --------------------------------------
 client_secret.json
-.credentials/
+.credentials
+credentials.json
+token.pickle
+*_token
+*_secret
+.mcpregistry_*
 *.key
 *.pem
 *.p12
 *.crt
 *.der
-token.pickle
-credentials.json
 
-# ---- Test & Debug Files -----------------------------------------------
+# ---- Test & debug -----------------------------------------------------------
 .coverage
 pytest_out.txt
 mcp_server_debug.log
 diff_output.txt
 
-# ---- Temporary & Build Files ------------------------------------------
+# ---- Temp & editor files ----------------------------------------------------
 *.tmp
 *.log
 *.pid
@@ -44,3 +60,8 @@ diff_output.txt
 *.swo
 *~
 
+# ---- Development artifacts not for distribution -----------------------------
+scripts/
+.beads
+.github/
+tests/

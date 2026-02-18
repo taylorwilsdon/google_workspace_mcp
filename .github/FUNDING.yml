@@ -1,0 +1,19 @@
+# .github/FUNDING.yml
+github: taylorwilsdon
+
+# --- Optional platforms (one value per platform) ---
+# patreon: REPLACE_ME
+# open_collective: REPLACE_ME
+# ko_fi: REPLACE_ME
+# liberapay: REPLACE_ME
+# issuehunt: REPLACE_ME
+# polar: REPLACE_ME
+# buy_me_a_coffee: REPLACE_ME
+# thanks_dev: u/gh/REPLACE_ME_GITHUB_USERNAME
+
+# Tidelift uses platform/package (npm, pypi, rubygems, maven, packagist, nuget)
+# tidelift: pypi/REPLACE_ME_PACKAGE_NAME
+
+# Up to 4 custom URLs (wrap in quotes if they contain :)
+# Good pattern: link to a SUPPORT.md that describes how to sponsor, or your donation page.
+# custom: ["https://REPLACE_ME_DOMAIN/sponsor", "https://github.com/REPLACE_ME_OWNER/REPLACE_ME_REPO/blob/main/SUPPORT.md"]

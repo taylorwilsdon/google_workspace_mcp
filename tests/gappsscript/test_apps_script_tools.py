@@ -62,12 +62,19 @@ async def test_list_script_projects():
 async def test_get_script_project():
     """Test retrieving complete project details"""
     mock_service = Mock()
-    mock_response = {
+
+    # projects().get() returns metadata only (no files)
+    mock_metadata_response = {
         "scriptId": "test123",
         "title": "Test Project",
         "creator": {"email": "creator@example.com"},
         "createTime": "2025-01-10T10:00:00Z",
         "updateTime": "2026-01-12T15:30:00Z",
+    }
+
+    # projects().getContent() returns files with source code
+    mock_content_response = {
+        "scriptId": "test123",
         "files": [
             {
                 "name": "Code",
@@ -77,7 +84,8 @@ async def test_get_script_project():
         ],
     }
 
-    mock_service.projects().get().execute.return_value = mock_response
+    mock_service.projects().get().execute.return_value = mock_metadata_response
+    mock_service.projects().getContent().execute.return_value = mock_content_response
 
     result = await _get_script_project_impl(
         service=mock_service, user_google_email="test@example.com", script_id="test123"

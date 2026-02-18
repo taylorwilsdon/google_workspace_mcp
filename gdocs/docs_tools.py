@@ -367,6 +367,7 @@ async def modify_doc_text(
     font_family: str = None,
     text_color: str = None,
     background_color: str = None,
+    link_url: str = None,
 ) -> str:
     """
     Modifies text in a Google Doc - can insert/replace text and/or apply formatting in a single operation.
@@ -384,13 +385,14 @@ async def modify_doc_text(
         font_family: Font family name (e.g., "Arial", "Times New Roman")
         text_color: Foreground text color (#RRGGBB)
         background_color: Background/highlight color (#RRGGBB)
+        link_url: Hyperlink URL (http/https)
 
     Returns:
         str: Confirmation message with operation details
     """
     logger.info(
         f"[modify_doc_text] Doc={document_id}, start={start_index}, end={end_index}, text={text is not None}, "
-        f"formatting={any([bold, italic, underline, font_size, font_family, text_color, background_color])}"
+        f"formatting={any(p is not None for p in [bold, italic, underline, font_size, font_family, text_color, background_color, link_url])}"
     )
 
     # Input validation
@@ -401,31 +403,21 @@ async def modify_doc_text(
         return f"Error: {error_msg}"
 
     # Validate that we have something to do
-    if text is None and not any(
-        [
-            bold is not None,
-            italic is not None,
-            underline is not None,
-            font_size,
-            font_family,
-            text_color,
-            background_color,
-        ]
-    ):
-        return "Error: Must provide either 'text' to insert/replace, or formatting parameters (bold, italic, underline, font_size, font_family, text_color, background_color)."
+    formatting_params = [
+        bold,
+        italic,
+        underline,
+        font_size,
+        font_family,
+        text_color,
+        background_color,
+        link_url,
+    ]
+    if text is None and not any(p is not None for p in formatting_params):
+        return "Error: Must provide either 'text' to insert/replace, or formatting parameters (bold, italic, underline, font_size, font_family, text_color, background_color, link_url)."
 
     # Validate text formatting params if provided
-    if any(
-        [
-            bold is not None,
-            italic is not None,
-            underline is not None,
-            font_size,
-            font_family,
-            text_color,
-            background_color,
-        ]
-    ):
+    if any(p is not None for p in formatting_params):
         is_valid, error_msg = validator.validate_text_formatting_params(
             bold,
             italic,
@@ -434,6 +426,7 @@ async def modify_doc_text(
             font_family,
             text_color,
             background_color,
+            link_url,
         )
         if not is_valid:
             return f"Error: {error_msg}"
@@ -482,17 +475,7 @@ async def modify_doc_text(
             operations.append(f"Inserted text at index {start_index}")
 
     # Handle formatting
-    if any(
-        [
-            bold is not None,
-            italic is not None,
-            underline is not None,
-            font_size,
-            font_family,
-            text_color,
-            background_color,
-        ]
-    ):
+    if any(p is not None for p in formatting_params):
         # Adjust range for formatting based on text operations
         format_start = start_index
         format_end = end_index
@@ -524,24 +507,24 @@ async def modify_doc_text(
                 font_family,
                 text_color,
                 background_color,
+                link_url,
             )
         )
 
-        format_details = []
-        if bold is not None:
-            format_details.append(f"bold={bold}")
-        if italic is not None:
-            format_details.append(f"italic={italic}")
-        if underline is not None:
-            format_details.append(f"underline={underline}")
-        if font_size:
-            format_details.append(f"font_size={font_size}")
-        if font_family:
-            format_details.append(f"font_family={font_family}")
-        if text_color:
-            format_details.append(f"text_color={text_color}")
-        if background_color:
-            format_details.append(f"background_color={background_color}")
+        format_details = [
+            f"{name}={value}"
+            for name, value in [
+                ("bold", bold),
+                ("italic", italic),
+                ("underline", underline),
+                ("font_size", font_size),
+                ("font_family", font_family),
+                ("text_color", text_color),
+                ("background_color", background_color),
+                ("link_url", link_url),
+            ]
+            if value is not None
+        ]
 
         operations.append(
             f"Applied formatting ({', '.join(format_details)}) to range {format_start}-{format_end}"
@@ -1333,6 +1316,35 @@ async def export_doc_to_pdf(
 # ==============================================================================
 
 
+async def _get_paragraph_start_indices_in_range(
+    service: Any, document_id: str, start_index: int, end_index: int
+) -> list[int]:
+    """
+    Fetch paragraph start indices that overlap a target range.
+    """
+    doc_data = await asyncio.to_thread(
+        service.documents()
+        .get(
+            documentId=document_id,
+            fields="body/content(startIndex,endIndex,paragraph)",
+        )
+        .execute
+    )
+
+    paragraph_starts = []
+    for element in doc_data.get("body", {}).get("content", []):
+        if "paragraph" not in element:
+            continue
+        paragraph_start = element.get("startIndex")
+        paragraph_end = element.get("endIndex")
+        if not isinstance(paragraph_start, int) or not isinstance(paragraph_end, int):
+            continue
+        if paragraph_end > start_index and paragraph_start < end_index:
+            paragraph_starts.append(paragraph_start)
+
+    return paragraph_starts or [start_index]
+
+
 @server.tool()
 @handle_http_errors("update_paragraph_style", service_type="docs")
 @require_google_service("docs", "docs_write")
@@ -1350,13 +1362,16 @@ async def update_paragraph_style(
     indent_end: float = None,
     space_above: float = None,
     space_below: float = None,
+    list_type: str = None,
+    list_nesting_level: int = None,
 ) -> str:
     """
-    Apply paragraph-level formatting and/or heading styles to a range in a Google Doc.
+    Apply paragraph-level formatting, heading styles, and/or list formatting to a range in a Google Doc.
 
     This tool can apply named heading styles (H1-H6) for semantic document structure,
-    and/or customize paragraph properties like alignment, spacing, and indentation.
-    Both can be applied in a single operation.
+    create bulleted or numbered lists with nested indentation, and customize paragraph
+    properties like alignment, spacing, and indentation. All operations can be applied
+    in a single call.
 
     Args:
         user_google_email: User's Google email address
@@ -1372,6 +1387,9 @@ async def update_paragraph_style(
         indent_end: Right/end indent in points
         space_above: Space above paragraph in points (e.g., 12 for one line)
         space_below: Space below paragraph in points
+        list_type: Create a list from existing paragraphs ('UNORDERED' for bullets, 'ORDERED' for numbers)
+        list_nesting_level: Nesting level for lists (0-8, where 0 is top level, default is 0)
+                           Use higher levels for nested/indented list items
 
     Returns:
         str: Confirmation message with formatting details
@@ -1380,13 +1398,21 @@ async def update_paragraph_style(
         # Apply H1 heading style
         update_paragraph_style(document_id="...", start_index=1, end_index=20, heading_level=1)
 
-        # Center-align a paragraph with double spacing
+        # Create a bulleted list
         update_paragraph_style(document_id="...", start_index=1, end_index=50,
-                               alignment="CENTER", line_spacing=2.0)
+                               list_type="UNORDERED")
+
+        # Create a nested numbered list item
+        update_paragraph_style(document_id="...", start_index=1, end_index=30,
+                               list_type="ORDERED", list_nesting_level=1)
 
         # Apply H2 heading with custom spacing
         update_paragraph_style(document_id="...", start_index=1, end_index=30,
                                heading_level=2, space_above=18, space_below=12)
+
+        # Center-align a paragraph with double spacing
+        update_paragraph_style(document_id="...", start_index=1, end_index=50,
+                               alignment="CENTER", line_spacing=2.0)
     """
     logger.info(
         f"[update_paragraph_style] Doc={document_id}, Range: {start_index}-{end_index}"
@@ -1397,6 +1423,27 @@ async def update_paragraph_style(
         return "Error: start_index must be >= 1"
     if end_index <= start_index:
         return "Error: end_index must be greater than start_index"
+
+    # Validate list parameters
+    list_type_value = list_type
+    if list_type_value is not None:
+        # Coerce non-string inputs to string before normalization to avoid AttributeError
+        if not isinstance(list_type_value, str):
+            list_type_value = str(list_type_value)
+        valid_list_types = ["UNORDERED", "ORDERED"]
+        normalized_list_type = list_type_value.upper()
+        if normalized_list_type not in valid_list_types:
+            return f"Error: list_type must be one of: {', '.join(valid_list_types)}"
+
+        list_type_value = normalized_list_type
+
+    if list_nesting_level is not None:
+        if list_type_value is None:
+            return "Error: list_nesting_level requires list_type parameter"
+        if not isinstance(list_nesting_level, int):
+            return "Error: list_nesting_level must be an integer"
+        if list_nesting_level < 0 or list_nesting_level > 8:
+            return "Error: list_nesting_level must be between 0 and 8"
 
     # Build paragraph style object
     paragraph_style = {}
@@ -1453,19 +1500,45 @@ async def update_paragraph_style(
         paragraph_style["spaceBelow"] = {"magnitude": space_below, "unit": "PT"}
         fields.append("spaceBelow")
 
-    if not paragraph_style:
-        return f"No paragraph style changes specified for document {document_id}"
+    # Create batch update requests
+    requests = []
 
-    # Create batch update request
-    requests = [
-        {
-            "updateParagraphStyle": {
-                "range": {"startIndex": start_index, "endIndex": end_index},
-                "paragraphStyle": paragraph_style,
-                "fields": ",".join(fields),
+    # Add paragraph style update if we have any style changes
+    if paragraph_style:
+        requests.append(
+            {
+                "updateParagraphStyle": {
+                    "range": {"startIndex": start_index, "endIndex": end_index},
+                    "paragraphStyle": paragraph_style,
+                    "fields": ",".join(fields),
+                }
             }
-        }
-    ]
+        )
+
+    # Add list creation if requested
+    if list_type_value is not None:
+        # Default to level 0 if not specified
+        nesting_level = list_nesting_level if list_nesting_level is not None else 0
+        try:
+            paragraph_start_indices = None
+            if nesting_level > 0:
+                paragraph_start_indices = await _get_paragraph_start_indices_in_range(
+                    service, document_id, start_index, end_index
+                )
+            list_requests = create_bullet_list_request(
+                start_index,
+                end_index,
+                list_type_value,
+                nesting_level,
+                paragraph_start_indices=paragraph_start_indices,
+            )
+            requests.extend(list_requests)
+        except ValueError as e:
+            return f"Error: {e}"
+
+    # Validate we have at least one operation
+    if not requests:
+        return f"No paragraph style changes or list creation specified for document {document_id}"
 
     await asyncio.to_thread(
         service.documents()
@@ -1480,9 +1553,14 @@ async def update_paragraph_style(
     format_fields = [f for f in fields if f != "namedStyleType"]
     if format_fields:
         summary_parts.append(", ".join(format_fields))
+    if list_type_value is not None:
+        list_desc = f"{list_type_value.lower()} list"
+        if list_nesting_level is not None and list_nesting_level > 0:
+            list_desc += f" (level {list_nesting_level})"
+        summary_parts.append(list_desc)
 
     link = f"https://docs.google.com/document/d/{document_id}/edit"
-    return f"Applied paragraph style ({', '.join(summary_parts)}) to range {start_index}-{end_index} in document {document_id}. Link: {link}"
+    return f"Applied paragraph formatting ({', '.join(summary_parts)}) to range {start_index}-{end_index} in document {document_id}. Link: {link}"
 
 
 # Create comment management tools for documents

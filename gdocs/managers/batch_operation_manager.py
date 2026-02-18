@@ -13,6 +13,7 @@ from gdocs.docs_helpers import (
     create_insert_text_request,
     create_delete_range_request,
     create_format_text_request,
+    create_update_paragraph_style_request,
     create_find_replace_request,
     create_insert_table_request,
     create_insert_page_break_request,
@@ -189,6 +190,7 @@ class BatchOperationManager:
                 op.get("font_family"),
                 op.get("text_color"),
                 op.get("background_color"),
+                op.get("link_url"),
             )
 
             if not request:
@@ -204,12 +206,66 @@ class BatchOperationManager:
                 ("font_family", "font family"),
                 ("text_color", "text color"),
                 ("background_color", "background color"),
+                ("link_url", "link"),
             ]:
                 if op.get(param) is not None:
                     value = f"{op[param]}pt" if param == "font_size" else op[param]
                     format_changes.append(f"{name}: {value}")
 
             description = f"format text {op['start_index']}-{op['end_index']} ({', '.join(format_changes)})"
+
+        elif op_type == "update_paragraph_style":
+            request = create_update_paragraph_style_request(
+                op["start_index"],
+                op["end_index"],
+                op.get("heading_level"),
+                op.get("alignment"),
+                op.get("line_spacing"),
+                op.get("indent_first_line"),
+                op.get("indent_start"),
+                op.get("indent_end"),
+                op.get("space_above"),
+                op.get("space_below"),
+            )
+
+            if not request:
+                raise ValueError("No paragraph style options provided")
+
+            _PT_PARAMS = {
+                "indent_first_line",
+                "indent_start",
+                "indent_end",
+                "space_above",
+                "space_below",
+            }
+            _SUFFIX = {
+                "heading_level": lambda v: f"H{v}",
+                "line_spacing": lambda v: f"{v}x",
+            }
+
+            style_changes = []
+            for param, name in [
+                ("heading_level", "heading"),
+                ("alignment", "alignment"),
+                ("line_spacing", "line spacing"),
+                ("indent_first_line", "first line indent"),
+                ("indent_start", "start indent"),
+                ("indent_end", "end indent"),
+                ("space_above", "space above"),
+                ("space_below", "space below"),
+            ]:
+                if op.get(param) is not None:
+                    raw = op[param]
+                    fmt = _SUFFIX.get(param)
+                    if fmt:
+                        value = fmt(raw)
+                    elif param in _PT_PARAMS:
+                        value = f"{raw}pt"
+                    else:
+                        value = raw
+                    style_changes.append(f"{name}: {value}")
+
+            description = f"paragraph style {op['start_index']}-{op['end_index']} ({', '.join(style_changes)})"
 
         elif op_type == "insert_table":
             request = create_insert_table_request(
@@ -233,6 +289,7 @@ class BatchOperationManager:
                 "delete_text",
                 "replace_text",
                 "format_text",
+                "update_paragraph_style",
                 "insert_table",
                 "insert_page_break",
                 "find_replace",
@@ -315,8 +372,23 @@ class BatchOperationManager:
                         "font_family",
                         "text_color",
                         "background_color",
+                        "link_url",
                     ],
                     "description": "Apply formatting to text range",
+                },
+                "update_paragraph_style": {
+                    "required": ["start_index", "end_index"],
+                    "optional": [
+                        "heading_level",
+                        "alignment",
+                        "line_spacing",
+                        "indent_first_line",
+                        "indent_start",
+                        "indent_end",
+                        "space_above",
+                        "space_below",
+                    ],
+                    "description": "Apply paragraph-level styling (headings, alignment, spacing, indentation)",
                 },
                 "insert_table": {
                     "required": ["index", "rows", "columns"],
@@ -341,5 +413,12 @@ class BatchOperationManager:
                     "bold": True,
                 },
                 {"type": "insert_table", "index": 20, "rows": 2, "columns": 3},
+                {
+                    "type": "update_paragraph_style",
+                    "start_index": 1,
+                    "end_index": 20,
+                    "heading_level": 1,
+                    "alignment": "CENTER",
+                },
             ],
         }
