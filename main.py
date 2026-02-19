@@ -155,12 +155,65 @@ def main():
         action="store_true",
         help="Run in read-only mode - requests only read-only scopes and disables tools requiring write permissions",
     )
+    parser.add_argument(
+        "--permissions",
+        nargs="+",
+        metavar="SERVICE:LEVEL",
+        help="Per-service permission levels (e.g., gmail:organize calendar:readonly). "
+        "Only listed services are loaded. Mutually exclusive with --read-only, --tools, and --tool-tier.",
+        default=None,
+    )
     args = parser.parse_args()
 
     # Clean up CLI args - argparse.REMAINDER may include leading dashes from first arg
     if args.cli is not None:
         # Filter out empty strings that might appear
         args.cli = [a for a in args.cli if a]
+
+    # Validate --permissions mutual exclusivity and parse
+    if args.permissions:
+        if args.read_only:
+            parser.error("--permissions and --read-only are mutually exclusive")
+        if args.tools is not None:
+            parser.error(
+                "--permissions and --tools are mutually exclusive "
+                "(--permissions implies which services to load)"
+            )
+        if args.tool_tier is not None:
+            parser.error("--permissions and --tool-tier are mutually exclusive")
+
+        from auth.scopes import (
+            TOOL_SCOPES_MAP,
+            get_scopes_for_permission_level,
+            set_permission_config,
+        )
+
+        permission_config = {}
+        for perm in args.permissions:
+            if ":" not in perm:
+                parser.error(
+                    f"Invalid format '{perm}'. Expected SERVICE:LEVEL "
+                    f"(e.g., gmail:organize)"
+                )
+            service, level = perm.split(":", 1)
+            service = service.strip().lower()
+            level = level.strip().lower()
+            if service not in TOOL_SCOPES_MAP:
+                parser.error(
+                    f"Unknown service '{service}'. "
+                    f"Valid services: {sorted(TOOL_SCOPES_MAP.keys())}"
+                )
+            if service in permission_config:
+                parser.error(
+                    f"Duplicate service '{service}'. "
+                    f"Specify each service only once."
+                )
+            try:
+                get_scopes_for_permission_level(service, level)
+            except ValueError as e:
+                parser.error(str(e))
+            permission_config[service] = level
+        set_permission_config(permission_config)
 
     # Set port and base URI once for reuse throughout the function
     port = int(os.getenv("PORT", os.getenv("WORKSPACE_MCP_PORT", 8000)))
@@ -184,6 +237,8 @@ def main():
     safe_print(f"   👤 Mode: {'Single-user' if args.single_user else 'Multi-user'}")
     if args.read_only:
         safe_print("   🔒 Read-Only: Enabled")
+    if args.permissions:
+        safe_print(f"   🔐 Permissions: {' '.join(args.permissions)}")
     safe_print(f"   🐍 Python: {sys.version.split()[0]}")
     safe_print("")
 
@@ -265,7 +320,13 @@ def main():
     }
 
     # Determine which tools to import based on arguments
-    if args.tool_tier is not None:
+    if args.permissions:
+        # Permission config already parsed and set above
+        from auth.scopes import get_permission_config
+
+        tools_to_import = list(get_permission_config().keys())
+        set_enabled_tool_names(None)
+    elif args.tool_tier is not None:
         # Use tier-based tool selection, optionally filtered by services
         try:
             tier_tools, suggested_services = resolve_tools_from_tier(

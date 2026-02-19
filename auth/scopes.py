@@ -201,6 +201,37 @@ TOOL_SCOPES_MAP = {
     "appscript": SCRIPT_SCOPES,
 }
 
+# Per-service permission levels
+# Each level is cumulative — includes all scopes from previous levels plus new ones.
+# Only services with custom levels beyond readonly/full need entries here.
+PERMISSION_LEVELS = {
+    "gmail": {
+        "readonly": [GMAIL_READONLY_SCOPE],
+        "organize": [GMAIL_READONLY_SCOPE, GMAIL_LABELS_SCOPE, GMAIL_MODIFY_SCOPE],
+        "drafts": [
+            GMAIL_READONLY_SCOPE,
+            GMAIL_LABELS_SCOPE,
+            GMAIL_MODIFY_SCOPE,
+            GMAIL_COMPOSE_SCOPE,
+        ],
+        "send": [
+            GMAIL_READONLY_SCOPE,
+            GMAIL_LABELS_SCOPE,
+            GMAIL_MODIFY_SCOPE,
+            GMAIL_COMPOSE_SCOPE,
+            GMAIL_SEND_SCOPE,
+        ],
+        "full": [
+            GMAIL_READONLY_SCOPE,
+            GMAIL_LABELS_SCOPE,
+            GMAIL_MODIFY_SCOPE,
+            GMAIL_COMPOSE_SCOPE,
+            GMAIL_SEND_SCOPE,
+            GMAIL_SETTINGS_BASIC_SCOPE,
+        ],
+    },
+}
+
 # Tool-to-read-only-scopes mapping
 TOOL_READONLY_SCOPES_MAP = {
     "gmail": [GMAIL_READONLY_SCOPE],
@@ -257,6 +288,94 @@ def is_read_only_mode() -> bool:
     return _READ_ONLY_MODE
 
 
+# Per-service permission configuration (set by main.py)
+_PERMISSION_CONFIG: dict[str, str] = {}
+
+
+def set_permission_config(config: dict[str, str]):
+    """
+    Set the per-service permission configuration.
+
+    Args:
+        config: Dict mapping service names to permission level names,
+                e.g. {"gmail": "organize", "calendar": "readonly"}.
+    """
+    global _PERMISSION_CONFIG
+    _PERMISSION_CONFIG = config
+    logger.info(f"Permission config set: {config}")
+
+
+def get_permission_config() -> dict[str, str]:
+    """Get the current per-service permission configuration."""
+    return _PERMISSION_CONFIG
+
+
+def clear_permission_config():
+    """Reset the permission configuration to empty."""
+    global _PERMISSION_CONFIG
+    _PERMISSION_CONFIG = {}
+
+
+def get_scopes_for_permission_level(service: str, level: str) -> list[str]:
+    """
+    Get the OAuth scopes for a specific service and permission level.
+
+    Three cases:
+    - Known service + known level (e.g. gmail:organize): return PERMISSION_LEVELS entry.
+    - Any service + generic level (readonly/full): return from TOOL_READONLY_SCOPES_MAP / TOOL_SCOPES_MAP.
+    - Unknown combination: raise ValueError.
+
+    Args:
+        service: Service name (e.g. "gmail", "calendar").
+        level: Permission level name (e.g. "readonly", "organize", "full").
+
+    Returns:
+        List of OAuth scope strings.
+
+    Raises:
+        ValueError: If the service/level combination is invalid.
+    """
+    # Check for service-specific custom levels
+    if service in PERMISSION_LEVELS:
+        service_levels = PERMISSION_LEVELS[service]
+        if level in service_levels:
+            return service_levels[level]
+        valid_levels = sorted(service_levels.keys())
+        raise ValueError(
+            f"Unknown permission level '{level}' for service '{service}'. "
+            f"Valid levels: {valid_levels}"
+        )
+
+    # Generic fallback for services without custom levels
+    if level == "readonly":
+        if service in TOOL_READONLY_SCOPES_MAP:
+            return TOOL_READONLY_SCOPES_MAP[service]
+        raise ValueError(f"Unknown service '{service}'")
+    if level == "full":
+        if service in TOOL_SCOPES_MAP:
+            return TOOL_SCOPES_MAP[service]
+        raise ValueError(f"Unknown service '{service}'")
+
+    raise ValueError(
+        f"Unknown permission level '{level}' for service '{service}'. "
+        f"Service '{service}' only supports generic levels: ['full', 'readonly']"
+    )
+
+
+def get_allowed_scopes_for_permissions() -> set[str]:
+    """
+    Build the union of all allowed scopes across all services in the
+    current permission config. Always includes BASE_SCOPES.
+
+    Returns:
+        Set of allowed OAuth scope strings.
+    """
+    allowed = set(BASE_SCOPES)
+    for service, level in _PERMISSION_CONFIG.items():
+        allowed.update(get_scopes_for_permission_level(service, level))
+    return allowed
+
+
 def get_all_read_only_scopes() -> list[str]:
     """Get all possible read-only scopes across all tools."""
     all_scopes = set(BASE_SCOPES)
@@ -298,14 +417,26 @@ def get_scopes_for_tools(enabled_tools=None):
     # Start with base scopes (always required)
     scopes = BASE_SCOPES.copy()
 
-    # Determine which map to use based on read-only mode
-    scope_map = TOOL_READONLY_SCOPES_MAP if _READ_ONLY_MODE else TOOL_SCOPES_MAP
-    mode_str = "read-only" if _READ_ONLY_MODE else "full"
+    # When permission config is active, use per-service permission levels
+    if _PERMISSION_CONFIG:
+        mode_str = "permissions"
+        for tool in enabled_tools:
+            if tool in _PERMISSION_CONFIG:
+                scopes.extend(
+                    get_scopes_for_permission_level(tool, _PERMISSION_CONFIG[tool])
+                )
+            elif tool in TOOL_SCOPES_MAP:
+                # Service enabled but not in permission config — use full scopes
+                scopes.extend(TOOL_SCOPES_MAP[tool])
+    else:
+        # Determine which map to use based on read-only mode
+        scope_map = TOOL_READONLY_SCOPES_MAP if _READ_ONLY_MODE else TOOL_SCOPES_MAP
+        mode_str = "read-only" if _READ_ONLY_MODE else "full"
 
-    # Add scopes for each enabled tool
-    for tool in enabled_tools:
-        if tool in scope_map:
-            scopes.extend(scope_map[tool])
+        # Add scopes for each enabled tool
+        for tool in enabled_tools:
+            if tool in scope_map:
+                scopes.extend(scope_map[tool])
 
     logger.debug(
         f"Generated {mode_str} scopes for tools {list(enabled_tools)}: {len(set(scopes))} unique scopes"

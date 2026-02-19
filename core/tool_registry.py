@@ -9,7 +9,12 @@ import logging
 from typing import Set, Optional, Callable
 
 from auth.oauth_config import is_oauth21_enabled
-from auth.scopes import is_read_only_mode, get_all_read_only_scopes
+from auth.scopes import (
+    is_read_only_mode,
+    get_all_read_only_scopes,
+    get_permission_config,
+    get_allowed_scopes_for_permissions,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +88,15 @@ def filter_server_tools(server):
     """Remove disabled tools from the server after registration."""
     enabled_tools = get_enabled_tools()
     oauth21_enabled = is_oauth21_enabled()
-    if enabled_tools is None and not oauth21_enabled:
+    read_only_mode = is_read_only_mode()
+    permission_config = get_permission_config()
+
+    if (
+        enabled_tools is None
+        and not oauth21_enabled
+        and not read_only_mode
+        and not permission_config
+    ):
         return
 
     tools_removed = 0
@@ -94,8 +107,13 @@ def filter_server_tools(server):
         if hasattr(tool_manager, "_tools"):
             tool_registry = tool_manager._tools
 
-            read_only_mode = is_read_only_mode()
-            allowed_scopes = set(get_all_read_only_scopes()) if read_only_mode else None
+            # Determine allowed scopes based on mode
+            if read_only_mode:
+                allowed_scopes = set(get_all_read_only_scopes())
+            elif permission_config:
+                allowed_scopes = get_allowed_scopes_for_permissions()
+            else:
+                allowed_scopes = None
 
             tools_to_remove = set()
 
@@ -110,8 +128,9 @@ def filter_server_tools(server):
                 tools_to_remove.add("start_google_auth")
                 logger.info("OAuth 2.1 enabled: disabling start_google_auth tool")
 
-            # 3. Read-only mode filtering
-            if read_only_mode:
+            # 3. Scope-based filtering (read-only mode or permission levels)
+            if allowed_scopes is not None:
+                mode_label = "Read-only" if read_only_mode else "Permissions"
                 for tool_name in list(tool_registry.keys()):
                     if tool_name in tools_to_remove:
                         continue
@@ -128,12 +147,12 @@ def filter_server_tools(server):
                     )
 
                     if required_scopes:
-                        # If ANY required scope is not in the allowed read-only scopes, disable the tool
+                        # If ANY required scope is not in the allowed scopes, disable the tool
                         if not all(
                             scope in allowed_scopes for scope in required_scopes
                         ):
                             logger.info(
-                                f"Read-only mode: Disabling tool '{tool_name}' (requires write scopes: {required_scopes})"
+                                f"{mode_label} mode: Disabling tool '{tool_name}' (requires scopes: {required_scopes})"
                             )
                             tools_to_remove.add(tool_name)
 
@@ -143,7 +162,12 @@ def filter_server_tools(server):
 
     if tools_removed > 0:
         enabled_count = len(enabled_tools) if enabled_tools is not None else "all"
-        mode = "Read-Only" if is_read_only_mode() else "Full"
+        if read_only_mode:
+            mode = "Read-Only"
+        elif permission_config:
+            mode = f"Permissions ({permission_config})"
+        else:
+            mode = "Full"
         logger.info(
             f"Tool filtering: removed {tools_removed} tools, {enabled_count} enabled. Mode: {mode}"
         )

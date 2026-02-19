@@ -559,6 +559,25 @@ Read-only mode provides secure, restricted access by:
 - Automatically filtering out tools that require write permissions at startup
 - Allowing read operations: list, get, search, and export across all services
 
+**🔐 Permission Levels**
+```bash
+# Per-service permission control
+uv run main.py --permissions gmail:organize         # Read + label + triage, no send
+uv run main.py --permissions gmail:drafts            # + draft management
+uv run main.py --permissions gmail:send              # + send messages
+uv run main.py --permissions gmail:readonly          # Read-only (same as --read-only --tools gmail)
+uv run main.py --permissions gmail:organize calendar:readonly  # Multi-service
+```
+
+Permission levels provide granular control between read-only and full access:
+- **readonly** — Read-only access (available for all services)
+- **organize** *(Gmail)* — Read + label management + message organization
+- **drafts** *(Gmail)* — + draft creation and management
+- **send** *(Gmail)* — + send messages
+- **full** — Full access (available for all services, default when not using --permissions)
+
+Only listed services are loaded. Mutually exclusive with `--read-only`, `--tools`, and `--tool-tier`.
+
 **★ Tool Tiers**
 ```bash
 uv run main.py --tool-tier core      # ● Essential tools only

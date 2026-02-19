@@ -11,7 +11,10 @@ import os
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+import pytest
+
 from auth.scopes import (
+    BASE_SCOPES,
     CALENDAR_READONLY_SCOPE,
     CALENDAR_SCOPE,
     CONTACTS_READONLY_SCOPE,
@@ -27,8 +30,13 @@ from auth.scopes import (
     GMAIL_SETTINGS_BASIC_SCOPE,
     SHEETS_READONLY_SCOPE,
     SHEETS_WRITE_SCOPE,
+    clear_permission_config,
+    get_allowed_scopes_for_permissions,
+    get_permission_config,
+    get_scopes_for_permission_level,
     get_scopes_for_tools,
     has_required_scopes,
+    set_permission_config,
     set_read_only,
 )
 
@@ -195,3 +203,264 @@ class TestHasRequiredScopes:
         available = [GMAIL_MODIFY_SCOPE]
         required = [GMAIL_READONLY_SCOPE, DRIVE_READONLY_SCOPE]
         assert not has_required_scopes(available, required)
+
+
+class TestPermissionLevelScopes:
+    """Tests for per-service permission level scope generation."""
+
+    def setup_method(self):
+        set_read_only(False)
+        clear_permission_config()
+
+    def teardown_method(self):
+        set_read_only(False)
+        clear_permission_config()
+
+    # --- Gmail level scopes ---
+
+    def test_gmail_organize_scopes(self):
+        """gmail:organize includes readonly, labels, modify."""
+        set_permission_config({"gmail": "organize"})
+        scopes = get_scopes_for_tools(["gmail"])
+        assert GMAIL_READONLY_SCOPE in scopes
+        assert GMAIL_LABELS_SCOPE in scopes
+        assert GMAIL_MODIFY_SCOPE in scopes
+        assert GMAIL_COMPOSE_SCOPE not in scopes
+        assert GMAIL_SEND_SCOPE not in scopes
+        assert GMAIL_SETTINGS_BASIC_SCOPE not in scopes
+
+    def test_gmail_drafts_scopes(self):
+        """gmail:drafts includes organize scopes + compose."""
+        set_permission_config({"gmail": "drafts"})
+        scopes = get_scopes_for_tools(["gmail"])
+        assert GMAIL_READONLY_SCOPE in scopes
+        assert GMAIL_LABELS_SCOPE in scopes
+        assert GMAIL_MODIFY_SCOPE in scopes
+        assert GMAIL_COMPOSE_SCOPE in scopes
+        assert GMAIL_SEND_SCOPE not in scopes
+        assert GMAIL_SETTINGS_BASIC_SCOPE not in scopes
+
+    def test_gmail_send_scopes(self):
+        """gmail:send includes drafts scopes + send."""
+        set_permission_config({"gmail": "send"})
+        scopes = get_scopes_for_tools(["gmail"])
+        assert GMAIL_READONLY_SCOPE in scopes
+        assert GMAIL_LABELS_SCOPE in scopes
+        assert GMAIL_MODIFY_SCOPE in scopes
+        assert GMAIL_COMPOSE_SCOPE in scopes
+        assert GMAIL_SEND_SCOPE in scopes
+        assert GMAIL_SETTINGS_BASIC_SCOPE not in scopes
+
+    def test_gmail_full_scopes(self):
+        """gmail:full includes all 6 Gmail scopes."""
+        set_permission_config({"gmail": "full"})
+        scopes = get_scopes_for_tools(["gmail"])
+        assert GMAIL_READONLY_SCOPE in scopes
+        assert GMAIL_LABELS_SCOPE in scopes
+        assert GMAIL_MODIFY_SCOPE in scopes
+        assert GMAIL_COMPOSE_SCOPE in scopes
+        assert GMAIL_SEND_SCOPE in scopes
+        assert GMAIL_SETTINGS_BASIC_SCOPE in scopes
+
+    def test_gmail_readonly_scopes(self):
+        """gmail:readonly includes only gmail.readonly."""
+        set_permission_config({"gmail": "readonly"})
+        scopes = get_scopes_for_tools(["gmail"])
+        assert GMAIL_READONLY_SCOPE in scopes
+        assert GMAIL_LABELS_SCOPE not in scopes
+        assert GMAIL_MODIFY_SCOPE not in scopes
+        assert GMAIL_COMPOSE_SCOPE not in scopes
+        assert GMAIL_SEND_SCOPE not in scopes
+        assert GMAIL_SETTINGS_BASIC_SCOPE not in scopes
+
+    # --- Generic fallback ---
+
+    def test_calendar_readonly_fallback(self):
+        """calendar:readonly uses TOOL_READONLY_SCOPES_MAP fallback."""
+        scopes = get_scopes_for_permission_level("calendar", "readonly")
+        assert CALENDAR_READONLY_SCOPE in scopes
+        assert CALENDAR_SCOPE not in scopes
+
+    def test_calendar_full_fallback(self):
+        """calendar:full uses TOOL_SCOPES_MAP fallback."""
+        scopes = get_scopes_for_permission_level("calendar", "full")
+        assert CALENDAR_SCOPE in scopes
+
+    # --- Invalid combinations ---
+
+    def test_gmail_invalid_level_raises(self):
+        """gmail:superadmin should raise ValueError."""
+        with pytest.raises(ValueError, match="Unknown permission level 'superadmin'"):
+            get_scopes_for_permission_level("gmail", "superadmin")
+
+    def test_calendar_organize_raises(self):
+        """calendar:organize should raise ValueError (no custom levels defined)."""
+        with pytest.raises(ValueError, match="Unknown permission level 'organize'"):
+            get_scopes_for_permission_level("calendar", "organize")
+
+    # --- Multi-service union ---
+
+    def test_multi_service_allowed_scopes(self):
+        """get_allowed_scopes_for_permissions() returns union of all services."""
+        set_permission_config({"gmail": "organize", "calendar": "readonly"})
+        allowed = get_allowed_scopes_for_permissions()
+        # Gmail organize scopes
+        assert GMAIL_READONLY_SCOPE in allowed
+        assert GMAIL_LABELS_SCOPE in allowed
+        assert GMAIL_MODIFY_SCOPE in allowed
+        # Calendar readonly scope
+        assert CALENDAR_READONLY_SCOPE in allowed
+        # Base scopes always included
+        for scope in BASE_SCOPES:
+            assert scope in allowed
+        # Not included
+        assert GMAIL_SEND_SCOPE not in allowed
+        assert CALENDAR_SCOPE not in allowed
+
+    # --- State lifecycle ---
+
+    def test_clear_permission_config(self):
+        """clear_permission_config() resets to empty dict."""
+        set_permission_config({"gmail": "organize"})
+        assert get_permission_config() == {"gmail": "organize"}
+        clear_permission_config()
+        assert get_permission_config() == {}
+
+    # --- get_scopes_for_tools integration ---
+
+    def test_scopes_for_tools_with_permission_config(self):
+        """get_scopes_for_tools uses permission config when set."""
+        set_permission_config({"gmail": "organize"})
+        scopes = get_scopes_for_tools(["gmail"])
+        scope_set = set(scopes)
+        # Should have base scopes + gmail organize scopes
+        assert GMAIL_READONLY_SCOPE in scope_set
+        assert GMAIL_LABELS_SCOPE in scope_set
+        assert GMAIL_MODIFY_SCOPE in scope_set
+        # Should NOT have compose/send/settings
+        assert GMAIL_COMPOSE_SCOPE not in scope_set
+        assert GMAIL_SEND_SCOPE not in scope_set
+
+    def test_scopes_unique(self):
+        """Returned scopes should be unique."""
+        set_permission_config({"gmail": "drafts"})
+        scopes = get_scopes_for_tools(["gmail"])
+        assert len(scopes) == len(set(scopes))
+
+
+class TestPermissionToolFiltering:
+    """Tests for filter_server_tools() with permission levels."""
+
+    def setup_method(self):
+        set_read_only(False)
+        clear_permission_config()
+
+    def teardown_method(self):
+        set_read_only(False)
+        clear_permission_config()
+
+    def _make_mock_tool(self, required_scopes=None):
+        """Create a mock tool object with _required_google_scopes."""
+
+        class MockTool:
+            pass
+
+        tool = MockTool()
+        fn = MockTool()
+        if required_scopes is not None:
+            fn._required_google_scopes = required_scopes
+        tool.fn = fn
+        return tool
+
+    def _make_tool_registry(self, tools_dict):
+        """Create a mock server with a tool registry."""
+
+        class MockToolManager:
+            def __init__(self, tools):
+                self._tools = dict(tools)
+
+        class MockServer:
+            def __init__(self, tools):
+                self._tool_manager = MockToolManager(tools)
+
+        return MockServer(tools_dict)
+
+    def test_permission_filtering_removes_disallowed_tools(self):
+        """Tools requiring scopes outside permission level should be removed."""
+        from core.tool_registry import filter_server_tools
+
+        set_permission_config({"gmail": "organize"})
+
+        tools = {
+            "search_gmail_messages": self._make_mock_tool([GMAIL_READONLY_SCOPE]),
+            "manage_gmail_label": self._make_mock_tool([GMAIL_LABELS_SCOPE]),
+            "send_gmail_message": self._make_mock_tool([GMAIL_SEND_SCOPE]),
+            "create_gmail_filter": self._make_mock_tool(
+                [GMAIL_SETTINGS_BASIC_SCOPE]
+            ),
+        }
+        mock_server = self._make_tool_registry(tools)
+        filter_server_tools(mock_server)
+
+        remaining = set(mock_server._tool_manager._tools.keys())
+        assert "search_gmail_messages" in remaining
+        assert "manage_gmail_label" in remaining
+        assert "send_gmail_message" not in remaining
+        assert "create_gmail_filter" not in remaining
+
+    def test_permission_filtering_keeps_tools_without_scopes(self):
+        """Tools without _required_google_scopes (e.g. start_google_auth) should be kept."""
+        from core.tool_registry import filter_server_tools
+
+        set_permission_config({"gmail": "readonly"})
+
+        tools = {
+            "search_gmail_messages": self._make_mock_tool([GMAIL_READONLY_SCOPE]),
+            "start_google_auth": self._make_mock_tool(),  # No scopes
+        }
+        mock_server = self._make_tool_registry(tools)
+        filter_server_tools(mock_server)
+
+        remaining = set(mock_server._tool_manager._tools.keys())
+        assert "search_gmail_messages" in remaining
+        assert "start_google_auth" in remaining
+
+    def test_permission_filtering_subset_behavior(self):
+        """Tool requiring multiple scopes: kept only if ALL are allowed."""
+        from core.tool_registry import filter_server_tools
+
+        set_permission_config({"gmail": "organize"})
+
+        tools = {
+            "tool_a": self._make_mock_tool([GMAIL_READONLY_SCOPE]),
+            "tool_ab": self._make_mock_tool(
+                [GMAIL_READONLY_SCOPE, GMAIL_LABELS_SCOPE]
+            ),
+            "tool_abc": self._make_mock_tool(
+                [GMAIL_READONLY_SCOPE, GMAIL_LABELS_SCOPE, GMAIL_SEND_SCOPE]
+            ),
+        }
+        mock_server = self._make_tool_registry(tools)
+        filter_server_tools(mock_server)
+
+        remaining = set(mock_server._tool_manager._tools.keys())
+        assert "tool_a" in remaining
+        assert "tool_ab" in remaining
+        assert "tool_abc" not in remaining
+
+    def test_drafts_level_allows_compose(self):
+        """gmail:drafts should allow tools requiring gmail.compose."""
+        from core.tool_registry import filter_server_tools
+
+        set_permission_config({"gmail": "drafts"})
+
+        tools = {
+            "draft_gmail_message": self._make_mock_tool([GMAIL_COMPOSE_SCOPE]),
+            "send_gmail_message": self._make_mock_tool([GMAIL_SEND_SCOPE]),
+        }
+        mock_server = self._make_tool_registry(tools)
+        filter_server_tools(mock_server)
+
+        remaining = set(mock_server._tool_manager._tools.keys())
+        assert "draft_gmail_message" in remaining
+        assert "send_gmail_message" not in remaining
