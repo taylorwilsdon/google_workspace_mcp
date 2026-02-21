@@ -80,10 +80,23 @@ docs:
     - reply_to_document_comment
     - resolve_document_comment
 
+# TODO: Keep
 keep:
   core:
+    - create_note
+    - delete_note
+    - list_notes
+    - read_note
   extended:
+    - download_note
+    - update_note
   complete:
+    - create_note
+    - read_note
+    - list_notes
+    - delete_note
+    - download_note
+    - update_note
 
 sheets:
   core:

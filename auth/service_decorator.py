@@ -40,6 +40,7 @@ from auth.scopes import (
     CHAT_WRITE_SCOPE,
     CHAT_SPACES_SCOPE,
     CHAT_SPACES_READONLY_SCOPE,
+    KEEP_WRITE_SCOPE,
     KEEP_READONLY_SCOPE,
     FORMS_BODY_SCOPE,
     FORMS_BODY_READONLY_SCOPE,
@@ -437,7 +438,8 @@ SCOPE_GROUPS = {
     "calendar_read": CALENDAR_READONLY_SCOPE,
     "calendar_events": CALENDAR_EVENTS_SCOPE,
     # Keep scopes
-    # TODO: Add
+    "keep_read": KEEP_READONLY_SCOPE,
+    "keep_write": KEEP_WRITE_SCOPE,
     # Sheets scopes
     "sheets_read": SHEETS_READONLY_SCOPE,
     "sheets_write": SHEETS_WRITE_SCOPE,

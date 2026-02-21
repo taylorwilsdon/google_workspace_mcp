@@ -19,6 +19,7 @@ from auth.scopes import (
     DRIVE_FILE_SCOPE,
     DRIVE_READONLY_SCOPE,
     DRIVE_SCOPE,
+    KEEP_WRITE_SCOPE,
     KEEP_READONLY_SCOPE,
     GMAIL_COMPOSE_SCOPE,
     GMAIL_LABELS_SCOPE,
@@ -183,6 +184,9 @@ class TestHasRequiredScopes:
 
     def test_contacts_covers_readonly(self):
         assert has_required_scopes([CONTACTS_SCOPE], [CONTACTS_READONLY_SCOPE])
+
+    def test_keep_write_covers_readonly(self):
+        assert has_required_scopes([KEEP_WRITE_SCOPE], [KEEP_READONLY_SCOPE])
 
     # Mixed: some exact, some via hierarchy
     def test_mixed_exact_and_hierarchy(self):

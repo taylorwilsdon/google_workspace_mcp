@@ -256,7 +256,7 @@ def main():
         "drive": "📁",
         "calendar": "📅",
         "docs": "📄",
-        "keep": ":note:",
+        "keep": "📝",
         "sheets": "📊",
         "chat": "💬",
         "forms": "📝",
