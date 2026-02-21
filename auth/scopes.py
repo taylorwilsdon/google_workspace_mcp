@@ -43,6 +43,9 @@ CHAT_WRITE_SCOPE = "https://www.googleapis.com/auth/chat.messages"
 CHAT_SPACES_SCOPE = "https://www.googleapis.com/auth/chat.spaces"
 CHAT_SPACES_READONLY_SCOPE = "https://www.googleapis.com/auth/chat.spaces.readonly"
 
+# Google Keep API scopes
+KEEP_SCOPE = ""
+
 # Google Sheets API scopes
 SHEETS_READONLY_SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly"
 SHEETS_WRITE_SCOPE = "https://www.googleapis.com/auth/spreadsheets"
@@ -96,6 +99,7 @@ SCOPE_HIERARCHY = {
     DOCS_WRITE_SCOPE: {DOCS_READONLY_SCOPE},
     SHEETS_WRITE_SCOPE: {SHEETS_READONLY_SCOPE},
     SLIDES_SCOPE: {SLIDES_READONLY_SCOPE},
+    KEEP_SCOPE: {},
     TASKS_SCOPE: {TASKS_READONLY_SCOPE},
     CONTACTS_SCOPE: {CONTACTS_READONLY_SCOPE},
     CHAT_WRITE_SCOPE: {CHAT_READONLY_SCOPE},
@@ -142,6 +146,8 @@ DOCS_SCOPES = [
 CALENDAR_SCOPES = [CALENDAR_SCOPE, CALENDAR_READONLY_SCOPE, CALENDAR_EVENTS_SCOPE]
 
 DRIVE_SCOPES = [DRIVE_SCOPE, DRIVE_READONLY_SCOPE, DRIVE_FILE_SCOPE]
+
+KEEP_SCOPES = []
 
 GMAIL_SCOPES = [
     GMAIL_READONLY_SCOPE,
@@ -194,6 +200,7 @@ TOOL_SCOPES_MAP = {
     "sheets": SHEETS_SCOPES,
     "chat": CHAT_SCOPES,
     "forms": FORMS_SCOPES,
+    "keep": KEEP_SCOPES,
     "slides": SLIDES_SCOPES,
     "tasks": TASKS_SCOPES,
     "contacts": CONTACTS_SCOPES,
@@ -211,6 +218,7 @@ TOOL_READONLY_SCOPES_MAP = {
     "chat": [CHAT_READONLY_SCOPE, CHAT_SPACES_READONLY_SCOPE],
     "forms": [FORMS_BODY_READONLY_SCOPE, FORMS_RESPONSES_READONLY_SCOPE],
     "slides": [SLIDES_READONLY_SCOPE],
+    "keep": [KEEP_READONLY_SCOPE],
     "tasks": [TASKS_READONLY_SCOPE],
     "contacts": [CONTACTS_READONLY_SCOPE],
     "search": CUSTOM_SEARCH_SCOPES,

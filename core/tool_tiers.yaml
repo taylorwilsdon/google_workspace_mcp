@@ -80,6 +80,11 @@ docs:
     - reply_to_document_comment
     - resolve_document_comment
 
+keep:
+  core:
+  extended:
+  complete:
+
 sheets:
   core:
     - create_spreadsheet

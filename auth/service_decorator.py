@@ -40,6 +40,7 @@ from auth.scopes import (
     CHAT_WRITE_SCOPE,
     CHAT_SPACES_SCOPE,
     CHAT_SPACES_READONLY_SCOPE,
+    KEEP_READONLY_SCOPE,
     FORMS_BODY_SCOPE,
     FORMS_BODY_READONLY_SCOPE,
     FORMS_RESPONSES_READONLY_SCOPE,
@@ -405,6 +406,7 @@ SERVICE_CONFIGS = {
     "drive": {"service": "drive", "version": "v3"},
     "calendar": {"service": "calendar", "version": "v3"},
     "docs": {"service": "docs", "version": "v1"},
+    "keep": {"service": "keep", "version": "v1"},
     "sheets": {"service": "sheets", "version": "v4"},
     "chat": {"service": "chat", "version": "v1"},
     "forms": {"service": "forms", "version": "v1"},
@@ -434,6 +436,8 @@ SCOPE_GROUPS = {
     # Calendar scopes
     "calendar_read": CALENDAR_READONLY_SCOPE,
     "calendar_events": CALENDAR_EVENTS_SCOPE,
+    # Keep scopes
+    # TODO: Add
     # Sheets scopes
     "sheets_read": SHEETS_READONLY_SCOPE,
     "sheets_write": SHEETS_WRITE_SCOPE,

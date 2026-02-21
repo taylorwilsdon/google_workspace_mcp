@@ -56,7 +56,7 @@ startCommand:
       tools:
         type: string
         default: ""
-        description: "Comma-separated list of tools to enable (gmail,drive,calendar,docs,sheets,chat,forms,slides,tasks,search). Leave empty for all tools."
+        description: "Comma-separated list of tools to enable (gmail,drive,calendar,docs,keep,sheets,chat,forms,slides,tasks,search). Leave empty for all tools."
       workspaceMcpStatelessMode:
         type: boolean
         default: true
