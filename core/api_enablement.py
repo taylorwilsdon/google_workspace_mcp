@@ -5,7 +5,7 @@ from typing import Dict, List, Optional, Tuple
 SUPPORTED_APIS: Dict[str, Tuple[List[str], str]]= {
     "calendar-json.googleapis.com": (["calendar"], "Google Calendar"),
     "drive.googleapis.com": (["drive"], "Google Drive"),
-    "gmail.googleapis.com": (["gmail"], "Gmail": ),
+    "gmail.googleapis.com": (["gmail"], "Gmail"),
     "keep.googleapis.com": (["keep"], "Google Keep"),
     "docs.googleapis.com": (["docs"], "Google Docs"),
     "sheets.googleapis.com": (["sheets"], "Google Sheets"),
