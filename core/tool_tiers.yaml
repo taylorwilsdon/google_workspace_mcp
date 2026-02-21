@@ -80,7 +80,6 @@ docs:
     - reply_to_document_comment
     - resolve_document_comment
 
-# TODO: Keep
 keep:
   core:
     - create_note

@@ -2,7 +2,7 @@ import re
 from typing import Dict, List, Optional, Tuple
 
 
-SUPPORTED_APIS: Dict[str, Tuple[List[str], str]]= {
+SUPPORTED_APIS: Dict[str, Tuple[List[str], str]] = {
     "calendar-json.googleapis.com": (["calendar"], "Google Calendar"),
     "drive.googleapis.com": (["drive"], "Google Drive"),
     "gmail.googleapis.com": (["gmail"], "Gmail"),

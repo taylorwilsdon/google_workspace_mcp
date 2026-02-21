@@ -167,8 +167,7 @@ def format_note(note: Note) -> str:
     return "\n".join(lines)
 
 
-def _format_list_item(item: ListItem, indent: Optional[str] = None) -> List[str]:
-    indent = indent or ""
+def _format_list_item(item: ListItem, indent: str = "") -> List[str]:
     marker = "x" if item.checked else " "
     lines = [f"{indent}- [{marker}] {item.text}"]
     for child in item.children:

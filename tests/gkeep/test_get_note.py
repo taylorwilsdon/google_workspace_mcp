@@ -3,7 +3,7 @@ Unit tests for Google Keep MCP `get_note` tool.
 """
 
 import pytest
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import Mock, patch
 import sys
 import os
 
@@ -34,6 +34,8 @@ async def test_get_note_with_full_name():
     assert "Test Note" in result
     assert "notes/abc123" in result
     assert "Hello world" in result
+    mock_service.notes().get.assert_called_with(name="notes/abc123")
+
 
 
 @pytest.mark.asyncio
@@ -50,6 +52,9 @@ async def test_get_note_with_short_id():
     )
 
     assert "Test Note" in result
+
+    # Verify that the short ID was normalized with "notes/" prefix
+    mock_service.notes().get.assert_called_with(name="notes/abc123")
 
 
 @pytest.mark.asyncio

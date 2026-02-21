@@ -32,7 +32,7 @@ async def list_notes(
     user_google_email: str,
     page_size: int = LIST_NOTES_PAGE_SIZE_DEFAULT,
     page_token: Optional[str] = None,
-    filter: Optional[str] = None,
+    filter_query: Optional[str] = None,
 ) -> str:
     """
     List notes from Google Keep.
@@ -41,7 +41,7 @@ async def list_notes(
         user_google_email (str): The user's Google email address. Required.
         page_size (int): Maximum number of notes to return (default: 25, max: 1000).
         page_token (Optional[str]): Token for pagination.
-        filter (Optional[str]): Filter for list results. If no filter is supplied, the
+        filter_query (Optional[str]): Filter for list results. If no filter is supplied, the
             trashed filter is applied by default. Filterable fields: createTime,
             updateTime, trashTime, trashed.
 
@@ -50,42 +50,32 @@ async def list_notes(
     """
     logger.info(f"[list_notes] Invoked. Email: '{user_google_email}'")
 
-    try:
-        params: Dict[str, Any] = {}
-        if page_size is not None:
-            params["pageSize"] = min(page_size, LIST_NOTES_PAGE_SIZE_MAX)
-        if page_token:
-            params["pageToken"] = page_token
-        if filter:
-            params["filter"] = filter
+    params: Dict[str, Any] = {}
+    if page_size is not None:
+        params["pageSize"] = min(page_size, LIST_NOTES_PAGE_SIZE_MAX)
+    if page_token:
+        params["pageToken"] = page_token
+    if filter_query:
+        params["filter"] = filter_query
 
-        result = await asyncio.to_thread(service.notes().list(**params).execute)
+    result = await asyncio.to_thread(service.notes().list(**params).execute)
 
-        raw_notes = result.get("notes", [])
-        next_page_token = result.get("nextPageToken")
+    raw_notes = result.get("notes", [])
+    next_page_token = result.get("nextPageToken")
 
-        if not raw_notes:
-            return f"No notes found for {user_google_email}."
+    if not raw_notes:
+        return f"No notes found for {user_google_email}."
 
-        notes = [Note.from_api(n) for n in raw_notes]
-        response = f"Notes for {user_google_email}:\n\n"
-        for note in notes:
-            response += format_note(note) + "\n\n"
+    notes = [Note.from_api(n) for n in raw_notes]
+    response = f"Notes for {user_google_email}:\n\n"
+    for note in notes:
+        response += format_note(note) + "\n\n"
 
-        if next_page_token:
-            response += f"Next page token: {next_page_token}\n"
+    if next_page_token:
+        response += f"Next page token: {next_page_token}\n"
 
-        logger.info(f"Found {len(notes)} notes for {user_google_email}")
-        return response
-
-    except HttpError as error:
-        message = format_reauth_message(error, user_google_email)
-        logger.error(message, exc_info=True)
-        raise Exception(message)
-    except Exception as e:
-        message = f"Unexpected error: {e}."
-        logger.exception(message)
-        raise Exception(message)
+    logger.info(f"Found {len(notes)} notes for {user_google_email}")
+    return response
 
 
 @server.tool()  # type: ignore
@@ -115,25 +105,14 @@ async def get_note(
     )
 
     name = note_id if note_id.startswith("notes/") else f"notes/{note_id}"
+    result = await asyncio.to_thread(service.notes().get(name=name).execute)
+    note = Note.from_api(result)
 
-    try:
-        result = await asyncio.to_thread(service.notes().get(name=name).execute)
-        note = Note.from_api(result)
+    response = f"Note Details for {name}:\n"
+    response += format_note(note)
 
-        response = f"Note Details for {name}:\n"
-        response += format_note(note)
-
-        logger.info(f"Retrieved note '{name}' for {user_google_email}")
-        return response
-
-    except HttpError as error:
-        message = format_reauth_message(error, user_google_email)
-        logger.error(message, exc_info=True)
-        raise Exception(message)
-    except Exception as e:
-        message = f"Unexpected error: {e}."
-        logger.exception(message)
-        raise Exception(message)
+    logger.info(f"Retrieved note '{name}' for {user_google_email}")
+    return response
 
 
 @server.tool()  # type: ignore
@@ -162,24 +141,13 @@ async def read_note(
     )
 
     name = note_id if note_id.startswith("notes/") else f"notes/{note_id}"
+    result = await asyncio.to_thread(service.notes().get(name=name).execute)
+    note = Note.from_api(result)
 
-    try:
-        result = await asyncio.to_thread(service.notes().get(name=name).execute)
-        note = Note.from_api(result)
+    response = format_note_content(note)
 
-        response = format_note_content(note)
-
-        logger.info(f"Read note content '{name}' for {user_google_email}")
-        return response
-
-    except HttpError as error:
-        message = format_reauth_message(error, user_google_email)
-        logger.error(message, exc_info=True)
-        raise Exception(message)
-    except Exception as e:
-        message = f"Unexpected error: {e}."
-        logger.exception(message)
-        raise Exception(message)
+    logger.info(f"Read note content '{name}' for {user_google_email}")
+    return response
 
 
 @server.tool()  # type: ignore
@@ -213,27 +181,17 @@ async def create_note(
         f"[create_note] Invoked. Email: '{user_google_email}', Title: '{title}'"
     )
 
-    try:
-        body = build_note_body(title, text=text, list_items=list_items)
-        result = await asyncio.to_thread(service.notes().create(body=body).execute)
-        note = Note.from_api(result)
+    body = build_note_body(title, text=text, list_items=list_items)
+    result = await asyncio.to_thread(service.notes().create(body=body).execute)
+    note = Note.from_api(result)
 
-        response = f"Note Created for {user_google_email}:\n"
-        response += format_note(note)
+    response = f"Note Created for {user_google_email}:\n"
+    response += format_note(note)
 
-        logger.info(
-            f"Created note '{title}' with name {note.name} for {user_google_email}"
-        )
-        return response
-
-    except HttpError as error:
-        message = format_reauth_message(error, user_google_email)
-        logger.error(message, exc_info=True)
-        raise Exception(message)
-    except Exception as e:
-        message = f"Unexpected error: {e}."
-        logger.exception(message)
-        raise Exception(message)
+    logger.info(
+        f"Created note '{title}' with name {note.name} for {user_google_email}"
+    )
+    return response
 
 
 @server.tool()  # type: ignore
@@ -260,22 +218,12 @@ async def delete_note(
 
     name = note_id if note_id.startswith("notes/") else f"notes/{note_id}"
 
-    try:
-        await asyncio.to_thread(service.notes().delete(name=name).execute)
+    await asyncio.to_thread(service.notes().delete(name=name).execute)
 
-        response = f"Note '{name}' has been deleted for {user_google_email}."
+    response = f"Note '{name}' has been deleted for {user_google_email}."
 
-        logger.info(f"Deleted note '{name}' for {user_google_email}")
-        return response
-
-    except HttpError as error:
-        message = format_reauth_message(error, user_google_email)
-        logger.error(message, exc_info=True)
-        raise Exception(message)
-    except Exception as e:
-        message = f"Unexpected error: {e}."
-        logger.exception(message)
-        raise Exception(message)
+    logger.info(f"Deleted note '{name}' for {user_google_email}")
+    return response
 
 
 @server.tool()  # type: ignore
@@ -306,34 +254,24 @@ async def download_attachment(
         f"[download_attachment] Invoked. Email: '{user_google_email}', Attachment: {attachment_name}"
     )
 
-    try:
-        result = await asyncio.to_thread(
-            service.media().download(name=attachment_name, mimeType=mime_type).execute
-        )
+    result = await asyncio.to_thread(
+        service.media().download(name=attachment_name, mimeType=mime_type).execute
+    )
 
-        response = f"Attachment downloaded for {user_google_email}:\n"
-        response += f"- Name: {attachment_name}\n"
-        response += f"- Requested MIME type: {mime_type}\n"
+    response = f"Attachment downloaded for {user_google_email}:\n"
+    response += f"- Name: {attachment_name}\n"
+    response += f"- Requested MIME type: {mime_type}\n"
 
-        if isinstance(result, dict):
-            for key, value in result.items():
-                response += f"- {key}: {value}\n"
-        else:
-            response += f"- Content length: {len(result)} bytes\n"
+    if isinstance(result, dict):
+        for key, value in result.items():
+            response += f"- {key}: {value}\n"
+    else:
+        response += f"- Content length: {len(result)} bytes\n"
 
-        logger.info(
-            f"Downloaded attachment '{attachment_name}' for {user_google_email}"
-        )
-        return response
-
-    except HttpError as error:
-        message = format_reauth_message(error, user_google_email)
-        logger.error(message, exc_info=True)
-        raise Exception(message)
-    except Exception as e:
-        message = f"Unexpected error: {e}."
-        logger.exception(message)
-        raise Exception(message)
+    logger.info(
+        f"Downloaded attachment '{attachment_name}' for {user_google_email}"
+    )
+    return response
 
 
 @server.tool()  # type: ignore
@@ -372,80 +310,70 @@ async def set_permissions(
 
     name = note_id if note_id.startswith("notes/") else f"notes/{note_id}"
 
-    try:
-        # Step 1: Read existing permissions
-        result = await asyncio.to_thread(service.notes().get(name=name).execute)
-        note = Note.from_api(result)
+    # Step 1: Read existing permissions
+    result = await asyncio.to_thread(service.notes().get(name=name).execute)
+    note = Note.from_api(result)
 
-        # Step 2: Delete all existing non-OWNER permissions
-        non_owner_perm_names = [
-            perm.name
-            for perm in note.permissions
-            if perm.role != "OWNER" and perm.name
-        ]
+    # Step 2: Delete all existing non-OWNER permissions
+    non_owner_perm_names = [
+        perm.name
+        for perm in note.permissions
+        if perm.role != "OWNER" and perm.name
+    ]
 
-        if non_owner_perm_names:
-            await asyncio.to_thread(
-                service.notes()
-                .permissions()
-                .batchDelete(
-                    parent=name,
-                    body={"names": non_owner_perm_names},
-                )
-                .execute
+    if non_owner_perm_names:
+        await asyncio.to_thread(
+            service.notes()
+            .permissions()
+            .batchDelete(
+                parent=name,
+                body={"names": non_owner_perm_names},
             )
-            logger.info(
-                f"Deleted {len(non_owner_perm_names)} existing permissions for '{name}'"
-            )
-
-        # Step 3: Create new permissions if any emails provided
-        if emails:
-            permission_requests = []
-            for email in emails:
-                member_field = {member_type: {"email": email}}
-                permission_requests.append(
-                    {
-                        "parent": name,
-                        "permission": {
-                            "role": "WRITER",
-                            "email": email,
-                            **member_field,
-                        },
-                    }
-                )
-
-            result = await asyncio.to_thread(
-                service.notes()
-                .permissions()
-                .batchCreate(
-                    parent=name,
-                    body={"requests": permission_requests},
-                )
-                .execute
-            )
-
-            created_permissions = result.get("permissions", [])
-            response = f"Permissions updated for note '{name}' ({user_google_email}):\n"
-            response += f"- Removed {len(non_owner_perm_names)} existing permission(s)\n"
-            response += f"- Added {len(created_permissions)} new permission(s):\n"
-            for perm in created_permissions:
-                response += f"  - {perm.get('email', 'N/A')} (role: {perm.get('role', 'N/A')})\n"
-        else:
-            response = f"Permissions updated for note '{name}' ({user_google_email}):\n"
-            response += f"- Removed {len(non_owner_perm_names)} existing permission(s)\n"
-            response += "- No new permissions added (empty email list)\n"
-
-        logger.info(
-            f"Set permissions for note '{name}': removed {len(non_owner_perm_names)}, "
-            f"added {len(emails)} for {user_google_email}"
+            .execute
         )
-        return response
+        logger.info(
+            f"Deleted {len(non_owner_perm_names)} existing permissions for '{name}'"
+        )
 
-    except HttpError as error:
-        message = format_reauth_message(error, user_google_email)
-        logger.error(message, exc_info=True)
-        raise Exception(message)
-    except Exception as e:
-        message = f"Unexpected error: {e}."
-        logger.exception(message)
-        raise Exception(message)
+    # Step 3: Create new permissions if any emails provided
+    if emails:
+        permission_requests = []
+        for email in emails:
+            member_field = {member_type: {"email": email}}
+            permission_requests.append(
+                {
+                    "parent": name,
+                    "permission": {
+                        "role": "WRITER",
+                        "email": email,
+                        **member_field,
+                    },
+                }
+            )
+
+        result = await asyncio.to_thread(
+            service.notes()
+            .permissions()
+            .batchCreate(
+                parent=name,
+                body={"requests": permission_requests},
+            )
+            .execute
+        )
+
+        created_permissions = result.get("permissions", [])
+        response = f"Permissions updated for note '{name}' ({user_google_email}):\n"
+        response += f"- Removed {len(non_owner_perm_names)} existing permission(s)\n"
+        response += f"- Added {len(created_permissions)} new permission(s):\n"
+        for perm in created_permissions:
+            response += f"  - {perm.get('email', 'N/A')} (role: {perm.get('role', 'N/A')})\n"
+    else:
+        response = f"Permissions updated for note '{name}' ({user_google_email}):\n"
+        response += f"- Removed {len(non_owner_perm_names)} existing permission(s)\n"
+        response += "- No new permissions added (empty email list)\n"
+
+    logger.info(
+        f"Set permissions for note '{name}': removed {len(non_owner_perm_names)}, "
+        f"added {len(emails)} for {user_google_email}"
+    )
+    return response

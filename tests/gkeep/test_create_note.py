@@ -3,7 +3,7 @@ Unit tests for Google Keep MCP `create_note` tool.
 """
 
 import pytest
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import Mock
 import sys
 import os
 

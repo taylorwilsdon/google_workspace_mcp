@@ -9,7 +9,7 @@ import os
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-from gkeep.keep_tools import list_notes
+from gkeep.keep_tools import list_notes, LIST_NOTES_PAGE_SIZE_MAX
 from .test_utils import unwrap, make_note_dict
 
 
@@ -73,17 +73,17 @@ async def test_list_notes_with_pagination_token():
 
 @pytest.mark.asyncio
 async def test_list_notes_passes_filter():
-    """list_notes should pass filter param to the API."""
+    """list_notes should pass filter_query param to the API."""
     mock_service = Mock()
     mock_service.notes().list().execute.return_value = {"notes": []}
 
     await unwrap(list_notes)(
         service=mock_service,
         user_google_email="test@example.com",
-        filter="trashed=true",
+        filter_query="trashed=true",
     )
 
-    mock_service.notes().list.assert_called()
+    mock_service.notes().list.assert_called_with(pageSize=25, filter="trashed=true")
 
 
 @pytest.mark.asyncio
@@ -97,3 +97,7 @@ async def test_list_notes_caps_page_size():
         user_google_email="test@example.com",
         page_size=5000,
     )
+
+    # Verify pageSize was capped to the maximum
+    call_kwargs = mock_service.notes().list.call_args.kwargs
+    assert call_kwargs.get("pageSize") == LIST_NOTES_PAGE_SIZE_MAX
