@@ -126,15 +126,15 @@ async def test_set_permissions_no_existing_writers():
         ]
     }
 
-    # Verify batchDelete was NOT called since there were no non-owner permissions
-    mock_service.notes().permissions().batchDelete.assert_not_called()
-
     result = await unwrap(set_permissions)(
         service=mock_service,
         user_google_email="test@example.com",
         note_id="notes/abc123",
         emails=["new@example.com"],
     )
+
+    # Verify batchDelete was NOT called since there were no non-owner permissions
+    mock_service.notes().permissions().batchDelete.assert_not_called()
 
     assert "Removed 0" in result
     assert "Added 1" in result
