@@ -14,6 +14,21 @@ from .test_utils import unwrap, make_note_dict
 
 
 @pytest.mark.asyncio
+async def test_set_permissions_invalid_member_type():
+    """set_permissions should raise ValueError for invalid member_type."""
+    mock_service = Mock()
+
+    with pytest.raises(ValueError, match="member_type must be 'user' or 'group'"):
+        await unwrap(set_permissions)(
+            service=mock_service,
+            user_google_email="test@example.com",
+            note_id="notes/abc123",
+            emails=["someone@example.com"],
+            member_type="invalid",
+        )
+
+
+@pytest.mark.asyncio
 async def test_set_permissions_add_writers():
     """set_permissions should remove old permissions and add new ones."""
     mock_service = Mock()

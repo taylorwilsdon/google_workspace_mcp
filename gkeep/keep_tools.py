@@ -307,6 +307,8 @@ async def set_permissions(
         f"[set_permissions] Invoked. Email: '{user_google_email}', Note ID: {note_id}, "
         f"Emails: {emails}"
     )
+    if member_type not in ["user", "group"]:
+        raise ValueError("member_type must be 'user' or 'group'")
 
     name = note_id if note_id.startswith("notes/") else f"notes/{note_id}"
 
