@@ -329,7 +329,7 @@ async def start_auth_flow(
     user_google_email: Optional[str],
     service_name: str,  # e.g., "Google Calendar", "Gmail" for user messages
     redirect_uri: str,  # Added redirect_uri as a required parameter
-) -> str:
+) -> tuple[str, str]:
     """
     Initiates the Google OAuth flow and returns an actionable message for the user.
 
@@ -339,7 +339,7 @@ async def start_auth_flow(
         redirect_uri: The URI Google will redirect to after authorization.
 
     Returns:
-        A formatted string containing guidance for the LLM/user.
+        Tuple of (formatted message string, auth_url).
 
     Raises:
         Exception: If the OAuth flow cannot be initiated.
@@ -422,7 +422,7 @@ async def start_auth_flow(
         message_lines.append(
             f"\nThe application will use the new credentials. If '{user_google_email}' was provided, it must match the authenticated account."
         )
-        return "\n".join(message_lines)
+        return "\n".join(message_lines), auth_url
 
     except FileNotFoundError as e:
         error_text = f"OAuth client credentials not found: {e}. Please either:\n1. Set environment variables: GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET\n2. Ensure '{CONFIG_CLIENT_SECRETS_PATH}' file exists"
@@ -939,14 +939,14 @@ async def get_authenticated_google_service(
             )
 
         # Generate auth URL and raise exception with it
-        auth_response = await start_auth_flow(
+        auth_response, auth_url = await start_auth_flow(
             user_google_email=user_google_email,
             service_name=f"Google {service_name.title()}",
             redirect_uri=redirect_uri,
         )
 
-        # Extract the auth URL from the response and raise with it
-        raise GoogleAuthenticationError(auth_response)
+        # Raise with both the message and the auth URL
+        raise GoogleAuthenticationError(auth_response, auth_url=auth_url)
 
     try:
         service = build(service_name, version, credentials=credentials)
