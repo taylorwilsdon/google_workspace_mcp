@@ -43,6 +43,10 @@ class MinimalOAuthServer:
         self.server_thread = None
         self.is_running = False
 
+        # CLI auth completion signaling
+        self.auth_completed = threading.Event()
+        self.auth_result: Optional[dict] = None  # {"success": bool, "user_id": str|None, "error": str|None}
+
         # Setup the callback route
         self._setup_callback_route()
         # Setup attachment serving route
@@ -62,6 +66,8 @@ class MinimalOAuthServer:
                     f"Authentication failed: Google returned an error: {error}."
                 )
                 logger.error(error_message)
+                self.auth_result = {"success": False, "user_id": None, "error": error_message}
+                self.auth_completed.set()
                 return create_error_response(error_message)
 
             if not code:
@@ -69,6 +75,8 @@ class MinimalOAuthServer:
                     "Authentication failed: No authorization code received from Google."
                 )
                 logger.error(error_message)
+                self.auth_result = {"success": False, "user_id": None, "error": error_message}
+                self.auth_completed.set()
                 return create_error_response(error_message)
 
             try:
@@ -96,12 +104,18 @@ class MinimalOAuthServer:
                     f"OAuth callback: Successfully authenticated user: {verified_user_id}."
                 )
 
+                # Signal completion for CLI auth flow
+                self.auth_result = {"success": True, "user_id": verified_user_id, "error": None}
+                self.auth_completed.set()
+
                 # Return success page using shared template
                 return create_success_response(verified_user_id)
 
             except Exception as e:
                 error_message_detail = f"Error processing OAuth callback: {str(e)}"
                 logger.error(error_message_detail, exc_info=True)
+                self.auth_result = {"success": False, "user_id": None, "error": str(e)}
+                self.auth_completed.set()
                 return create_server_error_response(str(e))
 
     def _setup_attachment_route(self):
@@ -200,6 +214,22 @@ class MinimalOAuthServer:
         logger.error(error_msg)
         return False, error_msg
 
+    def wait_for_auth(self, timeout: float = 300) -> Optional[dict]:
+        """
+        Block until OAuth callback is received or timeout.
+
+        Args:
+            timeout: Maximum seconds to wait (default 5 minutes)
+
+        Returns:
+            Auth result dict {"success": bool, "user_id": str|None, "error": str|None}
+            or None if timed out
+        """
+        completed = self.auth_completed.wait(timeout=timeout)
+        if completed:
+            return self.auth_result
+        return None
+
     def stop(self):
         """Stop the minimal OAuth server."""
         if not self.is_running:
@@ -277,6 +307,34 @@ def ensure_oauth_callback_available(
         error_msg = f"Unknown transport mode: {transport_mode}"
         logger.error(error_msg)
         return False, error_msg
+
+
+def set_cli_oauth_server(server: MinimalOAuthServer) -> None:
+    """Register a MinimalOAuthServer as the global instance (used by CLI mode)."""
+    global _minimal_oauth_server
+    _minimal_oauth_server = server
+
+
+def get_cli_oauth_port() -> int:
+    """
+    Find an available port for the CLI OAuth callback server.
+    Tries ports 8000-8009, falls back to OS-assigned port.
+
+    Returns:
+        Available port number
+    """
+    for port in range(8000, 8010):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(("localhost", port))
+                return port
+        except OSError:
+            continue
+
+    # Fallback: let OS assign a port
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("localhost", 0))
+        return s.getsockname()[1]
 
 
 def cleanup_oauth_callback_server():

@@ -311,9 +311,12 @@ def main():
             safe_print(
                 f"   {tool_icons[tool]} {tool.title()} - Google {tool.title()} API integration"
             )
-        except ModuleNotFoundError as exc:
+        except Exception as exc:
             logger.error("Failed to import tool '%s': %s", tool, exc, exc_info=True)
-            safe_print(f"   ⚠️ Failed to load {tool.title()} tool module ({exc}).")
+            if _CLI_MODE:
+                print(f"   Warning: Failed to load {tool.title()} tool module ({exc}).", file=sys.stderr)
+            else:
+                safe_print(f"   ⚠️ Failed to load {tool.title()} tool module ({exc}).")
     safe_print("")
 
     # Filter tools based on tier configuration (if tier-based loading is enabled)
