@@ -83,6 +83,8 @@ class MinimalOAuthServer:
                 # Check if we have credentials available (environment variables or file)
                 error_message = check_client_secrets()
                 if error_message:
+                    self.auth_result = {"success": False, "user_id": None, "error": error_message}
+                    self.auth_completed.set()
                     return create_server_error_response(error_message)
 
                 logger.info(
