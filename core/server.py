@@ -438,10 +438,11 @@ async def health_check(request: Request):
 
 
 @server.custom_route("/attachments/{file_id}", methods=["GET"])
-async def serve_attachment(file_id: str):
+async def serve_attachment(request):
     """Serve a stored attachment file."""
     from core.attachment_storage import get_attachment_storage
 
+    file_id = request.path_params["file_id"]
     storage = get_attachment_storage()
     metadata = storage.get_attachment_metadata(file_id)
 
