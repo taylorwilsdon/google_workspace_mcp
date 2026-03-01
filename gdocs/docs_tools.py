@@ -56,6 +56,42 @@ import json
 logger = logging.getLogger(__name__)
 
 
+def _extract_body_end_index(document_metadata: Dict[str, Any]) -> int:
+    """Return the largest endIndex in document body content, or 0 if unavailable."""
+    body = document_metadata.get("body")
+    if not isinstance(body, dict):
+        return 0
+    content = body.get("content")
+    if not isinstance(content, list):
+        return 0
+
+    max_end = 0
+    for element in content:
+        if not isinstance(element, dict):
+            continue
+        end_index = element.get("endIndex")
+        if isinstance(end_index, int) and end_index > max_end:
+            max_end = end_index
+    return max_end
+
+
+def _is_full_document_replacement_request(
+    *, start_index: int, end_index: int, body_end_index: int
+) -> bool:
+    """
+    Detect a replacement request that targets the full body segment.
+
+    Google Docs keeps a terminal newline at the end of each segment; deleting across
+    that boundary is invalid. If a request starts at the beginning and reaches the
+    segment end (or beyond), it should use find_and_replace_doc instead.
+    """
+    if body_end_index <= 0 or end_index <= start_index:
+        return False
+
+    normalized_start = 1 if start_index == 0 else start_index
+    return normalized_start <= 1 and end_index >= (body_end_index - 1)
+
+
 @server.tool()
 @handle_http_errors("search_docs", is_read_only=True, service_type="docs")
 @require_google_service("drive", "drive_read")
@@ -448,6 +484,38 @@ async def modify_doc_text(
 
     requests = []
     operations = []
+
+    # Guard against whole-document replacement attempts which are brittle with
+    # Docs segment boundaries and should use the dedicated global replace tool.
+    if (
+        text is not None
+        and end_index is not None
+        and end_index > start_index
+        and not any(p is not None for p in formatting_params)
+    ):
+        try:
+            document_metadata = await asyncio.to_thread(
+                service.documents()
+                .get(documentId=document_id, fields="body/content(endIndex)")
+                .execute
+            )
+            body_end_index = _extract_body_end_index(document_metadata)
+        except Exception as exc:
+            body_end_index = 0
+            logger.warning(
+                "[modify_doc_text] Failed to inspect document bounds for full replacement guard: %s",
+                exc,
+            )
+
+        if _is_full_document_replacement_request(
+            start_index=start_index,
+            end_index=end_index,
+            body_end_index=body_end_index,
+        ):
+            return (
+                "Error: Full-document replacement is blocked in modify_doc_text. "
+                "Use find_and_replace_doc for global substitutions."
+            )
 
     # Handle text insertion/replacement
     if text is not None:
