@@ -1,0 +1,35 @@
+Repo: Coldaine/google_workspace_mcp
+
+You are a coding agent with repo read/write + shell + PR capability.
+
+Mission:
+1) Read docs to determine what MCP surface area is implemented (Gmail/Drive/Calendar/etc).
+2) Produce a plan to make the MCP server reliable and operator-friendly.
+3) Execute Milestone 1 now.
+
+Required reading:
+- README.md + docs/
+- MCP server spec / tool list (if present)
+- Auth setup instructions (OAuth, service accounts) and security constraints
+- Open issues/PRs
+
+Deliverables:
+A) "Tool inventory":
+   - List each MCP tool, inputs/outputs, and auth requirements
+   - Known limitations and failure modes
+
+B) "Execution plan":
+   - Milestone 1: correctness + usability: working quickstart, env example, minimal smoke tests
+   - Milestone 2+: expand tool coverage + stronger error models
+
+C) Execute Milestone 1:
+   - Add a smoke test mode that runs without real credentials (mock layer) + an integration test path (optional)
+   - Harden error messages for auth failures and quota failures
+   - Open PR
+
+Constraints:
+- No credentials in repo; strong .env.example and redaction.
+- Avoid interactive flows in CI; provide local-only integration tests.
+
+Stopping condition:
+- One PR open that improves quickstart reliability + adds minimal test coverage.

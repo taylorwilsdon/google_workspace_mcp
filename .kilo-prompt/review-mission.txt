@@ -1,0 +1,22 @@
+You are a coding agent working on PR #7 in this repository (branch: kilo/mock-services-and-env).
+
+Your mission is to fully address all open review comments and ensure the PR is complete and correct.
+
+Steps:
+1. Run: gh pr view 7 --comments
+2. Run: gh pr diff 7
+3. Read tests/mock_services.py, .env.example, and any referenced tool files (gdrive/drive_tools.py, gsheets/sheets_tools.py, gcalendar/calendar_tools.py)
+4. Address EVERY comment:
+   - P1: MockCalendarService defines `list` twice (calendarList.list and events.list) — Python only keeps the second, breaking calendarList flow. Fix: split into separate resource classes.
+   - P1: MockSheetsService defines `get` twice (spreadsheets.get and values.get) — use separate _SpreadsheetsResource and _ValuesResource sub-objects.
+   - P2: MockDriveService.update — body=None causes TypeError when merged with **body. Guard: if body is not None else {}.
+   - Remove unused imports: AsyncMock, Optional (causes ruff check failure).
+   - export_media imports HttpRequest but never uses it — either use it or remove it (suggestion: return MagicMock(spec=HttpRequest)).
+   - .env.example: USER_GOOGLE_EMAIL is marked REQUIRED but should be OPTIONAL — update comment as suggested.
+   - .env.example: port default inconsistency (4100 vs 8000) — align to actual runtime default.
+5. Run `python -m pytest tests/mock_services.py` (or similar) to verify fixes.
+6. Commit all fixes to the PR branch.
+7. Push.
+8. Reply to review: gh pr review 7 --comment -b "Addressed all comments: ..."
+
+Stopping condition: All review bugs fixed, tests pass, committed and pushed.

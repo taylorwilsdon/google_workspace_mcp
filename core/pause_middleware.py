@@ -18,7 +18,9 @@ from starlette.responses import JSONResponse
 
 
 def _pause_flag_file() -> str:
-    return os.getenv("WORKSPACE_MCP_PAUSE_FILE", os.path.join(os.getcwd(), ".workspace_mcp_paused"))
+    return os.getenv(
+        "WORKSPACE_MCP_PAUSE_FILE", os.path.join(os.getcwd(), ".workspace_mcp_paused")
+    )
 
 
 def is_paused() -> bool:
@@ -34,10 +36,14 @@ class PauseMiddleware(BaseHTTPMiddleware):
             path = request.url.path
             # Allow health endpoint to report paused state differently
             if path == "/health":
-                await call_next(request)
-                # Replace health response with paused indicator
-                return JSONResponse({"status": "paused", "service": "workspace-mcp"}, status_code=200)
-            return JSONResponse({"status": "paused", "message": "Service temporarily paused"}, status_code=503)
+                # Return paused indicator for health endpoint
+                return JSONResponse(
+                    {"status": "paused", "service": "workspace-mcp"}, status_code=200
+                )
+            return JSONResponse(
+                {"status": "paused", "message": "Service temporarily paused"},
+                status_code=503,
+            )
         return await call_next(request)
 
 
