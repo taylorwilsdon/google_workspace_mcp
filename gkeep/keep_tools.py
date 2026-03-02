@@ -7,6 +7,7 @@ This module provides MCP tools for interacting with the Google Keep API.
 # API Reference: https://developers.google.com/workspace/keep/api/reference/rest
 
 import asyncio
+import base64
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -257,20 +258,62 @@ async def download_attachment(
         service.media().download(name=attachment_name, mimeType=mime_type).execute
     )
 
-    response = f"Attachment downloaded for {user_google_email}:\n"
-    response += f"- Name: {attachment_name}\n"
-    response += f"- Requested MIME type: {mime_type}\n"
-
     if isinstance(result, dict):
-        for key, value in result.items():
-            response += f"- {key}: {value}\n"
+        return (
+            f"Keep API returned metadata instead of binary data for '{attachment_name}'.\n"
+            f"Response: {result}"
+        )
+
+    file_bytes: bytes = result
+    size_bytes = len(file_bytes)
+    size_kb = size_bytes / 1024
+
+    # Derive a human-readable filename from the attachment resource name
+    filename = attachment_name.rsplit("/", 1)[-1] or "attachment"
+
+    from auth.oauth_config import is_stateless_mode
+
+    if is_stateless_mode():
+        b64_preview = base64.urlsafe_b64encode(file_bytes).decode("utf-8")[:100]
+        return "\n".join(
+            [
+                f"Attachment downloaded: {attachment_name} ({mime_type})",
+                f"Size: {size_kb:.1f} KB ({size_bytes} bytes)",
+                "",
+                "Stateless mode: File storage disabled.",
+                f"Base64 preview: {b64_preview}...",
+            ]
+        )
+
+    from core.attachment_storage import get_attachment_storage, get_attachment_url
+    from core.config import get_transport_mode
+
+    storage = get_attachment_storage()
+    b64_data = base64.urlsafe_b64encode(file_bytes).decode("utf-8")
+    saved = storage.save_attachment(
+        base64_data=b64_data, filename=filename, mime_type=mime_type
+    )
+
+    result_lines = [
+        f"Attachment downloaded: {attachment_name}",
+        f"Type: {mime_type}",
+        f"Size: {size_kb:.1f} KB ({size_bytes} bytes)",
+    ]
+
+    if get_transport_mode() == "stdio":
+        result_lines.append(f"\nSaved to: {saved.path}")
+        result_lines.append(
+            "\nThe file has been saved to disk and can be accessed directly via the file path."
+        )
     else:
-        response += f"- Content length: {len(result)} bytes\n"
+        download_url = get_attachment_url(saved.file_id)
+        result_lines.append(f"\nDownload URL: {download_url}")
+        result_lines.append("\nThe file will expire after 1 hour.")
 
     logger.info(
-        f"Downloaded attachment '{attachment_name}' for {user_google_email}"
+        f"[download_attachment] Saved {size_kb:.1f} KB attachment to {saved.path}"
     )
-    return response
+    return "\n".join(result_lines)
 
 
 @server.tool()  # type: ignore
