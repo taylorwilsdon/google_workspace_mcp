@@ -549,7 +549,7 @@ async def list_recent_files(
         include_items_from_all_drives (bool): Whether to include shared drive items. Defaults to True.
 
     Returns:
-        str: A formatted list of recent files with name, ID, type, modification time, who last modified it, and link.
+        str: A formatted list of recent files with name, ID, type, modification time, and link.
     """
     logger.info(
         f"[list_recent_files] Invoked. Email: '{user_google_email}', sort_by: '{sort_by}', "
@@ -599,7 +599,7 @@ async def list_recent_files(
     # Clamp page_size
     page_size = min(max(page_size, 1), 100)
 
-    # Build list params with lastModifyingUser and owners in fields
+    # Build list params with lastModifyingUser in fields
     fields = (
         "nextPageToken, files(id, name, mimeType, webViewLink, modifiedTime, size, "
         "lastModifyingUser(displayName, emailAddress), owners(displayName, emailAddress))"
@@ -651,6 +651,203 @@ async def list_recent_files(
     if next_token:
         formatted_parts.append(f"nextPageToken: {next_token}")
     return "\n".join(formatted_parts)
+
+
+@server.tool()
+@handle_http_errors("list_recent_activity", is_read_only=True, service_type="drive")
+@require_google_service("driveactivity", "drive_activity_read")
+async def list_recent_activity(
+    service,
+    user_google_email: str,
+    page_size: int = 20,
+    file_id: Optional[str] = None,
+    page_token: Optional[str] = None,
+) -> str:
+    """
+    Lists recent activity across Google Drive — shows WHO did WHAT and WHEN.
+    Returns a chronological feed of actions like edits, comments, shares, renames, and moves.
+    This is the collaboration log: use it to see what your teammates have been doing.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        page_size (int): Number of activity events to return. Defaults to 20. Max 100.
+        file_id (Optional[str]): If provided, only show activity for this specific file/folder.
+                                 Use a Google Drive file ID. If omitted, shows activity across all files.
+        page_token (Optional[str]): Page token from a previous response to get the next page of results.
+
+    Returns:
+        str: A formatted chronological feed of Drive activity events showing who did what, when, and to which file.
+    """
+    logger.info(
+        f"[list_recent_activity] Invoked. Email: '{user_google_email}', "
+        f"file_id: '{file_id}', page_size: {page_size}"
+    )
+
+    page_size = min(max(page_size, 1), 100)
+
+    # Build the request body for driveactivity.activity.query
+    request_body = {
+        "pageSize": page_size,
+    }
+
+    if file_id:
+        request_body["itemName"] = f"items/{file_id}"
+
+    if page_token:
+        request_body["pageToken"] = page_token
+
+    results = await asyncio.to_thread(
+        service.activity().query(body=request_body).execute
+    )
+    activities = results.get("activities", [])
+    if not activities:
+        scope = f"file {file_id}" if file_id else "your Drive"
+        return f"No recent activity found for {user_google_email} on {scope}."
+
+    next_token = results.get("nextPageToken")
+    scope_label = f" for file {file_id}" if file_id else ""
+    header = f"Recent activity for {user_google_email}{scope_label} ({len(activities)} events):"
+    formatted_parts = [header, ""]
+
+    for activity in activities:
+        # Extract actors (who did it)
+        actors = activity.get("actors", [])
+        actor_names = []
+        for actor in actors:
+            user_info = actor.get("user", {})
+            known_user = user_info.get("knownUser", {})
+            person_name = known_user.get("personName", "")
+            if person_name:
+                actor_names.append(person_name)
+            elif user_info.get("deletedUser"):
+                actor_names.append("(deleted user)")
+            elif actor.get("administrator"):
+                actor_names.append("(admin)")
+            elif actor.get("system"):
+                actor_names.append("(system)")
+            elif actor.get("impersonation"):
+                actor_names.append("(impersonation)")
+            else:
+                actor_names.append("(unknown)")
+        actor_str = ", ".join(actor_names) if actor_names else "(unknown)"
+
+        # Extract timestamp
+        timestamp = activity.get("timestamp", "")
+        if not timestamp:
+            time_range = activity.get("timeRange", {})
+            timestamp = time_range.get("endTime", time_range.get("startTime", ""))
+
+        # Extract targets (what files/folders were affected)
+        targets = activity.get("targets", [])
+        target_parts = []
+        for target in targets:
+            drive_item = target.get("driveItem", {})
+            item_name = drive_item.get("name", "")
+            item_title = drive_item.get("title", "")
+            # Also check for teamDrive, fileComment targets
+            if item_title:
+                target_parts.append(f'"{item_title}"')
+            elif item_name:
+                target_parts.append(item_name)
+            else:
+                team_drive = target.get("teamDrive", {})
+                if team_drive:
+                    target_parts.append(f'Shared drive: {team_drive.get("title", team_drive.get("name", "unknown"))}')
+        target_str = ", ".join(target_parts) if target_parts else "(unknown target)"
+
+        # Extract action (what happened)
+        primary_action = activity.get("primaryActionDetail", {})
+        action_str = _format_activity_action(primary_action)
+
+        formatted_parts.append(f"  {timestamp}")
+        formatted_parts.append(f"  {actor_str} → {action_str} → {target_str}")
+        formatted_parts.append("")
+
+    if next_token:
+        formatted_parts.append(f"nextPageToken: {next_token}")
+    return "\n".join(formatted_parts)
+
+
+def _format_activity_action(action_detail: Dict[str, Any]) -> str:
+    """Format an activity action into a human-readable string."""
+    if "create" in action_detail:
+        create = action_detail["create"]
+        if create.get("copy"):
+            return "copied"
+        elif create.get("upload"):
+            return "uploaded"
+        return "created"
+    elif "edit" in action_detail:
+        return "edited"
+    elif "move" in action_detail:
+        move = action_detail["move"]
+        added = move.get("addedParents", [])
+        removed = move.get("removedParents", [])
+        parts = []
+        if added:
+            titles = [p.get("driveItem", {}).get("title", "folder") for p in added]
+            parts.append(f"moved to {', '.join(titles)}")
+        if removed:
+            titles = [p.get("driveItem", {}).get("title", "folder") for p in removed]
+            parts.append(f"from {', '.join(titles)}")
+        return " ".join(parts) if parts else "moved"
+    elif "rename" in action_detail:
+        rename = action_detail["rename"]
+        old = rename.get("oldTitle", "")
+        new = rename.get("newTitle", "")
+        if old and new:
+            return f'renamed "{old}" → "{new}"'
+        return "renamed"
+    elif "delete" in action_detail:
+        return "deleted"
+    elif "restore" in action_detail:
+        return "restored from trash"
+    elif "permissionChange" in action_detail:
+        change = action_detail["permissionChange"]
+        added = change.get("addedPermissions", [])
+        removed = change.get("removedPermissions", [])
+        parts = []
+        for perm in added:
+            role = perm.get("role", "")
+            user = perm.get("user", {}).get("knownUser", {}).get("personName", "")
+            anyone = perm.get("anyone")
+            if anyone:
+                parts.append(f"shared with anyone ({role})")
+            elif user:
+                parts.append(f"shared with {user} ({role})")
+            else:
+                parts.append(f"added permission ({role})")
+        for perm in removed:
+            user = perm.get("user", {}).get("knownUser", {}).get("personName", "")
+            if user:
+                parts.append(f"removed access for {user}")
+            else:
+                parts.append("removed a permission")
+        return "; ".join(parts) if parts else "changed permissions"
+    elif "comment" in action_detail:
+        comment = action_detail["comment"]
+        sub_type = ""
+        if comment.get("post"):
+            sub_type = "commented"
+        elif comment.get("assignment"):
+            sub_type = "assigned"
+        elif comment.get("suggestion"):
+            sub_type = "suggested"
+        else:
+            sub_type = "commented"
+        mentioned = comment.get("mentionedUsers", [])
+        if mentioned:
+            names = [u.get("knownUser", {}).get("personName", "someone") for u in mentioned]
+            sub_type += f" (mentioned {', '.join(names)})"
+        return sub_type
+    elif "dlpChange" in action_detail:
+        return "DLP policy change"
+    elif "settingsChange" in action_detail:
+        return "changed settings"
+    else:
+        # Return the first key as a fallback
+        keys = list(action_detail.keys())
+        return keys[0] if keys else "unknown action"
 
 
 async def _create_drive_folder_impl(

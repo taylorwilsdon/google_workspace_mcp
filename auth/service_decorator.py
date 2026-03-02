@@ -30,6 +30,7 @@ from auth.scopes import (
     GMAIL_SETTINGS_BASIC_SCOPE,
     DRIVE_READONLY_SCOPE,
     DRIVE_FILE_SCOPE,
+    DRIVE_ACTIVITY_READONLY_SCOPE,
     DOCS_READONLY_SCOPE,
     DOCS_WRITE_SCOPE,
     CALENDAR_READONLY_SCOPE,
@@ -410,6 +411,7 @@ SERVICE_CONFIGS = {
     "forms": {"service": "forms", "version": "v1"},
     "slides": {"service": "slides", "version": "v1"},
     "tasks": {"service": "tasks", "version": "v1"},
+    "driveactivity": {"service": "driveactivity", "version": "v2"},
     "people": {"service": "people", "version": "v1"},
     "customsearch": {"service": "customsearch", "version": "v1"},
     "script": {"service": "script", "version": "v1"},
@@ -428,6 +430,7 @@ SCOPE_GROUPS = {
     # Drive scopes
     "drive_read": DRIVE_READONLY_SCOPE,
     "drive_file": DRIVE_FILE_SCOPE,
+    "drive_activity_read": DRIVE_ACTIVITY_READONLY_SCOPE,
     # Docs scopes
     "docs_read": DOCS_READONLY_SCOPE,
     "docs_write": DOCS_WRITE_SCOPE,
