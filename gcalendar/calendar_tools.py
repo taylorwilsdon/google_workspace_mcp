@@ -534,10 +534,14 @@ async def get_events(
     return text_output
 
 
-@server.tool()
-@handle_http_errors("create_event", service_type="calendar")
-@require_google_service("calendar", "calendar_events")
-async def create_event(
+# ---------------------------------------------------------------------------
+# Internal implementation functions for event create/modify/delete.
+# These are called by both the consolidated ``manage_event`` tool and the
+# legacy single-action tools.
+# ---------------------------------------------------------------------------
+
+
+async def _create_event_impl(
     service,
     user_google_email: str,
     summary: str,
@@ -558,32 +562,7 @@ async def create_event(
     guests_can_invite_others: Optional[bool] = None,
     guests_can_see_other_guests: Optional[bool] = None,
 ) -> str:
-    """
-    Creates a new event.
-
-    Args:
-        user_google_email (str): The user's Google email address. Required.
-        summary (str): Event title.
-        start_time (str): Start time (RFC3339, e.g., "2023-10-27T10:00:00-07:00" or "2023-10-27" for all-day).
-        end_time (str): End time (RFC3339, e.g., "2023-10-27T11:00:00-07:00" or "2023-10-28" for all-day).
-        calendar_id (str): Calendar ID (default: 'primary').
-        description (Optional[str]): Event description.
-        location (Optional[str]): Event location.
-        attendees (Optional[List[str]]): Attendee email addresses.
-        timezone (Optional[str]): Timezone (e.g., "America/New_York").
-        attachments (Optional[List[str]]): List of Google Drive file URLs or IDs to attach to the event.
-        add_google_meet (bool): Whether to add a Google Meet video conference to the event. Defaults to False.
-        reminders (Optional[Union[str, List[Dict[str, Any]]]]): JSON string or list of reminder objects. Each should have 'method' ("popup" or "email") and 'minutes' (0-40320). Max 5 reminders. Example: '[{"method": "popup", "minutes": 15}]' or [{"method": "popup", "minutes": 15}]
-        use_default_reminders (bool): Whether to use calendar's default reminders. If False, uses custom reminders. Defaults to True.
-        transparency (Optional[str]): Event transparency for busy/free status. "opaque" shows as Busy (default), "transparent" shows as Available/Free. Defaults to None (uses Google Calendar default).
-        visibility (Optional[str]): Event visibility. "default" uses calendar default, "public" is visible to all, "private" is visible only to attendees, "confidential" is same as private (legacy). Defaults to None (uses Google Calendar default).
-        guests_can_modify (Optional[bool]): Whether attendees other than the organizer can modify the event. Defaults to None (uses Google Calendar default of False).
-        guests_can_invite_others (Optional[bool]): Whether attendees other than the organizer can invite others to the event. Defaults to None (uses Google Calendar default of True).
-        guests_can_see_other_guests (Optional[bool]): Whether attendees other than the organizer can see who the event's attendees are. Defaults to None (uses Google Calendar default of True).
-
-    Returns:
-        str: Confirmation message of the successful event creation with event link.
-    """
+    """Internal implementation for creating a calendar event."""
     logger.info(
         f"[create_event] Invoked. Email: '{user_google_email}', Summary: {summary}"
     )
@@ -809,10 +788,7 @@ def _normalize_attendees(
     return normalized if normalized else None
 
 
-@server.tool()
-@handle_http_errors("modify_event", service_type="calendar")
-@require_google_service("calendar", "calendar_events")
-async def modify_event(
+async def _modify_event_impl(
     service,
     user_google_email: str,
     event_id: str,
@@ -834,33 +810,7 @@ async def modify_event(
     guests_can_invite_others: Optional[bool] = None,
     guests_can_see_other_guests: Optional[bool] = None,
 ) -> str:
-    """
-    Modifies an existing event.
-
-    Args:
-        user_google_email (str): The user's Google email address. Required.
-        event_id (str): The ID of the event to modify.
-        calendar_id (str): Calendar ID (default: 'primary').
-        summary (Optional[str]): New event title.
-        start_time (Optional[str]): New start time (RFC3339, e.g., "2023-10-27T10:00:00-07:00" or "2023-10-27" for all-day).
-        end_time (Optional[str]): New end time (RFC3339, e.g., "2023-10-27T11:00:00-07:00" or "2023-10-28" for all-day).
-        description (Optional[str]): New event description.
-        location (Optional[str]): New event location.
-        attendees (Optional[Union[List[str], List[Dict[str, Any]]]]): Attendees as email strings or objects with metadata. Supports: ["email@example.com"] or [{"email": "email@example.com", "responseStatus": "accepted", "organizer": true, "optional": true}]. When using objects, existing metadata (responseStatus, organizer, optional) is preserved. New attendees default to responseStatus="needsAction".
-        timezone (Optional[str]): New timezone (e.g., "America/New_York").
-        add_google_meet (Optional[bool]): Whether to add or remove Google Meet video conference. If True, adds Google Meet; if False, removes it; if None, leaves unchanged.
-        reminders (Optional[Union[str, List[Dict[str, Any]]]]): JSON string or list of reminder objects to replace existing reminders. Each should have 'method' ("popup" or "email") and 'minutes' (0-40320). Max 5 reminders. Example: '[{"method": "popup", "minutes": 15}]' or [{"method": "popup", "minutes": 15}]
-        use_default_reminders (Optional[bool]): Whether to use calendar's default reminders. If specified, overrides current reminder settings.
-        transparency (Optional[str]): Event transparency for busy/free status. "opaque" shows as Busy, "transparent" shows as Available/Free. If None, preserves existing transparency setting.
-        visibility (Optional[str]): Event visibility. "default" uses calendar default, "public" is visible to all, "private" is visible only to attendees, "confidential" is same as private (legacy). If None, preserves existing visibility setting.
-        color_id (Optional[str]): Event color ID (1-11). If None, preserves existing color.
-        guests_can_modify (Optional[bool]): Whether attendees other than the organizer can modify the event. If None, preserves existing setting.
-        guests_can_invite_others (Optional[bool]): Whether attendees other than the organizer can invite others to the event. If None, preserves existing setting.
-        guests_can_see_other_guests (Optional[bool]): Whether attendees other than the organizer can see who the event's attendees are. If None, preserves existing setting.
-
-    Returns:
-        str: Confirmation message of the successful event modification with event link.
-    """
+    """Internal implementation for modifying a calendar event."""
     logger.info(
         f"[modify_event] Invoked. Email: '{user_google_email}', Event ID: {event_id}"
     )
@@ -1075,23 +1025,13 @@ async def modify_event(
     return confirmation_message
 
 
-@server.tool()
-@handle_http_errors("delete_event", service_type="calendar")
-@require_google_service("calendar", "calendar_events")
-async def delete_event(
-    service, user_google_email: str, event_id: str, calendar_id: str = "primary"
+async def _delete_event_impl(
+    service,
+    user_google_email: str,
+    event_id: str,
+    calendar_id: str = "primary",
 ) -> str:
-    """
-    Deletes an existing event.
-
-    Args:
-        user_google_email (str): The user's Google email address. Required.
-        event_id (str): The ID of the event to delete.
-        calendar_id (str): Calendar ID (default: 'primary').
-
-    Returns:
-        str: Confirmation message of the successful event deletion.
-    """
+    """Internal implementation for deleting a calendar event."""
     logger.info(
         f"[delete_event] Invoked. Email: '{user_google_email}', Event ID: {event_id}"
     )
@@ -1131,6 +1071,141 @@ async def delete_event(
     confirmation_message = f"Successfully deleted event (ID: {event_id}) from calendar '{calendar_id}' for {user_google_email}."
     logger.info(f"Event deleted successfully for {user_google_email}. ID: {event_id}")
     return confirmation_message
+
+
+# ---------------------------------------------------------------------------
+# Consolidated event management tool
+# ---------------------------------------------------------------------------
+
+
+@server.tool()
+@handle_http_errors("manage_event", service_type="calendar")
+@require_google_service("calendar", "calendar_events")
+async def manage_event(
+    service,
+    user_google_email: str,
+    action: str,
+    summary: Optional[str] = None,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+    event_id: Optional[str] = None,
+    calendar_id: str = "primary",
+    description: Optional[str] = None,
+    location: Optional[str] = None,
+    attendees: Optional[Union[List[str], List[Dict[str, Any]]]] = None,
+    timezone: Optional[str] = None,
+    attachments: Optional[List[str]] = None,
+    add_google_meet: Optional[bool] = None,
+    reminders: Optional[Union[str, List[Dict[str, Any]]]] = None,
+    use_default_reminders: Optional[bool] = None,
+    transparency: Optional[str] = None,
+    visibility: Optional[str] = None,
+    color_id: Optional[str] = None,
+    guests_can_modify: Optional[bool] = None,
+    guests_can_invite_others: Optional[bool] = None,
+    guests_can_see_other_guests: Optional[bool] = None,
+) -> str:
+    """
+    Manages calendar events. Supports creating, updating, and deleting events.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        action (str): Action to perform - "create", "update", or "delete".
+        summary (Optional[str]): Event title (required for create).
+        start_time (Optional[str]): Start time in RFC3339 format (required for create).
+        end_time (Optional[str]): End time in RFC3339 format (required for create).
+        event_id (Optional[str]): Event ID (required for update and delete).
+        calendar_id (str): Calendar ID (default: 'primary').
+        description (Optional[str]): Event description.
+        location (Optional[str]): Event location.
+        attendees (Optional[Union[List[str], List[Dict[str, Any]]]]): Attendee email addresses or objects.
+        timezone (Optional[str]): Timezone (e.g., "America/New_York").
+        attachments (Optional[List[str]]): List of Google Drive file URLs or IDs to attach.
+        add_google_meet (Optional[bool]): Whether to add/remove Google Meet.
+        reminders (Optional[Union[str, List[Dict[str, Any]]]]): Custom reminder objects.
+        use_default_reminders (Optional[bool]): Whether to use default reminders.
+        transparency (Optional[str]): "opaque" (busy) or "transparent" (free).
+        visibility (Optional[str]): "default", "public", "private", or "confidential".
+        color_id (Optional[str]): Event color ID (1-11, update only).
+        guests_can_modify (Optional[bool]): Whether attendees can modify.
+        guests_can_invite_others (Optional[bool]): Whether attendees can invite others.
+        guests_can_see_other_guests (Optional[bool]): Whether attendees can see other guests.
+
+    Returns:
+        str: Confirmation message with event details.
+    """
+    action_lower = action.lower().strip()
+    if action_lower == "create":
+        if not summary or not start_time or not end_time:
+            raise ValueError(
+                "summary, start_time, and end_time are required for create action"
+            )
+        return await _create_event_impl(
+            service=service,
+            user_google_email=user_google_email,
+            summary=summary,
+            start_time=start_time,
+            end_time=end_time,
+            calendar_id=calendar_id,
+            description=description,
+            location=location,
+            attendees=attendees,
+            timezone=timezone,
+            attachments=attachments,
+            add_google_meet=add_google_meet or False,
+            reminders=reminders,
+            use_default_reminders=use_default_reminders
+            if use_default_reminders is not None
+            else True,
+            transparency=transparency,
+            visibility=visibility,
+            guests_can_modify=guests_can_modify,
+            guests_can_invite_others=guests_can_invite_others,
+            guests_can_see_other_guests=guests_can_see_other_guests,
+        )
+    elif action_lower == "update":
+        if not event_id:
+            raise ValueError("event_id is required for update action")
+        return await _modify_event_impl(
+            service=service,
+            user_google_email=user_google_email,
+            event_id=event_id,
+            calendar_id=calendar_id,
+            summary=summary,
+            start_time=start_time,
+            end_time=end_time,
+            description=description,
+            location=location,
+            attendees=attendees,
+            timezone=timezone,
+            add_google_meet=add_google_meet,
+            reminders=reminders,
+            use_default_reminders=use_default_reminders,
+            transparency=transparency,
+            visibility=visibility,
+            color_id=color_id,
+            guests_can_modify=guests_can_modify,
+            guests_can_invite_others=guests_can_invite_others,
+            guests_can_see_other_guests=guests_can_see_other_guests,
+        )
+    elif action_lower == "delete":
+        if not event_id:
+            raise ValueError("event_id is required for delete action")
+        return await _delete_event_impl(
+            service=service,
+            user_google_email=user_google_email,
+            event_id=event_id,
+            calendar_id=calendar_id,
+        )
+    else:
+        raise ValueError(
+            f"Invalid action '{action_lower}'. Must be 'create', 'update', or 'delete'."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Legacy single-action tools (deprecated -- prefer ``manage_event``)
+# ---------------------------------------------------------------------------
 
 
 @server.tool()

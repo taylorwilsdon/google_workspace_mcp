@@ -291,9 +291,7 @@ class TestImports:
         assert hasattr(contacts_tools, "list_contacts")
         assert hasattr(contacts_tools, "get_contact")
         assert hasattr(contacts_tools, "search_contacts")
-        assert hasattr(contacts_tools, "create_contact")
-        assert hasattr(contacts_tools, "update_contact")
-        assert hasattr(contacts_tools, "delete_contact")
+        assert hasattr(contacts_tools, "manage_contact")
 
     def test_import_group_tools(self):
         """Test that group tools can be imported."""
@@ -301,18 +299,13 @@ class TestImports:
 
         assert hasattr(contacts_tools, "list_contact_groups")
         assert hasattr(contacts_tools, "get_contact_group")
-        assert hasattr(contacts_tools, "create_contact_group")
-        assert hasattr(contacts_tools, "update_contact_group")
-        assert hasattr(contacts_tools, "delete_contact_group")
-        assert hasattr(contacts_tools, "modify_contact_group_members")
+        assert hasattr(contacts_tools, "manage_contact_group")
 
     def test_import_batch_tools(self):
         """Test that batch tools can be imported."""
         from gcontacts import contacts_tools
 
-        assert hasattr(contacts_tools, "batch_create_contacts")
-        assert hasattr(contacts_tools, "batch_update_contacts")
-        assert hasattr(contacts_tools, "batch_delete_contacts")
+        assert hasattr(contacts_tools, "manage_contacts_batch")
 
 
 class TestConstants:

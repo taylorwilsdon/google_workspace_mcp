@@ -13,7 +13,7 @@ from mcp import Resource
 
 from auth.service_decorator import require_google_service
 from core.server import server
-from core.utils import handle_http_errors
+from core.utils import UserInputError, handle_http_errors
 
 logger = logging.getLogger(__name__)
 
@@ -249,48 +249,44 @@ async def list_contacts(
     """
     logger.info(f"[list_contacts] Invoked. Email: '{user_google_email}'")
 
-    try:
-        params: Dict[str, Any] = {
-            "resourceName": "people/me",
-            "personFields": DEFAULT_PERSON_FIELDS,
-            "pageSize": min(page_size, 1000),
-        }
+    if page_size < 1:
+        raise UserInputError("page_size must be >= 1")
+    page_size = min(page_size, 1000)
 
-        if page_token:
-            params["pageToken"] = page_token
-        if sort_order:
-            params["sortOrder"] = sort_order
+    params: Dict[str, Any] = {
+        "resourceName": "people/me",
+        "personFields": DEFAULT_PERSON_FIELDS,
+        "pageSize": page_size,
+    }
 
-        result = await asyncio.to_thread(
-            service.people().connections().list(**params).execute
-        )
+    if page_token:
+        params["pageToken"] = page_token
+    if sort_order:
+        params["sortOrder"] = sort_order
 
-        connections = result.get("connections", [])
-        next_page_token = result.get("nextPageToken")
-        total_people = result.get("totalPeople", len(connections))
+    result = await asyncio.to_thread(
+        service.people().connections().list(**params).execute
+    )
 
-        if not connections:
-            return f"No contacts found for {user_google_email}."
+    connections = result.get("connections", [])
+    next_page_token = result.get("nextPageToken")
+    total_people = result.get("totalPeople", len(connections))
 
-        response = f"Contacts for {user_google_email} ({len(connections)} of {total_people}):\n\n"
+    if not connections:
+        return f"No contacts found for {user_google_email}."
 
-        for person in connections:
-            response += _format_contact(person) + "\n\n"
+    response = (
+        f"Contacts for {user_google_email} ({len(connections)} of {total_people}):\n\n"
+    )
 
-        if next_page_token:
-            response += f"Next page token: {next_page_token}"
+    for person in connections:
+        response += _format_contact(person) + "\n\n"
 
-        logger.info(f"Found {len(connections)} contacts for {user_google_email}")
-        return response
+    if next_page_token:
+        response += f"Next page token: {next_page_token}"
 
-    except HttpError as error:
-        message = f"API error: {error}. You might need to re-authenticate. LLM: Try 'start_google_auth' with the user's email ({user_google_email}) and service_name='Google Contacts'."
-        logger.error(message, exc_info=True)
-        raise Exception(message)
-    except Exception as e:
-        message = f"Unexpected error: {e}."
-        logger.exception(message)
-        raise Exception(message)
+    logger.info(f"Found {len(connections)} contacts for {user_google_email}")
+    return response
 
 
 @server.tool()
@@ -321,31 +317,17 @@ async def get_contact(
         f"[get_contact] Invoked. Email: '{user_google_email}', Contact: {resource_name}"
     )
 
-    try:
-        person = await asyncio.to_thread(
-            service.people()
-            .get(resourceName=resource_name, personFields=DETAILED_PERSON_FIELDS)
-            .execute
-        )
+    person = await asyncio.to_thread(
+        service.people()
+        .get(resourceName=resource_name, personFields=DETAILED_PERSON_FIELDS)
+        .execute
+    )
 
-        response = f"Contact Details for {user_google_email}:\n\n"
-        response += _format_contact(person, detailed=True)
+    response = f"Contact Details for {user_google_email}:\n\n"
+    response += _format_contact(person, detailed=True)
 
-        logger.info(f"Retrieved contact {resource_name} for {user_google_email}")
-        return response
-
-    except HttpError as error:
-        if error.resp.status == 404:
-            message = f"Contact not found: {contact_id}"
-            logger.warning(message)
-            raise Exception(message)
-        message = f"API error: {error}. You might need to re-authenticate. LLM: Try 'start_google_auth' with the user's email ({user_google_email}) and service_name='Google Contacts'."
-        logger.error(message, exc_info=True)
-        raise Exception(message)
-    except Exception as e:
-        message = f"Unexpected error: {e}."
-        logger.exception(message)
-        raise Exception(message)
+    logger.info(f"Retrieved contact {resource_name} for {user_google_email}")
+    return response
 
 
 @server.tool()
@@ -372,52 +354,48 @@ async def search_contacts(
         f"[search_contacts] Invoked. Email: '{user_google_email}', Query: '{query}'"
     )
 
-    try:
-        # Warm up the search cache if needed
-        await _warmup_search_cache(service, user_google_email)
+    if page_size < 1:
+        raise UserInputError("page_size must be >= 1")
+    page_size = min(page_size, 30)
 
-        result = await asyncio.to_thread(
-            service.people()
-            .searchContacts(
-                query=query,
-                readMask=DEFAULT_PERSON_FIELDS,
-                pageSize=min(page_size, 30),
-            )
-            .execute
+    # Warm up the search cache if needed
+    await _warmup_search_cache(service, user_google_email)
+
+    result = await asyncio.to_thread(
+        service.people()
+        .searchContacts(
+            query=query,
+            readMask=DEFAULT_PERSON_FIELDS,
+            pageSize=page_size,
         )
+        .execute
+    )
 
-        results = result.get("results", [])
+    results = result.get("results", [])
 
-        if not results:
-            return f"No contacts found matching '{query}' for {user_google_email}."
+    if not results:
+        return f"No contacts found matching '{query}' for {user_google_email}."
 
-        response = f"Search Results for '{query}' ({len(results)} found):\n\n"
+    response = f"Search Results for '{query}' ({len(results)} found):\n\n"
 
-        for item in results:
-            person = item.get("person", {})
-            response += _format_contact(person) + "\n\n"
+    for item in results:
+        person = item.get("person", {})
+        response += _format_contact(person) + "\n\n"
 
-        logger.info(
-            f"Found {len(results)} contacts matching '{query}' for {user_google_email}"
-        )
-        return response
-
-    except HttpError as error:
-        message = f"API error: {error}. You might need to re-authenticate. LLM: Try 'start_google_auth' with the user's email ({user_google_email}) and service_name='Google Contacts'."
-        logger.error(message, exc_info=True)
-        raise Exception(message)
-    except Exception as e:
-        message = f"Unexpected error: {e}."
-        logger.exception(message)
-        raise Exception(message)
+    logger.info(
+        f"Found {len(results)} contacts matching '{query}' for {user_google_email}"
+    )
+    return response
 
 
 @server.tool()
 @require_google_service("people", "contacts")
-@handle_http_errors("create_contact", service_type="people")
-async def create_contact(
+@handle_http_errors("manage_contact", service_type="people")
+async def manage_contact(
     service: Resource,
     user_google_email: str,
+    action: str,
+    contact_id: Optional[str] = None,
     given_name: Optional[str] = None,
     family_name: Optional[str] = None,
     email: Optional[str] = None,
@@ -427,26 +405,35 @@ async def create_contact(
     notes: Optional[str] = None,
 ) -> str:
     """
-    Create a new contact.
+    Create, update, or delete a contact. Consolidated tool replacing create_contact,
+    update_contact, and delete_contact.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
-        given_name (Optional[str]): First name.
-        family_name (Optional[str]): Last name.
-        email (Optional[str]): Email address.
-        phone (Optional[str]): Phone number.
-        organization (Optional[str]): Company/organization name.
-        job_title (Optional[str]): Job title.
-        notes (Optional[str]): Additional notes.
+        action (str): The action to perform: "create", "update", or "delete".
+        contact_id (Optional[str]): The contact ID. Required for "update" and "delete" actions.
+        given_name (Optional[str]): First name (for create/update).
+        family_name (Optional[str]): Last name (for create/update).
+        email (Optional[str]): Email address (for create/update).
+        phone (Optional[str]): Phone number (for create/update).
+        organization (Optional[str]): Company/organization name (for create/update).
+        job_title (Optional[str]): Job title (for create/update).
+        notes (Optional[str]): Additional notes (for create/update).
 
     Returns:
-        str: Confirmation with the new contact's details.
+        str: Result of the action performed.
     """
+    action = action.lower().strip()
+    if action not in ("create", "update", "delete"):
+        raise UserInputError(
+            f"Invalid action '{action}'. Must be 'create', 'update', or 'delete'."
+        )
+
     logger.info(
-        f"[create_contact] Invoked. Email: '{user_google_email}', Name: '{given_name} {family_name}'"
+        f"[manage_contact] Invoked. Action: '{action}', Email: '{user_google_email}'"
     )
 
-    try:
+    if action == "create":
         body = _build_person_body(
             given_name=given_name,
             family_name=family_name,
@@ -458,7 +445,7 @@ async def create_contact(
         )
 
         if not body:
-            raise Exception(
+            raise UserInputError(
                 "At least one field (name, email, phone, etc.) must be provided."
             )
 
@@ -471,69 +458,22 @@ async def create_contact(
         response = f"Contact Created for {user_google_email}:\n\n"
         response += _format_contact(result, detailed=True)
 
-        contact_id = result.get("resourceName", "").replace("people/", "")
-        logger.info(f"Created contact {contact_id} for {user_google_email}")
+        created_id = result.get("resourceName", "").replace("people/", "")
+        logger.info(f"Created contact {created_id} for {user_google_email}")
         return response
 
-    except HttpError as error:
-        message = f"API error: {error}. You might need to re-authenticate. LLM: Try 'start_google_auth' with the user's email ({user_google_email}) and service_name='Google Contacts'."
-        logger.error(message, exc_info=True)
-        raise Exception(message)
-    except Exception as e:
-        message = f"Unexpected error: {e}."
-        logger.exception(message)
-        raise Exception(message)
+    # update and delete both require contact_id
+    if not contact_id:
+        raise UserInputError(f"contact_id is required for '{action}' action.")
 
-
-# =============================================================================
-# Extended Tier Tools
-# =============================================================================
-
-
-@server.tool()
-@require_google_service("people", "contacts")
-@handle_http_errors("update_contact", service_type="people")
-async def update_contact(
-    service: Resource,
-    user_google_email: str,
-    contact_id: str,
-    given_name: Optional[str] = None,
-    family_name: Optional[str] = None,
-    email: Optional[str] = None,
-    phone: Optional[str] = None,
-    organization: Optional[str] = None,
-    job_title: Optional[str] = None,
-    notes: Optional[str] = None,
-) -> str:
-    """
-    Update an existing contact. Note: This replaces fields, not merges them.
-
-    Args:
-        user_google_email (str): The user's Google email address. Required.
-        contact_id (str): The contact ID to update.
-        given_name (Optional[str]): New first name.
-        family_name (Optional[str]): New last name.
-        email (Optional[str]): New email address.
-        phone (Optional[str]): New phone number.
-        organization (Optional[str]): New company/organization name.
-        job_title (Optional[str]): New job title.
-        notes (Optional[str]): New notes.
-
-    Returns:
-        str: Confirmation with updated contact details.
-    """
     # Normalize resource name
     if not contact_id.startswith("people/"):
         resource_name = f"people/{contact_id}"
     else:
         resource_name = contact_id
 
-    logger.info(
-        f"[update_contact] Invoked. Email: '{user_google_email}', Contact: {resource_name}"
-    )
-
-    try:
-        # First fetch the contact to get the etag
+    if action == "update":
+        # Fetch the contact to get the etag
         current = await asyncio.to_thread(
             service.people()
             .get(resourceName=resource_name, personFields=DETAILED_PERSON_FIELDS)
@@ -544,7 +484,6 @@ async def update_contact(
         if not etag:
             raise Exception("Unable to get contact etag for update.")
 
-        # Build update body
         body = _build_person_body(
             given_name=given_name,
             family_name=family_name,
@@ -556,13 +495,12 @@ async def update_contact(
         )
 
         if not body:
-            raise Exception(
+            raise UserInputError(
                 "At least one field (name, email, phone, etc.) must be provided."
             )
 
         body["etag"] = etag
 
-        # Determine which fields to update
         update_person_fields = []
         if "names" in body:
             update_person_fields.append("names")
@@ -594,70 +532,19 @@ async def update_contact(
         logger.info(f"Updated contact {resource_name} for {user_google_email}")
         return response
 
-    except HttpError as error:
-        if error.resp.status == 404:
-            message = f"Contact not found: {contact_id}"
-            logger.warning(message)
-            raise Exception(message)
-        message = f"API error: {error}. You might need to re-authenticate. LLM: Try 'start_google_auth' with the user's email ({user_google_email}) and service_name='Google Contacts'."
-        logger.error(message, exc_info=True)
-        raise Exception(message)
-    except Exception as e:
-        message = f"Unexpected error: {e}."
-        logger.exception(message)
-        raise Exception(message)
-
-
-@server.tool()
-@require_google_service("people", "contacts")
-@handle_http_errors("delete_contact", service_type="people")
-async def delete_contact(
-    service: Resource,
-    user_google_email: str,
-    contact_id: str,
-) -> str:
-    """
-    Delete a contact.
-
-    Args:
-        user_google_email (str): The user's Google email address. Required.
-        contact_id (str): The contact ID to delete.
-
-    Returns:
-        str: Confirmation message.
-    """
-    # Normalize resource name
-    if not contact_id.startswith("people/"):
-        resource_name = f"people/{contact_id}"
-    else:
-        resource_name = contact_id
-
-    logger.info(
-        f"[delete_contact] Invoked. Email: '{user_google_email}', Contact: {resource_name}"
+    # action == "delete"
+    await asyncio.to_thread(
+        service.people().deleteContact(resourceName=resource_name).execute
     )
 
-    try:
-        await asyncio.to_thread(
-            service.people().deleteContact(resourceName=resource_name).execute
-        )
+    response = f"Contact {contact_id} has been deleted for {user_google_email}."
+    logger.info(f"Deleted contact {resource_name} for {user_google_email}")
+    return response
 
-        response = f"Contact {contact_id} has been deleted for {user_google_email}."
 
-        logger.info(f"Deleted contact {resource_name} for {user_google_email}")
-        return response
-
-    except HttpError as error:
-        if error.resp.status == 404:
-            message = f"Contact not found: {contact_id}"
-            logger.warning(message)
-            raise Exception(message)
-        message = f"API error: {error}. You might need to re-authenticate. LLM: Try 'start_google_auth' with the user's email ({user_google_email}) and service_name='Google Contacts'."
-        logger.error(message, exc_info=True)
-        raise Exception(message)
-    except Exception as e:
-        message = f"Unexpected error: {e}."
-        logger.exception(message)
-        raise Exception(message)
+# =============================================================================
+# Extended Tier Tools
+# =============================================================================
 
 
 @server.tool()
@@ -682,51 +569,45 @@ async def list_contact_groups(
     """
     logger.info(f"[list_contact_groups] Invoked. Email: '{user_google_email}'")
 
-    try:
-        params: Dict[str, Any] = {
-            "pageSize": min(page_size, 1000),
-            "groupFields": CONTACT_GROUP_FIELDS,
-        }
+    if page_size < 1:
+        raise UserInputError("page_size must be >= 1")
+    page_size = min(page_size, 1000)
 
-        if page_token:
-            params["pageToken"] = page_token
+    params: Dict[str, Any] = {
+        "pageSize": page_size,
+        "groupFields": CONTACT_GROUP_FIELDS,
+    }
 
-        result = await asyncio.to_thread(service.contactGroups().list(**params).execute)
+    if page_token:
+        params["pageToken"] = page_token
 
-        groups = result.get("contactGroups", [])
-        next_page_token = result.get("nextPageToken")
+    result = await asyncio.to_thread(service.contactGroups().list(**params).execute)
 
-        if not groups:
-            return f"No contact groups found for {user_google_email}."
+    groups = result.get("contactGroups", [])
+    next_page_token = result.get("nextPageToken")
 
-        response = f"Contact Groups for {user_google_email}:\n\n"
+    if not groups:
+        return f"No contact groups found for {user_google_email}."
 
-        for group in groups:
-            resource_name = group.get("resourceName", "")
-            group_id = resource_name.replace("contactGroups/", "")
-            name = group.get("name", "Unnamed")
-            group_type = group.get("groupType", "USER_CONTACT_GROUP")
-            member_count = group.get("memberCount", 0)
+    response = f"Contact Groups for {user_google_email}:\n\n"
 
-            response += f"- {name}\n"
-            response += f"  ID: {group_id}\n"
-            response += f"  Type: {group_type}\n"
-            response += f"  Members: {member_count}\n\n"
+    for group in groups:
+        resource_name = group.get("resourceName", "")
+        group_id = resource_name.replace("contactGroups/", "")
+        name = group.get("name", "Unnamed")
+        group_type = group.get("groupType", "USER_CONTACT_GROUP")
+        member_count = group.get("memberCount", 0)
 
-        if next_page_token:
-            response += f"Next page token: {next_page_token}"
+        response += f"- {name}\n"
+        response += f"  ID: {group_id}\n"
+        response += f"  Type: {group_type}\n"
+        response += f"  Members: {member_count}\n\n"
 
-        logger.info(f"Found {len(groups)} contact groups for {user_google_email}")
-        return response
+    if next_page_token:
+        response += f"Next page token: {next_page_token}"
 
-    except HttpError as error:
-        message = f"API error: {error}. You might need to re-authenticate. LLM: Try 'start_google_auth' with the user's email ({user_google_email}) and service_name='Google Contacts'."
-        logger.error(message, exc_info=True)
-        raise Exception(message)
-    except Exception as e:
-        message = f"Unexpected error: {e}."
-        logger.exception(message)
-        raise Exception(message)
+    logger.info(f"Found {len(groups)} contact groups for {user_google_email}")
+    return response
 
 
 @server.tool()
@@ -759,49 +640,39 @@ async def get_contact_group(
         f"[get_contact_group] Invoked. Email: '{user_google_email}', Group: {resource_name}"
     )
 
-    try:
-        result = await asyncio.to_thread(
-            service.contactGroups()
-            .get(
-                resourceName=resource_name,
-                maxMembers=min(max_members, 1000),
-                groupFields=CONTACT_GROUP_FIELDS,
-            )
-            .execute
+    if max_members < 1:
+        raise UserInputError("max_members must be >= 1")
+    max_members = min(max_members, 1000)
+
+    result = await asyncio.to_thread(
+        service.contactGroups()
+        .get(
+            resourceName=resource_name,
+            maxMembers=max_members,
+            groupFields=CONTACT_GROUP_FIELDS,
         )
+        .execute
+    )
 
-        name = result.get("name", "Unnamed")
-        group_type = result.get("groupType", "USER_CONTACT_GROUP")
-        member_count = result.get("memberCount", 0)
-        member_resource_names = result.get("memberResourceNames", [])
+    name = result.get("name", "Unnamed")
+    group_type = result.get("groupType", "USER_CONTACT_GROUP")
+    member_count = result.get("memberCount", 0)
+    member_resource_names = result.get("memberResourceNames", [])
 
-        response = f"Contact Group Details for {user_google_email}:\n\n"
-        response += f"Name: {name}\n"
-        response += f"ID: {group_id}\n"
-        response += f"Type: {group_type}\n"
-        response += f"Total Members: {member_count}\n"
+    response = f"Contact Group Details for {user_google_email}:\n\n"
+    response += f"Name: {name}\n"
+    response += f"ID: {group_id}\n"
+    response += f"Type: {group_type}\n"
+    response += f"Total Members: {member_count}\n"
 
-        if member_resource_names:
-            response += f"\nMembers ({len(member_resource_names)} shown):\n"
-            for member in member_resource_names:
-                contact_id = member.replace("people/", "")
-                response += f"  - {contact_id}\n"
+    if member_resource_names:
+        response += f"\nMembers ({len(member_resource_names)} shown):\n"
+        for member in member_resource_names:
+            contact_id = member.replace("people/", "")
+            response += f"  - {contact_id}\n"
 
-        logger.info(f"Retrieved contact group {resource_name} for {user_google_email}")
-        return response
-
-    except HttpError as error:
-        if error.resp.status == 404:
-            message = f"Contact group not found: {group_id}"
-            logger.warning(message)
-            raise Exception(message)
-        message = f"API error: {error}. You might need to re-authenticate. LLM: Try 'start_google_auth' with the user's email ({user_google_email}) and service_name='Google Contacts'."
-        logger.error(message, exc_info=True)
-        raise Exception(message)
-    except Exception as e:
-        message = f"Unexpected error: {e}."
-        logger.exception(message)
-        raise Exception(message)
+    logger.info(f"Retrieved contact group {resource_name} for {user_google_email}")
+    return response
 
 
 # =============================================================================
@@ -811,40 +682,49 @@ async def get_contact_group(
 
 @server.tool()
 @require_google_service("people", "contacts")
-@handle_http_errors("batch_create_contacts", service_type="people")
-async def batch_create_contacts(
+@handle_http_errors("manage_contacts_batch", service_type="people")
+async def manage_contacts_batch(
     service: Resource,
     user_google_email: str,
-    contacts: List[Dict[str, str]],
+    action: str,
+    contacts: Optional[List[Dict[str, str]]] = None,
+    updates: Optional[List[Dict[str, str]]] = None,
+    contact_ids: Optional[List[str]] = None,
 ) -> str:
     """
-    Create multiple contacts in a batch operation.
+    Batch create, update, or delete contacts. Consolidated tool replacing
+    batch_create_contacts, batch_update_contacts, and batch_delete_contacts.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
-        contacts (List[Dict[str, str]]): List of contact dictionaries with fields:
-            - given_name: First name
-            - family_name: Last name
-            - email: Email address
-            - phone: Phone number
-            - organization: Company name
-            - job_title: Job title
+        action (str): The action to perform: "create", "update", or "delete".
+        contacts (Optional[List[Dict[str, str]]]): List of contact dicts for "create" action.
+            Each dict may contain: given_name, family_name, email, phone, organization, job_title.
+        updates (Optional[List[Dict[str, str]]]): List of update dicts for "update" action.
+            Each dict must contain contact_id and may contain: given_name, family_name,
+            email, phone, organization, job_title.
+        contact_ids (Optional[List[str]]): List of contact IDs for "delete" action.
 
     Returns:
-        str: Confirmation with created contacts.
+        str: Result of the batch action performed.
     """
+    action = action.lower().strip()
+    if action not in ("create", "update", "delete"):
+        raise UserInputError(
+            f"Invalid action '{action}'. Must be 'create', 'update', or 'delete'."
+        )
+
     logger.info(
-        f"[batch_create_contacts] Invoked. Email: '{user_google_email}', Count: {len(contacts)}"
+        f"[manage_contacts_batch] Invoked. Action: '{action}', Email: '{user_google_email}'"
     )
 
-    try:
+    if action == "create":
         if not contacts:
-            raise Exception("At least one contact must be provided.")
+            raise UserInputError("contacts parameter is required for 'create' action.")
 
         if len(contacts) > 200:
-            raise Exception("Maximum 200 contacts can be created in a batch.")
+            raise UserInputError("Maximum 200 contacts can be created in a batch.")
 
-        # Build batch request body
         contact_bodies = []
         for contact in contacts:
             body = _build_person_body(
@@ -859,7 +739,7 @@ async def batch_create_contacts(
                 contact_bodies.append({"contactPerson": body})
 
         if not contact_bodies:
-            raise Exception("No valid contact data provided.")
+            raise UserInputError("No valid contact data provided.")
 
         batch_body = {
             "contacts": contact_bodies,
@@ -884,63 +764,23 @@ async def batch_create_contacts(
         )
         return response
 
-    except HttpError as error:
-        message = f"API error: {error}. You might need to re-authenticate. LLM: Try 'start_google_auth' with the user's email ({user_google_email}) and service_name='Google Contacts'."
-        logger.error(message, exc_info=True)
-        raise Exception(message)
-    except Exception as e:
-        message = f"Unexpected error: {e}."
-        logger.exception(message)
-        raise Exception(message)
-
-
-@server.tool()
-@require_google_service("people", "contacts")
-@handle_http_errors("batch_update_contacts", service_type="people")
-async def batch_update_contacts(
-    service: Resource,
-    user_google_email: str,
-    updates: List[Dict[str, str]],
-) -> str:
-    """
-    Update multiple contacts in a batch operation.
-
-    Args:
-        user_google_email (str): The user's Google email address. Required.
-        updates (List[Dict[str, str]]): List of update dictionaries with fields:
-            - contact_id: The contact ID to update (required)
-            - given_name: New first name
-            - family_name: New last name
-            - email: New email address
-            - phone: New phone number
-            - organization: New company name
-            - job_title: New job title
-
-    Returns:
-        str: Confirmation with updated contacts.
-    """
-    logger.info(
-        f"[batch_update_contacts] Invoked. Email: '{user_google_email}', Count: {len(updates)}"
-    )
-
-    try:
+    if action == "update":
         if not updates:
-            raise Exception("At least one update must be provided.")
+            raise UserInputError("updates parameter is required for 'update' action.")
 
         if len(updates) > 200:
-            raise Exception("Maximum 200 contacts can be updated in a batch.")
+            raise UserInputError("Maximum 200 contacts can be updated in a batch.")
 
-        # First, fetch all contacts to get their etags
+        # Fetch all contacts to get their etags
         resource_names = []
         for update in updates:
-            contact_id = update.get("contact_id")
-            if not contact_id:
-                raise Exception("Each update must include a contact_id.")
-            if not contact_id.startswith("people/"):
-                contact_id = f"people/{contact_id}"
-            resource_names.append(contact_id)
+            cid = update.get("contact_id")
+            if not cid:
+                raise UserInputError("Each update must include a contact_id.")
+            if not cid.startswith("people/"):
+                cid = f"people/{cid}"
+            resource_names.append(cid)
 
-        # Batch get contacts for etags
         batch_get_result = await asyncio.to_thread(
             service.people()
             .getBatchGet(
@@ -951,25 +791,24 @@ async def batch_update_contacts(
         )
 
         etags = {}
-        for response in batch_get_result.get("responses", []):
-            person = response.get("person", {})
-            resource_name = person.get("resourceName")
+        for resp in batch_get_result.get("responses", []):
+            person = resp.get("person", {})
+            rname = person.get("resourceName")
             etag = person.get("etag")
-            if resource_name and etag:
-                etags[resource_name] = etag
+            if rname and etag:
+                etags[rname] = etag
 
-        # Build batch update body
         update_bodies = []
         update_fields_set: set = set()
 
         for update in updates:
-            contact_id = update.get("contact_id", "")
-            if not contact_id.startswith("people/"):
-                contact_id = f"people/{contact_id}"
+            cid = update.get("contact_id", "")
+            if not cid.startswith("people/"):
+                cid = f"people/{cid}"
 
-            etag = etags.get(contact_id)
+            etag = etags.get(cid)
             if not etag:
-                logger.warning(f"No etag found for {contact_id}, skipping")
+                logger.warning(f"No etag found for {cid}, skipping")
                 continue
 
             body = _build_person_body(
@@ -982,11 +821,10 @@ async def batch_update_contacts(
             )
 
             if body:
-                body["resourceName"] = contact_id
+                body["resourceName"] = cid
                 body["etag"] = etag
                 update_bodies.append({"person": body})
 
-                # Track which fields are being updated
                 if "names" in body:
                     update_fields_set.add("names")
                 if "emailAddresses" in body:
@@ -997,7 +835,7 @@ async def batch_update_contacts(
                     update_fields_set.add("organizations")
 
         if not update_bodies:
-            raise Exception("No valid update data provided.")
+            raise UserInputError("No valid update data provided.")
 
         batch_body = {
             "contacts": update_bodies,
@@ -1014,7 +852,7 @@ async def batch_update_contacts(
         response = f"Batch Update Results for {user_google_email}:\n\n"
         response += f"Updated {len(update_results)} contacts:\n\n"
 
-        for resource_name, update_result in update_results.items():
+        for rname, update_result in update_results.items():
             person = update_result.get("person", {})
             response += _format_contact(person) + "\n\n"
 
@@ -1023,99 +861,77 @@ async def batch_update_contacts(
         )
         return response
 
-    except HttpError as error:
-        message = f"API error: {error}. You might need to re-authenticate. LLM: Try 'start_google_auth' with the user's email ({user_google_email}) and service_name='Google Contacts'."
-        logger.error(message, exc_info=True)
-        raise Exception(message)
-    except Exception as e:
-        message = f"Unexpected error: {e}."
-        logger.exception(message)
-        raise Exception(message)
+    # action == "delete"
+    if not contact_ids:
+        raise UserInputError("contact_ids parameter is required for 'delete' action.")
+
+    if len(contact_ids) > 500:
+        raise UserInputError("Maximum 500 contacts can be deleted in a batch.")
+
+    resource_names = []
+    for cid in contact_ids:
+        if not cid.startswith("people/"):
+            resource_names.append(f"people/{cid}")
+        else:
+            resource_names.append(cid)
+
+    batch_body = {"resourceNames": resource_names}
+
+    await asyncio.to_thread(
+        service.people().batchDeleteContacts(body=batch_body).execute
+    )
+
+    response = f"Batch deleted {len(contact_ids)} contacts for {user_google_email}."
+    logger.info(f"Batch deleted {len(contact_ids)} contacts for {user_google_email}")
+    return response
 
 
 @server.tool()
 @require_google_service("people", "contacts")
-@handle_http_errors("batch_delete_contacts", service_type="people")
-async def batch_delete_contacts(
+@handle_http_errors("manage_contact_group", service_type="people")
+async def manage_contact_group(
     service: Resource,
     user_google_email: str,
-    contact_ids: List[str],
+    action: str,
+    group_id: Optional[str] = None,
+    name: Optional[str] = None,
+    delete_contacts: bool = False,
+    add_contact_ids: Optional[List[str]] = None,
+    remove_contact_ids: Optional[List[str]] = None,
 ) -> str:
     """
-    Delete multiple contacts in a batch operation.
+    Create, update, delete a contact group, or modify its members. Consolidated tool
+    replacing create_contact_group, update_contact_group, delete_contact_group, and
+    modify_contact_group_members.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
-        contact_ids (List[str]): List of contact IDs to delete.
+        action (str): The action to perform: "create", "update", "delete", or "modify_members".
+        group_id (Optional[str]): The contact group ID. Required for "update", "delete",
+            and "modify_members" actions.
+        name (Optional[str]): The group name. Required for "create" and "update" actions.
+        delete_contacts (bool): If True and action is "delete", also delete contacts in
+            the group (default: False).
+        add_contact_ids (Optional[List[str]]): Contact IDs to add (for "modify_members").
+        remove_contact_ids (Optional[List[str]]): Contact IDs to remove (for "modify_members").
 
     Returns:
-        str: Confirmation message.
+        str: Result of the action performed.
     """
-    logger.info(
-        f"[batch_delete_contacts] Invoked. Email: '{user_google_email}', Count: {len(contact_ids)}"
-    )
-
-    try:
-        if not contact_ids:
-            raise Exception("At least one contact ID must be provided.")
-
-        if len(contact_ids) > 500:
-            raise Exception("Maximum 500 contacts can be deleted in a batch.")
-
-        # Normalize resource names
-        resource_names = []
-        for contact_id in contact_ids:
-            if not contact_id.startswith("people/"):
-                resource_names.append(f"people/{contact_id}")
-            else:
-                resource_names.append(contact_id)
-
-        batch_body = {"resourceNames": resource_names}
-
-        await asyncio.to_thread(
-            service.people().batchDeleteContacts(body=batch_body).execute
+    action = action.lower().strip()
+    if action not in ("create", "update", "delete", "modify_members"):
+        raise UserInputError(
+            f"Invalid action '{action}'. Must be 'create', 'update', 'delete', or 'modify_members'."
         )
 
-        response = f"Batch deleted {len(contact_ids)} contacts for {user_google_email}."
-
-        logger.info(
-            f"Batch deleted {len(contact_ids)} contacts for {user_google_email}"
-        )
-        return response
-
-    except HttpError as error:
-        message = f"API error: {error}. You might need to re-authenticate. LLM: Try 'start_google_auth' with the user's email ({user_google_email}) and service_name='Google Contacts'."
-        logger.error(message, exc_info=True)
-        raise Exception(message)
-    except Exception as e:
-        message = f"Unexpected error: {e}."
-        logger.exception(message)
-        raise Exception(message)
-
-
-@server.tool()
-@require_google_service("people", "contacts")
-@handle_http_errors("create_contact_group", service_type="people")
-async def create_contact_group(
-    service: Resource,
-    user_google_email: str,
-    name: str,
-) -> str:
-    """
-    Create a new contact group (label).
-
-    Args:
-        user_google_email (str): The user's Google email address. Required.
-        name (str): The name of the new contact group.
-
-    Returns:
-        str: Confirmation with the new group details.
-    """
     logger.info(
-        f"[create_contact_group] Invoked. Email: '{user_google_email}', Name: '{name}'"
+        f"[manage_contact_group] Invoked. Action: '{action}', Email: '{user_google_email}'"
     )
 
-    try:
+    if action == "create":
+        if not name:
+            raise UserInputError("name is required for 'create' action.")
+
         body = {"contactGroup": {"name": name}}
 
         result = await asyncio.to_thread(
@@ -1123,58 +939,31 @@ async def create_contact_group(
         )
 
         resource_name = result.get("resourceName", "")
-        group_id = resource_name.replace("contactGroups/", "")
+        created_group_id = resource_name.replace("contactGroups/", "")
         created_name = result.get("name", name)
 
         response = f"Contact Group Created for {user_google_email}:\n\n"
         response += f"Name: {created_name}\n"
-        response += f"ID: {group_id}\n"
+        response += f"ID: {created_group_id}\n"
         response += f"Type: {result.get('groupType', 'USER_CONTACT_GROUP')}\n"
 
         logger.info(f"Created contact group '{name}' for {user_google_email}")
         return response
 
-    except HttpError as error:
-        message = f"API error: {error}. You might need to re-authenticate. LLM: Try 'start_google_auth' with the user's email ({user_google_email}) and service_name='Google Contacts'."
-        logger.error(message, exc_info=True)
-        raise Exception(message)
-    except Exception as e:
-        message = f"Unexpected error: {e}."
-        logger.exception(message)
-        raise Exception(message)
+    # All other actions require group_id
+    if not group_id:
+        raise UserInputError(f"group_id is required for '{action}' action.")
 
-
-@server.tool()
-@require_google_service("people", "contacts")
-@handle_http_errors("update_contact_group", service_type="people")
-async def update_contact_group(
-    service: Resource,
-    user_google_email: str,
-    group_id: str,
-    name: str,
-) -> str:
-    """
-    Update a contact group's name.
-
-    Args:
-        user_google_email (str): The user's Google email address. Required.
-        group_id (str): The contact group ID to update.
-        name (str): The new name for the contact group.
-
-    Returns:
-        str: Confirmation with updated group details.
-    """
     # Normalize resource name
     if not group_id.startswith("contactGroups/"):
         resource_name = f"contactGroups/{group_id}"
     else:
         resource_name = group_id
 
-    logger.info(
-        f"[update_contact_group] Invoked. Email: '{user_google_email}', Group: {resource_name}"
-    )
+    if action == "update":
+        if not name:
+            raise UserInputError("name is required for 'update' action.")
 
-    try:
         body = {"contactGroup": {"name": name}}
 
         result = await asyncio.to_thread(
@@ -1192,51 +981,7 @@ async def update_contact_group(
         logger.info(f"Updated contact group {resource_name} for {user_google_email}")
         return response
 
-    except HttpError as error:
-        if error.resp.status == 404:
-            message = f"Contact group not found: {group_id}"
-            logger.warning(message)
-            raise Exception(message)
-        message = f"API error: {error}. You might need to re-authenticate. LLM: Try 'start_google_auth' with the user's email ({user_google_email}) and service_name='Google Contacts'."
-        logger.error(message, exc_info=True)
-        raise Exception(message)
-    except Exception as e:
-        message = f"Unexpected error: {e}."
-        logger.exception(message)
-        raise Exception(message)
-
-
-@server.tool()
-@require_google_service("people", "contacts")
-@handle_http_errors("delete_contact_group", service_type="people")
-async def delete_contact_group(
-    service: Resource,
-    user_google_email: str,
-    group_id: str,
-    delete_contacts: bool = False,
-) -> str:
-    """
-    Delete a contact group.
-
-    Args:
-        user_google_email (str): The user's Google email address. Required.
-        group_id (str): The contact group ID to delete.
-        delete_contacts (bool): If True, also delete contacts in the group (default: False).
-
-    Returns:
-        str: Confirmation message.
-    """
-    # Normalize resource name
-    if not group_id.startswith("contactGroups/"):
-        resource_name = f"contactGroups/{group_id}"
-    else:
-        resource_name = group_id
-
-    logger.info(
-        f"[delete_contact_group] Invoked. Email: '{user_google_email}', Group: {resource_name}"
-    )
-
-    try:
+    if action == "delete":
         await asyncio.to_thread(
             service.contactGroups()
             .delete(resourceName=resource_name, deleteContacts=delete_contacts)
@@ -1252,117 +997,56 @@ async def delete_contact_group(
         logger.info(f"Deleted contact group {resource_name} for {user_google_email}")
         return response
 
-    except HttpError as error:
-        if error.resp.status == 404:
-            message = f"Contact group not found: {group_id}"
-            logger.warning(message)
-            raise Exception(message)
-        message = f"API error: {error}. You might need to re-authenticate. LLM: Try 'start_google_auth' with the user's email ({user_google_email}) and service_name='Google Contacts'."
-        logger.error(message, exc_info=True)
-        raise Exception(message)
-    except Exception as e:
-        message = f"Unexpected error: {e}."
-        logger.exception(message)
-        raise Exception(message)
+    # action == "modify_members"
+    if not add_contact_ids and not remove_contact_ids:
+        raise UserInputError(
+            "At least one of add_contact_ids or remove_contact_ids must be provided."
+        )
 
+    modify_body: Dict[str, Any] = {}
 
-@server.tool()
-@require_google_service("people", "contacts")
-@handle_http_errors("modify_contact_group_members", service_type="people")
-async def modify_contact_group_members(
-    service: Resource,
-    user_google_email: str,
-    group_id: str,
-    add_contact_ids: Optional[List[str]] = None,
-    remove_contact_ids: Optional[List[str]] = None,
-) -> str:
-    """
-    Add or remove contacts from a contact group.
+    if add_contact_ids:
+        add_names = []
+        for contact_id in add_contact_ids:
+            if not contact_id.startswith("people/"):
+                add_names.append(f"people/{contact_id}")
+            else:
+                add_names.append(contact_id)
+        modify_body["resourceNamesToAdd"] = add_names
 
-    Args:
-        user_google_email (str): The user's Google email address. Required.
-        group_id (str): The contact group ID.
-        add_contact_ids (Optional[List[str]]): Contact IDs to add to the group.
-        remove_contact_ids (Optional[List[str]]): Contact IDs to remove from the group.
+    if remove_contact_ids:
+        remove_names = []
+        for contact_id in remove_contact_ids:
+            if not contact_id.startswith("people/"):
+                remove_names.append(f"people/{contact_id}")
+            else:
+                remove_names.append(contact_id)
+        modify_body["resourceNamesToRemove"] = remove_names
 
-    Returns:
-        str: Confirmation with results.
-    """
-    # Normalize resource name
-    if not group_id.startswith("contactGroups/"):
-        resource_name = f"contactGroups/{group_id}"
-    else:
-        resource_name = group_id
-
-    logger.info(
-        f"[modify_contact_group_members] Invoked. Email: '{user_google_email}', Group: {resource_name}"
+    result = await asyncio.to_thread(
+        service.contactGroups()
+        .members()
+        .modify(resourceName=resource_name, body=modify_body)
+        .execute
     )
 
-    try:
-        if not add_contact_ids and not remove_contact_ids:
-            raise Exception(
-                "At least one of add_contact_ids or remove_contact_ids must be provided."
-            )
+    not_found = result.get("notFoundResourceNames", [])
+    cannot_remove = result.get("canNotRemoveLastContactGroupResourceNames", [])
 
-        body: Dict[str, Any] = {}
+    response = f"Contact Group Members Modified for {user_google_email}:\n\n"
+    response += f"Group: {group_id}\n"
 
-        if add_contact_ids:
-            # Normalize resource names
-            add_names = []
-            for contact_id in add_contact_ids:
-                if not contact_id.startswith("people/"):
-                    add_names.append(f"people/{contact_id}")
-                else:
-                    add_names.append(contact_id)
-            body["resourceNamesToAdd"] = add_names
+    if add_contact_ids:
+        response += f"Added: {len(add_contact_ids)} contacts\n"
+    if remove_contact_ids:
+        response += f"Removed: {len(remove_contact_ids)} contacts\n"
 
-        if remove_contact_ids:
-            # Normalize resource names
-            remove_names = []
-            for contact_id in remove_contact_ids:
-                if not contact_id.startswith("people/"):
-                    remove_names.append(f"people/{contact_id}")
-                else:
-                    remove_names.append(contact_id)
-            body["resourceNamesToRemove"] = remove_names
+    if not_found:
+        response += f"\nNot found: {', '.join(not_found)}\n"
+    if cannot_remove:
+        response += f"\nCannot remove (last group): {', '.join(cannot_remove)}\n"
 
-        result = await asyncio.to_thread(
-            service.contactGroups()
-            .members()
-            .modify(resourceName=resource_name, body=body)
-            .execute
-        )
-
-        not_found = result.get("notFoundResourceNames", [])
-        cannot_remove = result.get("canNotRemoveLastContactGroupResourceNames", [])
-
-        response = f"Contact Group Members Modified for {user_google_email}:\n\n"
-        response += f"Group: {group_id}\n"
-
-        if add_contact_ids:
-            response += f"Added: {len(add_contact_ids)} contacts\n"
-        if remove_contact_ids:
-            response += f"Removed: {len(remove_contact_ids)} contacts\n"
-
-        if not_found:
-            response += f"\nNot found: {', '.join(not_found)}\n"
-        if cannot_remove:
-            response += f"\nCannot remove (last group): {', '.join(cannot_remove)}\n"
-
-        logger.info(
-            f"Modified contact group members for {resource_name} for {user_google_email}"
-        )
-        return response
-
-    except HttpError as error:
-        if error.resp.status == 404:
-            message = f"Contact group not found: {group_id}"
-            logger.warning(message)
-            raise Exception(message)
-        message = f"API error: {error}. You might need to re-authenticate. LLM: Try 'start_google_auth' with the user's email ({user_google_email}) and service_name='Google Contacts'."
-        logger.error(message, exc_info=True)
-        raise Exception(message)
-    except Exception as e:
-        message = f"Unexpected error: {e}."
-        logger.exception(message)
-        raise Exception(message)
+    logger.info(
+        f"Modified contact group members for {resource_name} for {user_google_email}"
+    )
+    return response

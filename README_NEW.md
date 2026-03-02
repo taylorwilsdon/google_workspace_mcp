@@ -47,7 +47,7 @@ export OAUTHLIB_INSECURE_TRANSPORT=1  # Development only
 
 ## 🛠 Tools Reference
 
-### Gmail (11 tools)
+### Gmail (10 tools)
 
 | Tool | Tier | Description |
 |------|------|-------------|
@@ -60,39 +60,42 @@ export OAUTHLIB_INSECURE_TRANSPORT=1  # Development only
 | `list_gmail_labels` | Extended | List all system and user labels |
 | `manage_gmail_label` | Extended | Create, update, delete labels |
 | `modify_gmail_message_labels` | Extended | Add/remove labels (archive, trash, etc.) |
+| `manage_gmail_filter` | Extended | Create or delete Gmail filters |
 | `get_gmail_threads_content_batch` | Complete | Batch retrieve threads |
 | `batch_modify_gmail_message_labels` | Complete | Bulk label operations |
 
-**Also includes:** `get_gmail_attachment_content`, `list_gmail_filters`, `create_gmail_filter`, `delete_gmail_filter`
+**Also includes:** `get_gmail_attachment_content`, `list_gmail_filters`
 
-### Google Drive (7 tools)
+### Google Drive (10 tools)
 
 | Tool | Tier | Description |
 |------|------|-------------|
 | `search_drive_files` | Core | Search files with Drive query syntax or free text |
 | `get_drive_file_content` | Core | Read content from Docs, Sheets, Office files (.docx, .xlsx, .pptx) |
+| `get_drive_file_download_url` | Core | Download Drive files to local disk |
 | `create_drive_file` | Core | Create files from content or URL (supports file://, http://, https://) |
 | `create_drive_folder` | Core | Create empty folders in Drive or shared drives |
+| `import_to_google_doc` | Core | Import files (MD, DOCX, HTML, etc.) as Google Docs |
+| `get_drive_shareable_link` | Core | Get shareable links for a file |
 | `list_drive_items` | Extended | List folder contents with shared drive support |
+| `copy_drive_file` | Extended | Copy existing files (templates) with optional renaming |
 | `update_drive_file` | Extended | Update metadata, move between folders, star, trash |
-| `get_drive_file_permissions` | Complete | Check sharing status and permissions |
+| `manage_drive_access` | Extended | Grant, update, revoke permissions, and transfer ownership |
+| `set_drive_file_permissions` | Extended | Set link sharing and file-level sharing settings |
+| `get_drive_file_permissions` | Complete | Get detailed file permissions |
 | `check_drive_file_public_access` | Complete | Verify public link sharing for Docs image insertion |
 
-**Also includes:** `get_drive_file_download_url` for generating download URLs
-
-### Google Calendar (5 tools)
+### Google Calendar (3 tools)
 
 | Tool | Tier | Description |
 |------|------|-------------|
 | `list_calendars` | Core | List all accessible calendars |
 | `get_events` | Core | Query events by time range, search, or specific ID |
-| `create_event` | Core | Create events with attendees, reminders, Google Meet, attachments |
-| `modify_event` | Core | Update any event property including conferencing |
-| `delete_event` | Extended | Remove events |
+| `manage_event` | Core | Create, update, or delete calendar events |
 
-**Event features:** Timezone support, transparency (busy/free), visibility settings, up to 5 custom reminders
+**Event features:** Timezone support, transparency (busy/free), visibility settings, up to 5 custom reminders, Google Meet integration, attendees, attachments
 
-### Google Docs (16 tools)
+### Google Docs (14 tools)
 
 | Tool | Tier | Description |
 |------|------|-------------|
@@ -103,6 +106,8 @@ export OAUTHLIB_INSECURE_TRANSPORT=1  # Development only
 | `find_and_replace_doc` | Extended | Global find/replace with case matching |
 | `list_docs_in_folder` | Extended | List Docs in a specific folder |
 | `insert_doc_elements` | Extended | Add tables, lists, page breaks |
+| `update_paragraph_style` | Extended | Apply heading styles, lists (bulleted/numbered with nesting), and paragraph formatting |
+| `get_doc_as_markdown` | Extended | Export document as formatted Markdown with optional comments |
 | `export_doc_to_pdf` | Extended | Export to PDF and save to Drive |
 | `insert_doc_image` | Complete | Insert images from Drive or URLs |
 | `update_doc_headers_footers` | Complete | Modify headers/footers |
@@ -110,10 +115,10 @@ export OAUTHLIB_INSECURE_TRANSPORT=1  # Development only
 | `inspect_doc_structure` | Complete | Analyze document structure for safe insertion points |
 | `create_table_with_data` | Complete | Create and populate tables in one operation |
 | `debug_table_structure` | Complete | Debug table cell positions and content |
+| `list_document_comments` | Complete | List all document comments |
+| `manage_document_comment` | Complete | Create, reply to, or resolve comments |
 
-**Comments:** `read_document_comments`, `create_document_comment`, `reply_to_document_comment`, `resolve_document_comment`
-
-### Google Sheets (13 tools)
+### Google Sheets (9 tools)
 
 | Tool | Tier | Description |
 |------|------|-------------|
@@ -124,13 +129,11 @@ export OAUTHLIB_INSECURE_TRANSPORT=1  # Development only
 | `get_spreadsheet_info` | Extended | Get metadata, sheets, conditional formats |
 | `format_sheet_range` | Extended | Apply colors, number formats, text wrapping, alignment, bold/italic, font size |
 | `create_sheet` | Complete | Add sheets to existing spreadsheets |
-| `add_conditional_formatting` | Complete | Add boolean or gradient rules |
-| `update_conditional_formatting` | Complete | Modify existing rules |
-| `delete_conditional_formatting` | Complete | Remove formatting rules |
+| `list_spreadsheet_comments` | Complete | List all spreadsheet comments |
+| `manage_spreadsheet_comment` | Complete | Create, reply to, or resolve comments |
+| `manage_conditional_formatting` | Complete | Add, update, or delete conditional formatting rules |
 
-**Comments:** `read_spreadsheet_comments`, `create_spreadsheet_comment`, `reply_to_spreadsheet_comment`, `resolve_spreadsheet_comment`
-
-### Google Slides (9 tools)
+### Google Slides (7 tools)
 
 | Tool | Tier | Description |
 |------|------|-------------|
@@ -139,8 +142,8 @@ export OAUTHLIB_INSECURE_TRANSPORT=1  # Development only
 | `batch_update_presentation` | Extended | Apply multiple updates (create slides, shapes, etc.) |
 | `get_page` | Extended | Get specific slide details and elements |
 | `get_page_thumbnail` | Extended | Generate PNG thumbnails |
-
-**Comments:** `read_presentation_comments`, `create_presentation_comment`, `reply_to_presentation_comment`, `resolve_presentation_comment`
+| `list_presentation_comments` | Complete | List all presentation comments |
+| `manage_presentation_comment` | Complete | Create, reply to, or resolve comments |
 
 ### Google Forms (6 tools)
 
@@ -153,24 +156,18 @@ export OAUTHLIB_INSECURE_TRANSPORT=1  # Development only
 | `get_form_response` | Complete | Get individual response details |
 | `batch_update_form` | Complete | Execute batch updates to forms (questions, items, settings) |
 
-### Google Tasks (12 tools)
+### Google Tasks (5 tools)
 
 | Tool | Tier | Description |
 |------|------|-------------|
 | `list_tasks` | Core | List tasks with filtering, subtask hierarchy preserved |
 | `get_task` | Core | Get task details |
-| `create_task` | Core | Create tasks with notes, due dates, parent/sibling positioning |
-| `update_task` | Core | Update task properties |
-| `delete_task` | Extended | Remove tasks |
+| `manage_task` | Core | Create, update, delete, or move tasks |
 | `list_task_lists` | Complete | List all task lists |
 | `get_task_list` | Complete | Get task list details |
-| `create_task_list` | Complete | Create new task lists |
-| `update_task_list` | Complete | Rename task lists |
-| `delete_task_list` | Complete | Delete task lists (and all tasks) |
-| `move_task` | Complete | Reposition or move between lists |
-| `clear_completed_tasks` | Complete | Hide completed tasks |
+| `manage_task_list` | Complete | Create, update, delete task lists, or clear completed tasks |
 
-### Google Apps Script (11 tools)
+### Google Apps Script (9 tools)
 
 | Tool | Tier | Description |
 |------|------|-------------|
@@ -180,15 +177,26 @@ export OAUTHLIB_INSECURE_TRANSPORT=1  # Development only
 | `create_script_project` | Core | Create new standalone or bound project |
 | `update_script_content` | Core | Update or create script files |
 | `run_script_function` | Core | Execute function with parameters |
-| `create_deployment` | Extended | Create new script deployment |
 | `list_deployments` | Extended | List all project deployments |
-| `update_deployment` | Extended | Update deployment configuration |
-| `delete_deployment` | Extended | Remove deployment |
+| `manage_deployment` | Extended | Create, update, or delete script deployments |
 | `list_script_processes` | Extended | View recent executions and status |
 
 **Enables:** Cross-app automation, persistent workflows, custom business logic execution, script development and debugging
 
 **Note:** Trigger management is not currently supported via MCP tools.
+
+### Google Contacts (7 tools)
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `search_contacts` | Core | Search contacts by name, email, phone |
+| `get_contact` | Core | Retrieve detailed contact info |
+| `list_contacts` | Core | List contacts with pagination |
+| `manage_contact` | Core | Create, update, or delete contacts |
+| `list_contact_groups` | Extended | List contact groups/labels |
+| `get_contact_group` | Extended | Get group details with members |
+| `manage_contacts_batch` | Complete | Batch create, update, or delete contacts |
+| `manage_contact_group` | Complete | Create, update, delete groups, or modify membership |
 
 ### Google Chat (4 tools)
 
@@ -199,12 +207,11 @@ export OAUTHLIB_INSECURE_TRANSPORT=1  # Development only
 | `search_messages` | Core | Search across chat history |
 | `list_spaces` | Extended | List rooms and DMs |
 
-### Google Custom Search (3 tools)
+### Google Custom Search (2 tools)
 
 | Tool | Tier | Description |
 |------|------|-------------|
-| `search_custom` | Core | Web search with filters (date, file type, language, safe search) |
-| `search_custom_siterestrict` | Extended | Search within specific domains |
+| `search_custom` | Core | Web search with filters (date, file type, language, safe search, site restrictions via sites parameter) |
 | `get_search_engine_info` | Complete | Get search engine metadata |
 
 **Requires:** `GOOGLE_PSE_API_KEY` and `GOOGLE_PSE_ENGINE_ID` environment variables
@@ -219,7 +226,7 @@ Choose a tier based on your needs:
 |------|-------|----------|
 | **Core** | ~30 | Essential operations: search, read, create, send |
 | **Extended** | ~50 | Core + management: labels, folders, batch ops |
-| **Complete** | ~80 | Full API: comments, headers, admin functions |
+| **Complete** | 111 | Full API: comments, headers, admin functions |
 
 ```bash
 uvx workspace-mcp --tool-tier core      # Start minimal

@@ -3,7 +3,7 @@
 import sys
 import os
 import pytest
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import Mock
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 

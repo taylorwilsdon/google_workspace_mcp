@@ -12,6 +12,7 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from auth.scopes import (
+    BASE_SCOPES,
     CALENDAR_READONLY_SCOPE,
     CALENDAR_SCOPE,
     CONTACTS_READONLY_SCOPE,
@@ -31,6 +32,8 @@ from auth.scopes import (
     has_required_scopes,
     set_read_only,
 )
+from auth.permissions import get_scopes_for_permission, set_permissions
+import auth.permissions as permissions_module
 
 
 class TestDocsScopes:
@@ -195,3 +198,34 @@ class TestHasRequiredScopes:
         available = [GMAIL_MODIFY_SCOPE]
         required = [GMAIL_READONLY_SCOPE, DRIVE_READONLY_SCOPE]
         assert not has_required_scopes(available, required)
+
+
+class TestGranularPermissionsScopes:
+    """Tests for granular permissions scope generation path."""
+
+    def setup_method(self):
+        set_read_only(False)
+        permissions_module._PERMISSIONS = None
+
+    def teardown_method(self):
+        set_read_only(False)
+        permissions_module._PERMISSIONS = None
+
+    def test_permissions_mode_returns_base_plus_permission_scopes(self):
+        set_permissions({"gmail": "send", "drive": "readonly"})
+        scopes = get_scopes_for_tools(["calendar"])  # ignored in permissions mode
+
+        expected = set(BASE_SCOPES)
+        expected.update(get_scopes_for_permission("gmail", "send"))
+        expected.update(get_scopes_for_permission("drive", "readonly"))
+        assert set(scopes) == expected
+
+    def test_permissions_mode_overrides_read_only_and_full_maps(self):
+        set_read_only(True)
+        without_permissions = get_scopes_for_tools(["drive"])
+        assert DRIVE_READONLY_SCOPE in without_permissions
+
+        set_permissions({"gmail": "readonly"})
+        with_permissions = get_scopes_for_tools(["drive"])
+        assert GMAIL_READONLY_SCOPE in with_permissions
+        assert DRIVE_READONLY_SCOPE not in with_permissions

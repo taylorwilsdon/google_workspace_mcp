@@ -22,10 +22,10 @@
 
 <div align="center">
 <a href="https://glama.ai/mcp/servers/@taylorwilsdon/google_workspace_mcp">
-  <img width="195" src="https://glama.ai/mcp/servers/@taylorwilsdon/google_workspace_mcp/badge" alt="Google Workspace Server MCP server" align="center"/>
+  <img width="170" src="https://glama.ai/mcp/servers/@taylorwilsdon/google_workspace_mcp/badge" alt="Google Workspace Server MCP server" align="center"/>
 </a>
 <a href="https://www.pulsemcp.com/servers/taylorwilsdon-google-workspace">
-<img width="456" src="https://github.com/user-attachments/assets/0794ef1a-dc1c-447d-9661-9c704d7acc9d" align="center"/>
+<img width="375" src="https://github.com/user-attachments/assets/0794ef1a-dc1c-447d-9661-9c704d7acc9d" align="center"/>
 </a>
 </div>
 
@@ -64,11 +64,11 @@ A production-ready MCP server that integrates all major Google Workspace service
 <td width="50%" valign="top">
 
 **<span style="color:#72898f">@</span> Gmail** • **<span style="color:#72898f">≡</span> Drive** • **<span style="color:#72898f">⧖</span> Calendar** **<span style="color:#72898f">≡</span> Docs**
-- Complete Gmail management, end to end coverage
+- Complete Gmail management, end-to-end coverage
 - Full calendar management with advanced features
 - File operations with Office format support
 - Document creation, editing & comments
-- Deep, exhaustive support for fine grained editing
+- Deep, exhaustive support for fine-grained editing
 
 ---
 
@@ -147,16 +147,7 @@ uv run main.py --tools gmail drive
 
 </details>
 
-### 1. One-Click Claude Desktop Install (Recommended)
 
-1. **Download:** Grab the latest `google_workspace_mcp.dxt` from the “Releases” page
-2. **Install:** Double-click the file – Claude Desktop opens and prompts you to **Install**
-3. **Configure:** In Claude Desktop → **Settings → Extensions → Google Workspace MCP**, paste your Google OAuth credentials
-4. **Use it:** Start a new Claude chat and call any Google Workspace tool
-
->
-**Why DXT?**
-> Desktop Extensions (`.dxt`) bundle the server, dependencies, and manifest so users go from download → working MCP in **one click** – no terminal, no JSON editing, no version conflicts.
 
 #### Required Configuration
 <details>
@@ -191,6 +182,17 @@ Claude Desktop stores these securely in the OS keychain; set them once in the ex
 </details>
 
 ---
+
+### One-Click Claude Desktop Install (Claude Desktop Only, Stdio, Single User)
+
+1. **Download:** Grab the latest `google_workspace_mcp.dxt` from the “Releases” page
+2. **Install:** Double-click the file – Claude Desktop opens and prompts you to **Install**
+3. **Configure:** In Claude Desktop → **Settings → Extensions → Google Workspace MCP**, paste your Google OAuth credentials
+4. **Use it:** Start a new Claude chat and call any Google Workspace tool
+
+>
+**Why DXT?**
+> Desktop Extensions (`.dxt`) bundle the server, dependencies, and manifest so users go from download → working MCP in **one click** – no terminal, no JSON editing, no version conflicts.
 
 <div align="center">
   <video width="832" src="https://github.com/user-attachments/assets/83cca4b3-5e94-448b-acb3-6e3a27341d3a"></video>
@@ -558,6 +560,22 @@ Read-only mode provides secure, restricted access by:
 - Automatically filtering out tools that require write permissions at startup
 - Allowing read operations: list, get, search, and export across all services
 
+**🔐 Granular Permissions**
+```bash
+# Per-service permission levels
+uv run main.py --permissions gmail:organize drive:readonly
+
+# Combine permissions with tier filtering
+uv run main.py --permissions gmail:send drive:full --tool-tier core
+```
+Granular permissions mode provides service-by-service scope control:
+- Format: `service:level` (one entry per service)
+- Gmail levels: `readonly`, `organize`, `drafts`, `send`, `full` (cumulative)
+- Other services currently support: `readonly`, `full`
+- `--permissions` and `--read-only` are mutually exclusive
+- `--permissions` cannot be combined with `--tools`; enabled services are determined by the `--permissions` entries (optionally filtered by `--tool-tier`)
+- With `--tool-tier`, only tier-matched tools are enabled and only services that have tools in the selected tier are imported
+
 **★ Tool Tiers**
 ```bash
 uv run main.py --tool-tier core      # ● Essential tools only
@@ -736,6 +754,9 @@ uv run main.py --tool-tier complete                        # Enable all availabl
 uv run main.py --tools gmail drive --tool-tier core        # Core tools for specific services
 uv run main.py --tools gmail --tool-tier extended          # Extended Gmail functionality only
 uv run main.py --tools docs sheets --tool-tier complete    # Full access to Docs and Sheets
+
+# Combine tier selection with granular permission levels
+uv run main.py --permissions gmail:organize drive:full --tool-tier core
 ```
 
 ## 📋 Credential Configuration
@@ -825,9 +846,7 @@ cp .env.oauth21 .env
 |------|------|-------------|
 | `list_calendars` | **Core** | List accessible calendars |
 | `get_events` | **Core** | Retrieve events with time range filtering |
-| `create_event` | **Core** | Create events with attachments & reminders |
-| `modify_event` | **Core** | Update existing events |
-| `delete_event` | Extended | Remove events |
+| `manage_event` | **Core** | Create, update, or delete calendar events |
 
 </td>
 <td width="50%" valign="top">
@@ -842,15 +861,11 @@ cp .env.oauth21 .env
 | `create_drive_file` | **Core** | Create files or fetch from URLs |
 | `create_drive_folder` | **Core** | Create empty folders in Drive or shared drives |
 | `import_to_google_doc` | **Core** | Import files (MD, DOCX, HTML, etc.) as Google Docs |
-| `share_drive_file` | **Core** | Share file with users/groups/domains/anyone |
 | `get_drive_shareable_link` | **Core** | Get shareable links for a file |
 | `list_drive_items` | Extended | List folder contents |
 | `copy_drive_file` | Extended | Copy existing files (templates) with optional renaming |
 | `update_drive_file` | Extended | Update file metadata, move between folders |
-| `batch_share_drive_file` | Extended | Share file with multiple recipients |
-| `update_drive_permission` | Extended | Modify permission role |
-| `remove_drive_permission` | Extended | Revoke file access |
-| `transfer_drive_ownership` | Extended | Transfer file ownership to another user |
+| `manage_drive_access` | Extended | Grant, update, revoke permissions, and transfer ownership |
 | `set_drive_file_permissions` | Extended | Set link sharing and file-level sharing settings |
 | `get_drive_file_permissions` | Complete | Get detailed file permissions |
 | `check_drive_file_public_access` | Complete | Check public sharing status |
@@ -873,7 +888,9 @@ cp .env.oauth21 .env
 | `get_gmail_thread_content` | Extended | Get full thread content |
 | `modify_gmail_message_labels` | Extended | Modify message labels |
 | `list_gmail_labels` | Extended | List available labels |
+| `list_gmail_filters` | Extended | List Gmail filters |
 | `manage_gmail_label` | Extended | Create/update/delete labels |
+| `manage_gmail_filter` | Extended | Create or delete Gmail filters |
 | `draft_gmail_message` | Extended | Create drafts |
 | `get_gmail_threads_content_batch` | Complete | Batch retrieve thread content |
 | `batch_modify_gmail_message_labels` | Complete | Batch modify labels |
@@ -944,7 +961,8 @@ Saved files expire after 1 hour and are cleaned up automatically.
 | `export_doc_to_pdf` | Extended | Export document to PDF |
 | `create_table_with_data` | Complete | Create data tables |
 | `debug_table_structure` | Complete | Debug table issues |
-| `*_document_comments` | Complete | Read, Reply, Create, Resolve |
+| `list_document_comments` | Complete | List all document comments |
+| `manage_document_comment` | Complete | Create, reply to, or resolve comments |
 
 </td>
 </tr>
@@ -963,7 +981,9 @@ Saved files expire after 1 hour and are cleaned up automatically.
 | `get_spreadsheet_info` | Extended | Get spreadsheet metadata |
 | `format_sheet_range` | Extended | Apply colors, number formats, text wrapping, alignment, bold/italic, font size |
 | `create_sheet` | Complete | Add sheets to existing files |
-| `*_sheet_comment` | Complete | Read/create/reply/resolve comments |
+| `list_spreadsheet_comments` | Complete | List all spreadsheet comments |
+| `manage_spreadsheet_comment` | Complete | Create, reply to, or resolve comments |
+| `manage_conditional_formatting` | Complete | Add, update, or delete conditional formatting rules |
 
 </td>
 <td width="50%" valign="top">
@@ -977,7 +997,8 @@ Saved files expire after 1 hour and are cleaned up automatically.
 | `batch_update_presentation` | Extended | Apply multiple updates |
 | `get_page` | Extended | Get specific slide information |
 | `get_page_thumbnail` | Extended | Generate slide thumbnails |
-| `*_presentation_comment` | Complete | Read/create/reply/resolve comments |
+| `list_presentation_comments` | Complete | List all presentation comments |
+| `manage_presentation_comment` | Complete | Create, reply to, or resolve comments |
 
 </td>
 </tr>
@@ -1004,12 +1025,10 @@ Saved files expire after 1 hour and are cleaned up automatically.
 |------|------|-------------|
 | `list_tasks` | **Core** | List tasks with filtering |
 | `get_task` | **Core** | Retrieve task details |
-| `create_task` | **Core** | Create tasks with hierarchy |
-| `update_task` | **Core** | Modify task properties |
-| `delete_task` | Extended | Remove tasks |
-| `move_task` | Complete | Reposition tasks |
-| `clear_completed_tasks` | Complete | Hide completed tasks |
-| `*_task_list` | Complete | List/get/create/update/delete task lists |
+| `manage_task` | **Core** | Create, update, delete, or move tasks |
+| `list_task_lists` | Complete | List task lists |
+| `get_task_list` | Complete | Get task list details |
+| `manage_task_list` | Complete | Create, update, delete task lists, or clear completed tasks |
 
 </td>
 </tr>
@@ -1023,14 +1042,11 @@ Saved files expire after 1 hour and are cleaned up automatically.
 | `search_contacts` | **Core** | Search contacts by name, email, phone |
 | `get_contact` | **Core** | Retrieve detailed contact info |
 | `list_contacts` | **Core** | List contacts with pagination |
-| `create_contact` | **Core** | Create new contacts |
-| `update_contact` | Extended | Update existing contacts |
-| `delete_contact` | Extended | Delete contacts |
+| `manage_contact` | **Core** | Create, update, or delete contacts |
 | `list_contact_groups` | Extended | List contact groups/labels |
 | `get_contact_group` | Extended | Get group details with members |
-| `batch_*_contacts` | Complete | Batch create/update/delete contacts |
-| `*_contact_group` | Complete | Create/update/delete contact groups |
-| `modify_contact_group_members` | Complete | Add/remove contacts from groups |
+| `manage_contacts_batch` | Complete | Batch create, update, or delete contacts |
+| `manage_contact_group` | Complete | Create, update, delete groups, or modify membership |
 
 </td>
 </tr>
@@ -1055,9 +1071,8 @@ Saved files expire after 1 hour and are cleaned up automatically.
 
 | Tool | Tier | Description |
 |------|------|-------------|
-| `search_custom` | **Core** | Perform web searches |
+| `search_custom` | **Core** | Perform web searches (supports site restrictions via sites parameter) |
 | `get_search_engine_info` | Complete | Retrieve search engine metadata |
-| `search_custom_siterestrict` | Extended | Search within specific domains |
 
 </td>
 </tr>
@@ -1074,10 +1089,8 @@ Saved files expire after 1 hour and are cleaned up automatically.
 | `create_script_project` | **Core** | Create new standalone or bound project |
 | `update_script_content` | **Core** | Update or create script files |
 | `run_script_function` | **Core** | Execute function with parameters |
-| `create_deployment` | Extended | Create new script deployment |
 | `list_deployments` | Extended | List all project deployments |
-| `update_deployment` | Extended | Update deployment configuration |
-| `delete_deployment` | Extended | Remove deployment |
+| `manage_deployment` | Extended | Create, update, or delete script deployments |
 | `list_script_processes` | Extended | View recent executions and status |
 
 </td>

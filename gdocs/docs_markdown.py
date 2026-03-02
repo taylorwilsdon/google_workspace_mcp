@@ -5,6 +5,7 @@ Converts Google Docs API JSON responses to clean Markdown, preserving:
 - Headings (H1-H6, Title, Subtitle)
 - Bold, italic, strikethrough, code, links
 - Ordered and unordered lists with nesting
+- Checklists with checked/unchecked state
 - Tables with header row separators
 """
 
@@ -60,9 +61,20 @@ def convert_doc_to_markdown(doc: dict[str, Any]) -> str:
             if bullet:
                 list_id = bullet["listId"]
                 nesting = bullet.get("nestingLevel", 0)
-                is_ordered = _is_ordered_list(lists_meta, list_id, nesting)
 
-                if is_ordered:
+                if _is_checklist(lists_meta, list_id, nesting):
+                    checked = _is_checked(para)
+                    checkbox = "[x]" if checked else "[ ]"
+                    indent = "  " * nesting
+                    # Re-render text without strikethrough for checked items
+                    # to avoid redundant ~~text~~ alongside [x]
+                    cb_text = (
+                        _convert_paragraph_text(para, skip_strikethrough=True)
+                        if checked
+                        else text
+                    )
+                    lines.append(f"{indent}- {checkbox} {cb_text}")
+                elif _is_ordered_list(lists_meta, list_id, nesting):
                     key = (list_id, nesting)
                     ordered_counters[key] = ordered_counters.get(key, 0) + 1
                     counter = ordered_counters[key]
@@ -102,16 +114,20 @@ def convert_doc_to_markdown(doc: dict[str, Any]) -> str:
     return result
 
 
-def _convert_paragraph_text(para: dict[str, Any]) -> str:
+def _convert_paragraph_text(
+    para: dict[str, Any], skip_strikethrough: bool = False
+) -> str:
     """Convert paragraph elements to inline markdown text."""
     parts: list[str] = []
     for elem in para.get("elements", []):
         if "textRun" in elem:
-            parts.append(_convert_text_run(elem["textRun"]))
+            parts.append(_convert_text_run(elem["textRun"], skip_strikethrough))
     return "".join(parts).strip()
 
 
-def _convert_text_run(text_run: dict[str, Any]) -> str:
+def _convert_text_run(
+    text_run: dict[str, Any], skip_strikethrough: bool = False
+) -> str:
     """Convert a single text run to markdown."""
     content = text_run.get("content", "")
     style = text_run.get("textStyle", {})
@@ -120,10 +136,12 @@ def _convert_text_run(text_run: dict[str, Any]) -> str:
     if not text:
         return ""
 
-    return _apply_text_style(text, style)
+    return _apply_text_style(text, style, skip_strikethrough)
 
 
-def _apply_text_style(text: str, style: dict[str, Any]) -> str:
+def _apply_text_style(
+    text: str, style: dict[str, Any], skip_strikethrough: bool = False
+) -> str:
     """Apply markdown formatting based on text style."""
     link = style.get("link", {})
     url = link.get("url")
@@ -143,7 +161,7 @@ def _apply_text_style(text: str, style: dict[str, Any]) -> str:
     elif italic:
         text = f"*{text}*"
 
-    if strikethrough:
+    if strikethrough and not skip_strikethrough:
         text = f"~~{text}~~"
 
     if url:
@@ -160,6 +178,37 @@ def _is_ordered_list(lists_meta: dict[str, Any], list_id: str, nesting: int) -> 
         level = nesting_levels[nesting]
         glyph = level.get("glyphType", "")
         return glyph not in ("", "GLYPH_TYPE_UNSPECIFIED")
+    return False
+
+
+def _is_checklist(lists_meta: dict[str, Any], list_id: str, nesting: int) -> bool:
+    """Check if a list at a given nesting level is a checklist.
+
+    Google Docs checklists are distinguished from regular bullet lists by having
+    GLYPH_TYPE_UNSPECIFIED with no glyphSymbol — the Docs UI renders interactive
+    checkboxes rather than a static glyph character.
+    """
+    list_info = lists_meta.get(list_id, {})
+    nesting_levels = list_info.get("listProperties", {}).get("nestingLevels", [])
+    if nesting < len(nesting_levels):
+        level = nesting_levels[nesting]
+        glyph_type = level.get("glyphType", "")
+        has_glyph_symbol = "glyphSymbol" in level
+        return glyph_type in ("", "GLYPH_TYPE_UNSPECIFIED") and not has_glyph_symbol
+    return False
+
+
+def _is_checked(para: dict[str, Any]) -> bool:
+    """Check if a checklist item is checked.
+
+    Google Docs marks checked checklist items by applying strikethrough
+    formatting to the paragraph text.
+    """
+    for elem in para.get("elements", []):
+        if "textRun" in elem:
+            content = elem["textRun"].get("content", "").strip()
+            if content:
+                return elem["textRun"].get("textStyle", {}).get("strikethrough", False)
     return False
 
 

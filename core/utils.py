@@ -2,13 +2,14 @@ import io
 import logging
 import os
 import zipfile
-import xml.etree.ElementTree as ET
 import ssl
 import asyncio
 import functools
 
 from pathlib import Path
 from typing import List, Optional
+
+from defusedxml import ElementTree as ET
 
 from googleapiclient.errors import HttpError
 from .api_enablement import get_api_enablement_message
@@ -226,7 +227,7 @@ def extract_office_xml_text(file_bytes: bytes, mime_type: str) -> Optional[str]:
     """
     Very light-weight XML scraper for Word, Excel, PowerPoint files.
     Returns plain-text if something readable is found, else None.
-    No external deps – just std-lib zipfile + ElementTree.
+    Uses zipfile + defusedxml.ElementTree.
     """
     shared_strings: List[str] = []
     ns_excel_main = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"

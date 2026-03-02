@@ -181,6 +181,8 @@ def build_drive_list_params(
     drive_id: Optional[str] = None,
     include_items_from_all_drives: bool = True,
     corpora: Optional[str] = None,
+    page_token: Optional[str] = None,
+    detailed: bool = True,
 ) -> Dict[str, Any]:
     """
     Helper function to build common list parameters for Drive API calls.
@@ -191,17 +193,27 @@ def build_drive_list_params(
         drive_id: Optional shared drive ID
         include_items_from_all_drives: Whether to include items from all drives
         corpora: Optional corpus specification
+        page_token: Optional page token for pagination (from a previous nextPageToken)
+        detailed: Whether to request size, modifiedTime, and webViewLink fields.
+                  Defaults to True to preserve existing behavior.
 
     Returns:
         Dictionary of parameters for Drive API list calls
     """
+    if detailed:
+        fields = "nextPageToken, files(id, name, mimeType, webViewLink, iconLink, modifiedTime, size)"
+    else:
+        fields = "nextPageToken, files(id, name, mimeType)"
     list_params = {
         "q": query,
         "pageSize": page_size,
-        "fields": "nextPageToken, files(id, name, mimeType, webViewLink, iconLink, modifiedTime, size)",
+        "fields": fields,
         "supportsAllDrives": True,
         "includeItemsFromAllDrives": include_items_from_all_drives,
     }
+
+    if page_token:
+        list_params["pageToken"] = page_token
 
     if drive_id:
         list_params["driveId"] = drive_id
@@ -217,6 +229,83 @@ def build_drive_list_params(
 
 SHORTCUT_MIME_TYPE = "application/vnd.google-apps.shortcut"
 FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
+
+# RFC 6838 token-style MIME type validation (safe for Drive query interpolation).
+MIME_TYPE_PATTERN = re.compile(r"^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+$")
+
+# Mapping from friendly type names to Google Drive MIME types.
+# Raw MIME type strings (containing '/') are always accepted as-is.
+FILE_TYPE_MIME_MAP: Dict[str, str] = {
+    "folder": "application/vnd.google-apps.folder",
+    "folders": "application/vnd.google-apps.folder",
+    "document": "application/vnd.google-apps.document",
+    "doc": "application/vnd.google-apps.document",
+    "documents": "application/vnd.google-apps.document",
+    "docs": "application/vnd.google-apps.document",
+    "spreadsheet": "application/vnd.google-apps.spreadsheet",
+    "sheet": "application/vnd.google-apps.spreadsheet",
+    "spreadsheets": "application/vnd.google-apps.spreadsheet",
+    "sheets": "application/vnd.google-apps.spreadsheet",
+    "presentation": "application/vnd.google-apps.presentation",
+    "presentations": "application/vnd.google-apps.presentation",
+    "slide": "application/vnd.google-apps.presentation",
+    "slides": "application/vnd.google-apps.presentation",
+    "form": "application/vnd.google-apps.form",
+    "forms": "application/vnd.google-apps.form",
+    "drawing": "application/vnd.google-apps.drawing",
+    "drawings": "application/vnd.google-apps.drawing",
+    "pdf": "application/pdf",
+    "pdfs": "application/pdf",
+    "shortcut": "application/vnd.google-apps.shortcut",
+    "shortcuts": "application/vnd.google-apps.shortcut",
+    "script": "application/vnd.google-apps.script",
+    "scripts": "application/vnd.google-apps.script",
+    "site": "application/vnd.google-apps.site",
+    "sites": "application/vnd.google-apps.site",
+    "jam": "application/vnd.google-apps.jam",
+    "jamboard": "application/vnd.google-apps.jam",
+    "jamboards": "application/vnd.google-apps.jam",
+}
+
+
+def resolve_file_type_mime(file_type: str) -> str:
+    """
+    Resolve a friendly file type name or raw MIME type string to a Drive MIME type.
+
+    If `file_type` contains '/' it is returned as-is (treated as a raw MIME type).
+    Otherwise it is looked up in FILE_TYPE_MIME_MAP.
+
+    Args:
+        file_type: A friendly name ('folder', 'document', 'pdf', …) or a raw MIME
+                   type string ('application/vnd.google-apps.document', …).
+
+    Returns:
+        str: The resolved MIME type string.
+
+    Raises:
+        ValueError: If the value is not a recognised friendly name and contains no '/'.
+    """
+    normalized = file_type.strip()
+    if not normalized:
+        raise ValueError("file_type cannot be empty.")
+
+    if "/" in normalized:
+        normalized_mime = normalized.lower()
+        if not MIME_TYPE_PATTERN.fullmatch(normalized_mime):
+            raise ValueError(
+                f"Invalid MIME type '{file_type}'. Expected format like 'application/pdf'."
+            )
+        return normalized_mime
+    lower = normalized.lower()
+    if lower not in FILE_TYPE_MIME_MAP:
+        valid = ", ".join(sorted(FILE_TYPE_MIME_MAP.keys()))
+        raise ValueError(
+            f"Unknown file_type '{file_type}'. Pass a MIME type directly (e.g. "
+            f"'application/pdf') or use one of the friendly names: {valid}"
+        )
+    return FILE_TYPE_MIME_MAP[lower]
+
+
 BASE_SHORTCUT_FIELDS = (
     "id, mimeType, parents, shortcutDetails(targetId, targetMimeType)"
 )

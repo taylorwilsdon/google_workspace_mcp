@@ -270,6 +270,69 @@ class TestLists:
         assert "- Item two" in md
 
 
+CHECKLIST_DOC = {
+    "title": "Checklist Test",
+    "lists": {
+        "kix.checklist001": {
+            "listProperties": {
+                "nestingLevels": [
+                    {"glyphType": "GLYPH_TYPE_UNSPECIFIED"},
+                ]
+            }
+        }
+    },
+    "body": {
+        "content": [
+            {"sectionBreak": {"sectionStyle": {}}},
+            {
+                "paragraph": {
+                    "elements": [
+                        {"textRun": {"content": "Buy groceries\n", "textStyle": {}}}
+                    ],
+                    "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+                    "bullet": {"listId": "kix.checklist001", "nestingLevel": 0},
+                }
+            },
+            {
+                "paragraph": {
+                    "elements": [
+                        {
+                            "textRun": {
+                                "content": "Walk the dog\n",
+                                "textStyle": {"strikethrough": True},
+                            }
+                        }
+                    ],
+                    "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+                    "bullet": {"listId": "kix.checklist001", "nestingLevel": 0},
+                }
+            },
+        ]
+    },
+}
+
+
+class TestChecklists:
+    def test_unchecked(self):
+        md = convert_doc_to_markdown(CHECKLIST_DOC)
+        assert "- [ ] Buy groceries" in md
+
+    def test_checked(self):
+        md = convert_doc_to_markdown(CHECKLIST_DOC)
+        assert "- [x] Walk the dog" in md
+
+    def test_checked_no_strikethrough(self):
+        """Checked items should not have redundant ~~strikethrough~~ markdown."""
+        md = convert_doc_to_markdown(CHECKLIST_DOC)
+        assert "~~Walk the dog~~" not in md
+
+    def test_regular_bullet_not_checklist(self):
+        """Bullet lists with glyphSymbol should remain as plain bullets."""
+        md = convert_doc_to_markdown(LIST_DOC)
+        assert "[ ]" not in md
+        assert "[x]" not in md
+
+
 class TestEmptyDoc:
     def test_empty(self):
         md = convert_doc_to_markdown({"title": "Empty", "body": {"content": []}})

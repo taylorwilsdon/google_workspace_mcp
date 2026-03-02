@@ -322,13 +322,9 @@ You can view or download the thumbnail using the provided URL."""
 
 # Create comment management tools for slides
 _comment_tools = create_comment_tools("presentation", "presentation_id")
-read_presentation_comments = _comment_tools["read_comments"]
-create_presentation_comment = _comment_tools["create_comment"]
-reply_to_presentation_comment = _comment_tools["reply_to_comment"]
-resolve_presentation_comment = _comment_tools["resolve_comment"]
+list_presentation_comments = _comment_tools["list_comments"]
+manage_presentation_comment = _comment_tools["manage_comment"]
 
 # Aliases for backwards compatibility and intuitive naming
-read_slide_comments = read_presentation_comments
-create_slide_comment = create_presentation_comment
-reply_to_slide_comment = reply_to_presentation_comment
-resolve_slide_comment = resolve_presentation_comment
+list_slide_comments = list_presentation_comments
+manage_slide_comment = manage_presentation_comment

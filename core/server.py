@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import os
 from typing import List, Optional
@@ -5,6 +6,8 @@ from importlib import metadata
 
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from starlette.applications import Starlette
+from starlette.datastructures import MutableHeaders
+from starlette.types import Scope, Receive, Send
 from starlette.requests import Request
 from starlette.middleware import Middleware
 
@@ -38,19 +41,64 @@ _legacy_callback_registered = False
 session_middleware = Middleware(MCPSessionMiddleware)
 
 
+class WellKnownCacheControlMiddleware:
+    """Force no-cache headers for OAuth well-known discovery endpoints."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path = scope.get("path", "")
+        is_oauth_well_known = (
+            path == "/.well-known/oauth-authorization-server"
+            or path.startswith("/.well-known/oauth-authorization-server/")
+            or path == "/.well-known/oauth-protected-resource"
+            or path.startswith("/.well-known/oauth-protected-resource/")
+        )
+        if not is_oauth_well_known:
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_no_cache_headers(message):
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(raw=message.setdefault("headers", []))
+                headers["Cache-Control"] = "no-store, must-revalidate"
+                headers["ETag"] = f'"{_compute_scope_fingerprint()}"'
+            await send(message)
+
+        await self.app(scope, receive, send_with_no_cache_headers)
+
+
+well_known_cache_control_middleware = Middleware(WellKnownCacheControlMiddleware)
+
+
+def _compute_scope_fingerprint() -> str:
+    """Compute a short hash of the current scope configuration for cache-busting."""
+    scopes_str = ",".join(sorted(get_current_scopes()))
+    return hashlib.sha256(scopes_str.encode()).hexdigest()[:12]
+
+
 # Custom FastMCP that adds secure middleware stack for OAuth 2.1
 class SecureFastMCP(FastMCP):
-    def streamable_http_app(self) -> "Starlette":
+    def http_app(self, **kwargs) -> "Starlette":
         """Override to add secure middleware stack for OAuth 2.1."""
-        app = super().streamable_http_app()
+        app = super().http_app(**kwargs)
 
         # Add middleware in order (first added = outermost layer)
+        app.user_middleware.insert(0, well_known_cache_control_middleware)
+
         # Session Management - extracts session info for MCP context
-        app.user_middleware.insert(0, session_middleware)
+        app.user_middleware.insert(1, session_middleware)
 
         # Rebuild middleware stack
         app.middleware_stack = app.build_middleware_stack()
-        logger.info("Added middleware stack: Session Management")
+        logger.info(
+            "Added middleware stack: WellKnownCacheControl, Session Management"
+        )
         return app
 
 
@@ -387,18 +435,6 @@ def configure_server_for_http():
                     "OAuth 2.1 enabled using FastMCP GoogleProvider with protocol-level auth"
                 )
 
-                # Explicitly mount well-known routes from the OAuth provider
-                # These should be auto-mounted but we ensure they're available
-                try:
-                    well_known_routes = provider.get_well_known_routes()
-                    for route in well_known_routes:
-                        logger.info(f"Mounting OAuth well-known route: {route.path}")
-                        server.custom_route(route.path, methods=list(route.methods))(
-                            route.endpoint
-                        )
-                except Exception as e:
-                    logger.warning(f"Could not mount well-known routes: {e}")
-
             # Always set auth provider for token validation in middleware
             set_auth_provider(provider)
             _auth_provider = provider
@@ -438,10 +474,11 @@ async def health_check(request: Request):
 
 
 @server.custom_route("/attachments/{file_id}", methods=["GET"])
-async def serve_attachment(file_id: str):
+async def serve_attachment(request: Request):
     """Serve a stored attachment file."""
     from core.attachment_storage import get_attachment_storage
 
+    file_id = request.path_params["file_id"]
     storage = get_attachment_storage()
     metadata = storage.get_attachment_metadata(file_id)
 

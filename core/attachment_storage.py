@@ -102,7 +102,11 @@ class AttachmentStorage:
         # Save file with restrictive permissions (sensitive email/drive content)
         file_path = STORAGE_DIR / save_name
         try:
-            fd = os.open(file_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            fd = os.open(
+                file_path,
+                os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0),
+                0o600,
+            )
             try:
                 total_written = 0
                 data_len = len(file_bytes)

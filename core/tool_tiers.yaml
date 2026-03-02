@@ -13,8 +13,7 @@ gmail:
     - manage_gmail_label
     - draft_gmail_message
     - list_gmail_filters
-    - create_gmail_filter
-    - delete_gmail_filter
+    - manage_gmail_filter
 
   complete:
     - get_gmail_threads_content_batch
@@ -29,16 +28,12 @@ drive:
     - create_drive_file
     - create_drive_folder
     - import_to_google_doc
-    - share_drive_file
     - get_drive_shareable_link
   extended:
     - list_drive_items
     - copy_drive_file
     - update_drive_file
-    - update_drive_permission
-    - remove_drive_permission
-    - transfer_drive_ownership
-    - batch_share_drive_file
+    - manage_drive_access
     - set_drive_file_permissions
   complete:
     - get_drive_file_permissions
@@ -48,10 +43,8 @@ calendar:
   core:
     - list_calendars
     - get_events
-    - create_event
-    - modify_event
+    - manage_event
   extended:
-    - delete_event
     - query_freebusy
   complete: []
 
@@ -75,10 +68,8 @@ docs:
     - inspect_doc_structure
     - create_table_with_data
     - debug_table_structure
-    - read_document_comments
-    - create_document_comment
-    - reply_to_document_comment
-    - resolve_document_comment
+    - list_document_comments
+    - manage_document_comment
 
 sheets:
   core:
@@ -91,10 +82,9 @@ sheets:
     - format_sheet_range
   complete:
     - create_sheet
-    - read_spreadsheet_comments
-    - create_spreadsheet_comment
-    - reply_to_spreadsheet_comment
-    - resolve_spreadsheet_comment
+    - list_spreadsheet_comments
+    - manage_spreadsheet_comment
+    - manage_conditional_formatting
 
 chat:
   core:
@@ -127,53 +117,37 @@ slides:
     - get_page
     - get_page_thumbnail
   complete:
-    - read_presentation_comments
-    - create_presentation_comment
-    - reply_to_presentation_comment
-    - resolve_presentation_comment
+    - list_presentation_comments
+    - manage_presentation_comment
 
 tasks:
   core:
     - get_task
     - list_tasks
-    - create_task
-    - update_task
-  extended:
-    - delete_task
+    - manage_task
+  extended: []
   complete:
     - list_task_lists
     - get_task_list
-    - create_task_list
-    - update_task_list
-    - delete_task_list
-    - move_task
-    - clear_completed_tasks
+    - manage_task_list
 
 contacts:
   core:
     - search_contacts
     - get_contact
     - list_contacts
-    - create_contact
+    - manage_contact
   extended:
-    - update_contact
-    - delete_contact
     - list_contact_groups
     - get_contact_group
   complete:
-    - batch_create_contacts
-    - batch_update_contacts
-    - batch_delete_contacts
-    - create_contact_group
-    - update_contact_group
-    - delete_contact_group
-    - modify_contact_group_members
+    - manage_contacts_batch
+    - manage_contact_group
 
 search:
   core:
     - search_custom
-  extended:
-    - search_custom_siterestrict
+  extended: []
   complete:
     - get_search_engine_info
 
@@ -187,10 +161,8 @@ appscript:
     - run_script_function
     - generate_trigger_code
   extended:
-    - create_deployment
+    - manage_deployment
     - list_deployments
-    - update_deployment
-    - delete_deployment
     - delete_script_project
     - list_versions
     - create_version

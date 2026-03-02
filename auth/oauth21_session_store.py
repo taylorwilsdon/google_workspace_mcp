@@ -221,6 +221,7 @@ class OAuth21SessionStore:
         state: str,
         session_id: Optional[str] = None,
         expires_in_seconds: int = 600,
+        code_verifier: Optional[str] = None,
     ) -> None:
         """Persist an OAuth state value for later validation."""
         if not state:
@@ -236,6 +237,7 @@ class OAuth21SessionStore:
                 "session_id": session_id,
                 "expires_at": expiry,
                 "created_at": now,
+                "code_verifier": code_verifier,
             }
             logger.debug(
                 "Stored OAuth state %s (expires at %s)",

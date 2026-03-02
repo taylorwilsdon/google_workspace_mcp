@@ -1678,7 +1678,5 @@ async def get_doc_as_markdown(
 _comment_tools = create_comment_tools("document", "document_id")
 
 # Extract and register the functions
-read_doc_comments = _comment_tools["read_comments"]
-create_doc_comment = _comment_tools["create_comment"]
-reply_to_comment = _comment_tools["reply_to_comment"]
-resolve_comment = _comment_tools["resolve_comment"]
+list_document_comments = _comment_tools["list_comments"]
+manage_document_comment = _comment_tools["manage_comment"]

@@ -291,16 +291,34 @@ def check_client_secrets() -> Optional[str]:
 
 
 def create_oauth_flow(
-    scopes: List[str], redirect_uri: str, state: Optional[str] = None
+    scopes: List[str],
+    redirect_uri: str,
+    state: Optional[str] = None,
+    code_verifier: Optional[str] = None,
+    autogenerate_code_verifier: bool = True,
 ) -> Flow:
     """Creates an OAuth flow using environment variables or client secrets file."""
+    flow_kwargs = {
+        "scopes": scopes,
+        "redirect_uri": redirect_uri,
+        "state": state,
+    }
+    if code_verifier:
+        flow_kwargs["code_verifier"] = code_verifier
+        # Preserve the original verifier when re-creating the flow in callback.
+        flow_kwargs["autogenerate_code_verifier"] = False
+    else:
+        # Generate PKCE code verifier for the initial auth flow.
+        # google-auth-oauthlib's from_client_* helpers pass
+        # autogenerate_code_verifier=None unless explicitly provided, which
+        # prevents Flow from generating and storing a code_verifier.
+        flow_kwargs["autogenerate_code_verifier"] = autogenerate_code_verifier
+
     # Try environment variables first
     env_config = load_client_secrets_from_env()
     if env_config:
         # Use client config directly
-        flow = Flow.from_client_config(
-            env_config, scopes=scopes, redirect_uri=redirect_uri, state=state
-        )
+        flow = Flow.from_client_config(env_config, **flow_kwargs)
         logger.debug("Created OAuth flow from environment variables")
         return flow
 
@@ -312,9 +330,7 @@ def create_oauth_flow(
 
     flow = Flow.from_client_secrets_file(
         CONFIG_CLIENT_SECRETS_PATH,
-        scopes=scopes,
-        redirect_uri=redirect_uri,
-        state=state,
+        **flow_kwargs,
     )
     logger.debug(
         f"Created OAuth flow from client secrets file: {CONFIG_CLIENT_SECRETS_PATH}"
@@ -389,7 +405,11 @@ async def start_auth_flow(
             )
 
         store = get_oauth21_session_store()
-        store.store_oauth_state(oauth_state, session_id=session_id)
+        store.store_oauth_state(
+            oauth_state,
+            session_id=session_id,
+            code_verifier=flow.code_verifier,
+        )
 
         logger.info(
             f"Auth flow started for {user_display_name}. Advise user to visit: {auth_url}"
@@ -482,6 +502,12 @@ def handle_auth_callback(
             )
             os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 
+        # Allow partial scope grants without raising an exception.
+        # When users decline some scopes on Google's consent screen,
+        # oauthlib raises because the granted scopes differ from requested.
+        if "OAUTHLIB_RELAX_TOKEN_SCOPE" not in os.environ:
+            os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
+
         store = get_oauth21_session_store()
         parsed_response = urlparse(authorization_response)
         state_values = parse_qs(parsed_response.query).get("state")
@@ -496,13 +522,42 @@ def handle_auth_callback(
             state_info.get("session_id") or "<unknown>",
         )
 
-        flow = create_oauth_flow(scopes=scopes, redirect_uri=redirect_uri, state=state)
+        flow = create_oauth_flow(
+            scopes=scopes,
+            redirect_uri=redirect_uri,
+            state=state,
+            code_verifier=state_info.get("code_verifier"),
+            autogenerate_code_verifier=False,
+        )
 
         # Exchange the authorization code for credentials
         # Note: fetch_token will use the redirect_uri configured in the flow
         flow.fetch_token(authorization_response=authorization_response)
         credentials = flow.credentials
         logger.info("Successfully exchanged authorization code for tokens.")
+
+        # Handle partial OAuth grants: if the user declined some scopes on
+        # Google's consent screen, credentials.granted_scopes contains only
+        # what was actually authorized. Store those instead of the inflated
+        # requested scopes so that refresh() sends the correct scope set.
+        granted = getattr(credentials, "granted_scopes", None)
+        if granted and set(granted) != set(credentials.scopes or []):
+            logger.warning(
+                "Partial OAuth grant detected. Requested: %s, Granted: %s",
+                credentials.scopes,
+                granted,
+            )
+            credentials = Credentials(
+                token=credentials.token,
+                refresh_token=credentials.refresh_token,
+                id_token=getattr(credentials, "id_token", None),
+                token_uri=credentials.token_uri,
+                client_id=credentials.client_id,
+                client_secret=credentials.client_secret,
+                scopes=list(granted),
+                expiry=credentials.expiry,
+                quota_project_id=getattr(credentials, "quota_project_id", None),
+            )
 
         # Get user info to determine user_id (using email here)
         user_info = get_user_info(credentials)

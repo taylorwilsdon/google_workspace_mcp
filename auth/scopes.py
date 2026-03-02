@@ -291,6 +291,24 @@ def get_scopes_for_tools(enabled_tools=None):
     Returns:
         List of unique scopes for the enabled tools plus base scopes.
     """
+    # Granular permissions mode overrides both full and read-only scope maps.
+    # Lazy import with guard to avoid circular dependency during module init
+    # (SCOPES = get_scopes_for_tools() runs at import time before auth.permissions
+    # is fully loaded, but permissions mode is never active at that point).
+    try:
+        from auth.permissions import is_permissions_mode, get_all_permission_scopes
+
+        if is_permissions_mode():
+            scopes = BASE_SCOPES.copy()
+            scopes.extend(get_all_permission_scopes())
+            logger.debug(
+                "Generated scopes from granular permissions: %d unique scopes",
+                len(set(scopes)),
+            )
+            return list(set(scopes))
+    except ImportError:
+        pass
+
     if enabled_tools is None:
         # Default behavior - return all scopes
         enabled_tools = TOOL_SCOPES_MAP.keys()

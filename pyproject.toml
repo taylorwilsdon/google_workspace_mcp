@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "workspace-mcp"
-version = "1.12.0"
+version = "1.14.1"
 description = "Comprehensive, highly performant Google Workspace Streamable HTTP & SSE MCP Server for Calendar, Gmail, Docs, Sheets, Slides & Drive"
 readme = "README.md"
 keywords = [ "mcp", "google", "workspace", "llm", "ai", "claude", "model", "context", "protocol", "server"]
@@ -12,7 +12,7 @@ license = "MIT"
 requires-python = ">=3.10"
 dependencies = [
  "fastapi>=0.115.12",
- "fastmcp>=2.14.4",
+ "fastmcp>=3.0.2",
  "google-api-python-client>=2.168.0",
  "google-auth-httplib2>=0.2.0",
  "google-auth-oauthlib>=1.2.2",
@@ -22,6 +22,7 @@ dependencies = [
  "python-dotenv>=1.1.0",
  "pyyaml>=6.0.2",
  "cryptography>=45.0.0",
+ "defusedxml>=0.7.1",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -106,6 +107,9 @@ py-modules = [ "fastmcp_server", "main"]
 [tool.setuptools.packages.find]
 where = ["."]
 exclude = ["tests*", "docs*", "build", "dist"]
+
+[tool.pytest.ini_options]
+addopts = "--ignore=tests/gappsscript/manual_test.py"
 
 [tool.setuptools.package-data]
 core = ["tool_tiers.yaml"]

@@ -33,6 +33,7 @@ async def search_custom(
     file_type: Optional[str] = None,
     language: Optional[str] = None,
     country: Optional[str] = None,
+    sites: Optional[List[str]] = None,
 ) -> str:
     """
     Performs a search using Google Custom Search JSON API.
@@ -50,6 +51,7 @@ async def search_custom(
         file_type (Optional[str]): Filter by file type (e.g., "pdf", "doc").
         language (Optional[str]): Language code for results (e.g., "lang_en").
         country (Optional[str]): Country code for results (e.g., "countryUS").
+        sites (Optional[List[str]]): List of sites/domains to restrict search to (e.g., ["example.com", "docs.example.com"]). When provided, results are limited to these sites.
 
     Returns:
         str: Formatted search results including title, link, and snippet for each result.
@@ -70,6 +72,12 @@ async def search_custom(
     logger.info(
         f"[search_custom] Invoked. Email: '{user_google_email}', Query: '{q}', CX: '{cx}'"
     )
+
+    # Apply site restriction if sites are provided
+    if sites:
+        site_query = " OR ".join([f"site:{site}" for site in sites])
+        q = f"{q} ({site_query})"
+        logger.info(f"[search_custom] Applied site restriction: {sites}")
 
     # Build the request parameters
     params = {
@@ -224,50 +232,3 @@ async def get_search_engine_info(service, user_google_email: str) -> str:
 
     logger.info(f"Search engine info retrieved successfully for {user_google_email}")
     return confirmation_message
-
-
-@server.tool()
-@handle_http_errors(
-    "search_custom_siterestrict", is_read_only=True, service_type="customsearch"
-)
-@require_google_service("customsearch", "customsearch")
-async def search_custom_siterestrict(
-    service,
-    user_google_email: str,
-    q: str,
-    sites: List[str],
-    num: int = 10,
-    start: int = 1,
-    safe: Literal["active", "moderate", "off"] = "off",
-) -> str:
-    """
-    Performs a search restricted to specific sites using Google Custom Search.
-
-    Args:
-        user_google_email (str): The user's Google email address. Required.
-        q (str): The search query. Required.
-        sites (List[str]): List of sites/domains to search within.
-        num (int): Number of results to return (1-10). Defaults to 10.
-        start (int): The index of the first result to return (1-based). Defaults to 1.
-        safe (Literal["active", "moderate", "off"]): Safe search level. Defaults to "off".
-
-    Returns:
-        str: Formatted search results from the specified sites.
-    """
-    logger.info(
-        f"[search_custom_siterestrict] Invoked. Email: '{user_google_email}', Query: '{q}', Sites: {sites}"
-    )
-
-    # Build site restriction query
-    site_query = " OR ".join([f"site:{site}" for site in sites])
-    full_query = f"{q} ({site_query})"
-
-    # Use the main search function with the modified query
-    return await search_custom(
-        service=service,
-        user_google_email=user_google_email,
-        q=full_query,
-        num=num,
-        start=start,
-        safe=safe,
-    )
