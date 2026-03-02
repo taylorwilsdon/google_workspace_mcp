@@ -7,8 +7,6 @@ Shared utilities for Google Keep operations.
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from auth.oauth_config import is_oauth21_enabled, is_external_oauth21_provider
-
 
 @dataclass
 class ListItem:
@@ -106,27 +104,6 @@ class Note:
                 Permission.from_api(perm) for perm in data.get("permissions", [])
             ],
         )
-
-
-def format_reauth_message(error: Exception, user_google_email: str) -> str:
-    base = f"API error: {error}. You might need to re-authenticate."
-    if is_oauth21_enabled():
-        if is_external_oauth21_provider():
-            hint = (
-                "LLM: Ask the user to provide a valid OAuth 2.1 bearer token in the "
-                "Authorization header and retry."
-            )
-        else:
-            hint = (
-                "LLM: Ask the user to authenticate via their MCP client's OAuth 2.1 "
-                "flow and retry."
-            )
-    else:
-        hint = (
-            "LLM: Try 'start_google_auth' with the user's email "
-            f"({user_google_email}) and service_name='Google Keep'."
-        )
-    return f"{base} {hint}"
 
 
 def format_note(note: Note) -> str:

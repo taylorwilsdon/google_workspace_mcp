@@ -10,13 +10,12 @@ import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
-from googleapiclient.errors import HttpError  # type: ignore
 from mcp import Resource
 
 from auth.service_decorator import require_google_service
 from core.server import server
 from core.utils import handle_http_errors
-from gkeep.keep_helpers import Note, build_note_body, format_note, format_note_content, format_reauth_message
+from gkeep.keep_helpers import Note, build_note_body, format_note, format_note_content
 
 logger = logging.getLogger(__name__)
 

@@ -82,21 +82,14 @@ docs:
 
 keep:
   core:
-    - create_note
-    - delete_note
     - list_notes
     - get_note
     - read_note
   extended:
-    - download_attachment
-    - set_permissions
-  complete:
-    - create_note
     - delete_note
+    - create_note
+  complete:
     - download_attachment
-    - get_note
-    - list_notes
-    - read_note
     - set_permissions
 
 sheets:
