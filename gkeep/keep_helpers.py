@@ -175,6 +175,9 @@ def build_note_body(
     list_items: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Build a note request body for creation."""
+    if text is not None and list_items is not None:
+        raise ValueError("Provide either 'text' or 'list_items', not both.")
+
     body: Dict[str, Any] = {"title": title}
     if list_items is not None:
         body["body"] = {"list": {"listItems": list_items}}

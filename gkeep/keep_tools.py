@@ -23,13 +23,18 @@ logger = logging.getLogger(__name__)
 LIST_NOTES_PAGE_SIZE_DEFAULT = 25
 LIST_NOTES_PAGE_SIZE_MAX = 1000
 
+def _redact_email(email: str) -> str:
+    if "@" not in email:
+        return "***"
+    local, domain = email.split("@", 1)
+    return f"{local[:2]}***@{domain}"
 
 @server.tool()  # type: ignore
 @require_google_service("keep", "keep_read")  # type: ignore
 @handle_http_errors("list_notes", service_type="keep")  # type: ignore
 async def list_notes(
     service: Resource,
-    user_google_email: str,
+    _redact_email(user_google_email): str,
     page_size: int = LIST_NOTES_PAGE_SIZE_DEFAULT,
     page_token: Optional[str] = None,
     filter_query: Optional[str] = None,
@@ -38,7 +43,7 @@ async def list_notes(
     List notes from Google Keep.
 
     Args:
-        user_google_email (str): The user's Google email address. Required.
+        _redact_email(user_google_email) (str): The user's Google email address. Required.
         page_size (int): Maximum number of notes to return (default: 25, max: 1000).
         page_token (Optional[str]): Token for pagination.
         filter_query (Optional[str]): Filter for list results. If no filter is supplied, the
@@ -48,10 +53,10 @@ async def list_notes(
     Returns:
         str: List of notes with their details.
     """
-    logger.info(f"[list_notes] Invoked. Email: '{user_google_email}'")
+    logger.info(f"[list_notes] Invoked. Email: '{_redact_email(_redact_email(user_google_email))}'")
 
     params: Dict[str, Any] = {}
-    if page_size is not None:
+    if page_size is not None and page_size >= 1:
         params["pageSize"] = min(page_size, LIST_NOTES_PAGE_SIZE_MAX)
     if page_token:
         params["pageToken"] = page_token
@@ -64,17 +69,17 @@ async def list_notes(
     next_page_token = result.get("nextPageToken")
 
     if not raw_notes:
-        return f"No notes found for {user_google_email}."
+        return f"No notes found for {_redact_email(user_google_email)}."
 
     notes = [Note.from_api(n) for n in raw_notes]
-    response = f"Notes for {user_google_email}:\n\n"
+    response = f"Notes for {_redact_email(user_google_email)}:\n\n"
     for note in notes:
         response += format_note(note) + "\n\n"
 
     if next_page_token:
         response += f"Next page token: {next_page_token}\n"
 
-    logger.info(f"Found {len(notes)} notes for {user_google_email}")
+    logger.info(f"Found {len(notes)} notes for {_redact_email(user_google_email)}")
     return response
 
 
@@ -83,7 +88,7 @@ async def list_notes(
 @handle_http_errors("get_note", service_type="keep")  # type: ignore
 async def get_note(
     service: Resource,
-    user_google_email: str,
+    _redact_email(user_google_email): str,
     note_id: str,
 ) -> str:
     """
@@ -94,14 +99,14 @@ async def get_note(
     full note content, use read_note instead.
 
     Args:
-        user_google_email (str): The user's Google email address. Required.
+        _redact_email(user_google_email) (str): The user's Google email address. Required.
         note_id (str): The ID of the note to retrieve (e.g., "notes/abc123" or just "abc123").
 
     Returns:
         str: Note summary including title, body preview, timestamps, and metadata.
     """
     logger.info(
-        f"[get_note] Invoked. Email: '{user_google_email}', Note ID: {note_id}"
+        f"[get_note] Invoked. Email: '{_redact_email(user_google_email)}', Note ID: {note_id}"
     )
 
     name = note_id if note_id.startswith("notes/") else f"notes/{note_id}"
@@ -111,7 +116,7 @@ async def get_note(
     response = f"Note Details for {name}:\n"
     response += format_note(note)
 
-    logger.info(f"Retrieved note '{name}' for {user_google_email}")
+    logger.info(f"Retrieved note '{name}' for {_redact_email(user_google_email)}")
     return response
 
 
@@ -120,7 +125,7 @@ async def get_note(
 @handle_http_errors("read_note", service_type="keep")  # type: ignore
 async def read_note(
     service: Resource,
-    user_google_email: str,
+    _redact_email(user_google_email): str,
     note_id: str,
 ) -> str:
     """
@@ -130,14 +135,14 @@ async def read_note(
     truncation. Use get_note for metadata and summaries.
 
     Args:
-        user_google_email (str): The user's Google email address. Required.
+        _redact_email(user_google_email) (str): The user's Google email address. Required.
         note_id (str): The ID of the note to read (e.g., "notes/abc123" or just "abc123").
 
     Returns:
         str: The full note content (text or checklist items).
     """
     logger.info(
-        f"[read_note] Invoked. Email: '{user_google_email}', Note ID: {note_id}"
+        f"[read_note] Invoked. Email: '{_redact_email(user_google_email)}', Note ID: {note_id}"
     )
 
     name = note_id if note_id.startswith("notes/") else f"notes/{note_id}"
@@ -146,7 +151,7 @@ async def read_note(
 
     response = format_note_content(note)
 
-    logger.info(f"Read note content '{name}' for {user_google_email}")
+    logger.info(f"Read note content '{name}' for {_redact_email(user_google_email)}")
     return response
 
 
@@ -155,7 +160,7 @@ async def read_note(
 @handle_http_errors("create_note", service_type="keep")  # type: ignore
 async def create_note(
     service: Resource,
-    user_google_email: str,
+    _redact_email(user_google_email): str,
     title: str,
     text: Optional[str] = None,
     list_items: Optional[List[Dict[str, Any]]] = None,
@@ -167,7 +172,7 @@ async def create_note(
     If neither text nor list_items is provided, the note will be created with just a title.
 
     Args:
-        user_google_email (str): The user's Google email address. Required.
+        _redact_email(user_google_email) (str): The user's Google email address. Required.
         title (str): The title of the note (max 1,000 characters).
         text (Optional[str]): Plain text content for the note body (max 20,000 characters).
         list_items (Optional[List[Dict[str, Any]]]): List/checklist items. Each item should
@@ -178,18 +183,18 @@ async def create_note(
         str: Confirmation message with the new note details.
     """
     logger.info(
-        f"[create_note] Invoked. Email: '{user_google_email}', Title: '{title}'"
+        f"[create_note] Invoked. Email: '{_redact_email(user_google_email)}', Title: '{title}'"
     )
 
     body = build_note_body(title, text=text, list_items=list_items)
     result = await asyncio.to_thread(service.notes().create(body=body).execute)
     note = Note.from_api(result)
 
-    response = f"Note Created for {user_google_email}:\n"
+    response = f"Note Created for {_redact_email(user_google_email)}:\n"
     response += format_note(note)
 
     logger.info(
-        f"Created note '{title}' with name {note.name} for {user_google_email}"
+        f"Created note '{title}' with name {note.name} for {_redact_email(user_google_email)}"
     )
     return response
 
@@ -199,30 +204,30 @@ async def create_note(
 @handle_http_errors("delete_note", service_type="keep")  # type: ignore
 async def delete_note(
     service: Resource,
-    user_google_email: str,
+    _redact_email(user_google_email): str,
     note_id: str,
 ) -> str:
     """
     Delete a note from Google Keep.
 
     Args:
-        user_google_email (str): The user's Google email address. Required.
+        _redact_email(user_google_email) (str): The user's Google email address. Required.
         note_id (str): The ID of the note to delete (e.g., "notes/abc123" or just "abc123").
 
     Returns:
         str: Confirmation message.
     """
     logger.info(
-        f"[delete_note] Invoked. Email: '{user_google_email}', Note ID: {note_id}"
+        f"[delete_note] Invoked. Email: '{_redact_email(user_google_email)}', Note ID: {note_id}"
     )
 
     name = note_id if note_id.startswith("notes/") else f"notes/{note_id}"
 
     await asyncio.to_thread(service.notes().delete(name=name).execute)
 
-    response = f"Note '{name}' has been deleted for {user_google_email}."
+    response = f"Note '{name}' has been deleted for {_redact_email(user_google_email)}."
 
-    logger.info(f"Deleted note '{name}' for {user_google_email}")
+    logger.info(f"Deleted note '{name}' for {_redact_email(user_google_email)}")
     return response
 
 
@@ -231,7 +236,7 @@ async def delete_note(
 @handle_http_errors("download_attachment", service_type="keep")  # type: ignore
 async def download_attachment(
     service: Resource,
-    user_google_email: str,
+    _redact_email(user_google_email): str,
     attachment_name: str,
     mime_type: str,
 ) -> str:
@@ -241,7 +246,7 @@ async def download_attachment(
     Use the attachment name from the note's attachments list (obtained via read_note).
 
     Args:
-        user_google_email (str): The user's Google email address. Required.
+        _redact_email(user_google_email) (str): The user's Google email address. Required.
         attachment_name (str): The resource name of the attachment
             (e.g., "notes/abc123/attachments/def456").
         mime_type (str): The MIME type to download the attachment as. Must match one of
@@ -251,7 +256,7 @@ async def download_attachment(
         str: Information about the downloaded attachment.
     """
     logger.info(
-        f"[download_attachment] Invoked. Email: '{user_google_email}', Attachment: {attachment_name}"
+        f"[download_attachment] Invoked. Email: '{_redact_email(user_google_email)}', Attachment: {attachment_name}"
     )
 
     result = await asyncio.to_thread(
@@ -321,7 +326,7 @@ async def download_attachment(
 @handle_http_errors("set_permissions", service_type="keep")  # type: ignore
 async def set_permissions(
     service: Resource,
-    user_google_email: str,
+    _redact_email(user_google_email): str,
     note_id: str,
     emails: List[str],
     member_type: str = "user",
@@ -336,7 +341,7 @@ async def set_permissions(
     Only the WRITER role can be granted via the API.
 
     Args:
-        user_google_email (str): The user's Google email address. Required.
+        _redact_email(user_google_email) (str): The user's Google email address. Required.
         note_id (str): The ID of the note (e.g., "notes/abc123" or just "abc123").
         emails (List[str]): List of email addresses to grant WRITER access to.
             Pass an empty list to remove all non-owner permissions.
@@ -346,7 +351,7 @@ async def set_permissions(
         str: Confirmation message with the updated permissions.
     """
     logger.info(
-        f"[set_permissions] Invoked. Email: '{user_google_email}', Note ID: {note_id}, "
+        f"[set_permissions] Invoked. Email: '{_redact_email(user_google_email)}', Note ID: {note_id}, "
         f"Emails: {emails}"
     )
     if member_type not in ["user", "group"]:
@@ -406,18 +411,18 @@ async def set_permissions(
         )
 
         created_permissions = result.get("permissions", [])
-        response = f"Permissions updated for note '{name}' ({user_google_email}):\n"
+        response = f"Permissions updated for note '{name}' ({_redact_email(user_google_email)}):\n"
         response += f"- Removed {len(non_owner_perm_names)} existing permission(s)\n"
         response += f"- Added {len(created_permissions)} new permission(s):\n"
         for perm in created_permissions:
             response += f"  - {perm.get('email', 'N/A')} (role: {perm.get('role', 'N/A')})\n"
     else:
-        response = f"Permissions updated for note '{name}' ({user_google_email}):\n"
+        response = f"Permissions updated for note '{name}' ({_redact_email(user_google_email)}):\n"
         response += f"- Removed {len(non_owner_perm_names)} existing permission(s)\n"
         response += "- No new permissions added (empty email list)\n"
 
     logger.info(
         f"Set permissions for note '{name}': removed {len(non_owner_perm_names)}, "
-        f"added {len(emails)} for {user_google_email}"
+        f"added {len(emails)} for {_redact_email(user_google_email)}"
     )
     return response
