@@ -106,10 +106,11 @@ def filter_server_tools(server):
     enabled_tools = get_enabled_tools()
     oauth21_enabled = is_oauth21_enabled()
     permissions_mode = is_permissions_mode()
+    read_only_mode = is_read_only_mode()
     if (
         enabled_tools is None
         and not oauth21_enabled
-        and not is_read_only_mode()
+        and not read_only_mode
         and not permissions_mode
     ):
         return
@@ -117,7 +118,6 @@ def filter_server_tools(server):
     tools_removed = 0
     tool_components = get_tool_components(server)
 
-    read_only_mode = is_read_only_mode()
     allowed_scopes = set(get_all_read_only_scopes()) if read_only_mode else None
 
     tools_to_remove = set()
@@ -202,10 +202,51 @@ def filter_server_tools(server):
         enabled_count = len(enabled_tools) if enabled_tools is not None else "all"
         if permissions_mode:
             mode = "Permissions"
-        elif is_read_only_mode():
+        elif read_only_mode:
             mode = "Read-Only"
         else:
             mode = "Full"
         logger.info(
             f"Tool filtering: removed {tools_removed} tools, {enabled_count} enabled. Mode: {mode}"
         )
+
+
+def _is_wrapped_string_output_schema(tool, output_schema: dict) -> bool:
+    """Check if tool output schema is FastMCP's wrapped-string schema."""
+    if not output_schema.get("x-fastmcp-wrap-result"):
+        return False
+
+    # FastMCP FunctionTool stores inferred return annotation.
+    if getattr(tool, "return_type", None) is str:
+        return True
+
+    # Fallback: detect wrapped {"result": {"type": "string"}} schema shape.
+    result_schema = output_schema.get("properties", {}).get("result", {})
+    return isinstance(result_schema, dict) and result_schema.get("type") == "string"
+
+
+def normalize_string_tool_output_schemas(server) -> int:
+    """
+    Clear wrapped output schemas for string-returning tools.
+
+    FastMCP wraps non-object return types for structured output validation.
+    For plain text tools, clearing output_schema keeps clean TextContent output
+    without structured {"result": "..."} wrappers.
+    """
+    schemas_cleared = 0
+
+    for tool in get_tool_components(server).values():
+        output_schema = getattr(tool, "output_schema", None)
+        if isinstance(output_schema, dict) and _is_wrapped_string_output_schema(
+            tool, output_schema
+        ):
+            tool.output_schema = None
+            schemas_cleared += 1
+
+    if schemas_cleared > 0:
+        logger.info(
+            "Content blocks: cleared output_schema on %s string-returning tools",
+            schemas_cleared,
+        )
+
+    return schemas_cleared

@@ -21,6 +21,7 @@ from core.tool_registry import (
     set_enabled_tools as set_enabled_tool_names,
     wrap_server_tool_method,
     filter_server_tools,
+    normalize_string_tool_output_schemas,
 )
 from auth.scopes import set_enabled_tools
 
@@ -171,6 +172,7 @@ set_enabled_tool_names(None)  # Don't filter individual tools - enable all
 
 # Filter tools based on configuration
 filter_server_tools(server)
+normalize_string_tool_output_schemas(server)
 
 # Configure authentication after scopes are known
 configure_server_for_http()

@@ -22,6 +22,7 @@ from core.tool_registry import (  # noqa: E402
     set_enabled_tools as set_enabled_tool_names,
     wrap_server_tool_method,
     filter_server_tools,
+    normalize_string_tool_output_schemas,
 )
 
 dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
@@ -408,6 +409,7 @@ def main():
 
     # Filter tools based on tier configuration (if tier-based loading is enabled)
     filter_server_tools(server)
+    normalize_string_tool_output_schemas(server)
 
     # Handle CLI mode - execute tool and exit
     if args.cli is not None:
