@@ -46,6 +46,7 @@ class MinimalOAuthServer:
         # CLI auth completion signaling
         self.auth_completed = threading.Event()
         self.auth_result: Optional[dict] = None  # {"success": bool, "user_id": str|None, "error": str|None}
+        self._auth_lock = threading.Lock()
 
         # Setup the callback route
         self._setup_callback_route()
@@ -158,7 +159,6 @@ class MinimalOAuthServer:
             logger.info("Minimal OAuth server is already running")
             return True, ""
 
-        # Check if port is available
         # Extract hostname from base_uri (e.g., "http://localhost" -> "localhost")
         try:
             parsed_uri = urlparse(self.base_uri)
@@ -166,13 +166,7 @@ class MinimalOAuthServer:
         except Exception:
             hostname = "localhost"
 
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.bind((hostname, self.port))
-        except OSError:
-            error_msg = f"Port {self.port} is already in use on {hostname}. Cannot start minimal OAuth server."
-            logger.error(error_msg)
-            return False, error_msg
+        _startup_error = [None]  # mutable container for thread communication
 
         def run_server():
             """Run the server in a separate thread."""
@@ -188,6 +182,7 @@ class MinimalOAuthServer:
                 asyncio.run(self.server.serve())
 
             except Exception as e:
+                _startup_error[0] = e
                 logger.error(f"Minimal OAuth server error: {e}", exc_info=True)
                 self.is_running = False
 
@@ -195,10 +190,15 @@ class MinimalOAuthServer:
         self.server_thread = threading.Thread(target=run_server, daemon=True)
         self.server_thread.start()
 
-        # Wait for server to start
-        max_wait = 3.0
+        # Wait for server to start — verify with actual HTTP request to catch
+        # both port conflicts and route initialization issues
+        max_wait = 5.0
         start_time = time.time()
         while time.time() - start_time < max_wait:
+            if _startup_error[0]:
+                error_msg = f"OAuth server failed to start: {_startup_error[0]}"
+                logger.error(error_msg)
+                return False, error_msg
             try:
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                     result = s.connect_ex((hostname, self.port))
@@ -215,6 +215,12 @@ class MinimalOAuthServer:
         error_msg = f"Failed to start minimal OAuth server on {hostname}:{self.port} - server did not respond within {max_wait}s"
         logger.error(error_msg)
         return False, error_msg
+
+    def reset_auth_state(self):
+        """Reset auth completion state so wait_for_auth blocks for a fresh callback."""
+        with self._auth_lock:
+            self.auth_completed.clear()
+            self.auth_result = None
 
     def wait_for_auth(self, timeout: float = 300) -> Optional[dict]:
         """

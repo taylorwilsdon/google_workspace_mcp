@@ -422,6 +422,9 @@ async def _handle_cli_auth_flow(
     print(f"  {auth_error.auth_url}\n", file=sys.stderr)
     print("Waiting for authentication (timeout: 5 minutes)...", file=sys.stderr)
 
+    # Clear any stale auth state before waiting for a fresh callback
+    oauth_server.reset_auth_state()
+
     # Wait for the OAuth callback in a thread (blocking call)
     result = await asyncio.to_thread(oauth_server.wait_for_auth, 300)
 
