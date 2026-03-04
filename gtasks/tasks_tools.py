@@ -25,24 +25,30 @@ LIST_TASKS_MAX_POSITION = "99999999999999999999"
 
 
 def _format_reauth_message(error: Exception, user_google_email: str) -> str:
-    base = f"API error: {error}. You might need to re-authenticate."
-    if is_oauth21_enabled():
-        if is_external_oauth21_provider():
-            hint = (
-                "LLM: Ask the user to provide a valid OAuth 2.1 bearer token in the "
-                "Authorization header and retry."
-            )
+    base = f"API error: {error}"
+
+    # Only suggest re-authentication for auth-related errors (401, 403)
+    if isinstance(error, HttpError) and error.resp.status in (401, 403):
+        base += ". You might need to re-authenticate."
+        if is_oauth21_enabled():
+            if is_external_oauth21_provider():
+                hint = (
+                    "LLM: Ask the user to provide a valid OAuth 2.1 bearer token in the "
+                    "Authorization header and retry."
+                )
+            else:
+                hint = (
+                    "LLM: Ask the user to authenticate via their MCP client's OAuth 2.1 "
+                    "flow and retry."
+                )
         else:
             hint = (
-                "LLM: Ask the user to authenticate via their MCP client's OAuth 2.1 "
-                "flow and retry."
+                "LLM: Try 'start_google_auth' with the user's email "
+                f"({user_google_email}) and service_name='Google Tasks'."
             )
-    else:
-        hint = (
-            "LLM: Try 'start_google_auth' with the user's email "
-            f"({user_google_email}) and service_name='Google Tasks'."
-        )
-    return f"{base} {hint}"
+        return f"{base} {hint}"
+
+    return base
 
 
 class StructuredTask:

@@ -41,6 +41,7 @@ class TableOperationManager:
         table_data: List[List[str]],
         index: int,
         bold_headers: bool = True,
+        tab_id: str = None,
     ) -> Tuple[bool, str, Dict[str, Any]]:
         """
         Creates a table and populates it with data in a reliable multi-step process.
@@ -52,6 +53,7 @@ class TableOperationManager:
             table_data: 2D list of strings for table content
             index: Position to insert the table
             bold_headers: Whether to make the first row bold
+            tab_id: Optional tab ID for targeting a specific tab
 
         Returns:
             Tuple of (success, message, metadata)
@@ -70,16 +72,16 @@ class TableOperationManager:
 
         try:
             # Step 1: Create empty table
-            await self._create_empty_table(document_id, index, rows, cols)
+            await self._create_empty_table(document_id, index, rows, cols, tab_id)
 
             # Step 2: Get fresh document structure to find actual cell positions
-            fresh_tables = await self._get_document_tables(document_id)
+            fresh_tables = await self._get_document_tables(document_id, tab_id)
             if not fresh_tables:
                 return False, "Could not find table after creation", {}
 
             # Step 3: Populate each cell with proper index refreshing
             population_count = await self._populate_table_cells(
-                document_id, table_data, bold_headers
+                document_id, table_data, bold_headers, tab_id
             )
 
             metadata = {
@@ -100,7 +102,7 @@ class TableOperationManager:
             return False, f"Table creation failed: {str(e)}", {}
 
     async def _create_empty_table(
-        self, document_id: str, index: int, rows: int, cols: int
+        self, document_id: str, index: int, rows: int, cols: int, tab_id: str = None
     ) -> None:
         """Create an empty table at the specified index."""
         logger.debug(f"Creating {rows}x{cols} table at index {index}")
@@ -109,20 +111,49 @@ class TableOperationManager:
             self.service.documents()
             .batchUpdate(
                 documentId=document_id,
-                body={"requests": [create_insert_table_request(index, rows, cols)]},
+                body={
+                    "requests": [create_insert_table_request(index, rows, cols, tab_id)]
+                },
             )
             .execute
         )
 
-    async def _get_document_tables(self, document_id: str) -> List[Dict[str, Any]]:
+    async def _get_document_tables(
+        self, document_id: str, tab_id: str = None
+    ) -> List[Dict[str, Any]]:
         """Get fresh document structure and extract table information."""
         doc = await asyncio.to_thread(
-            self.service.documents().get(documentId=document_id).execute
+            self.service.documents()
+            .get(documentId=document_id, includeTabsContent=True)
+            .execute
         )
+
+        if tab_id:
+            tab = self._find_tab(doc.get("tabs", []), tab_id)
+            if tab and "documentTab" in tab:
+                doc = doc.copy()
+                doc["body"] = tab["documentTab"].get("body", {})
+
         return find_tables(doc)
 
+    @staticmethod
+    def _find_tab(tabs: list, target_id: str):
+        """Recursively find a tab by ID."""
+        for tab in tabs:
+            if tab.get("tabProperties", {}).get("tabId") == target_id:
+                return tab
+            if "childTabs" in tab:
+                found = TableOperationManager._find_tab(tab["childTabs"], target_id)
+                if found:
+                    return found
+        return None
+
     async def _populate_table_cells(
-        self, document_id: str, table_data: List[List[str]], bold_headers: bool
+        self,
+        document_id: str,
+        table_data: List[List[str]],
+        bold_headers: bool,
+        tab_id: str = None,
     ) -> int:
         """
         Populate table cells with data, refreshing structure after each insertion.
@@ -147,6 +178,7 @@ class TableOperationManager:
                         col_idx,
                         cell_text,
                         bold_headers and row_idx == 0,
+                        tab_id,
                     )
 
                     if success:
@@ -169,6 +201,7 @@ class TableOperationManager:
         col_idx: int,
         cell_text: str,
         apply_bold: bool = False,
+        tab_id: str = None,
     ) -> bool:
         """
         Populate a single cell with text, with optional bold formatting.
@@ -177,7 +210,7 @@ class TableOperationManager:
         """
         try:
             # Get fresh table structure to avoid index shifting issues
-            tables = await self._get_document_tables(document_id)
+            tables = await self._get_document_tables(document_id, tab_id)
             if not tables:
                 return False
 

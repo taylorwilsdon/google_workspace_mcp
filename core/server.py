@@ -96,15 +96,22 @@ class SecureFastMCP(FastMCP):
 
         # Rebuild middleware stack
         app.middleware_stack = app.build_middleware_stack()
-        logger.info(
-            "Added middleware stack: WellKnownCacheControl, Session Management"
-        )
+        logger.info("Added middleware stack: WellKnownCacheControl, Session Management")
         return app
 
+
+# Build server instructions with user email context for single-user mode
+_server_instructions = None
+if USER_GOOGLE_EMAIL:
+    _server_instructions = f"""Connected Google account: {USER_GOOGLE_EMAIL}
+
+When using Google Workspace tools, always use `{USER_GOOGLE_EMAIL}` as the `user_google_email` parameter. Do not ask the user for their email address."""
+    logger.info(f"Server instructions configured for user: {USER_GOOGLE_EMAIL}")
 
 server = SecureFastMCP(
     name="google_workspace",
     auth=None,
+    instructions=_server_instructions,
 )
 
 # Add the AuthInfo middleware to inject authentication into FastMCP context

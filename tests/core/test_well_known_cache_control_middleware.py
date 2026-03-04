@@ -51,7 +51,9 @@ def test_well_known_cache_control_middleware_rewrites_headers():
     assert "etag" not in extra.headers
 
 
-def test_configured_server_applies_no_cache_to_served_oauth_discovery_routes(monkeypatch):
+def test_configured_server_applies_no_cache_to_served_oauth_discovery_routes(
+    monkeypatch,
+):
     monkeypatch.setenv("MCP_ENABLE_OAUTH21", "true")
     monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "dummy-client")
     monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_SECRET", "dummy-secret")

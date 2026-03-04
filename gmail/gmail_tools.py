@@ -37,6 +37,19 @@ GMAIL_BATCH_SIZE = 25
 GMAIL_REQUEST_DELAY = 0.1
 HTML_BODY_TRUNCATE_LIMIT = 20000
 GMAIL_METADATA_HEADERS = ["Subject", "From", "To", "Cc", "Message-ID", "Date"]
+LOW_VALUE_TEXT_PLACEHOLDERS = (
+    "your client does not support html",
+    "view this email in your browser",
+    "open this email in your browser",
+)
+LOW_VALUE_TEXT_FOOTER_MARKERS = (
+    "mailing list",
+    "mailman/listinfo",
+    "unsubscribe",
+    "list-unsubscribe",
+    "manage preferences",
+)
+LOW_VALUE_TEXT_HTML_DIFF_MIN = 80
 
 
 class _HTMLTextExtractor(HTMLParser):
@@ -154,16 +167,29 @@ def _format_body_content(text_body: str, html_body: str) -> str:
     """
     text_stripped = text_body.strip()
     html_stripped = html_body.strip()
+    html_text = _html_to_text(html_stripped).strip() if html_stripped else ""
 
-    # Detect useless fallback: HTML comments in text, or HTML is 50x+ longer
-    use_html = html_stripped and (
-        not text_stripped
-        or "<!--" in text_stripped
-        or len(html_stripped) > len(text_stripped) * 50
+    plain_lower = " ".join(text_stripped.split()).lower()
+    html_lower = " ".join(html_text.split()).lower()
+    plain_is_low_value = plain_lower and (
+        any(marker in plain_lower for marker in LOW_VALUE_TEXT_PLACEHOLDERS)
+        or (
+            any(marker in plain_lower for marker in LOW_VALUE_TEXT_FOOTER_MARKERS)
+            and len(html_lower) >= len(plain_lower) + LOW_VALUE_TEXT_HTML_DIFF_MIN
+        )
+        or (
+            len(html_lower) >= len(plain_lower) + LOW_VALUE_TEXT_HTML_DIFF_MIN
+            and html_lower.endswith(plain_lower)
+        )
+    )
+
+    # Prefer plain text, but fall back to HTML when plain text is empty or clearly low-value.
+    use_html = html_text and (
+        not text_stripped or "<!--" in text_stripped or plain_is_low_value
     )
 
     if use_html:
-        content = _html_to_text(html_stripped)
+        content = html_text
         if len(content) > HTML_BODY_TRUNCATE_LIMIT:
             content = content[:HTML_BODY_TRUNCATE_LIMIT] + "\n\n[Content truncated...]"
         return content

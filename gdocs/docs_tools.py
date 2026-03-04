@@ -8,7 +8,7 @@ import logging
 import asyncio
 import io
 import re
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 
@@ -28,6 +28,9 @@ from gdocs.docs_helpers import (
     create_insert_page_break_request,
     create_insert_image_request,
     create_bullet_list_request,
+    create_insert_doc_tab_request,
+    create_update_doc_tab_request,
+    create_delete_doc_tab_request,
 )
 
 # Import document structure and table utilities
@@ -157,16 +160,18 @@ async def get_doc_content(
             .execute
         )
         # Tab header format constant
-        TAB_HEADER_FORMAT = "\n--- TAB: {tab_name} ---\n"
+        TAB_HEADER_FORMAT = "\n--- TAB: {tab_name} (ID: {tab_id}) ---\n"
 
-        def extract_text_from_elements(elements, tab_name=None, depth=0):
+        def extract_text_from_elements(elements, tab_name=None, tab_id=None, depth=0):
             """Extract text from document elements (paragraphs, tables, etc.)"""
             # Prevent infinite recursion by limiting depth
             if depth > 5:
                 return ""
             text_lines = []
             if tab_name:
-                text_lines.append(TAB_HEADER_FORMAT.format(tab_name=tab_name))
+                text_lines.append(
+                    TAB_HEADER_FORMAT.format(tab_name=tab_name, tab_id=tab_id)
+                )
 
             for element in elements:
                 if "paragraph" in element:
@@ -204,9 +209,9 @@ async def get_doc_content(
                 tab_id = props.get("tabId", "Unknown ID")
                 # Add indentation for nested tabs to show hierarchy
                 if level > 0:
-                    tab_title = "    " * level + f"{tab_title} ( ID: {tab_id})"
+                    tab_title = "    " * level + f"{tab_title}"
                 tab_body = tab.get("documentTab", {}).get("body", {}).get("content", [])
-                tab_text += extract_text_from_elements(tab_body, tab_title)
+                tab_text += extract_text_from_elements(tab_body, tab_title, tab_id)
 
             # Process child tabs (nested tabs)
             child_tabs = tab.get("childTabs", [])
@@ -559,6 +564,7 @@ async def find_and_replace_doc(
     find_text: str,
     replace_text: str,
     match_case: bool = False,
+    tab_id: Optional[str] = None,
 ) -> str:
     """
     Finds and replaces text throughout a Google Doc.
@@ -569,15 +575,18 @@ async def find_and_replace_doc(
         find_text: Text to search for
         replace_text: Text to replace with
         match_case: Whether to match case exactly
+        tab_id: Optional ID of the tab to target
 
     Returns:
         str: Confirmation message with replacement count
     """
     logger.info(
-        f"[find_and_replace_doc] Doc={document_id}, find='{find_text}', replace='{replace_text}'"
+        f"[find_and_replace_doc] Doc={document_id}, find='{find_text}', replace='{replace_text}', tab='{tab_id}'"
     )
 
-    requests = [create_find_replace_request(find_text, replace_text, match_case)]
+    requests = [
+        create_find_replace_request(find_text, replace_text, match_case, tab_id)
+    ]
 
     result = await asyncio.to_thread(
         service.documents()
@@ -842,15 +851,41 @@ async def batch_update_doc(
     Args:
         user_google_email: User's Google email address
         document_id: ID of the document to update
-        operations: List of operation dictionaries. Each operation should contain:
-                   - type: Operation type ('insert_text', 'delete_text', 'replace_text', 'format_text', 'insert_table', 'insert_page_break')
-                   - Additional parameters specific to each operation type
+        operations: List of operation dicts. Each operation MUST have a 'type' field.
+                    All operations accept an optional 'tab_id' to target a specific tab.
+
+    Supported operation types and their parameters:
+
+      insert_text      - required: index (int), text (str)
+      delete_text      - required: start_index (int), end_index (int)
+      replace_text     - required: start_index (int), end_index (int), text (str)
+      format_text      - required: start_index (int), end_index (int)
+                         optional: bold, italic, underline, font_size, font_family,
+                                   text_color, background_color, link_url
+      update_paragraph_style
+                       - required: start_index (int), end_index (int)
+                         optional: heading_level (0-6, 0=normal), alignment
+                                   (START/CENTER/END/JUSTIFIED), line_spacing,
+                                   indent_first_line, indent_start, indent_end,
+                                   space_above, space_below
+      insert_table     - required: index (int), rows (int), columns (int)
+      insert_page_break- required: index (int)
+      find_replace     - required: find_text (str), replace_text (str)
+                         optional: match_case (bool, default false)
+      insert_doc_tab   - required: title (str), index (int)
+                         optional: parent_tab_id (str)
+      delete_doc_tab   - required: tab_id (str)
+      update_doc_tab   - required: tab_id (str), title (str)
 
     Example operations:
         [
             {"type": "insert_text", "index": 1, "text": "Hello World"},
             {"type": "format_text", "start_index": 1, "end_index": 12, "bold": true},
-            {"type": "insert_table", "index": 20, "rows": 2, "columns": 3}
+            {"type": "update_paragraph_style", "start_index": 1, "end_index": 12,
+             "heading_level": 1, "alignment": "CENTER"},
+            {"type": "find_replace", "find_text": "foo", "replace_text": "bar"},
+            {"type": "insert_table", "index": 20, "rows": 2, "columns": 3},
+            {"type": "insert_doc_tab", "title": "Appendix", "index": 1}
         ]
 
     Returns:
@@ -892,6 +927,7 @@ async def inspect_doc_structure(
     user_google_email: str,
     document_id: str,
     detailed: bool = False,
+    tab_id: str = None,
 ) -> str:
     """
     Essential tool for finding safe insertion points and understanding document structure.
@@ -901,6 +937,7 @@ async def inspect_doc_structure(
     - Understanding document layout before making changes
     - Locating existing tables and their positions
     - Getting document statistics and complexity info
+    - Inspecting structure of specific tabs
 
     CRITICAL FOR TABLE OPERATIONS:
     ALWAYS call this BEFORE creating tables to get a safe insertion index.
@@ -910,6 +947,7 @@ async def inspect_doc_structure(
     - total_length: Maximum safe index for insertion
     - tables: Number of existing tables
     - table_details: Position and dimensions of each table
+    - tabs: List of available tabs in the document (if no tab_id specified)
 
     WORKFLOW:
     Step 1: Call this function
@@ -921,20 +959,49 @@ async def inspect_doc_structure(
         user_google_email: User's Google email address
         document_id: ID of the document to inspect
         detailed: Whether to return detailed structure information
+        tab_id: Optional ID of the tab to inspect. If not provided, inspects main document.
 
     Returns:
         str: JSON string containing document structure and safe insertion indices
     """
-    logger.debug(f"[inspect_doc_structure] Doc={document_id}, detailed={detailed}")
+    logger.debug(
+        f"[inspect_doc_structure] Doc={document_id}, detailed={detailed}, tab_id={tab_id}"
+    )
 
     # Get the document
     doc = await asyncio.to_thread(
-        service.documents().get(documentId=document_id).execute
+        service.documents().get(documentId=document_id, includeTabsContent=True).execute
     )
+
+    # If tab_id is specified, find the tab and use its content
+    target_content = doc.get("body", {})
+
+    def find_tab(tabs, target_id):
+        for tab in tabs:
+            if tab.get("tabProperties", {}).get("tabId") == target_id:
+                return tab
+            if "childTabs" in tab:
+                found = find_tab(tab["childTabs"], target_id)
+                if found:
+                    return found
+        return None
+
+    if tab_id:
+        tab = find_tab(doc.get("tabs", []), tab_id)
+        if tab and "documentTab" in tab:
+            target_content = tab["documentTab"].get("body", {})
+        elif tab:
+            return f"Error: Tab {tab_id} is not a document tab and has no body content."
+        else:
+            return f"Error: Tab {tab_id} not found in document."
+
+    # Create a dummy doc object for analysis tools that expect a full doc
+    analysis_doc = doc.copy()
+    analysis_doc["body"] = target_content
 
     if detailed:
         # Return full parsed structure
-        structure = parse_document_structure(doc)
+        structure = parse_document_structure(analysis_doc)
 
         # Simplify for JSON serialization
         result = {
@@ -991,10 +1058,10 @@ async def inspect_doc_structure(
 
     else:
         # Return basic analysis
-        result = analyze_document_complexity(doc)
+        result = analyze_document_complexity(analysis_doc)
 
         # Add table information
-        tables = find_tables(doc)
+        tables = find_tables(analysis_doc)
         if tables:
             result["table_details"] = []
             for i, table in enumerate(tables):
@@ -1007,6 +1074,27 @@ async def inspect_doc_structure(
                         "end_index": table["end_index"],
                     }
                 )
+
+    # Always include available tabs if no tab_id was specified
+    if not tab_id:
+
+        def get_tabs_summary(tabs):
+            summary = []
+            for tab in tabs:
+                props = tab.get("tabProperties", {})
+                tab_info = {
+                    "title": props.get("title"),
+                    "tab_id": props.get("tabId"),
+                }
+                if "childTabs" in tab:
+                    tab_info["child_tabs"] = get_tabs_summary(tab["childTabs"])
+                summary.append(tab_info)
+            return summary
+
+        result["tabs"] = get_tabs_summary(doc.get("tabs", []))
+
+    if tab_id:
+        result["inspected_tab_id"] = tab_id
 
     link = f"https://docs.google.com/document/d/{document_id}/edit"
     return f"Document structure analysis for {document_id}:\n\n{json.dumps(result, indent=2)}\n\nLink: {link}"
@@ -1022,6 +1110,7 @@ async def create_table_with_data(
     table_data: List[List[str]],
     index: int,
     bold_headers: bool = True,
+    tab_id: Optional[str] = None,
 ) -> str:
     """
     Creates a table and populates it with data in one reliable operation.
@@ -1060,6 +1149,7 @@ async def create_table_with_data(
         table_data: 2D list of strings - EXACT format: [["col1", "col2"], ["row1col1", "row1col2"]]
         index: Document position (MANDATORY: get from inspect_doc_structure 'total_length')
         bold_headers: Whether to make first row bold (default: true)
+        tab_id: Optional tab ID to create the table in a specific tab
 
     Returns:
         str: Confirmation with table details and link
@@ -1086,7 +1176,7 @@ async def create_table_with_data(
 
     # Try to create the table, and if it fails due to index being at document end, retry with index-1
     success, message, metadata = await table_manager.create_and_populate_table(
-        document_id, table_data, index, bold_headers
+        document_id, table_data, index, bold_headers, tab_id
     )
 
     # If it failed due to index being at or beyond document end, retry with adjusted index
@@ -1095,7 +1185,7 @@ async def create_table_with_data(
             f"Index {index} is at document boundary, retrying with index {index - 1}"
         )
         success, message, metadata = await table_manager.create_and_populate_table(
-            document_id, table_data, index - 1, bold_headers
+            document_id, table_data, index - 1, bold_headers, tab_id
         )
 
     if success:
@@ -1672,6 +1762,127 @@ async def get_doc_as_markdown(
     else:
         appendix = format_comments_appendix(comments)
         return markdown.rstrip("\n") + "\n\n" + appendix
+
+
+@server.tool()
+@handle_http_errors("insert_doc_tab", service_type="docs")
+@require_google_service("docs", "docs_write")
+async def insert_doc_tab(
+    service: Any,
+    user_google_email: str,
+    document_id: str,
+    title: str,
+    index: int,
+    parent_tab_id: Optional[str] = None,
+) -> str:
+    """
+    Inserts a new tab into a Google Doc.
+
+    Args:
+        user_google_email: User's Google email address
+        document_id: ID of the document to update
+        title: Title of the new tab
+        index: Position index for the new tab (0-based among sibling tabs)
+        parent_tab_id: Optional ID of a parent tab to nest the new tab under
+
+    Returns:
+        str: Confirmation message with document link
+    """
+    logger.info(f"[insert_doc_tab] Doc={document_id}, title='{title}', index={index}")
+
+    request = create_insert_doc_tab_request(title, index, parent_tab_id)
+    result = await asyncio.to_thread(
+        service.documents()
+        .batchUpdate(documentId=document_id, body={"requests": [request]})
+        .execute
+    )
+
+    # Extract the new tab ID from the batchUpdate response
+    tab_id = None
+    if "replies" in result and result["replies"]:
+        reply = result["replies"][0]
+        if "createDocumentTab" in reply:
+            tab_id = reply["createDocumentTab"].get("tabProperties", {}).get("tabId")
+
+    link = f"https://docs.google.com/document/d/{document_id}/edit"
+    msg = f"Inserted tab '{title}' at index {index} in document {document_id}."
+    if tab_id:
+        msg += f" Tab ID: {tab_id}."
+    if parent_tab_id:
+        msg += f" Nested under parent tab {parent_tab_id}."
+    return f"{msg} Link: {link}"
+
+
+@server.tool()
+@handle_http_errors("delete_doc_tab", service_type="docs")
+@require_google_service("docs", "docs_write")
+async def delete_doc_tab(
+    service: Any,
+    user_google_email: str,
+    document_id: str,
+    tab_id: str,
+) -> str:
+    """
+    Deletes a tab from a Google Doc by its tab ID.
+
+    Args:
+        user_google_email: User's Google email address
+        document_id: ID of the document to update
+        tab_id: ID of the tab to delete (use inspect_doc_structure to find tab IDs)
+
+    Returns:
+        str: Confirmation message with document link
+    """
+    logger.info(f"[delete_doc_tab] Doc={document_id}, tab_id='{tab_id}'")
+
+    request = create_delete_doc_tab_request(tab_id)
+    await asyncio.to_thread(
+        service.documents()
+        .batchUpdate(documentId=document_id, body={"requests": [request]})
+        .execute
+    )
+
+    link = f"https://docs.google.com/document/d/{document_id}/edit"
+    return f"Deleted tab '{tab_id}' from document {document_id}. Link: {link}"
+
+
+@server.tool()
+@handle_http_errors("update_doc_tab", service_type="docs")
+@require_google_service("docs", "docs_write")
+async def update_doc_tab(
+    service: Any,
+    user_google_email: str,
+    document_id: str,
+    tab_id: str,
+    title: str,
+) -> str:
+    """
+    Renames a tab in a Google Doc.
+
+    Args:
+        user_google_email: User's Google email address
+        document_id: ID of the document to update
+        tab_id: ID of the tab to rename (use inspect_doc_structure to find tab IDs)
+        title: New title for the tab
+
+    Returns:
+        str: Confirmation message with document link
+    """
+    logger.info(
+        f"[update_doc_tab] Doc={document_id}, tab_id='{tab_id}', title='{title}'"
+    )
+
+    request = create_update_doc_tab_request(tab_id, title)
+    await asyncio.to_thread(
+        service.documents()
+        .batchUpdate(documentId=document_id, body={"requests": [request]})
+        .execute
+    )
+
+    link = f"https://docs.google.com/document/d/{document_id}/edit"
+    return (
+        f"Renamed tab '{tab_id}' to '{title}' in document {document_id}. Link: {link}"
+    )
 
 
 # Create comment management tools for documents
