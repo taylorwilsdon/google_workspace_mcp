@@ -478,18 +478,21 @@ async def handle_cli_mode(server, cli_args: List[str]) -> int:
             args.update(parsed["tool_args"])
 
             try:
-                result = await run_tool(server, parsed["tool_name"], args)
-                print(result)
-                return 0
-            except Exception as e:
-                from auth.google_auth import GoogleAuthenticationError
-                if isinstance(e, GoogleAuthenticationError) and e.auth_url:
-                    result = await _handle_cli_auth_flow(
-                        server, parsed["tool_name"], args, e, oauth_server
-                    )
+                try:
+                    result = await run_tool(server, parsed["tool_name"], args)
                     print(result)
                     return 0
-                raise
+                except Exception as e:
+                    from auth.google_auth import GoogleAuthenticationError
+                    if isinstance(e, GoogleAuthenticationError) and e.auth_url:
+                        result = await _handle_cli_auth_flow(
+                            server, parsed["tool_name"], args, e, oauth_server
+                        )
+                        print(result)
+                        return 0
+                    raise
+            finally:
+                oauth_server.stop()
 
         # Unknown command
         print(f"Unknown command: {parsed['command']}")

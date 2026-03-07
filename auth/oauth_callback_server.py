@@ -10,6 +10,7 @@ import logging
 import threading
 import time
 import socket
+import urllib.request
 import uvicorn
 
 from fastapi import FastAPI, Request
@@ -115,11 +116,11 @@ class MinimalOAuthServer:
                 return create_success_response(verified_user_id)
 
             except Exception as e:
-                error_message_detail = f"Error processing OAuth callback: {str(e)}"
-                logger.error(error_message_detail, exc_info=True)
-                self.auth_result = {"success": False, "user_id": None, "error": str(e)}
+                logger.error(f"Error processing OAuth callback: {e}", exc_info=True)
+                generic_error = "An unexpected error occurred while processing authentication. Please try again."
+                self.auth_result = {"success": False, "user_id": None, "error": generic_error}
                 self.auth_completed.set()
-                return create_server_error_response(str(e))
+                return create_server_error_response(generic_error)
 
     def _setup_attachment_route(self):
         """Setup the attachment serving route."""
@@ -190,29 +191,43 @@ class MinimalOAuthServer:
         self.server_thread = threading.Thread(target=run_server, daemon=True)
         self.server_thread.start()
 
-        # Wait for server to start — verify with actual HTTP request to catch
-        # both port conflicts and route initialization issues
+        # Wait for server to start — verify with an actual HTTP request to the
+        # callback route so we confirm route registration, not just TCP binding.
+        # A missing-code response (400) or any non-404 proves the route exists.
         max_wait = 5.0
         start_time = time.time()
+        probe_url = f"http://{hostname}:{self.port}/oauth2callback"
         while time.time() - start_time < max_wait:
             if _startup_error[0]:
                 error_msg = f"OAuth server failed to start: {_startup_error[0]}"
                 logger.error(error_msg)
                 return False, error_msg
             try:
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    result = s.connect_ex((hostname, self.port))
-                    if result == 0:
-                        self.is_running = True
-                        logger.info(
-                            f"Minimal OAuth server started on {hostname}:{self.port}"
-                        )
-                        return True, ""
+                resp = urllib.request.urlopen(probe_url, timeout=0.5)
+                # Any 2xx/3xx means route is up
+                if resp.status < 500:
+                    self.is_running = True
+                    logger.info(
+                        f"Minimal OAuth server started on {hostname}:{self.port}"
+                    )
+                    return True, ""
+            except urllib.error.HTTPError as http_err:
+                # 4xx responses (e.g. 400 missing code, 422 validation) confirm
+                # the route is registered and the server is handling requests.
+                if http_err.code != 404:
+                    self.is_running = True
+                    logger.info(
+                        f"Minimal OAuth server started on {hostname}:{self.port}"
+                    )
+                    return True, ""
             except Exception:
                 pass
             time.sleep(0.1)
 
-        error_msg = f"Failed to start minimal OAuth server on {hostname}:{self.port} - server did not respond within {max_wait}s"
+        error_msg = (
+            f"Failed to start minimal OAuth server on {hostname}:{self.port}"
+            f" - callback route did not respond within {max_wait}s"
+        )
         logger.error(error_msg)
         return False, error_msg
 
