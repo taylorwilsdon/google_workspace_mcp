@@ -28,6 +28,7 @@ from core.attachment_storage import get_attachment_storage, get_attachment_url
 from core.utils import extract_office_xml_text, handle_http_errors, validate_file_path
 from core.server import server
 from core.config import get_transport_mode
+from core.tool_schema import tool_schema
 from gdrive.drive_helpers import (
     DRIVE_QUERY_PATTERNS,
     FOLDER_MIME_TYPE,
@@ -50,6 +51,14 @@ UPLOAD_CHUNK_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB (Google recommended minimum)
 MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB safety limit for URL downloads
 
 
+@tool_schema(
+    service="drive",
+    tier="core",
+    scopes=["drive_read"],
+    read_only=True,
+    tags=["search"],
+    paginated=True,
+)
 @server.tool()
 @handle_http_errors("search_drive_files", is_read_only=True, service_type="drive")
 @require_google_service("drive", "drive_read")
@@ -149,6 +158,9 @@ async def search_drive_files(
     return text_output
 
 
+@tool_schema(
+    service="drive", tier="core", scopes=["drive_read"], read_only=True, tags=["files"]
+)
 @server.tool()
 @handle_http_errors("get_drive_file_content", is_read_only=True, service_type="drive")
 @require_google_service("drive", "drive_read")
@@ -240,6 +252,9 @@ async def get_drive_file_content(
     return header + body_text
 
 
+@tool_schema(
+    service="drive", tier="core", scopes=["drive_read"], read_only=True, tags=["files"]
+)
 @server.tool()
 @handle_http_errors(
     "get_drive_file_download_url", is_read_only=True, service_type="drive"
@@ -429,6 +444,14 @@ async def get_drive_file_download_url(
         )
 
 
+@tool_schema(
+    service="drive",
+    tier="extended",
+    scopes=["drive_read"],
+    read_only=True,
+    tags=["files"],
+    paginated=True,
+)
 @server.tool()
 @handle_http_errors("list_drive_items", is_read_only=True, service_type="drive")
 @require_google_service("drive", "drive_read")
@@ -545,6 +568,13 @@ async def _create_drive_folder_impl(
     )
 
 
+@tool_schema(
+    service="drive",
+    tier="core",
+    scopes=["drive_file"],
+    read_only=False,
+    tags=["folders"],
+)
 @server.tool()
 @handle_http_errors("create_drive_folder", service_type="drive")
 @require_google_service("drive", "drive_file")
@@ -574,6 +604,9 @@ async def create_drive_folder(
     )
 
 
+@tool_schema(
+    service="drive", tier="core", scopes=["drive_file"], read_only=False, tags=["files"]
+)
 @server.tool()
 @handle_http_errors("create_drive_file", service_type="drive")
 @require_google_service("drive", "drive_file")
@@ -1130,6 +1163,13 @@ def _detect_source_format(file_name: str, content: Optional[str] = None) -> str:
     return "text/plain"
 
 
+@tool_schema(
+    service="drive",
+    tier="core",
+    scopes=["drive_file"],
+    read_only=False,
+    tags=["files", "import"],
+)
 @server.tool()
 @handle_http_errors("import_to_google_doc", service_type="drive")
 @require_google_service("drive", "drive_file")
@@ -1330,6 +1370,13 @@ async def import_to_google_doc(
     return confirmation
 
 
+@tool_schema(
+    service="drive",
+    tier="complete",
+    scopes=["drive_read"],
+    read_only=True,
+    tags=["sharing"],
+)
 @server.tool()
 @handle_http_errors(
     "get_drive_file_permissions", is_read_only=True, service_type="drive"
@@ -1439,6 +1486,13 @@ async def get_drive_file_permissions(
         return f"Error getting file permissions: {e}"
 
 
+@tool_schema(
+    service="drive",
+    tier="complete",
+    scopes=["drive_read"],
+    read_only=True,
+    tags=["sharing"],
+)
 @server.tool()
 @handle_http_errors(
     "check_drive_file_public_access", is_read_only=True, service_type="drive"
@@ -1536,6 +1590,13 @@ async def check_drive_file_public_access(
     return "\n".join(output_parts)
 
 
+@tool_schema(
+    service="drive",
+    tier="extended",
+    scopes=["drive_file"],
+    read_only=False,
+    tags=["files"],
+)
 @server.tool()
 @handle_http_errors("update_drive_file", is_read_only=False, service_type="drive")
 @require_google_service("drive", "drive_file")
@@ -1713,6 +1774,13 @@ async def update_drive_file(
     return "\n".join(output_parts)
 
 
+@tool_schema(
+    service="drive",
+    tier="core",
+    scopes=["drive_read"],
+    read_only=True,
+    tags=["sharing"],
+)
 @server.tool()
 @handle_http_errors("get_drive_shareable_link", is_read_only=True, service_type="drive")
 @require_google_service("drive", "drive_read")
@@ -1773,6 +1841,13 @@ async def get_drive_shareable_link(
     return "\n".join(output_parts)
 
 
+@tool_schema(
+    service="drive",
+    tier="extended",
+    scopes=["drive_file"],
+    read_only=False,
+    tags=["sharing"],
+)
 @server.tool()
 @handle_http_errors("manage_drive_access", is_read_only=False, service_type="drive")
 @require_google_service("drive", "drive_file")
@@ -2140,6 +2215,13 @@ async def manage_drive_access(
     return "\n".join(output_parts)
 
 
+@tool_schema(
+    service="drive",
+    tier="extended",
+    scopes=["drive_file"],
+    read_only=False,
+    tags=["files"],
+)
 @server.tool()
 @handle_http_errors("copy_drive_file", is_read_only=False, service_type="drive")
 @require_google_service("drive", "drive_file")
@@ -2212,6 +2294,13 @@ async def copy_drive_file(
     return "\n".join(output_parts)
 
 
+@tool_schema(
+    service="drive",
+    tier="extended",
+    scopes=["drive_file"],
+    read_only=False,
+    tags=["sharing"],
+)
 @server.tool()
 @handle_http_errors(
     "set_drive_file_permissions", is_read_only=False, service_type="drive"

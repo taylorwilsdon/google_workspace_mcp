@@ -13,10 +13,18 @@ from auth.service_decorator import require_google_service
 from core.server import server
 from core.utils import handle_http_errors
 from core.comments import create_comment_tools
+from core.tool_schema import tool_schema, register_comment_schemas
 
 logger = logging.getLogger(__name__)
 
 
+@tool_schema(
+    service="slides",
+    tier="core",
+    scopes=["slides"],
+    read_only=False,
+    tags=["presentations"],
+)
 @server.tool()
 @handle_http_errors("create_presentation", service_type="slides")
 @require_google_service("slides", "slides")
@@ -54,6 +62,13 @@ async def create_presentation(
     return confirmation_message
 
 
+@tool_schema(
+    service="slides",
+    tier="core",
+    scopes=["slides_read"],
+    read_only=True,
+    tags=["presentations"],
+)
 @server.tool()
 @handle_http_errors("get_presentation", is_read_only=True, service_type="slides")
 @require_google_service("slides", "slides_read")
@@ -147,6 +162,13 @@ Slides Breakdown:
     return confirmation_message
 
 
+@tool_schema(
+    service="slides",
+    tier="extended",
+    scopes=["slides"],
+    read_only=False,
+    tags=["presentations", "batch"],
+)
 @server.tool()
 @handle_http_errors("batch_update_presentation", service_type="slides")
 @require_google_service("slides", "slides")
@@ -207,6 +229,13 @@ async def batch_update_presentation(
     return confirmation_message
 
 
+@tool_schema(
+    service="slides",
+    tier="extended",
+    scopes=["slides_read"],
+    read_only=True,
+    tags=["pages"],
+)
 @server.tool()
 @handle_http_errors("get_page", is_read_only=True, service_type="slides")
 @require_google_service("slides", "slides_read")
@@ -268,6 +297,13 @@ Page Elements:
     return confirmation_message
 
 
+@tool_schema(
+    service="slides",
+    tier="extended",
+    scopes=["slides_read"],
+    read_only=True,
+    tags=["pages"],
+)
 @server.tool()
 @handle_http_errors("get_page_thumbnail", is_read_only=True, service_type="slides")
 @require_google_service("slides", "slides_read")
@@ -324,6 +360,7 @@ You can view or download the thumbnail using the provided URL."""
 _comment_tools = create_comment_tools("presentation", "presentation_id")
 list_presentation_comments = _comment_tools["list_comments"]
 manage_presentation_comment = _comment_tools["manage_comment"]
+register_comment_schemas("presentation", "slides")
 
 # Aliases for backwards compatibility and intuitive naming
 list_slide_comments = list_presentation_comments

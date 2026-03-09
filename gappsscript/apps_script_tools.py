@@ -10,6 +10,7 @@ from typing import List, Dict, Any, Optional
 
 from auth.service_decorator import require_google_service
 from core.server import server
+from core.tool_schema import tool_schema
 from core.utils import handle_http_errors
 
 logger = logging.getLogger(__name__)
@@ -69,6 +70,15 @@ async def _list_script_projects_impl(
     return "\n".join(output)
 
 
+@tool_schema(
+    service="appscript",
+    tier="core",
+    scopes=["drive_read"],
+    read_only=True,
+    tags=["projects"],
+    paginated=True,
+    service_type="drive",
+)
 @server.tool()
 @handle_http_errors("list_script_projects", is_read_only=True, service_type="drive")
 @require_google_service("drive", "drive_read")
@@ -141,6 +151,14 @@ async def _get_script_project_impl(
     return "\n".join(output)
 
 
+@tool_schema(
+    service="appscript",
+    tier="core",
+    scopes=["script_readonly"],
+    read_only=True,
+    tags=["projects"],
+    service_type="script",
+)
 @server.tool()
 @handle_http_errors("get_script_project", is_read_only=True, service_type="script")
 @require_google_service("script", "script_readonly")
@@ -199,6 +217,14 @@ async def _get_script_content_impl(
     return "\n".join(output)
 
 
+@tool_schema(
+    service="appscript",
+    tier="core",
+    scopes=["script_readonly"],
+    read_only=True,
+    tags=["projects"],
+    service_type="script",
+)
 @server.tool()
 @handle_http_errors("get_script_content", is_read_only=True, service_type="script")
 @require_google_service("script", "script_readonly")
@@ -256,6 +282,14 @@ async def _create_script_project_impl(
     return "\n".join(output)
 
 
+@tool_schema(
+    service="appscript",
+    tier="core",
+    scopes=["script_projects"],
+    read_only=False,
+    tags=["projects"],
+    service_type="script",
+)
 @server.tool()
 @handle_http_errors("create_script_project", service_type="script")
 @require_google_service("script", "script_projects")
@@ -310,6 +344,14 @@ async def _update_script_content_impl(
     return "\n".join(output)
 
 
+@tool_schema(
+    service="appscript",
+    tier="core",
+    scopes=["script_projects"],
+    read_only=False,
+    tags=["projects"],
+    service_type="script",
+)
 @server.tool()
 @handle_http_errors("update_script_content", service_type="script")
 @require_google_service("script", "script_projects")
@@ -381,6 +423,14 @@ async def _run_script_function_impl(
         return f"Execution failed\nFunction: {function_name}\nError: {str(e)}"
 
 
+@tool_schema(
+    service="appscript",
+    tier="core",
+    scopes=["script_projects"],
+    read_only=False,
+    tags=["execution"],
+    service_type="script",
+)
 @server.tool()
 @handle_http_errors("run_script_function", service_type="script")
 @require_google_service("script", "script_projects")
@@ -463,6 +513,14 @@ async def _create_deployment_impl(
     return "\n".join(output)
 
 
+@tool_schema(
+    service="appscript",
+    tier="extended",
+    scopes=["script_deployments"],
+    read_only=False,
+    tags=["deployments"],
+    service_type="script",
+)
 @server.tool()
 @handle_http_errors("manage_deployment", service_type="script")
 @require_google_service("script", "script_deployments")
@@ -549,6 +607,14 @@ async def _list_deployments_impl(
     return "\n".join(output)
 
 
+@tool_schema(
+    service="appscript",
+    tier="extended",
+    scopes=["script_deployments_readonly"],
+    read_only=True,
+    tags=["deployments"],
+    service_type="script",
+)
 @server.tool()
 @handle_http_errors("list_deployments", is_read_only=True, service_type="script")
 @require_google_service("script", "script_deployments_readonly")
@@ -670,6 +736,14 @@ async def _list_script_processes_impl(
     return "\n".join(output)
 
 
+@tool_schema(
+    service="appscript",
+    tier="extended",
+    scopes=["script_readonly"],
+    read_only=True,
+    tags=["processes"],
+    service_type="script",
+)
 @server.tool()
 @handle_http_errors("list_script_processes", is_read_only=True, service_type="script")
 @require_google_service("script", "script_readonly")
@@ -718,6 +792,14 @@ async def _delete_script_project_impl(
     return f"Deleted Apps Script project: {script_id}"
 
 
+@tool_schema(
+    service="appscript",
+    tier="extended",
+    scopes=["drive_full"],
+    read_only=False,
+    tags=["projects"],
+    service_type="drive",
+)
 @server.tool()
 @handle_http_errors("delete_script_project", is_read_only=False, service_type="drive")
 @require_google_service("drive", "drive_full")
@@ -779,6 +861,14 @@ async def _list_versions_impl(
     return "\n".join(output)
 
 
+@tool_schema(
+    service="appscript",
+    tier="extended",
+    scopes=["script_readonly"],
+    read_only=True,
+    tags=["versions"],
+    service_type="script",
+)
 @server.tool()
 @handle_http_errors("list_versions", is_read_only=True, service_type="script")
 @require_google_service("script", "script_readonly")
@@ -837,6 +927,14 @@ async def _create_version_impl(
     return "\n".join(output)
 
 
+@tool_schema(
+    service="appscript",
+    tier="extended",
+    scopes=["script_full"],
+    read_only=False,
+    tags=["versions"],
+    service_type="script",
+)
 @server.tool()
 @handle_http_errors("create_version", is_read_only=False, service_type="script")
 @require_google_service("script", "script_full")
@@ -898,6 +996,14 @@ async def _get_version_impl(
     return "\n".join(output)
 
 
+@tool_schema(
+    service="appscript",
+    tier="extended",
+    scopes=["script_readonly"],
+    read_only=True,
+    tags=["versions"],
+    service_type="script",
+)
 @server.tool()
 @handle_http_errors("get_version", is_read_only=True, service_type="script")
 @require_google_service("script", "script_readonly")
@@ -995,6 +1101,14 @@ async def _get_script_metrics_impl(
     return "\n".join(output)
 
 
+@tool_schema(
+    service="appscript",
+    tier="extended",
+    scopes=["script_readonly"],
+    read_only=True,
+    tags=["metrics"],
+    service_type="script",
+)
 @server.tool()
 @handle_http_errors("get_script_metrics", is_read_only=True, service_type="script")
 @require_google_service("script", "script_readonly")
@@ -1246,6 +1360,14 @@ def _generate_trigger_code_impl(
     return "\n".join(instructions) + "\n\n" + code
 
 
+@tool_schema(
+    service="appscript",
+    tier="core",
+    scopes=[],
+    read_only=True,
+    tags=["triggers"],
+    service_type="",
+)
 @server.tool()
 async def generate_trigger_code(
     trigger_type: str,

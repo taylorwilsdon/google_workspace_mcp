@@ -20,7 +20,9 @@ import sys
 from typing import Any, Dict, List, Optional
 
 from auth.oauth_config import set_transport_mode
+from core.schema_cli import discover_service, list_tools_by_schema
 from core.tool_registry import get_tool_components
+from core.tool_schema import SchemaRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -111,16 +113,22 @@ def list_tools(server, output_format: str = "text") -> str:
             )
         return json.dumps({"tools": tool_list}, indent=2)
 
-    # Text format for human reading
+    # Text format — use SchemaRegistry for proper service grouping
+    registry = SchemaRegistry.instance()
+    if registry.all_schemas():
+        output = list_tools_by_schema(registry)
+        output += "\nUse --cli <tool_name> --help for detailed tool information"
+        output += "\nUse --cli <tool_name> --args '{...}' to run a tool"
+        output += "\nUse --cli discover <service> for service details"
+        return output
+
+    # Fallback: prefix-based grouping when SchemaRegistry is empty
     lines = [
         f"Available tools ({len(tools)}):",
         "",
     ]
-
-    # Group tools by service
     services = {}
     for name, info in tools.items():
-        # Extract service prefix from tool name
         prefix = name.split("_")[0] if "_" in name else "other"
         if prefix not in services:
             services[prefix] = []
@@ -130,7 +138,6 @@ def list_tools(server, output_format: str = "text") -> str:
         lines.append(f"  {service.upper()}:")
         for name, info in sorted(services[service]):
             desc = info["description"] or "(no description)"
-            # Get first line only and truncate
             first_line = desc.split("\n")[0].strip()
             if len(first_line) > 70:
                 first_line = first_line[:67] + "..."
@@ -295,7 +302,18 @@ def parse_cli_args(args: List[str]) -> Dict[str, Any]:
     while i < len(args):
         arg = args[i]
 
-        if arg in ("list", "-l", "--list"):
+        if arg == "discover":
+            result["command"] = "discover"
+            # Next arg is the service name
+            if i + 1 < len(args) and not args[i + 1].startswith("-"):
+                result["discover_service"] = args[i + 1]
+                i += 1
+                # Optional query filter
+                if i + 1 < len(args) and not args[i + 1].startswith("-"):
+                    result["discover_query"] = args[i + 1]
+                    i += 1
+            i += 1
+        elif arg in ("list", "-l", "--list"):
             result["command"] = "list"
             i += 1
         elif arg in ("--json", "-j"):
@@ -377,6 +395,20 @@ async def handle_cli_mode(server, cli_args: List[str]) -> int:
 
     try:
         parsed = parse_cli_args(cli_args)
+
+        if parsed["command"] == "discover":
+            registry = SchemaRegistry.instance()
+            service = parsed.get("discover_service")
+            if not service:
+                print("Usage: workspace-mcp --cli discover <service> [query]")
+                services = sorted(registry.all_services())
+                if services:
+                    print(f"Available services: {', '.join(services)}")
+                return 0
+            query = parsed.get("discover_query")
+            output = discover_service(registry, service, query)
+            print(output)
+            return 0
 
         if parsed["command"] == "list":
             output = list_tools(server, parsed["output_format"])

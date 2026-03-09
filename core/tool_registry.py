@@ -11,6 +11,7 @@ from typing import Set, Optional, Callable
 from auth.oauth_config import is_oauth21_enabled
 from auth.permissions import is_permissions_mode, get_allowed_scopes_set
 from auth.scopes import is_read_only_mode, get_all_read_only_scopes
+from auth.service_decorator import SCOPE_GROUPS
 
 logger = logging.getLogger(__name__)
 
@@ -101,85 +102,94 @@ def get_tool_components(server) -> dict:
     return tools
 
 
+def _resolve_scope_urls(scope_groups: tuple) -> list:
+    """Convert scope group names to full OAuth URLs."""
+    urls = []
+    for group in scope_groups:
+        if group in SCOPE_GROUPS:
+            scopes = SCOPE_GROUPS[group]
+            if isinstance(scopes, list):
+                urls.extend(scopes)
+            else:
+                urls.append(scopes)
+    return urls
+
+
+def _get_required_scopes_from_obj(tool_obj) -> list:
+    """Fallback: introspect _required_google_scopes from wrapper chain."""
+    func_to_check = tool_obj
+    if hasattr(tool_obj, "fn"):
+        func_to_check = tool_obj.fn
+    return getattr(func_to_check, "_required_google_scopes", [])
+
+
 def filter_server_tools(server):
     """Remove disabled tools from the server after registration."""
+    from core.tool_schema import SchemaRegistry
+
+    registry = SchemaRegistry.instance()
     enabled_tools = get_enabled_tools()
     oauth21_enabled = is_oauth21_enabled()
     permissions_mode = is_permissions_mode()
+    read_only_mode = is_read_only_mode()
+
     if (
         enabled_tools is None
         and not oauth21_enabled
-        and not is_read_only_mode()
+        and not read_only_mode
         and not permissions_mode
     ):
         return
 
-    tools_removed = 0
+    allowed_ro_scopes = set(get_all_read_only_scopes()) if read_only_mode else None
+    perm_allowed = get_allowed_scopes_set() if permissions_mode else None
     tool_components = get_tool_components(server)
-
-    read_only_mode = is_read_only_mode()
-    allowed_scopes = set(get_all_read_only_scopes()) if read_only_mode else None
-
     tools_to_remove = set()
 
-    # 1. Tier filtering
-    if enabled_tools is not None:
-        for tool_name in tool_components:
-            if not is_tool_enabled(tool_name):
+    for tool_name, tool_obj in tool_components.items():
+        # 1. Tier filtering
+        if enabled_tools is not None and tool_name not in enabled_tools:
+            tools_to_remove.add(tool_name)
+            continue
+
+        # 2. OAuth 2.1 filtering
+        if oauth21_enabled and tool_name == "start_google_auth":
+            tools_to_remove.add(tool_name)
+            logger.info("OAuth 2.1 enabled: disabling start_google_auth tool")
+            continue
+
+        # Resolve required scopes — prefer SchemaRegistry, fall back to introspection
+        schema = registry.get(tool_name)
+        if schema is not None:
+            required_scopes = _resolve_scope_urls(schema.scopes)
+        else:
+            required_scopes = _get_required_scopes_from_obj(tool_obj)
+
+        # 3. Read-only mode filtering (skipped when granular permissions active)
+        if read_only_mode and not permissions_mode:
+            if required_scopes and not all(
+                s in allowed_ro_scopes for s in required_scopes
+            ):
+                logger.info(
+                    "Read-only mode: Disabling tool '%s' (requires write scopes: %s)",
+                    tool_name,
+                    required_scopes,
+                )
                 tools_to_remove.add(tool_name)
-
-    # 2. OAuth 2.1 filtering
-    if oauth21_enabled and "start_google_auth" in tool_components:
-        tools_to_remove.add("start_google_auth")
-        logger.info("OAuth 2.1 enabled: disabling start_google_auth tool")
-
-    # 3. Read-only mode filtering (skipped when granular permissions are active)
-    if read_only_mode and not permissions_mode:
-        for tool_name, tool_obj in tool_components.items():
-            if tool_name in tools_to_remove:
                 continue
 
-            # Check if tool has required scopes attached (from @require_google_service)
-            func_to_check = tool_obj
-            if hasattr(tool_obj, "fn"):
-                func_to_check = tool_obj.fn
-
-            required_scopes = getattr(func_to_check, "_required_google_scopes", [])
-
-            if required_scopes:
-                # If ANY required scope is not in the allowed read-only scopes, disable the tool
-                if not all(scope in allowed_scopes for scope in required_scopes):
-                    logger.info(
-                        f"Read-only mode: Disabling tool '{tool_name}' (requires write scopes: {required_scopes})"
-                    )
-                    tools_to_remove.add(tool_name)
-
-    # 4. Granular permissions filtering
-    # No scope hierarchy expansion here — permission levels are already cumulative
-    # and explicitly define allowed scopes. Hierarchy expansion would defeat the
-    # purpose (e.g. gmail.modify in the hierarchy covers gmail.send, but the
-    # "organize" permission level intentionally excludes gmail.send).
-    if permissions_mode:
-        perm_allowed = get_allowed_scopes_set() or set()
-
-        for tool_name, tool_obj in tool_components.items():
-            if tool_name in tools_to_remove:
+        # 4. Granular permissions filtering
+        if permissions_mode and perm_allowed is not None:
+            if required_scopes and not all(s in perm_allowed for s in required_scopes):
+                logger.info(
+                    "Permissions mode: Disabling tool '%s' (requires: %s)",
+                    tool_name,
+                    required_scopes,
+                )
+                tools_to_remove.add(tool_name)
                 continue
 
-            func_to_check = tool_obj
-            if hasattr(tool_obj, "fn"):
-                func_to_check = tool_obj.fn
-
-            required_scopes = getattr(func_to_check, "_required_google_scopes", [])
-            if required_scopes:
-                if not all(scope in perm_allowed for scope in required_scopes):
-                    logger.info(
-                        "Permissions mode: Disabling tool '%s' (requires: %s)",
-                        tool_name,
-                        required_scopes,
-                    )
-                    tools_to_remove.add(tool_name)
-
+    tools_removed = 0
     for tool_name in tools_to_remove:
         try:
             server.local_provider.remove_tool(tool_name)
@@ -202,10 +212,13 @@ def filter_server_tools(server):
         enabled_count = len(enabled_tools) if enabled_tools is not None else "all"
         if permissions_mode:
             mode = "Permissions"
-        elif is_read_only_mode():
+        elif read_only_mode:
             mode = "Read-Only"
         else:
             mode = "Full"
         logger.info(
-            f"Tool filtering: removed {tools_removed} tools, {enabled_count} enabled. Mode: {mode}"
+            "Tool filtering: removed %d tools, %s enabled. Mode: %s",
+            tools_removed,
+            enabled_count,
+            mode,
         )

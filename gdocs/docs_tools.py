@@ -17,6 +17,7 @@ from auth.service_decorator import require_google_service, require_multiple_serv
 from core.utils import extract_office_xml_text, handle_http_errors
 from core.server import server
 from core.comments import create_comment_tools
+from core.tool_schema import tool_schema, register_comment_schemas
 
 # Import helper functions for document operations
 from gdocs.docs_helpers import (
@@ -59,6 +60,13 @@ import json
 logger = logging.getLogger(__name__)
 
 
+@tool_schema(
+    service="docs",
+    tier="extended",
+    scopes=["drive_read"],
+    read_only=True,
+    tags=["search"],
+)
 @server.tool()
 @handle_http_errors("search_docs", is_read_only=True, service_type="docs")
 @require_google_service("drive", "drive_read")
@@ -101,6 +109,14 @@ async def search_docs(
     return "\n".join(output)
 
 
+@tool_schema(
+    service="docs",
+    tier="core",
+    scopes=["drive_read", "docs_read"],
+    read_only=True,
+    tags=["documents"],
+    multi_service=True,
+)
 @server.tool()
 @handle_http_errors("get_doc_content", is_read_only=True, service_type="docs")
 @require_multiple_services(
@@ -288,6 +304,13 @@ async def get_doc_content(
     return header + body_text
 
 
+@tool_schema(
+    service="docs",
+    tier="extended",
+    scopes=["drive_read"],
+    read_only=True,
+    tags=["documents"],
+)
 @server.tool()
 @handle_http_errors("list_docs_in_folder", is_read_only=True, service_type="docs")
 @require_google_service("drive", "drive_read")
@@ -326,6 +349,13 @@ async def list_docs_in_folder(
     return "\n".join(out)
 
 
+@tool_schema(
+    service="docs",
+    tier="core",
+    scopes=["docs_write"],
+    read_only=False,
+    tags=["documents"],
+)
 @server.tool()
 @handle_http_errors("create_doc", service_type="docs")
 @require_google_service("docs", "docs_write")
@@ -362,6 +392,13 @@ async def create_doc(
     return msg
 
 
+@tool_schema(
+    service="docs",
+    tier="core",
+    scopes=["docs_write"],
+    read_only=False,
+    tags=["documents"],
+)
 @server.tool()
 @handle_http_errors("modify_doc_text", service_type="docs")
 @require_google_service("docs", "docs_write")
@@ -554,6 +591,13 @@ async def modify_doc_text(
     return f"{operation_summary} in document {document_id}.{text_info} Link: {link}"
 
 
+@tool_schema(
+    service="docs",
+    tier="extended",
+    scopes=["docs_write"],
+    read_only=False,
+    tags=["documents"],
+)
 @server.tool()
 @handle_http_errors("find_and_replace_doc", service_type="docs")
 @require_google_service("docs", "docs_write")
@@ -605,6 +649,13 @@ async def find_and_replace_doc(
     return f"Replaced {replacements} occurrence(s) of '{find_text}' with '{replace_text}' in document {document_id}. Link: {link}"
 
 
+@tool_schema(
+    service="docs",
+    tier="extended",
+    scopes=["docs_write"],
+    read_only=False,
+    tags=["documents"],
+)
 @server.tool()
 @handle_http_errors("insert_doc_elements", service_type="docs")
 @require_google_service("docs", "docs_write")
@@ -687,6 +738,14 @@ async def insert_doc_elements(
     return f"Inserted {description} at index {index} in document {document_id}. Link: {link}"
 
 
+@tool_schema(
+    service="docs",
+    tier="complete",
+    scopes=["docs_write", "drive_read"],
+    read_only=False,
+    tags=["documents", "images"],
+    multi_service=True,
+)
 @server.tool()
 @handle_http_errors("insert_doc_image", service_type="docs")
 @require_multiple_services(
@@ -779,6 +838,13 @@ async def insert_doc_image(
     return f"Inserted {source_description}{size_info} at index {index} in document {document_id}. Link: {link}"
 
 
+@tool_schema(
+    service="docs",
+    tier="complete",
+    scopes=["docs_write"],
+    read_only=False,
+    tags=["documents"],
+)
 @server.tool()
 @handle_http_errors("update_doc_headers_footers", service_type="docs")
 @require_google_service("docs", "docs_write")
@@ -836,6 +902,13 @@ async def update_doc_headers_footers(
         return f"Error: {message}"
 
 
+@tool_schema(
+    service="docs",
+    tier="complete",
+    scopes=["docs_write"],
+    read_only=False,
+    tags=["documents", "batch"],
+)
 @server.tool()
 @handle_http_errors("batch_update_doc", service_type="docs")
 @require_google_service("docs", "docs_write")
@@ -919,6 +992,13 @@ async def batch_update_doc(
         return f"Error: {message}"
 
 
+@tool_schema(
+    service="docs",
+    tier="complete",
+    scopes=["docs_read"],
+    read_only=True,
+    tags=["documents"],
+)
 @server.tool()
 @handle_http_errors("inspect_doc_structure", is_read_only=True, service_type="docs")
 @require_google_service("docs", "docs_read")
@@ -1100,6 +1180,13 @@ async def inspect_doc_structure(
     return f"Document structure analysis for {document_id}:\n\n{json.dumps(result, indent=2)}\n\nLink: {link}"
 
 
+@tool_schema(
+    service="docs",
+    tier="complete",
+    scopes=["docs_write"],
+    read_only=False,
+    tags=["documents", "tables"],
+)
 @server.tool()
 @handle_http_errors("create_table_with_data", service_type="docs")
 @require_google_service("docs", "docs_write")
@@ -1200,6 +1287,13 @@ async def create_table_with_data(
         return f"ERROR: {message}"
 
 
+@tool_schema(
+    service="docs",
+    tier="complete",
+    scopes=["docs_read"],
+    read_only=True,
+    tags=["documents", "tables"],
+)
 @server.tool()
 @handle_http_errors("debug_table_structure", is_read_only=True, service_type="docs")
 @require_google_service("docs", "docs_read")
@@ -1287,6 +1381,13 @@ async def debug_table_structure(
     return f"Table structure debug for table {table_index}:\n\n{json.dumps(debug_info, indent=2)}\n\nLink: {link}"
 
 
+@tool_schema(
+    service="docs",
+    tier="extended",
+    scopes=["drive_file"],
+    read_only=False,
+    tags=["documents", "export"],
+)
 @server.tool()
 @handle_http_errors("export_doc_to_pdf", service_type="drive")
 @require_google_service("drive", "drive_file")
@@ -1442,6 +1543,13 @@ async def _get_paragraph_start_indices_in_range(
     return paragraph_starts or [start_index]
 
 
+@tool_schema(
+    service="docs",
+    tier="extended",
+    scopes=["docs_write"],
+    read_only=False,
+    tags=["documents", "formatting"],
+)
 @server.tool()
 @handle_http_errors("update_paragraph_style", service_type="docs")
 @require_google_service("docs", "docs_write")
@@ -1660,6 +1768,14 @@ async def update_paragraph_style(
     return f"Applied paragraph formatting ({', '.join(summary_parts)}) to range {start_index}-{end_index} in document {document_id}. Link: {link}"
 
 
+@tool_schema(
+    service="docs",
+    tier="extended",
+    scopes=["drive_read", "docs_read"],
+    read_only=True,
+    tags=["documents", "export"],
+    multi_service=True,
+)
 @server.tool()
 @handle_http_errors("get_doc_as_markdown", is_read_only=True, service_type="docs")
 @require_multiple_services(
@@ -1764,6 +1880,13 @@ async def get_doc_as_markdown(
         return markdown.rstrip("\n") + "\n\n" + appendix
 
 
+@tool_schema(
+    service="docs",
+    tier="extended",
+    scopes=["docs_write"],
+    read_only=False,
+    tags=["documents", "tabs"],
+)
 @server.tool()
 @handle_http_errors("insert_doc_tab", service_type="docs")
 @require_google_service("docs", "docs_write")
@@ -1813,6 +1936,13 @@ async def insert_doc_tab(
     return f"{msg} Link: {link}"
 
 
+@tool_schema(
+    service="docs",
+    tier="extended",
+    scopes=["docs_write"],
+    read_only=False,
+    tags=["documents", "tabs"],
+)
 @server.tool()
 @handle_http_errors("delete_doc_tab", service_type="docs")
 @require_google_service("docs", "docs_write")
@@ -1846,6 +1976,13 @@ async def delete_doc_tab(
     return f"Deleted tab '{tab_id}' from document {document_id}. Link: {link}"
 
 
+@tool_schema(
+    service="docs",
+    tier="extended",
+    scopes=["docs_write"],
+    read_only=False,
+    tags=["documents", "tabs"],
+)
 @server.tool()
 @handle_http_errors("update_doc_tab", service_type="docs")
 @require_google_service("docs", "docs_write")
@@ -1891,3 +2028,4 @@ _comment_tools = create_comment_tools("document", "document_id")
 # Extract and register the functions
 list_document_comments = _comment_tools["list_comments"]
 manage_document_comment = _comment_tools["manage_comment"]
+register_comment_schemas("document", "docs")

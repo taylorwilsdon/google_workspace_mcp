@@ -12,10 +12,18 @@ from typing import Optional, List, Literal
 from auth.service_decorator import require_google_service
 from core.server import server
 from core.utils import handle_http_errors
+from core.tool_schema import tool_schema
 
 logger = logging.getLogger(__name__)
 
 
+@tool_schema(
+    service="search",
+    tier="core",
+    scopes=["customsearch"],
+    read_only=True,
+    tags=["search"],
+)
 @server.tool()
 @handle_http_errors("search_custom", is_read_only=True, service_type="customsearch")
 @require_google_service("customsearch", "customsearch")
@@ -163,6 +171,13 @@ async def search_custom(
     return confirmation_message
 
 
+@tool_schema(
+    service="search",
+    tier="complete",
+    scopes=["customsearch"],
+    read_only=True,
+    tags=["search"],
+)
 @server.tool()
 @handle_http_errors(
     "get_search_engine_info", is_read_only=True, service_type="customsearch"

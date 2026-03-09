@@ -30,6 +30,7 @@ from auth.scopes import (
     GMAIL_MODIFY_SCOPE,
     GMAIL_LABELS_SCOPE,
 )
+from core.tool_schema import tool_schema
 
 logger = logging.getLogger(__name__)
 
@@ -571,6 +572,14 @@ def _format_gmail_results_plain(
     return "\n".join(lines)
 
 
+@tool_schema(
+    service="gmail",
+    tier="core",
+    scopes=["gmail_read"],
+    read_only=True,
+    tags=["search", "messages"],
+    paginated=True,
+)
 @server.tool()
 @handle_http_errors("search_gmail_messages", is_read_only=True, service_type="gmail")
 @require_google_service("gmail", "gmail_read")
@@ -635,6 +644,13 @@ async def search_gmail_messages(
     return formatted_output
 
 
+@tool_schema(
+    service="gmail",
+    tier="core",
+    scopes=["gmail_read"],
+    read_only=True,
+    tags=["messages"],
+)
 @server.tool()
 @handle_http_errors(
     "get_gmail_message_content", is_read_only=True, service_type="gmail"
@@ -735,6 +751,13 @@ async def get_gmail_message_content(
     return "\n".join(content_lines)
 
 
+@tool_schema(
+    service="gmail",
+    tier="core",
+    scopes=["gmail_read"],
+    read_only=True,
+    tags=["messages", "batch"],
+)
 @server.tool()
 @handle_http_errors(
     "get_gmail_messages_content_batch", is_read_only=True, service_type="gmail"
@@ -934,6 +957,14 @@ async def get_gmail_messages_content_batch(
     return final_output
 
 
+@tool_schema(
+    service="gmail",
+    tier="extended",
+    scopes=["gmail_read"],
+    read_only=True,
+    tags=["attachments"],
+    supports_download=True,
+)
 @server.tool()
 @handle_http_errors(
     "get_gmail_attachment_content", is_read_only=True, service_type="gmail"
@@ -1113,6 +1144,13 @@ async def get_gmail_attachment_content(
         return "\n".join(result_lines)
 
 
+@tool_schema(
+    service="gmail",
+    tier="core",
+    scopes=["gmail_send"],
+    read_only=False,
+    tags=["messages", "send"],
+)
 @server.tool()
 @handle_http_errors("send_gmail_message", service_type="gmail")
 @require_google_service("gmail", GMAIL_SEND_SCOPE)
@@ -1315,6 +1353,13 @@ async def send_gmail_message(
     return f"Email sent! Message ID: {message_id}"
 
 
+@tool_schema(
+    service="gmail",
+    tier="extended",
+    scopes=["gmail_compose"],
+    read_only=False,
+    tags=["drafts"],
+)
 @server.tool()
 @handle_http_errors("draft_gmail_message", service_type="gmail")
 @require_google_service("gmail", GMAIL_COMPOSE_SCOPE)
@@ -1608,6 +1653,13 @@ def _format_thread_content(thread_data: dict, thread_id: str) -> str:
     return "\n".join(content_lines)
 
 
+@tool_schema(
+    service="gmail",
+    tier="extended",
+    scopes=["gmail_read"],
+    read_only=True,
+    tags=["threads"],
+)
 @server.tool()
 @require_google_service("gmail", "gmail_read")
 @handle_http_errors("get_gmail_thread_content", is_read_only=True, service_type="gmail")
@@ -1636,6 +1688,13 @@ async def get_gmail_thread_content(
     return _format_thread_content(thread_response, thread_id)
 
 
+@tool_schema(
+    service="gmail",
+    tier="complete",
+    scopes=["gmail_read"],
+    read_only=True,
+    tags=["threads", "batch"],
+)
 @server.tool()
 @require_google_service("gmail", "gmail_read")
 @handle_http_errors(
@@ -1745,6 +1804,13 @@ async def get_gmail_threads_content_batch(
     return header + "\n\n" + "\n---\n\n".join(output_threads)
 
 
+@tool_schema(
+    service="gmail",
+    tier="extended",
+    scopes=["gmail_read"],
+    read_only=True,
+    tags=["labels"],
+)
 @server.tool()
 @handle_http_errors("list_gmail_labels", is_read_only=True, service_type="gmail")
 @require_google_service("gmail", "gmail_read")
@@ -1793,6 +1859,13 @@ async def list_gmail_labels(service, user_google_email: str) -> str:
     return "\n".join(lines)
 
 
+@tool_schema(
+    service="gmail",
+    tier="extended",
+    scopes=["gmail_labels"],
+    read_only=False,
+    tags=["labels"],
+)
 @server.tool()
 @handle_http_errors("manage_gmail_label", service_type="gmail")
 @require_google_service("gmail", GMAIL_LABELS_SCOPE)
@@ -1872,6 +1945,13 @@ async def manage_gmail_label(
         return f"Label '{label_name}' (ID: {label_id}) deleted successfully!"
 
 
+@tool_schema(
+    service="gmail",
+    tier="extended",
+    scopes=["gmail_settings_basic"],
+    read_only=True,
+    tags=["filters"],
+)
 @server.tool()
 @handle_http_errors("list_gmail_filters", is_read_only=True, service_type="gmail")
 @require_google_service("gmail", "gmail_settings_basic")
@@ -1950,6 +2030,13 @@ async def list_gmail_filters(service, user_google_email: str) -> str:
     return "\n".join(lines).rstrip()
 
 
+@tool_schema(
+    service="gmail",
+    tier="extended",
+    scopes=["gmail_settings_basic"],
+    read_only=False,
+    tags=["filters"],
+)
 @server.tool()
 @handle_http_errors("manage_gmail_filter", service_type="gmail")
 @require_google_service("gmail", "gmail_settings_basic")
@@ -2019,6 +2106,13 @@ async def manage_gmail_filter(
         )
 
 
+@tool_schema(
+    service="gmail",
+    tier="extended",
+    scopes=["gmail_modify"],
+    read_only=False,
+    tags=["labels"],
+)
 @server.tool()
 @handle_http_errors("modify_gmail_message_labels", service_type="gmail")
 @require_google_service("gmail", GMAIL_MODIFY_SCOPE)
@@ -2071,6 +2165,13 @@ async def modify_gmail_message_labels(
     return f"Message labels updated successfully!\nMessage ID: {message_id}\n{'; '.join(actions)}"
 
 
+@tool_schema(
+    service="gmail",
+    tier="complete",
+    scopes=["gmail_modify"],
+    read_only=False,
+    tags=["labels", "batch"],
+)
 @server.tool()
 @handle_http_errors("batch_modify_gmail_message_labels", service_type="gmail")
 @require_google_service("gmail", GMAIL_MODIFY_SCOPE)

@@ -12,10 +12,14 @@ from typing import List, Optional, Dict, Any
 from auth.service_decorator import require_google_service
 from core.server import server
 from core.utils import handle_http_errors
+from core.tool_schema import tool_schema
 
 logger = logging.getLogger(__name__)
 
 
+@tool_schema(
+    service="forms", tier="core", scopes=["forms"], read_only=False, tags=["forms"]
+)
 @server.tool()
 @handle_http_errors("create_form", service_type="forms")
 @require_google_service("forms", "forms")
@@ -63,6 +67,9 @@ async def create_form(
     return confirmation_message
 
 
+@tool_schema(
+    service="forms", tier="core", scopes=["forms"], read_only=True, tags=["forms"]
+)
 @server.tool()
 @handle_http_errors("get_form", is_read_only=True, service_type="forms")
 @require_google_service("forms", "forms")
@@ -119,6 +126,9 @@ async def get_form(service, user_google_email: str, form_id: str) -> str:
     return result
 
 
+@tool_schema(
+    service="forms", tier="complete", scopes=["forms"], read_only=False, tags=["forms"]
+)
 @server.tool()
 @handle_http_errors("set_publish_settings", service_type="forms")
 @require_google_service("forms", "forms")
@@ -161,6 +171,13 @@ async def set_publish_settings(
     return confirmation_message
 
 
+@tool_schema(
+    service="forms",
+    tier="complete",
+    scopes=["forms"],
+    read_only=True,
+    tags=["responses"],
+)
 @server.tool()
 @handle_http_errors("get_form_response", is_read_only=True, service_type="forms")
 @require_google_service("forms", "forms")
@@ -216,6 +233,14 @@ async def get_form_response(
     return result
 
 
+@tool_schema(
+    service="forms",
+    tier="extended",
+    scopes=["forms"],
+    read_only=True,
+    tags=["responses"],
+    paginated=True,
+)
 @server.tool()
 @handle_http_errors("list_form_responses", is_read_only=True, service_type="forms")
 @require_google_service("forms", "forms")
@@ -337,6 +362,13 @@ async def _batch_update_form_impl(
     return confirmation_message
 
 
+@tool_schema(
+    service="forms",
+    tier="complete",
+    scopes=["forms"],
+    read_only=False,
+    tags=["forms", "batch"],
+)
 @server.tool()
 @handle_http_errors("batch_update_form", service_type="forms")
 @require_google_service("forms", "forms")

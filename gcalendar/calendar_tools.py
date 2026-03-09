@@ -19,6 +19,7 @@ from auth.service_decorator import require_google_service
 from core.utils import handle_http_errors
 
 from core.server import server
+from core.tool_schema import tool_schema
 
 
 # Configure module logger
@@ -301,6 +302,13 @@ def _correct_time_format_for_api(
     return time_str
 
 
+@tool_schema(
+    service="calendar",
+    tier="core",
+    scopes=["calendar_read"],
+    read_only=True,
+    tags=["calendars"],
+)
 @server.tool()
 @handle_http_errors("list_calendars", is_read_only=True, service_type="calendar")
 @require_google_service("calendar", "calendar_read")
@@ -335,6 +343,13 @@ async def list_calendars(service, user_google_email: str) -> str:
     return text_output
 
 
+@tool_schema(
+    service="calendar",
+    tier="core",
+    scopes=["calendar_read"],
+    read_only=True,
+    tags=["events"],
+)
 @server.tool()
 @handle_http_errors("get_events", is_read_only=True, service_type="calendar")
 @require_google_service("calendar", "calendar_read")
@@ -1078,6 +1093,13 @@ async def _delete_event_impl(
 # ---------------------------------------------------------------------------
 
 
+@tool_schema(
+    service="calendar",
+    tier="core",
+    scopes=["calendar_events"],
+    read_only=False,
+    tags=["events"],
+)
 @server.tool()
 @handle_http_errors("manage_event", service_type="calendar")
 @require_google_service("calendar", "calendar_events")
@@ -1208,6 +1230,13 @@ async def manage_event(
 # ---------------------------------------------------------------------------
 
 
+@tool_schema(
+    service="calendar",
+    tier="extended",
+    scopes=["calendar_read"],
+    read_only=True,
+    tags=["freebusy"],
+)
 @server.tool()
 @handle_http_errors("query_freebusy", is_read_only=True, service_type="calendar")
 @require_google_service("calendar", "calendar_read")

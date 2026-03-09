@@ -16,6 +16,7 @@ from googleapiclient.errors import HttpError
 from auth.service_decorator import require_google_service, require_multiple_services
 from core.server import server
 from core.utils import handle_http_errors
+from core.tool_schema import tool_schema
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +101,13 @@ def _extract_rich_links(msg: dict) -> List[str]:
     return urls
 
 
+@tool_schema(
+    service="chat",
+    tier="extended",
+    scopes=["chat_spaces_readonly"],
+    read_only=True,
+    tags=["spaces"],
+)
 @server.tool()
 @require_google_service("chat", "chat_spaces_readonly")
 @handle_http_errors("list_spaces", service_type="chat")
@@ -144,6 +152,14 @@ async def list_spaces(
     return "\n".join(output)
 
 
+@tool_schema(
+    service="chat",
+    tier="core",
+    scopes=["chat_read", "contacts_read"],
+    read_only=True,
+    tags=["messages"],
+    multi_service=True,
+)
 @server.tool()
 @require_multiple_services(
     [
@@ -251,6 +267,13 @@ async def get_messages(
     return "\n".join(output)
 
 
+@tool_schema(
+    service="chat",
+    tier="core",
+    scopes=["chat_write"],
+    read_only=False,
+    tags=["messages", "send"],
+)
 @server.tool()
 @require_google_service("chat", "chat_write")
 @handle_http_errors("send_message", service_type="chat")
@@ -300,6 +323,14 @@ async def send_message(
     return msg
 
 
+@tool_schema(
+    service="chat",
+    tier="core",
+    scopes=["chat_read", "contacts_read"],
+    read_only=True,
+    tags=["search", "messages"],
+    multi_service=True,
+)
 @server.tool()
 @require_multiple_services(
     [
@@ -412,6 +443,13 @@ async def search_messages(
     return "\n".join(output)
 
 
+@tool_schema(
+    service="chat",
+    tier="core",
+    scopes=["chat_write"],
+    read_only=False,
+    tags=["reactions"],
+)
 @server.tool()
 @require_google_service("chat", "chat_write")
 @handle_http_errors("create_reaction", service_type="chat")
@@ -448,6 +486,14 @@ async def create_reaction(
     return f"Reacted with {emoji_unicode} on message {message_id}. Reaction ID: {reaction_name}"
 
 
+@tool_schema(
+    service="chat",
+    tier="extended",
+    scopes=["chat_read"],
+    read_only=True,
+    tags=["attachments"],
+    supports_download=True,
+)
 @server.tool()
 @handle_http_errors("download_chat_attachment", is_read_only=True, service_type="chat")
 @require_google_service("chat", "chat_read")

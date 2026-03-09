@@ -13,6 +13,7 @@ from mcp import Resource
 
 from auth.service_decorator import require_google_service
 from core.server import server
+from core.tool_schema import tool_schema
 from core.utils import UserInputError, handle_http_errors
 
 logger = logging.getLogger(__name__)
@@ -225,6 +226,14 @@ async def _warmup_search_cache(service: Resource, user_google_email: str) -> Non
 # =============================================================================
 
 
+@tool_schema(
+    service="contacts",
+    tier="core",
+    scopes=["contacts_read"],
+    read_only=True,
+    tags=["contacts"],
+    paginated=True,
+)
 @server.tool()
 @require_google_service("people", "contacts_read")
 @handle_http_errors("list_contacts", service_type="people")
@@ -289,6 +298,13 @@ async def list_contacts(
     return response
 
 
+@tool_schema(
+    service="contacts",
+    tier="core",
+    scopes=["contacts_read"],
+    read_only=True,
+    tags=["contacts"],
+)
 @server.tool()
 @require_google_service("people", "contacts_read")
 @handle_http_errors("get_contact", service_type="people")
@@ -330,6 +346,13 @@ async def get_contact(
     return response
 
 
+@tool_schema(
+    service="contacts",
+    tier="core",
+    scopes=["contacts_read"],
+    read_only=True,
+    tags=["search"],
+)
 @server.tool()
 @require_google_service("people", "contacts_read")
 @handle_http_errors("search_contacts", service_type="people")
@@ -388,6 +411,13 @@ async def search_contacts(
     return response
 
 
+@tool_schema(
+    service="contacts",
+    tier="core",
+    scopes=["contacts"],
+    read_only=False,
+    tags=["contacts"],
+)
 @server.tool()
 @require_google_service("people", "contacts")
 @handle_http_errors("manage_contact", service_type="people")
@@ -547,6 +577,14 @@ async def manage_contact(
 # =============================================================================
 
 
+@tool_schema(
+    service="contacts",
+    tier="extended",
+    scopes=["contacts_read"],
+    read_only=True,
+    tags=["groups"],
+    paginated=True,
+)
 @server.tool()
 @require_google_service("people", "contacts_read")
 @handle_http_errors("list_contact_groups", service_type="people")
@@ -610,6 +648,13 @@ async def list_contact_groups(
     return response
 
 
+@tool_schema(
+    service="contacts",
+    tier="extended",
+    scopes=["contacts_read"],
+    read_only=True,
+    tags=["groups"],
+)
 @server.tool()
 @require_google_service("people", "contacts_read")
 @handle_http_errors("get_contact_group", service_type="people")
@@ -680,6 +725,13 @@ async def get_contact_group(
 # =============================================================================
 
 
+@tool_schema(
+    service="contacts",
+    tier="complete",
+    scopes=["contacts"],
+    read_only=False,
+    tags=["contacts", "batch"],
+)
 @server.tool()
 @require_google_service("people", "contacts")
 @handle_http_errors("manage_contacts_batch", service_type="people")
@@ -886,6 +938,13 @@ async def manage_contacts_batch(
     return response
 
 
+@tool_schema(
+    service="contacts",
+    tier="complete",
+    scopes=["contacts"],
+    read_only=False,
+    tags=["groups"],
+)
 @server.tool()
 @require_google_service("people", "contacts")
 @handle_http_errors("manage_contact_group", service_type="people")

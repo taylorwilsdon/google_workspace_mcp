@@ -13,6 +13,7 @@ from typing import List, Optional, Union
 from auth.service_decorator import require_google_service
 from core.server import server
 from core.utils import handle_http_errors, UserInputError
+from core.tool_schema import tool_schema, register_comment_schemas
 from core.comments import create_comment_tools
 from gsheets.sheets_helpers import (
     _a1_range_cell_count,
@@ -39,6 +40,13 @@ logger = logging.getLogger(__name__)
 MAX_HYPERLINK_FETCH_CELLS = 5000
 
 
+@tool_schema(
+    service="sheets",
+    tier="extended",
+    scopes=["drive_read"],
+    read_only=True,
+    tags=["search"],
+)
 @server.tool()
 @handle_http_errors("list_spreadsheets", is_read_only=True, service_type="sheets")
 @require_google_service("drive", "drive_read")
@@ -92,6 +100,13 @@ async def list_spreadsheets(
     return text_output
 
 
+@tool_schema(
+    service="sheets",
+    tier="extended",
+    scopes=["sheets_read"],
+    read_only=True,
+    tags=["spreadsheets"],
+)
 @server.tool()
 @handle_http_errors("get_spreadsheet_info", is_read_only=True, service_type="sheets")
 @require_google_service("sheets", "sheets_read")
@@ -170,6 +185,13 @@ async def get_spreadsheet_info(
     return text_output
 
 
+@tool_schema(
+    service="sheets",
+    tier="core",
+    scopes=["sheets_read"],
+    read_only=True,
+    tags=["spreadsheets"],
+)
 @server.tool()
 @handle_http_errors("read_sheet_values", is_read_only=True, service_type="sheets")
 @require_google_service("sheets", "sheets_read")
@@ -280,6 +302,13 @@ async def read_sheet_values(
     return text_output + hyperlink_section + detailed_errors_section
 
 
+@tool_schema(
+    service="sheets",
+    tier="core",
+    scopes=["sheets_write"],
+    read_only=False,
+    tags=["spreadsheets"],
+)
 @server.tool()
 @handle_http_errors("modify_sheet_values", service_type="sheets")
 @require_google_service("sheets", "sheets_write")
@@ -649,6 +678,13 @@ async def _format_sheet_range_impl(
     }
 
 
+@tool_schema(
+    service="sheets",
+    tier="extended",
+    scopes=["sheets_write"],
+    read_only=False,
+    tags=["spreadsheets", "formatting"],
+)
 @server.tool()
 @handle_http_errors("format_sheet_range", service_type="sheets")
 @require_google_service("sheets", "sheets_write")
@@ -728,6 +764,13 @@ async def format_sheet_range(
     )
 
 
+@tool_schema(
+    service="sheets",
+    tier="complete",
+    scopes=["sheets_write"],
+    read_only=False,
+    tags=["spreadsheets", "formatting"],
+)
 @server.tool()
 @handle_http_errors("manage_conditional_formatting", service_type="sheets")
 @require_google_service("sheets", "sheets_write")
@@ -1126,6 +1169,13 @@ async def manage_conditional_formatting(
         )
 
 
+@tool_schema(
+    service="sheets",
+    tier="core",
+    scopes=["sheets_write"],
+    read_only=False,
+    tags=["spreadsheets"],
+)
 @server.tool()
 @handle_http_errors("create_spreadsheet", service_type="sheets")
 @require_google_service("sheets", "sheets_write")
@@ -1182,6 +1232,13 @@ async def create_spreadsheet(
     return text_output
 
 
+@tool_schema(
+    service="sheets",
+    tier="complete",
+    scopes=["sheets_write"],
+    read_only=False,
+    tags=["spreadsheets"],
+)
 @server.tool()
 @handle_http_errors("create_sheet", service_type="sheets")
 @require_google_service("sheets", "sheets_write")
@@ -1230,3 +1287,4 @@ _comment_tools = create_comment_tools("spreadsheet", "spreadsheet_id")
 # Extract and register the functions
 list_spreadsheet_comments = _comment_tools["list_comments"]
 manage_spreadsheet_comment = _comment_tools["manage_comment"]
+register_comment_schemas("spreadsheet", "sheets")

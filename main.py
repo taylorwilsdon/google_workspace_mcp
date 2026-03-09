@@ -182,6 +182,11 @@ def main():
         help="Run in read-only mode - requests only read-only scopes and disables tools requiring write permissions",
     )
     parser.add_argument(
+        "--code-mode",
+        action="store_true",
+        help="Enable Code Mode: expose a single execute_code tool with typed API stubs",
+    )
+    parser.add_argument(
         "--permissions",
         nargs="+",
         metavar="SERVICE:LEVEL",
@@ -408,6 +413,13 @@ def main():
 
     # Filter tools based on tier configuration (if tier-based loading is enabled)
     filter_server_tools(server)
+
+    # Enable Code Mode if requested
+    if args.code_mode:
+        from core.code_mode import register_code_mode
+
+        register_code_mode(server)
+        safe_print("   Code Mode: Enabled (execute_workspace_code tool registered)")
 
     # Handle CLI mode - execute tool and exit
     if args.cli is not None:

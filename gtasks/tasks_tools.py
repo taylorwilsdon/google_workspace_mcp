@@ -16,6 +16,7 @@ from auth.oauth_config import is_oauth21_enabled, is_external_oauth21_provider
 from auth.permissions import is_action_denied
 from auth.service_decorator import require_google_service
 from core.server import server
+from core.tool_schema import tool_schema
 from core.utils import UserInputError, handle_http_errors
 
 logger = logging.getLogger(__name__)
@@ -96,6 +97,14 @@ def _adjust_due_max_for_tasks_api(due_max: str) -> str:
     return adjusted.isoformat()
 
 
+@tool_schema(
+    service="tasks",
+    tier="complete",
+    scopes=["tasks_read"],
+    read_only=True,
+    tags=["task_lists"],
+    paginated=True,
+)
 @server.tool()  # type: ignore
 @require_google_service("tasks", "tasks_read")  # type: ignore
 @handle_http_errors("list_task_lists", service_type="tasks")  # type: ignore
@@ -154,6 +163,13 @@ async def list_task_lists(
         raise Exception(message)
 
 
+@tool_schema(
+    service="tasks",
+    tier="complete",
+    scopes=["tasks_read"],
+    read_only=True,
+    tags=["task_lists"],
+)
 @server.tool()  # type: ignore
 @require_google_service("tasks", "tasks_read")  # type: ignore
 @handle_http_errors("get_task_list", service_type="tasks")  # type: ignore
@@ -289,6 +305,13 @@ async def _clear_completed_tasks_impl(
 # --- Consolidated manage_task_list tool ---
 
 
+@tool_schema(
+    service="tasks",
+    tier="complete",
+    scopes=["tasks"],
+    read_only=False,
+    tags=["task_lists"],
+)
 @server.tool()  # type: ignore
 @require_google_service("tasks", "tasks")  # type: ignore
 @handle_http_errors("manage_task_list", service_type="tasks")  # type: ignore
@@ -356,6 +379,14 @@ async def manage_task_list(
 # --- Task tools ---
 
 
+@tool_schema(
+    service="tasks",
+    tier="core",
+    scopes=["tasks_read"],
+    read_only=True,
+    tags=["tasks"],
+    paginated=True,
+)
 @server.tool()  # type: ignore
 @require_google_service("tasks", "tasks_read")  # type: ignore
 @handle_http_errors("list_tasks", service_type="tasks")  # type: ignore
@@ -600,6 +631,9 @@ This can also occur due to filtering that excludes parent tasks while including 
     return response
 
 
+@tool_schema(
+    service="tasks", tier="core", scopes=["tasks_read"], read_only=True, tags=["tasks"]
+)
 @server.tool()  # type: ignore
 @require_google_service("tasks", "tasks_read")  # type: ignore
 @handle_http_errors("get_task", service_type="tasks")  # type: ignore
@@ -843,6 +877,9 @@ async def _move_task_impl(
 # --- Consolidated manage_task tool ---
 
 
+@tool_schema(
+    service="tasks", tier="core", scopes=["tasks"], read_only=False, tags=["tasks"]
+)
 @server.tool()  # type: ignore
 @require_google_service("tasks", "tasks")  # type: ignore
 @handle_http_errors("manage_task", service_type="tasks")  # type: ignore
