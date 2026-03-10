@@ -1,3 +1,4 @@
+import base64
 import io
 import logging
 import os
@@ -371,6 +372,47 @@ def extract_office_xml_text(file_bytes: bytes, mime_type: str) -> Optional[str]:
             f"Failed to extract office XML text for {mime_type}: {e}", exc_info=True
         )
         return None
+
+
+IMAGE_MIME_TYPES = {
+    "image/png",
+    "image/jpeg",
+    "image/gif",
+    "image/webp",
+    "image/bmp",
+    "image/tiff",
+    "image/svg+xml",
+}
+
+
+def extract_pdf_text(file_bytes: bytes) -> Optional[str]:
+    """
+    Extract text from a PDF using pypdf.
+    Returns plain text with pages separated by double newlines, or None on failure.
+    """
+    try:
+        from pypdf import PdfReader
+
+        reader = PdfReader(io.BytesIO(file_bytes))
+        pages = []
+        for page in reader.pages:
+            text = page.extract_text()
+            if text:
+                pages.append(text)
+        if not pages:
+            return None
+        return "\n\n".join(pages).strip() or None
+    except Exception as e:
+        logger.warning(f"Failed to extract PDF text: {e}")
+        return None
+
+
+def encode_image_content(file_bytes: bytes, mime_type: str) -> str:
+    """
+    Base64-encode image bytes with a mime type metadata prefix.
+    """
+    encoded = base64.b64encode(file_bytes).decode("ascii")
+    return f"[base64_image:{mime_type}]{encoded}"
 
 
 def handle_http_errors(
