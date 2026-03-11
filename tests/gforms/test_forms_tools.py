@@ -11,8 +11,8 @@ import os
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-# Import the internal implementation function (not the decorated one)
-from gforms.forms_tools import _batch_update_form_impl
+# Import internal implementation functions (not decorated tool wrappers)
+from gforms.forms_tools import _batch_update_form_impl, _serialize_form_item, get_form
 
 
 @pytest.mark.asyncio
@@ -229,3 +229,116 @@ async def test_batch_update_form_mixed_reply_types():
     assert "Replies Received: 3" in result
     assert "item_a" in result
     assert "item_c" in result
+
+
+def test_serialize_form_item_choice_question_includes_ids_and_options():
+    """Choice question items should expose questionId/options/type metadata."""
+    item = {
+        "itemId": "item_123",
+        "title": "Favorite color?",
+        "questionItem": {
+            "question": {
+                "questionId": "q_123",
+                "required": True,
+                "choiceQuestion": {
+                    "type": "RADIO",
+                    "options": [{"value": "Red"}, {"value": "Blue"}],
+                },
+            }
+        },
+    }
+
+    serialized = _serialize_form_item(item, 1)
+
+    assert serialized["index"] == 1
+    assert serialized["itemId"] == "item_123"
+    assert serialized["type"] == "RADIO"
+    assert serialized["questionId"] == "q_123"
+    assert serialized["required"] is True
+    assert serialized["options"] == [{"value": "Red"}, {"value": "Blue"}]
+
+
+def test_serialize_form_item_grid_includes_row_and_column_structure():
+    """Grid question groups should expose row labels/IDs and column options."""
+    item = {
+        "itemId": "grid_item_1",
+        "title": "Weekly chores",
+        "questionGroupItem": {
+            "questions": [
+                {
+                    "questionId": "row_q1",
+                    "required": True,
+                    "rowQuestion": {"title": "Laundry"},
+                },
+                {
+                    "questionId": "row_q2",
+                    "required": False,
+                    "rowQuestion": {"title": "Dishes"},
+                },
+            ],
+            "grid": {"columns": {"options": [{"value": "Never"}, {"value": "Often"}]}},
+        },
+    }
+
+    serialized = _serialize_form_item(item, 2)
+
+    assert serialized["index"] == 2
+    assert serialized["type"] == "GRID"
+    assert serialized["grid"]["columns"] == [{"value": "Never"}, {"value": "Often"}]
+    assert serialized["grid"]["rows"] == [
+        {"title": "Laundry", "questionId": "row_q1", "required": True},
+        {"title": "Dishes", "questionId": "row_q2", "required": False},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_get_form_returns_structured_item_metadata():
+    """get_form should include question IDs, options, and grid structure."""
+    mock_service = Mock()
+    mock_service.forms().get().execute.return_value = {
+        "formId": "form_1",
+        "info": {"title": "Survey", "description": "Test survey"},
+        "items": [
+            {
+                "itemId": "item_1",
+                "title": "Favorite fruit?",
+                "questionItem": {
+                    "question": {
+                        "questionId": "q_1",
+                        "required": True,
+                        "choiceQuestion": {
+                            "type": "RADIO",
+                            "options": [{"value": "Apple"}, {"value": "Banana"}],
+                        },
+                    }
+                },
+            },
+            {
+                "itemId": "item_2",
+                "title": "Household chores",
+                "questionGroupItem": {
+                    "questions": [
+                        {
+                            "questionId": "row_1",
+                            "required": True,
+                            "rowQuestion": {"title": "Laundry"},
+                        }
+                    ],
+                    "grid": {"columns": {"options": [{"value": "Never"}]}},
+                },
+            },
+        ],
+    }
+
+    # Bypass decorators and call the core implementation directly.
+    result = await get_form.__wrapped__.__wrapped__(
+        mock_service, "user@example.com", "form_1"
+    )
+
+    assert "- Items (structured):" in result
+    assert '"questionId": "q_1"' in result
+    assert '"options": [' in result
+    assert '"Apple"' in result
+    assert '"type": "GRID"' in result
+    assert '"columns": [' in result
+    assert '"rows": [' in result
