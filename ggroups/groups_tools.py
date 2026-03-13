@@ -373,6 +373,47 @@ async def manage_group(
     return f"Group {group_id} has been deleted."
 
 
+@server.tool()
+@require_google_service("cloudidentity", "groups_read")
+@handle_http_errors("lookup_group", service_type="cloudidentity")
+async def lookup_group(
+    service: Resource,
+    user_google_email: str,
+    group_email: str,
+) -> str:
+    """
+    Look up the resource name of a group by its email address.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        group_email (str): The group's email address to look up.
+
+    Returns:
+        str: The group's resource name and key information.
+    """
+    logger.info(
+        f"[lookup_group] Invoked. Email: '{user_google_email}', "
+        f"Group email: '{group_email}'"
+    )
+
+    result = await asyncio.to_thread(
+        service.groups()
+        .lookup(groupKey_id=group_email)
+        .execute
+    )
+
+    resource_name = result.get("name", "Unknown")
+    group_id = resource_name.replace("groups/", "")
+
+    response = f"Group Lookup Result:\n\n"
+    response += f"Email: {group_email}\n"
+    response += f"Resource Name: {resource_name}\n"
+    response += f"Group ID: {group_id}\n"
+
+    logger.info(f"Looked up group {group_email} -> {resource_name}")
+    return response
+
+
 # =============================================================================
 # Extended Tier Tools
 # =============================================================================
@@ -562,45 +603,4 @@ async def list_groups(
         response += f"Next page token: {next_page_token}"
 
     logger.info(f"Found {len(groups)} groups under {parent} for {user_google_email}")
-    return response
-
-
-@server.tool()
-@require_google_service("cloudidentity", "groups_read")
-@handle_http_errors("lookup_group", service_type="cloudidentity")
-async def lookup_group(
-    service: Resource,
-    user_google_email: str,
-    group_email: str,
-) -> str:
-    """
-    Look up the resource name of a group by its email address.
-
-    Args:
-        user_google_email (str): The user's Google email address. Required.
-        group_email (str): The group's email address to look up.
-
-    Returns:
-        str: The group's resource name and key information.
-    """
-    logger.info(
-        f"[lookup_group] Invoked. Email: '{user_google_email}', "
-        f"Group email: '{group_email}'"
-    )
-
-    result = await asyncio.to_thread(
-        service.groups()
-        .lookup(groupKey_id=group_email)
-        .execute
-    )
-
-    resource_name = result.get("name", "Unknown")
-    group_id = resource_name.replace("groups/", "")
-
-    response = f"Group Lookup Result:\n\n"
-    response += f"Email: {group_email}\n"
-    response += f"Resource Name: {resource_name}\n"
-    response += f"Group ID: {group_id}\n"
-
-    logger.info(f"Looked up group {group_email} -> {resource_name}")
     return response

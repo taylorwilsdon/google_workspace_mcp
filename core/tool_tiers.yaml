@@ -150,11 +150,11 @@ groups:
     - get_group
     - list_group_members
     - manage_group
+    - lookup_group
   extended:
     - manage_group_members
   complete:
     - list_groups
-    - lookup_group
 
 search:
   core:

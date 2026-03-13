@@ -1056,9 +1056,9 @@ Saved files expire after 1 hour and are cleaned up automatically.
 | `get_group` | **Core** | Retrieve group details |
 | `list_group_members` | **Core** | List members of a group |
 | `manage_group` | **Core** | Create, update, or delete groups |
+| `lookup_group` | **Core** | Look up group resource name by email |
 | `manage_group_members` | Extended | Add, remove, or modify member roles |
 | `list_groups` | Complete | List all groups under a customer |
-| `lookup_group` | Complete | Look up group resource name by email |
 
 </td>
 </tr>
