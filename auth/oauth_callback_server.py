@@ -10,6 +10,7 @@ import logging
 import threading
 import time
 import socket
+import urllib.request
 import uvicorn
 
 from fastapi import FastAPI, Request
@@ -43,6 +44,11 @@ class MinimalOAuthServer:
         self.server_thread = None
         self.is_running = False
 
+        # CLI auth completion signaling
+        self.auth_completed = threading.Event()
+        self.auth_result: Optional[dict] = None  # {"success": bool, "user_id": str|None, "error": str|None}
+        self._auth_lock = threading.Lock()
+
         # Setup the callback route
         self._setup_callback_route()
         # Setup attachment serving route
@@ -62,6 +68,8 @@ class MinimalOAuthServer:
                     f"Authentication failed: Google returned an error: {error}."
                 )
                 logger.error(error_message)
+                self.auth_result = {"success": False, "user_id": None, "error": error_message}
+                self.auth_completed.set()
                 return create_error_response(error_message)
 
             if not code:
@@ -69,12 +77,16 @@ class MinimalOAuthServer:
                     "Authentication failed: No authorization code received from Google."
                 )
                 logger.error(error_message)
+                self.auth_result = {"success": False, "user_id": None, "error": error_message}
+                self.auth_completed.set()
                 return create_error_response(error_message)
 
             try:
                 # Check if we have credentials available (environment variables or file)
                 error_message = check_client_secrets()
                 if error_message:
+                    self.auth_result = {"success": False, "user_id": None, "error": error_message}
+                    self.auth_completed.set()
                     return create_server_error_response(error_message)
 
                 logger.info(
@@ -96,13 +108,19 @@ class MinimalOAuthServer:
                     f"OAuth callback: Successfully authenticated user: {verified_user_id}."
                 )
 
+                # Signal completion for CLI auth flow
+                self.auth_result = {"success": True, "user_id": verified_user_id, "error": None}
+                self.auth_completed.set()
+
                 # Return success page using shared template
                 return create_success_response(verified_user_id)
 
             except Exception as e:
-                error_message_detail = f"Error processing OAuth callback: {str(e)}"
-                logger.error(error_message_detail, exc_info=True)
-                return create_server_error_response(str(e))
+                logger.error(f"Error processing OAuth callback: {e}", exc_info=True)
+                generic_error = "An unexpected error occurred while processing authentication. Please try again."
+                self.auth_result = {"success": False, "user_id": None, "error": generic_error}
+                self.auth_completed.set()
+                return create_server_error_response(generic_error)
 
     def _setup_attachment_route(self):
         """Setup the attachment serving route."""
@@ -142,7 +160,6 @@ class MinimalOAuthServer:
             logger.info("Minimal OAuth server is already running")
             return True, ""
 
-        # Check if port is available
         # Extract hostname from base_uri (e.g., "http://localhost" -> "localhost")
         try:
             parsed_uri = urlparse(self.base_uri)
@@ -150,13 +167,7 @@ class MinimalOAuthServer:
         except Exception:
             hostname = "localhost"
 
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.bind((hostname, self.port))
-        except OSError:
-            error_msg = f"Port {self.port} is already in use on {hostname}. Cannot start minimal OAuth server."
-            logger.error(error_msg)
-            return False, error_msg
+        _startup_error = [None]  # mutable container for thread communication
 
         def run_server():
             """Run the server in a separate thread."""
@@ -172,6 +183,7 @@ class MinimalOAuthServer:
                 asyncio.run(self.server.serve())
 
             except Exception as e:
+                _startup_error[0] = e
                 logger.error(f"Minimal OAuth server error: {e}", exc_info=True)
                 self.is_running = False
 
@@ -179,26 +191,67 @@ class MinimalOAuthServer:
         self.server_thread = threading.Thread(target=run_server, daemon=True)
         self.server_thread.start()
 
-        # Wait for server to start
-        max_wait = 3.0
+        # Wait for server to start — verify with an actual HTTP request to the
+        # callback route so we confirm route registration, not just TCP binding.
+        # A missing-code response (400) or any non-404 proves the route exists.
+        max_wait = 5.0
         start_time = time.time()
+        probe_url = f"http://{hostname}:{self.port}/oauth2callback"
         while time.time() - start_time < max_wait:
+            if _startup_error[0]:
+                error_msg = f"OAuth server failed to start: {_startup_error[0]}"
+                logger.error(error_msg)
+                return False, error_msg
             try:
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    result = s.connect_ex((hostname, self.port))
-                    if result == 0:
-                        self.is_running = True
-                        logger.info(
-                            f"Minimal OAuth server started on {hostname}:{self.port}"
-                        )
-                        return True, ""
+                resp = urllib.request.urlopen(probe_url, timeout=0.5)
+                # Any 2xx/3xx means route is up
+                if resp.status < 500:
+                    self.is_running = True
+                    logger.info(
+                        f"Minimal OAuth server started on {hostname}:{self.port}"
+                    )
+                    return True, ""
+            except urllib.error.HTTPError as http_err:
+                # 4xx responses (e.g. 400 missing code, 422 validation) confirm
+                # the route is registered and the server is handling requests.
+                if http_err.code != 404:
+                    self.is_running = True
+                    logger.info(
+                        f"Minimal OAuth server started on {hostname}:{self.port}"
+                    )
+                    return True, ""
             except Exception:
                 pass
             time.sleep(0.1)
 
-        error_msg = f"Failed to start minimal OAuth server on {hostname}:{self.port} - server did not respond within {max_wait}s"
+        error_msg = (
+            f"Failed to start minimal OAuth server on {hostname}:{self.port}"
+            f" - callback route did not respond within {max_wait}s"
+        )
         logger.error(error_msg)
         return False, error_msg
+
+    def reset_auth_state(self):
+        """Reset auth completion state so wait_for_auth blocks for a fresh callback."""
+        with self._auth_lock:
+            self.auth_completed.clear()
+            self.auth_result = None
+
+    def wait_for_auth(self, timeout: float = 300) -> Optional[dict]:
+        """
+        Block until OAuth callback is received or timeout.
+
+        Args:
+            timeout: Maximum seconds to wait (default 5 minutes)
+
+        Returns:
+            Auth result dict {"success": bool, "user_id": str|None, "error": str|None}
+            or None if timed out
+        """
+        completed = self.auth_completed.wait(timeout=timeout)
+        if completed:
+            return self.auth_result
+        return None
 
     def stop(self):
         """Stop the minimal OAuth server."""
@@ -277,6 +330,34 @@ def ensure_oauth_callback_available(
         error_msg = f"Unknown transport mode: {transport_mode}"
         logger.error(error_msg)
         return False, error_msg
+
+
+def set_cli_oauth_server(server: MinimalOAuthServer) -> None:
+    """Register a MinimalOAuthServer as the global instance (used by CLI mode)."""
+    global _minimal_oauth_server
+    _minimal_oauth_server = server
+
+
+def get_cli_oauth_port() -> int:
+    """
+    Find an available port for the CLI OAuth callback server.
+    Tries ports 8000-8009, falls back to OS-assigned port.
+
+    Returns:
+        Available port number
+    """
+    for port in range(8000, 8010):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(("localhost", port))
+                return port
+        except OSError:
+            continue
+
+    # Fallback: let OS assign a port
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("localhost", 0))
+        return s.getsockname()[1]
 
 
 def cleanup_oauth_callback_server():

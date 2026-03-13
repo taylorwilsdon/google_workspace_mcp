@@ -396,10 +396,10 @@ def main():
             safe_print(
                 f"   {tool_icons[tool]} {tool.title()} - Google {tool.title()} API integration"
             )
-        except ModuleNotFoundError as exc:
+        except Exception as exc:
             logger.error("Failed to import tool '%s': %s", tool, exc, exc_info=True)
             safe_print(f"   ⚠️ Failed to load {tool.title()} tool module ({exc}).")
-
+            
     if perms:
         safe_print("🔒 Permission Levels:")
         for svc, lvl in sorted(perms.items()):

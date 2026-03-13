@@ -609,7 +609,7 @@ async def start_google_auth(
         return f"**Authentication Error:** {error_message}"
 
     try:
-        auth_message = await start_auth_flow(
+        auth_message, _ = await start_auth_flow(
             user_google_email=user_google_email,
             service_name=service_name,
             redirect_uri=get_oauth_redirect_uri_for_current_mode(),

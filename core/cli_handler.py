@@ -16,10 +16,16 @@ Usage:
 import asyncio
 import json
 import logging
+import os
 import sys
 from typing import Any, Dict, List, Optional
 
-from auth.oauth_config import set_transport_mode
+from auth.oauth_config import set_transport_mode, reload_oauth_config
+from auth.oauth_callback_server import (
+    MinimalOAuthServer,
+    get_cli_oauth_port,
+    set_cli_oauth_server,
+)
 from core.tool_registry import get_tool_components
 
 logger = logging.getLogger(__name__)
@@ -263,6 +269,10 @@ async def run_tool(server, tool_name: str, args: Dict[str, Any]) -> str:
             f"Provided parameters: {list(call_args.keys())}"
         )
     except Exception as e:
+        # Let GoogleAuthenticationError propagate for CLI auth handling
+        from auth.google_auth import GoogleAuthenticationError
+        if isinstance(e, GoogleAuthenticationError):
+            raise
         logger.error(f"[CLI] Error executing {tool_name}: {e}", exc_info=True)
         return f"Error: {type(e).__name__}: {e}"
 
@@ -360,6 +370,77 @@ def read_stdin_args() -> Dict[str, Any]:
     return {}
 
 
+def _setup_cli_oauth_server() -> MinimalOAuthServer:
+    """
+    Pre-start a MinimalOAuthServer for CLI auth flow.
+
+    Finds an available port, configures the redirect URI, starts the server,
+    and registers it as the global OAuth server.
+
+    Returns:
+        The started MinimalOAuthServer instance
+    """
+    port = get_cli_oauth_port()
+    redirect_uri = f"http://localhost:{port}/oauth2callback"
+
+    # Set redirect URI in env so OAuthConfig picks it up
+    os.environ["GOOGLE_OAUTH_REDIRECT_URI"] = redirect_uri
+    reload_oauth_config()
+
+    oauth_server = MinimalOAuthServer(port=port, base_uri="http://localhost")
+    success, error_msg = oauth_server.start()
+    if not success:
+        raise RuntimeError(f"Failed to start OAuth server: {error_msg}")
+
+    set_cli_oauth_server(oauth_server)
+    logger.info(f"[CLI] OAuth callback server ready on port {port}")
+    return oauth_server
+
+
+async def _handle_cli_auth_flow(
+    server, tool_name: str, args: Dict[str, Any], auth_error, oauth_server: MinimalOAuthServer
+) -> str:
+    """
+    Handle OAuth authentication flow in CLI mode.
+
+    Prints the auth URL, waits for the browser callback, then retries the tool.
+
+    Args:
+        server: The FastMCP server instance
+        tool_name: Name of the tool to retry after auth
+        args: Tool arguments
+        auth_error: The GoogleAuthenticationError with auth_url
+        oauth_server: The running MinimalOAuthServer
+
+    Returns:
+        Tool result as string
+    """
+    print("\n" + "=" * 60, file=sys.stderr)
+    print("Authentication Required", file=sys.stderr)
+    print("=" * 60, file=sys.stderr)
+    print(f"\nOpen this URL in your browser:\n", file=sys.stderr)
+    print(f"  {auth_error.auth_url}\n", file=sys.stderr)
+    print("Waiting for authentication (timeout: 5 minutes)...", file=sys.stderr)
+
+    # Clear any stale auth state before waiting for a fresh callback
+    oauth_server.reset_auth_state()
+
+    # Wait for the OAuth callback in a thread (blocking call)
+    result = await asyncio.to_thread(oauth_server.wait_for_auth, 300)
+
+    if result is None:
+        raise RuntimeError("Authentication timed out after 5 minutes.")
+
+    if not result["success"]:
+        raise RuntimeError(f"Authentication failed: {result['error']}")
+
+    print(f"\nAuthenticated as: {result['user_id']}", file=sys.stderr)
+    print("Retrying tool execution...\n", file=sys.stderr)
+
+    # Retry the tool
+    return await run_tool(server, tool_name, args)
+
+
 async def handle_cli_mode(server, cli_args: List[str]) -> int:
     """
     Main entry point for CLI mode.
@@ -389,13 +470,29 @@ async def handle_cli_mode(server, cli_args: List[str]) -> int:
             return 0
 
         if parsed["command"] == "run":
+            # Pre-start OAuth server before running tools that may need auth
+            oauth_server = _setup_cli_oauth_server()
+
             # Merge stdin args with inline args (inline takes precedence)
             args = read_stdin_args()
             args.update(parsed["tool_args"])
 
-            result = await run_tool(server, parsed["tool_name"], args)
-            print(result)
-            return 0
+            try:
+                try:
+                    result = await run_tool(server, parsed["tool_name"], args)
+                    print(result)
+                    return 0
+                except Exception as e:
+                    from auth.google_auth import GoogleAuthenticationError
+                    if isinstance(e, GoogleAuthenticationError) and e.auth_url:
+                        result = await _handle_cli_auth_flow(
+                            server, parsed["tool_name"], args, e, oauth_server
+                        )
+                        print(result)
+                        return 0
+                    raise
+            finally:
+                oauth_server.stop()
 
         # Unknown command
         print(f"Unknown command: {parsed['command']}")
