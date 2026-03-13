@@ -1046,6 +1046,21 @@ Saved files expire after 1 hour and are cleaned up automatically.
 | `manage_contact_group` | Complete | Create, update, delete groups, or modify membership |
 
 </td>
+<td width="50%" valign="top">
+
+### 👥 **Google Groups** <sub>[`groups_tools.py`](ggroups/groups_tools.py)</sub>
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `search_groups` | **Core** | Search groups with CEL queries |
+| `get_group` | **Core** | Retrieve group details |
+| `list_group_members` | **Core** | List members of a group |
+| `manage_group` | **Core** | Create, update, or delete groups |
+| `manage_group_members` | Extended | Add, remove, or modify member roles |
+| `list_groups` | Complete | List all groups under a customer |
+| `lookup_group` | Complete | Look up group resource name by email |
+
+</td>
 </tr>
 <tr>
 <td width="50%" valign="top">
