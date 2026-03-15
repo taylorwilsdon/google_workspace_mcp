@@ -11,6 +11,7 @@ import os
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
+from tests.helpers import _make_minimal_pdf
 from gdrive.drive_tools import get_drive_file_content
 
 
@@ -19,55 +20,6 @@ def _unwrap(tool):
     while hasattr(fn, "__wrapped__"):
         fn = fn.__wrapped__
     return fn
-
-
-def _make_minimal_pdf(text: str = "Contract clause 1") -> bytes:
-    from pypdf import PdfWriter
-    from pypdf.generic import (
-        DictionaryObject,
-        DecodedStreamObject,
-        NameObject,
-    )
-
-    writer = PdfWriter()
-    writer.add_blank_page(width=72, height=72)
-    page = writer.pages[0]
-    stream = DecodedStreamObject()
-    stream.set_data(f"BT /F1 12 Tf 10 50 Td ({text}) Tj ET".encode())
-
-    font_dict = DictionaryObject()
-    font_dict[NameObject("/Type")] = NameObject("/Font")
-    font_dict[NameObject("/Subtype")] = NameObject("/Type1")
-    font_dict[NameObject("/BaseFont")] = NameObject("/Helvetica")
-
-    font_res = DictionaryObject()
-    font_res[NameObject("/F1")] = font_dict
-
-    resources = DictionaryObject()
-    resources[NameObject("/Font")] = font_res
-
-    page[NameObject("/Resources")] = resources
-    page[NameObject("/Contents")] = writer._add_object(stream)
-    buf = io.BytesIO()
-    writer.write(buf)
-    return buf.getvalue()
-
-
-def _mock_download(content_bytes):
-    """Return a mock service whose MediaIoBaseDownload writes content_bytes."""
-
-    def fake_next_chunk(fh=None):
-        return None, True
-
-    mock_service = Mock()
-    mock_service.files().get().execute.return_value = {
-        "id": "file123",
-        "name": "test_file",
-        "mimeType": "application/pdf",
-        "webViewLink": "https://drive.google.com/file/file123",
-    }
-    mock_service.files().get_media.return_value = "media_request"
-    return mock_service, content_bytes
 
 
 @pytest.fixture
@@ -98,19 +50,6 @@ def mock_resolve_image():
         yield m
 
 
-def _patch_downloader(content_bytes):
-    """Patch MediaIoBaseDownload to write content_bytes into the BytesIO handle."""
-
-    def init_side_effect(fh, request):
-        fh.write(content_bytes)
-        fh.seek(0)
-
-    return patch(
-        "gdrive.drive_tools.MediaIoBaseDownload",
-        side_effect=lambda fh, req: _FakeDownloader(fh, content_bytes),
-    )
-
-
 class _FakeDownloader:
     def __init__(self, fh, data):
         fh.write(data)
@@ -118,6 +57,14 @@ class _FakeDownloader:
 
     def next_chunk(self):
         return None, True
+
+
+def _patch_downloader(content_bytes):
+    """Patch MediaIoBaseDownload to write content_bytes into the BytesIO handle."""
+    return patch(
+        "gdrive.drive_tools.MediaIoBaseDownload",
+        side_effect=lambda fh, req: _FakeDownloader(fh, content_bytes),
+    )
 
 
 # ---------------------------------------------------------------------------

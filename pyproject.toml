@@ -23,7 +23,7 @@ dependencies = [
  "pyyaml>=6.0.2",
  "cryptography>=45.0.0",
  "defusedxml>=0.7.1",
- "pypdf>=4.0.0",
+ "pypdf>=6.8.0",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",

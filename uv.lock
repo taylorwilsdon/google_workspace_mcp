@@ -2170,7 +2170,7 @@ requires-dist = [
     { name = "py-key-value-aio", extras = ["disk"], marker = "extra == 'disk'", specifier = ">=0.3.0" },
     { name = "py-key-value-aio", extras = ["valkey"], marker = "extra == 'valkey'", specifier = ">=0.3.0" },
     { name = "pyjwt", specifier = ">=2.10.1" },
-    { name = "pypdf", specifier = ">=4.0.0" },
+    { name = "pypdf", specifier = ">=6.8.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3.0" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.3.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23.0" },
