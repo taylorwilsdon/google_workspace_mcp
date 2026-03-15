@@ -280,6 +280,7 @@ class ValidationManager:
         indent_end: Optional[float] = None,
         space_above: Optional[float] = None,
         space_below: Optional[float] = None,
+        named_style_type: Optional[str] = None,
     ) -> Tuple[bool, str]:
         """
         Validate paragraph style parameters.
@@ -293,6 +294,7 @@ class ValidationManager:
             indent_end: Right/end indent in points
             space_above: Space above paragraph in points
             space_below: Space below paragraph in points
+            named_style_type: Direct named style (TITLE, SUBTITLE, HEADING_1..6, NORMAL_TEXT)
 
         Returns:
             Tuple of (is_valid, error_message)
@@ -306,12 +308,25 @@ class ValidationManager:
             indent_end,
             space_above,
             space_below,
+            named_style_type,
         ]
         if all(param is None for param in style_params):
             return (
                 False,
-                "At least one paragraph style parameter must be provided (heading_level, alignment, line_spacing, indent_first_line, indent_start, indent_end, space_above, or space_below)",
+                "At least one paragraph style parameter must be provided (heading_level, alignment, line_spacing, indent_first_line, indent_start, indent_end, space_above, space_below, or named_style_type)",
             )
+
+        if named_style_type is not None:
+            valid_styles = [
+                "NORMAL_TEXT", "TITLE", "SUBTITLE",
+                "HEADING_1", "HEADING_2", "HEADING_3",
+                "HEADING_4", "HEADING_5", "HEADING_6",
+            ]
+            if named_style_type not in valid_styles:
+                return (
+                    False,
+                    f"Invalid named_style_type '{named_style_type}'. Must be one of: {', '.join(valid_styles)}",
+                )
 
         if heading_level is not None:
             if not isinstance(heading_level, int):
@@ -627,6 +642,7 @@ class ValidationManager:
                     op.get("indent_end"),
                     op.get("space_above"),
                     op.get("space_below"),
+                    op.get("named_style_type"),
                 )
                 if not is_valid:
                     return (

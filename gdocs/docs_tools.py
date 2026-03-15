@@ -872,6 +872,10 @@ async def batch_update_doc(
       insert_page_break- required: index (int)
       find_replace     - required: find_text (str), replace_text (str)
                          optional: match_case (bool, default false)
+      create_bullet_list - required: start_index (int), end_index (int)
+                         optional: list_type ('UNORDERED'|'ORDERED'|'NONE', default UNORDERED),
+                                   nesting_level (0-8), paragraph_start_indices (list[int])
+                         Use list_type='NONE' to remove existing bullet/list formatting
       insert_doc_tab   - required: title (str), index (int)
                          optional: parent_tab_id (str)
       delete_doc_tab   - required: tab_id (str)

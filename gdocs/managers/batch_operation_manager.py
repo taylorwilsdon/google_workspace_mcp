@@ -17,6 +17,8 @@ from gdocs.docs_helpers import (
     create_find_replace_request,
     create_insert_table_request,
     create_insert_page_break_request,
+    create_bullet_list_request,
+    create_delete_bullet_list_request,
     create_insert_doc_tab_request,
     create_delete_doc_tab_request,
     create_update_doc_tab_request,
@@ -244,6 +246,7 @@ class BatchOperationManager:
                 op.get("space_above"),
                 op.get("space_below"),
                 tab_id,
+                op.get("named_style_type"),
             )
 
             if not request:
@@ -301,6 +304,31 @@ class BatchOperationManager:
             )
             description = f"find/replace '{op['find_text']}' → '{op['replace_text']}'"
 
+        elif op_type == "create_bullet_list":
+            list_type = op.get("list_type", "UNORDERED")
+            if list_type not in ("UNORDERED", "ORDERED", "NONE"):
+                raise ValueError(
+                    f"Invalid list_type '{list_type}'. Must be 'UNORDERED', 'ORDERED', or 'NONE'"
+                )
+            if list_type == "NONE":
+                request = create_delete_bullet_list_request(
+                    op["start_index"], op["end_index"], tab_id
+                )
+                description = f"remove bullets {op['start_index']}-{op['end_index']}"
+            else:
+                request = create_bullet_list_request(
+                    op["start_index"],
+                    op["end_index"],
+                    list_type,
+                    op.get("nesting_level"),
+                    op.get("paragraph_start_indices"),
+                    tab_id,
+                )
+                style = "bulleted" if list_type == "UNORDERED" else "numbered"
+                description = f"create {style} list {op['start_index']}-{op['end_index']}"
+                if op.get("nesting_level"):
+                    description += f" (nesting level {op['nesting_level']})"
+
         elif op_type == "insert_doc_tab":
             request = create_insert_doc_tab_request(
                 op["title"], op["index"], op.get("parent_tab_id")
@@ -327,6 +355,7 @@ class BatchOperationManager:
                 "insert_table",
                 "insert_page_break",
                 "find_replace",
+                "create_bullet_list",
                 "insert_doc_tab",
                 "delete_doc_tab",
                 "update_doc_tab",
@@ -459,6 +488,11 @@ class BatchOperationManager:
                     "required": ["find_text", "replace_text"],
                     "optional": ["match_case"],
                     "description": "Find and replace text throughout document",
+                },
+                "create_bullet_list": {
+                    "required": ["start_index", "end_index"],
+                    "optional": ["list_type", "nesting_level", "paragraph_start_indices"],
+                    "description": "Apply or remove native bullet/numbered list formatting (list_type: UNORDERED, ORDERED, or NONE to remove; nesting_level: 0-8)",
                 },
                 "insert_doc_tab": {
                     "required": ["title", "index"],
