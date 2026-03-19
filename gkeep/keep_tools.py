@@ -34,7 +34,7 @@ def _redact_email(email: str) -> str:
 @handle_http_errors("list_notes", service_type="keep")  # type: ignore
 async def list_notes(
     service: Resource,
-    _redact_email(user_google_email): str,
+    user_google_email: str,
     page_size: int = LIST_NOTES_PAGE_SIZE_DEFAULT,
     page_token: Optional[str] = None,
     filter_query: Optional[str] = None,
@@ -43,7 +43,7 @@ async def list_notes(
     List notes from Google Keep.
 
     Args:
-        _redact_email(user_google_email) (str): The user's Google email address. Required.
+        user_google_email (str): The user's Google email address. Required.
         page_size (int): Maximum number of notes to return (default: 25, max: 1000).
         page_token (Optional[str]): Token for pagination.
         filter_query (Optional[str]): Filter for list results. If no filter is supplied, the
