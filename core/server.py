@@ -416,7 +416,6 @@ def configure_server_for_http():
                     required_scopes=required_scopes,
                     resource_server_url=config.get_oauth_base_url(),
                 )
-                server.auth = provider
 
                 logger.info("OAuth 2.1 enabled with EXTERNAL provider mode")
                 logger.info(
