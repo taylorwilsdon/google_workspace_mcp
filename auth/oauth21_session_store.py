@@ -7,7 +7,10 @@ session context management and credential conversion functionality.
 """
 
 import contextvars
+import json
 import logging
+import os
+from pathlib import Path
 from typing import Dict, Optional, Any, Tuple
 from threading import RLock
 from datetime import datetime, timedelta, timezone
@@ -201,6 +204,48 @@ class OAuth21SessionStore:
         self._oauth_states: Dict[str, Dict[str, Any]] = {}
         self._lock = RLock()
 
+        # Persist OAuth states to a shared file so that sibling stdio
+        # processes (each a separate workspace-mcp invocation) can see
+        # each other's states.  Fixes #546 / #588.
+        self._shared_state_file = Path(
+            os.environ.get(
+                "GOOGLE_MCP_CREDENTIALS_DIR",
+                Path.home() / ".google_workspace_mcp" / "credentials",
+            )
+        ) / ".oauth_states.json"
+        self._shared_state_file.parent.mkdir(parents=True, exist_ok=True)
+        self._load_shared_states()
+
+    def _load_shared_states(self):
+        """Load OAuth states from shared file into memory."""
+        try:
+            if self._shared_state_file.exists():
+                data = json.loads(self._shared_state_file.read_text())
+                for state, info in data.items():
+                    if "expires_at" in info and isinstance(info["expires_at"], str):
+                        info["expires_at"] = datetime.fromisoformat(info["expires_at"])
+                    if "created_at" in info and isinstance(info["created_at"], str):
+                        info["created_at"] = datetime.fromisoformat(info["created_at"])
+                    self._oauth_states[state] = info
+                logger.debug("Loaded %d OAuth states from shared file", len(data))
+        except Exception as e:
+            logger.debug("Could not load shared OAuth states: %s", e)
+
+    def _save_shared_states(self):
+        """Persist current OAuth states to shared file."""
+        try:
+            data = {}
+            for state, info in self._oauth_states.items():
+                entry = dict(info)
+                if isinstance(entry.get("expires_at"), datetime):
+                    entry["expires_at"] = entry["expires_at"].isoformat()
+                if isinstance(entry.get("created_at"), datetime):
+                    entry["created_at"] = entry["created_at"].isoformat()
+                data[state] = entry
+            self._shared_state_file.write_text(json.dumps(data))
+        except Exception as e:
+            logger.debug("Could not save shared OAuth states: %s", e)
+
     def _cleanup_expired_oauth_states_locked(self):
         """Remove expired OAuth state entries. Caller must hold lock."""
         now = datetime.now(timezone.utc)
@@ -239,6 +284,7 @@ class OAuth21SessionStore:
                 "created_at": now,
                 "code_verifier": code_verifier,
             }
+            self._save_shared_states()
             logger.debug(
                 "Stored OAuth state %s (expires at %s)",
                 state[:8] if len(state) > 8 else state,
@@ -267,6 +313,7 @@ class OAuth21SessionStore:
             raise ValueError("Missing OAuth state parameter")
 
         with self._lock:
+            self._load_shared_states()
             self._cleanup_expired_oauth_states_locked()
             state_info = self._oauth_states.get(state)
 
@@ -289,6 +336,7 @@ class OAuth21SessionStore:
 
             # State is valid – consume it to prevent reuse
             del self._oauth_states[state]
+            self._save_shared_states()
             logger.debug(
                 "Validated OAuth state %s",
                 state[:8] if len(state) > 8 else state,

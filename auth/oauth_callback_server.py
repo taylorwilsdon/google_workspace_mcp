@@ -154,6 +154,18 @@ class MinimalOAuthServer:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.bind((hostname, self.port))
         except OSError:
+            # Another workspace-mcp stdio process may already be serving
+            # the OAuth callback on this port.  Probe with connect_ex: if
+            # the port is actively listening we can delegate to it instead
+            # of blocking the entire auth flow.  Fixes #546 / #588.
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                if s.connect_ex((hostname, self.port)) == 0:
+                    logger.info(
+                        f"Port {self.port} is held by another workspace-mcp "
+                        "instance; reusing existing OAuth server."
+                    )
+                    self.is_running = True
+                    return True, ""
             error_msg = f"Port {self.port} is already in use on {hostname}. Cannot start minimal OAuth server."
             logger.error(error_msg)
             return False, error_msg
