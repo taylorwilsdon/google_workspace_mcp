@@ -150,8 +150,13 @@ def extract_session_from_headers(headers: Dict[str, str]) -> Optional[str]:
     if session_id:
         return session_id
 
-    # Try Authorization header for Bearer token
-    auth_header = headers.get("authorization") or headers.get("Authorization")
+    # Try Authorization header or custom X-Authorization header for Bearer token
+    auth_header = (
+        headers.get("authorization")
+        or headers.get("Authorization")
+        or headers.get("x-authorization")
+        or headers.get("X-Authorization")
+    )
     if auth_header and auth_header.lower().startswith("bearer "):
         token = auth_header[7:]  # Remove "Bearer " prefix
         # Intentionally ignore empty tokens - "Bearer " with no token should not
