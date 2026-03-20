@@ -141,13 +141,17 @@ def extract_session_from_headers(headers: Dict[str, str]) -> Optional[str]:
     Returns:
         Session ID if found
     """
+    logger.debug(f"Extracting session from headers. Available keys: {list(headers.keys())}")
+    
     # Try different header names
     session_id = headers.get("mcp-session-id") or headers.get("Mcp-Session-Id")
     if session_id:
+        logger.debug(f"Found session ID in mcp-session-id header: {session_id}")
         return session_id
 
     session_id = headers.get("x-session-id") or headers.get("X-Session-ID")
     if session_id:
+        logger.debug(f"Found session ID in x-session-id header: {session_id}")
         return session_id
 
     # Try Authorization header or custom X-Authorization header for Bearer token
@@ -157,23 +161,36 @@ def extract_session_from_headers(headers: Dict[str, str]) -> Optional[str]:
         or headers.get("x-authorization")
         or headers.get("X-Authorization")
     )
-    if auth_header and auth_header.lower().startswith("bearer "):
-        token = auth_header[7:]  # Remove "Bearer " prefix
-        # Intentionally ignore empty tokens - "Bearer " with no token should not
-        # create a session context (avoids hash collisions on empty string)
-        if token:
-            # Use thread-safe lookup to find session by access token
-            store = get_oauth21_session_store()
-            session_id = store.find_session_id_for_access_token(token)
-            if session_id:
-                return session_id
+    
+    if auth_header:
+        logger.debug("Found authorization header (Authorization or X-Authorization)")
+        if auth_header.lower().startswith("bearer "):
+            token = auth_header[7:]  # Remove "Bearer " prefix
+            # Intentionally ignore empty tokens - "Bearer " with no token should not
+            # create a session context (avoids hash collisions on empty string)
+            if token:
+                logger.debug("Extracted Bearer token from header")
+                # Use thread-safe lookup to find session by access token
+                store = get_oauth21_session_store()
+                session_id = store.find_session_id_for_access_token(token)
+                if session_id:
+                    logger.debug(f"Found existing session for token: {session_id}")
+                    return session_id
 
-            # If no session found, create a temporary session ID from token hash
-            # This allows header-based authentication to work with session context
-            import hashlib
+                # If no session found, create a temporary session ID from token hash
+                # This allows header-based authentication to work with session context
+                import hashlib
 
-            token_hash = hashlib.sha256(token.encode()).hexdigest()[:8]
-            return f"bearer_token_{token_hash}"
+                token_hash = hashlib.sha256(token.encode()).hexdigest()[:8]
+                temp_session = f"bearer_token_{token_hash}"
+                logger.debug(f"No existing session found for token, created temporary session: {temp_session}")
+                return temp_session
+            else:
+                logger.debug("Bearer token was empty")
+        else:
+            logger.debug("Authorization header did not start with 'bearer '")
+    else:
+        logger.debug("No authorization header found in request")
 
     return None
 
