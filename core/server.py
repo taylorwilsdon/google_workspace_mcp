@@ -41,6 +41,24 @@ _legacy_callback_registered = False
 session_middleware = Middleware(MCPSessionMiddleware)
 
 
+class HeaderRewriteMiddleware:
+    """Rewrite custom X-Authorization header to standard Authorization header."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] in ("http", "websocket"):
+            headers = MutableHeaders(scope=scope)
+            x_auth = headers.get("x-authorization")
+            if x_auth and not headers.get("authorization"):
+                headers["authorization"] = x_auth
+        await self.app(scope, receive, send)
+
+
+header_rewrite_middleware = Middleware(HeaderRewriteMiddleware)
+
+
 class WellKnownCacheControlMiddleware:
     """Force no-cache headers for OAuth well-known discovery endpoints."""
 
@@ -89,14 +107,15 @@ class SecureFastMCP(FastMCP):
         app = super().http_app(**kwargs)
 
         # Add middleware in order (first added = outermost layer)
-        app.user_middleware.insert(0, well_known_cache_control_middleware)
+        app.user_middleware.insert(0, header_rewrite_middleware)
+        app.user_middleware.insert(1, well_known_cache_control_middleware)
 
         # Session Management - extracts session info for MCP context
-        app.user_middleware.insert(1, session_middleware)
+        app.user_middleware.insert(2, session_middleware)
 
         # Rebuild middleware stack
         app.middleware_stack = app.build_middleware_stack()
-        logger.info("Added middleware stack: WellKnownCacheControl, Session Management")
+        logger.info("Added middleware stack: HeaderRewrite, WellKnownCacheControl, Session Management")
         return app
 
 
