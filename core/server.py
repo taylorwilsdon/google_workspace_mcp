@@ -3,6 +3,8 @@ import logging
 import os
 from typing import List, Optional
 from importlib import metadata
+from pathlib import Path
+from urllib.parse import urlparse
 
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from starlette.applications import Starlette
@@ -13,6 +15,90 @@ from starlette.middleware import Middleware
 
 from fastmcp import FastMCP
 from fastmcp.server.auth.providers.google import GoogleProvider
+
+
+def _apply_fastmcp_workarounds():
+    """Apply workarounds for FastMCP bugs until they are fixed upstream.
+
+    See: https://github.com/PrefectHQ/fastmcp/issues/3574
+
+    1. Patch redirect URI validation to skip port matching for loopback
+       addresses (RFC 8252 §7.3). FastMCP strictly matches ports against
+       the CIMD document, but native OAuth clients (e.g. Claude Code) use
+       ephemeral localhost ports.
+
+    2. Pre-create the FileTreeStore directory tree for URL-based client IDs.
+       FileTreeStore uses the client_id URL as a filesystem path key but
+       does not create intermediate directories, causing FileNotFoundError.
+    """
+    # --- Bug 1: Monkey-patch localhost redirect URI port matching ---
+    try:
+        import fastmcp.server.auth.redirect_validation as _rv
+
+        _original_matches = _rv.matches_allowed_pattern
+
+        def _patched_matches_allowed_pattern(uri: str, pattern: str) -> bool:
+            try:
+                parsed = urlparse(uri)
+                host = parsed.hostname
+                if host and host.lower() in ("localhost", "127.0.0.1", "::1"):
+                    # Strip port from both URI and pattern, compare the rest
+                    uri_no_port = parsed._replace(
+                        netloc=host
+                    ).geturl()
+                    pattern_parsed = urlparse(pattern)
+                    pattern_host = pattern_parsed.hostname or ""
+                    if pattern_host.lower() in ("localhost", "127.0.0.1", "::1"):
+                        pattern_no_port = pattern_parsed._replace(
+                            netloc=pattern_host
+                        ).geturl()
+                        return _original_matches(uri_no_port, pattern_no_port)
+            except Exception:
+                pass
+            return _original_matches(uri, pattern)
+
+        _rv.matches_allowed_pattern = _patched_matches_allowed_pattern
+
+        # Also patch the reference in the models module which may have
+        # already imported the function by name.
+        try:
+            import fastmcp.server.auth.oauth_proxy.models as _models
+            _models.matches_allowed_pattern = _patched_matches_allowed_pattern
+        except (ImportError, AttributeError):
+            pass
+
+        logging.getLogger(__name__).info(
+            "Applied FastMCP workaround: RFC 8252 localhost port-agnostic redirect matching"
+        )
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "Failed to apply redirect URI workaround: %s", exc
+        )
+
+    # --- Bug 2: Pre-create FileTreeStore directories for known CIMD clients ---
+    try:
+        storage_dir = os.environ.get(
+            "FASTMCP_OAUTH_PROXY_STORAGE_DIR",
+            str(Path.home() / ".fastmcp" / "oauth-proxy"),
+        )
+        known_cimd_client_ids = [
+            "https://claude.ai/oauth/claude-code-client-metadata",
+        ]
+        for client_id in known_cimd_client_ids:
+            # FileTreeStore uses the client_id directly as a path key
+            client_dir = Path(storage_dir) / "mcp-oauth-proxy-clients" / client_id
+            client_dir.mkdir(parents=True, exist_ok=True)
+
+        logging.getLogger(__name__).info(
+            "Applied FastMCP workaround: pre-created FileTreeStore directories for CIMD clients"
+        )
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "Failed to pre-create FileTreeStore directories: %s", exc
+        )
+
+
+_apply_fastmcp_workarounds()
 
 from auth.oauth21_session_store import get_oauth21_session_store, set_auth_provider
 from auth.google_auth import handle_auth_callback, start_auth_flow, check_client_secrets
