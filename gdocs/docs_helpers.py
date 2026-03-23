@@ -10,6 +10,13 @@ from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
+VALID_SUGGESTIONS_VIEW_MODES = (
+    "DEFAULT_FOR_CURRENT_ACCESS",
+    "SUGGESTIONS_INLINE",
+    "PREVIEW_SUGGESTIONS_ACCEPTED",
+    "PREVIEW_WITHOUT_SUGGESTIONS",
+)
+
 
 def _normalize_color(
     color: Optional[str], param_name: str

@@ -31,6 +31,7 @@ from gdocs.docs_helpers import (
     create_insert_doc_tab_request,
     create_update_doc_tab_request,
     create_delete_doc_tab_request,
+    VALID_SUGGESTIONS_VIEW_MODES,
 )
 
 # Import document structure and table utilities
@@ -118,15 +119,30 @@ async def get_doc_content(
     docs_service: Any,
     user_google_email: str,
     document_id: str,
+    suggestions_view_mode: str = "DEFAULT_FOR_CURRENT_ACCESS",
 ) -> str:
     """
     Retrieves content of a Google Doc or a Drive file (like .docx) identified by document_id.
     - Native Google Docs: Fetches content via Docs API.
     - Office files (.docx, etc.) stored in Drive: Downloads via Drive API and extracts text.
 
+    Args:
+        user_google_email: User's Google email address
+        document_id: ID of the Google Doc (or full URL)
+        suggestions_view_mode: How to render suggestions in the returned content:
+            - "DEFAULT_FOR_CURRENT_ACCESS": Default based on user's access level
+            - "SUGGESTIONS_INLINE": Suggested changes appear inline in the document
+            - "PREVIEW_SUGGESTIONS_ACCEPTED": Preview as if all suggestions were accepted
+            - "PREVIEW_WITHOUT_SUGGESTIONS": Preview as if all suggestions were rejected
+
     Returns:
         str: The document content with metadata header.
     """
+    if suggestions_view_mode not in VALID_SUGGESTIONS_VIEW_MODES:
+        return (
+            f"Error: suggestions_view_mode must be one of "
+            f"{', '.join(VALID_SUGGESTIONS_VIEW_MODES)}, got '{suggestions_view_mode}'"
+        )
     logger.info(
         f"[get_doc_content] Invoked. Document/File ID: '{document_id}' for user '{user_google_email}'"
     )
@@ -156,7 +172,11 @@ async def get_doc_content(
         logger.info("[get_doc_content] Processing as native Google Doc.")
         doc_data = await asyncio.to_thread(
             docs_service.documents()
-            .get(documentId=document_id, includeTabsContent=True)
+            .get(
+                documentId=document_id,
+                includeTabsContent=True,
+                suggestionsViewMode=suggestions_view_mode,
+            )
             .execute
         )
         # Tab header format constant
@@ -1717,6 +1737,7 @@ async def get_doc_as_markdown(
     include_comments: bool = True,
     comment_mode: str = "inline",
     include_resolved: bool = False,
+    suggestions_view_mode: str = "DEFAULT_FOR_CURRENT_ACCESS",
 ) -> str:
     """
     Reads a Google Doc and returns it as clean Markdown with optional comment context.
@@ -1737,6 +1758,11 @@ async def get_doc_as_markdown(
             - "appendix": All comments grouped at the bottom with blockquoted anchor text
             - "none": No comments included
         include_resolved: Whether to include resolved comments (default: False)
+        suggestions_view_mode: How to render suggestions in the returned content:
+            - "DEFAULT_FOR_CURRENT_ACCESS": Default based on user's access level
+            - "SUGGESTIONS_INLINE": Suggested changes appear inline in the document
+            - "PREVIEW_SUGGESTIONS_ACCEPTED": Preview as if all suggestions were accepted
+            - "PREVIEW_WITHOUT_SUGGESTIONS": Preview as if all suggestions were rejected
 
     Returns:
         str: The document content as Markdown, optionally with comments
@@ -1750,13 +1776,24 @@ async def get_doc_as_markdown(
     if comment_mode not in valid_modes:
         return f"Error: comment_mode must be one of {valid_modes}, got '{comment_mode}'"
 
+    if suggestions_view_mode not in VALID_SUGGESTIONS_VIEW_MODES:
+        return (
+            f"Error: suggestions_view_mode must be one of "
+            f"{', '.join(VALID_SUGGESTIONS_VIEW_MODES)}, got '{suggestions_view_mode}'"
+        )
+
     logger.info(
         f"[get_doc_as_markdown] Doc={document_id}, comments={include_comments}, mode={comment_mode}"
     )
 
     # Fetch document content via Docs API
     doc = await asyncio.to_thread(
-        docs_service.documents().get(documentId=document_id).execute
+        docs_service.documents()
+        .get(
+            documentId=document_id,
+            suggestionsViewMode=suggestions_view_mode,
+        )
+        .execute
     )
 
     markdown = convert_doc_to_markdown(doc)
