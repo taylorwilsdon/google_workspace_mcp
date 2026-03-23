@@ -74,6 +74,8 @@ def create_comment_tools(app_name: str, file_id_param: str):
             """List all comments from a Google Document."""
             return await _read_comments_impl(service, app_name, document_id)
 
+        # Full "drive" scope required: "drive.file" limits visibility to files
+        # created/opened by the app, making comments invisible to collaborators.
         @require_google_service("drive", "drive")
         @handle_http_errors(manage_func_name, service_type="drive")
         async def manage_comment(
@@ -107,6 +109,8 @@ def create_comment_tools(app_name: str, file_id_param: str):
             """List all comments from a Google Spreadsheet."""
             return await _read_comments_impl(service, app_name, spreadsheet_id)
 
+        # Full "drive" scope required: "drive.file" limits visibility to files
+        # created/opened by the app, making comments invisible to collaborators.
         @require_google_service("drive", "drive")
         @handle_http_errors(manage_func_name, service_type="drive")
         async def manage_comment(
@@ -138,6 +142,8 @@ def create_comment_tools(app_name: str, file_id_param: str):
             """List all comments from a Google Presentation."""
             return await _read_comments_impl(service, app_name, presentation_id)
 
+        # Full "drive" scope required: "drive.file" limits visibility to files
+        # created/opened by the app, making comments invisible to collaborators.
         @require_google_service("drive", "drive")
         @handle_http_errors(manage_func_name, service_type="drive")
         async def manage_comment(

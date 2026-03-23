@@ -80,10 +80,10 @@ sheets:
     - list_spreadsheets
     - get_spreadsheet_info
     - format_sheet_range
-  complete:
-    - create_sheet
     - list_spreadsheet_comments
     - manage_spreadsheet_comment
+  complete:
+    - create_sheet
     - manage_conditional_formatting
 
 chat:
@@ -116,9 +116,9 @@ slides:
     - batch_update_presentation
     - get_page
     - get_page_thumbnail
-  complete:
     - list_presentation_comments
     - manage_presentation_comment
+  complete: []
 
 tasks:
   core:
