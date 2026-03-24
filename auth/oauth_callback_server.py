@@ -197,7 +197,24 @@ class MinimalOAuthServer:
         Returns:
             Tuple of (success: bool, error_message: str)
         """
-        if self.is_running:
+        # Check if this instance already has a running server — whether is_running
+        # is set or not.  The flag can be stale (e.g. set to False by an exception
+        # handler while the thread is still alive and holding the port).
+        if self.server_thread and self.server_thread.is_alive():
+            if self.is_actually_running():
+                logger.info(
+                    "Minimal OAuth server thread is still alive and port is responding, reusing"
+                )
+                self.is_running = True
+                return True, ""
+            else:
+                logger.warning(
+                    "Minimal OAuth server thread is alive but port is not responding. Restarting."
+                )
+                self.stop()
+                self.server = None
+                self.server_thread = None
+        elif self.is_running:
             if self.is_actually_running():
                 logger.info("Minimal OAuth server is already running")
                 return True, ""
@@ -221,6 +238,14 @@ class MinimalOAuthServer:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.bind((hostname, self.port))
         except OSError:
+            # Before failing, check if the port is held by a previous server
+            # instance in our own process that we can still use for callbacks.
+            if self.is_actually_running():
+                logger.info(
+                    f"Port {self.port} is in use by our own OAuth server, reusing"
+                )
+                self.is_running = True
+                return True, ""
             error_msg = f"Port {self.port} is already in use on {hostname}. Cannot start minimal OAuth server."
             logger.error(error_msg)
             return False, error_msg
@@ -268,10 +293,12 @@ class MinimalOAuthServer:
         return False, error_msg
 
     def stop(self):
-        """Stop the minimal OAuth server."""
-        if not self.is_running:
-            return
+        """Stop the minimal OAuth server.
 
+        Attempts to shut down the uvicorn server and join its thread regardless
+        of the ``is_running`` flag — the flag can be stale when an exception in
+        the server thread resets it while the thread is still alive.
+        """
         try:
             if self.server:
                 if hasattr(self.server, "should_exit"):
@@ -285,6 +312,7 @@ class MinimalOAuthServer:
 
         except Exception as e:
             logger.error(f"Error stopping minimal OAuth server: {e}", exc_info=True)
+            self.is_running = False
 
 
 # Global instance for stdio mode
