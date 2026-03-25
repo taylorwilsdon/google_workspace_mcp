@@ -16,7 +16,7 @@ from googleapiclient.errors import HttpError
 from googleapiclient.discovery import build
 
 from auth.service_decorator import require_google_service
-from core.utils import handle_http_errors
+from core.utils import handle_http_errors, StringList
 
 from core.server import server
 
@@ -1122,9 +1122,9 @@ async def manage_event(
     calendar_id: str = "primary",
     description: Optional[str] = None,
     location: Optional[str] = None,
-    attendees: Optional[Union[List[str], List[Dict[str, Any]]]] = None,
+    attendees: Optional[Union[StringList, List[Dict[str, Any]]]] = None,
     timezone: Optional[str] = None,
-    attachments: Optional[List[str]] = None,
+    attachments: Optional[StringList] = None,
     add_google_meet: Optional[bool] = None,
     reminders: Optional[Union[str, List[Dict[str, Any]]]] = None,
     use_default_reminders: Optional[bool] = None,
@@ -1246,7 +1246,7 @@ async def query_freebusy(
     user_google_email: str,
     time_min: str,
     time_max: str,
-    calendar_ids: Optional[List[str]] = None,
+    calendar_ids: Optional[StringList] = None,
     group_expansion_max: Optional[int] = None,
     calendar_expansion_max: Optional[int] = None,
 ) -> str:

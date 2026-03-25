@@ -12,7 +12,7 @@ from typing import List, Optional, Union
 
 from auth.service_decorator import require_google_service
 from core.server import server
-from core.utils import handle_http_errors, UserInputError
+from core.utils import handle_http_errors, UserInputError, StringList
 from core.comments import create_comment_tools
 from gsheets.sheets_helpers import (
     CONDITION_TYPES,
@@ -1106,7 +1106,7 @@ async def create_spreadsheet(
     service,
     user_google_email: str,
     title: str,
-    sheet_names: Optional[List[str]] = None,
+    sheet_names: Optional[StringList] = None,
 ) -> str:
     """
     Creates a new Google Spreadsheet.

@@ -7,11 +7,11 @@ This module provides MCP tools for interacting with Google Programmable Search E
 import logging
 import asyncio
 import os
-from typing import Optional, List, Literal
+from typing import Optional, Literal
 
 from auth.service_decorator import require_google_service
 from core.server import server
-from core.utils import handle_http_errors
+from core.utils import handle_http_errors, StringList
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ async def search_custom(
     file_type: Optional[str] = None,
     language: Optional[str] = None,
     country: Optional[str] = None,
-    sites: Optional[List[str]] = None,
+    sites: Optional[StringList] = None,
 ) -> str:
     """
     Performs a search using Google Custom Search JSON API.

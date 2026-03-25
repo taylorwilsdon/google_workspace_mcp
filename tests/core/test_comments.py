@@ -45,12 +45,9 @@ async def test_read_comments_includes_quoted_text():
 
     result = await _read_comments_impl(mock_service, "document", "doc123")
 
-    # Comment with anchor text should show the quoted text
     assert "Quoted text: the specific text that was highlighted" in result
     assert "Needs a citation here." in result
 
-    # Comment without anchor text should not have a "Quoted text" line between Bob's author and content
-    # The output uses literal \n joins, so split on that
     parts = result.split("\\n")
     bob_section_started = False
     for part in parts:

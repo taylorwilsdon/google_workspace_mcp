@@ -10,6 +10,18 @@ from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
+VALID_NAMED_STYLE_TYPES = (
+    "NORMAL_TEXT",
+    "TITLE",
+    "SUBTITLE",
+    "HEADING_1",
+    "HEADING_2",
+    "HEADING_3",
+    "HEADING_4",
+    "HEADING_5",
+    "HEADING_6",
+)
+
 VALID_SUGGESTIONS_VIEW_MODES = (
     "DEFAULT_FOR_CURRENT_ACCESS",
     "SUGGESTIONS_INLINE",
@@ -17,6 +29,17 @@ VALID_SUGGESTIONS_VIEW_MODES = (
     "PREVIEW_WITHOUT_SUGGESTIONS",
 )
 
+
+
+def validate_suggestions_view_mode(suggestions_view_mode: str) -> Optional[str]:
+    """Return an error message when suggestions_view_mode is invalid."""
+    if suggestions_view_mode in VALID_SUGGESTIONS_VIEW_MODES:
+        return None
+
+    return (
+        "Error: suggestions_view_mode must be one of "
+        f"{', '.join(VALID_SUGGESTIONS_VIEW_MODES)}, got '{suggestions_view_mode}'"
+    )
 
 def _normalize_color(
     color: Optional[str], param_name: str
@@ -126,7 +149,7 @@ def build_paragraph_style(
     indent_end: float = None,
     space_above: float = None,
     space_below: float = None,
-    named_style_type: str = None,
+    named_style_type: Optional[str] = None,
 ) -> tuple[Dict[str, Any], list[str]]:
     """
     Build paragraph style object for Google Docs API requests.
@@ -150,21 +173,10 @@ def build_paragraph_style(
     fields = []
 
     if named_style_type is not None:
-        valid_styles = [
-            "NORMAL_TEXT",
-            "TITLE",
-            "SUBTITLE",
-            "HEADING_1",
-            "HEADING_2",
-            "HEADING_3",
-            "HEADING_4",
-            "HEADING_5",
-            "HEADING_6",
-        ]
-        if named_style_type not in valid_styles:
+        if named_style_type not in VALID_NAMED_STYLE_TYPES:
             raise ValueError(
                 f"Invalid named_style_type '{named_style_type}'. "
-                f"Must be one of: {', '.join(valid_styles)}"
+                f"Must be one of: {', '.join(VALID_NAMED_STYLE_TYPES)}"
             )
         paragraph_style["namedStyleType"] = named_style_type
         fields.append("namedStyleType")
@@ -359,7 +371,7 @@ def create_update_paragraph_style_request(
     space_above: float = None,
     space_below: float = None,
     tab_id: Optional[str] = None,
-    named_style_type: str = None,
+    named_style_type: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """
     Create an updateParagraphStyle request for Google Docs API.
@@ -382,15 +394,15 @@ def create_update_paragraph_style_request(
         Dictionary representing the updateParagraphStyle request, or None if no styles provided
     """
     paragraph_style, fields = build_paragraph_style(
-        heading_level,
-        alignment,
-        line_spacing,
-        indent_first_line,
-        indent_start,
-        indent_end,
-        space_above,
-        space_below,
-        named_style_type,
+        heading_level=heading_level,
+        alignment=alignment,
+        line_spacing=line_spacing,
+        indent_first_line=indent_first_line,
+        indent_start=indent_start,
+        indent_end=indent_end,
+        space_above=space_above,
+        space_below=space_below,
+        named_style_type=named_style_type,
     )
 
     if not paragraph_style:

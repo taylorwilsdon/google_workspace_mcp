@@ -31,7 +31,7 @@ from gdocs.docs_helpers import (
     create_insert_doc_tab_request,
     create_update_doc_tab_request,
     create_delete_doc_tab_request,
-    VALID_SUGGESTIONS_VIEW_MODES,
+    validate_suggestions_view_mode,
 )
 
 # Import document structure and table utilities
@@ -138,16 +138,13 @@ async def get_doc_content(
     Returns:
         str: The document content with metadata header.
     """
-    if suggestions_view_mode not in VALID_SUGGESTIONS_VIEW_MODES:
-        return (
-            f"Error: suggestions_view_mode must be one of "
-            f"{', '.join(VALID_SUGGESTIONS_VIEW_MODES)}, got '{suggestions_view_mode}'"
-        )
+    validation_error = validate_suggestions_view_mode(suggestions_view_mode)
+    if validation_error:
+        return validation_error
     logger.info(
         f"[get_doc_content] Invoked. Document/File ID: '{document_id}' for user '{user_google_email}'"
     )
 
-    # Step 2: Get file metadata from Drive
     file_metadata = await asyncio.to_thread(
         drive_service.files()
         .get(
@@ -165,9 +162,8 @@ async def get_doc_content(
         f"[get_doc_content] File '{file_name}' (ID: {document_id}) has mimeType: '{mime_type}'"
     )
 
-    body_text = ""  # Initialize body_text
+    body_text = ""
 
-    # Step 3: Process based on mimeType
     if mime_type == "application/vnd.google-apps.document":
         logger.info("[get_doc_content] Processing as native Google Doc.")
         doc_data = await asyncio.to_thread(
@@ -179,12 +175,10 @@ async def get_doc_content(
             )
             .execute
         )
-        # Tab header format constant
         TAB_HEADER_FORMAT = "\n--- TAB: {tab_name} (ID: {tab_id}) ---\n"
 
         def extract_text_from_elements(elements, tab_name=None, tab_id=None, depth=0):
             """Extract text from document elements (paragraphs, tables, etc.)"""
-            # Prevent infinite recursion by limiting depth
             if depth > 5:
                 return ""
             text_lines = []
@@ -227,13 +221,11 @@ async def get_doc_content(
                 props = tab.get("tabProperties", {})
                 tab_title = props.get("title", "Untitled Tab")
                 tab_id = props.get("tabId", "Unknown ID")
-                # Add indentation for nested tabs to show hierarchy
                 if level > 0:
                     tab_title = "    " * level + f"{tab_title}"
                 tab_body = tab.get("documentTab", {}).get("body", {}).get("content", [])
                 tab_text += extract_text_from_elements(tab_body, tab_title, tab_id)
 
-            # Process child tabs (nested tabs)
             child_tabs = tab.get("childTabs", [])
             for child_tab in child_tabs:
                 tab_text += process_tab_hierarchy(child_tab, level + 1)
@@ -242,13 +234,11 @@ async def get_doc_content(
 
         processed_text_lines = []
 
-        # Process main document body
         body_elements = doc_data.get("body", {}).get("content", [])
         main_content = extract_text_from_elements(body_elements)
         if main_content.strip():
             processed_text_lines.append(main_content)
 
-        # Process all tabs
         tabs = doc_data.get("tabs", [])
         for tab in tabs:
             tab_content = process_tab_hierarchy(tab)
@@ -893,7 +883,8 @@ async def batch_update_doc(
                          optional: heading_level (0-6, 0=normal), alignment
                                    (START/CENTER/END/JUSTIFIED), line_spacing,
                                    indent_first_line, indent_start, indent_end,
-                                   space_above, space_below
+                                   space_above, space_below, named_style_type
+                                   ('NORMAL_TEXT'|'TITLE'|'SUBTITLE'|'HEADING_1'..'HEADING_6')
       insert_table     - required: index (int), rows (int), columns (int)
       insert_page_break- required: index (int)
       find_replace     - required: find_text (str), replace_text (str)
@@ -1776,11 +1767,9 @@ async def get_doc_as_markdown(
     if comment_mode not in valid_modes:
         return f"Error: comment_mode must be one of {valid_modes}, got '{comment_mode}'"
 
-    if suggestions_view_mode not in VALID_SUGGESTIONS_VIEW_MODES:
-        return (
-            f"Error: suggestions_view_mode must be one of "
-            f"{', '.join(VALID_SUGGESTIONS_VIEW_MODES)}, got '{suggestions_view_mode}'"
-        )
+    validation_error = validate_suggestions_view_mode(suggestions_view_mode)
+    if validation_error:
+        return validation_error
 
     logger.info(
         f"[get_doc_as_markdown] Doc={document_id}, comments={include_comments}, mode={comment_mode}"

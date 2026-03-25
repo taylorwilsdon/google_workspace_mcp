@@ -1,4 +1,5 @@
 import io
+import json
 import logging
 import os
 import zipfile
@@ -7,8 +8,9 @@ import asyncio
 import functools
 
 from pathlib import Path
-from typing import List, Optional
+from typing import Annotated, Any, List, Optional
 
+from pydantic import BeforeValidator
 from defusedxml import ElementTree as ET
 
 from googleapiclient.errors import HttpError
@@ -29,6 +31,31 @@ class UserInputError(Exception):
     """Raised for user-facing input/validation errors that shouldn't be retried."""
 
     pass
+
+
+def _coerce_json_str_to_list(v: Any) -> Any:
+    """Coerce a JSON-encoded string to a list.
+
+    Some MCP clients (e.g. Cowork) serialise array parameters as JSON strings
+    rather than native arrays.  This ``BeforeValidator`` transparently converts
+    ``'["a","b"]'`` → ``["a", "b"]`` so Pydantic validation succeeds.
+    """
+    if isinstance(v, str):
+        try:
+            parsed = json.loads(v)
+            if isinstance(parsed, list):
+                return parsed
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return v
+
+
+StringList = Annotated[List[str], BeforeValidator(_coerce_json_str_to_list)]
+"""``List[str]`` that also accepts a JSON-encoded string of an array.
+
+Use in tool signatures instead of ``List[str]`` to work around MCP clients
+that send ``'["value"]'`` instead of ``["value"]``.
+"""
 
 
 # Directories from which local file reads are allowed.
