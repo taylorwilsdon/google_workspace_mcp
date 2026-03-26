@@ -13,7 +13,7 @@ from mcp import Resource
 
 from auth.service_decorator import require_google_service
 from core.server import server
-from core.utils import UserInputError, handle_http_errors
+from core.utils import UserInputError, handle_http_errors, StringList
 
 logger = logging.getLogger(__name__)
 
@@ -689,7 +689,7 @@ async def manage_contacts_batch(
     action: str,
     contacts: Optional[List[Dict[str, str]]] = None,
     updates: Optional[List[Dict[str, str]]] = None,
-    contact_ids: Optional[List[str]] = None,
+    contact_ids: Optional[StringList] = None,
 ) -> str:
     """
     Batch create, update, or delete contacts. Consolidated tool replacing
@@ -896,8 +896,8 @@ async def manage_contact_group(
     group_id: Optional[str] = None,
     name: Optional[str] = None,
     delete_contacts: bool = False,
-    add_contact_ids: Optional[List[str]] = None,
-    remove_contact_ids: Optional[List[str]] = None,
+    add_contact_ids: Optional[StringList] = None,
+    remove_contact_ids: Optional[StringList] = None,
 ) -> str:
     """
     Create, update, delete a contact group, or modify its members. Consolidated tool

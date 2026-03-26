@@ -11,6 +11,8 @@ on:
       - main
   workflow_dispatch:
 
+permissions: {}
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}

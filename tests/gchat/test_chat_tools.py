@@ -3,6 +3,9 @@ Unit tests for Google Chat MCP tools — attachment support
 """
 
 import base64
+import inspect
+from urllib.parse import urlparse
+
 import pytest
 from unittest.mock import AsyncMock, Mock, patch
 import sys
@@ -144,6 +147,39 @@ async def test_get_messages_multiple_attachments(mock_resolve):
     assert "[attachment 1: doc.pdf (application/pdf)]" in result
 
 
+@pytest.mark.asyncio
+@patch("gchat.chat_tools._resolve_sender", new_callable=AsyncMock)
+async def test_get_messages_exposes_message_filter_and_forwards_it(mock_resolve):
+    """get_messages should expose message_filter publicly and pass it to the Chat API."""
+    mock_resolve.return_value = "Test User"
+
+    msg = _make_message(text="Filtered message")
+    chat_service = Mock()
+    chat_service.spaces().get().execute.return_value = {"displayName": "Test Space"}
+    chat_service.spaces().messages().list().execute.return_value = {"messages": [msg]}
+    people_service = Mock()
+
+    from gchat.chat_tools import get_messages
+
+    public_fn = getattr(get_messages, "fn", get_messages)
+    params = inspect.signature(public_fn).parameters
+
+    assert "message_filter" in params
+    assert "filter" not in params
+
+    result = await _unwrap(get_messages)(
+        chat_service=chat_service,
+        people_service=people_service,
+        user_google_email="test@example.com",
+        space_id="spaces/S",
+        message_filter="thread.name = spaces/S/threads/T",
+    )
+
+    assert "Filtered message" in result
+    list_kwargs = chat_service.spaces().messages().list.call_args.kwargs
+    assert list_kwargs["filter"] == "thread.name = spaces/S/threads/T"
+
+
 # ---------------------------------------------------------------------------
 # search_messages: attachment indicator
 # ---------------------------------------------------------------------------
@@ -177,6 +213,42 @@ async def test_search_messages_shows_attachment_indicator(mock_resolve):
     )
 
     assert "[attachment: report.pdf (application/pdf)]" in result
+
+
+@pytest.mark.asyncio
+@patch("gchat.chat_tools._resolve_sender", new_callable=AsyncMock)
+async def test_search_messages_combines_filters_and_uses_page_size(mock_resolve):
+    """Cross-space search should honor page_size and combine query with time_filter."""
+    mock_resolve.return_value = "Test User"
+
+    msg = _make_message(text="Deploy finished")
+    msg["_space_name"] = "General"
+
+    chat_service = Mock()
+    chat_service.spaces().list().execute.return_value = {
+        "spaces": [{"name": "spaces/S", "displayName": "General"}]
+    }
+    chat_service.spaces().messages().list().execute.return_value = {"messages": [msg]}
+    people_service = Mock()
+
+    from gchat.chat_tools import search_messages
+
+    result = await _unwrap(search_messages)(
+        chat_service=chat_service,
+        people_service=people_service,
+        user_google_email="test@example.com",
+        query="deploy",
+        time_filter='createTime > "2026-03-18T00:00:00-03:00"',
+        page_size=7,
+    )
+
+    assert 'text "deploy" and createTime > "2026-03-18T00:00:00-03:00"' in result
+    list_kwargs = chat_service.spaces().messages().list.call_args.kwargs
+    assert list_kwargs["pageSize"] == 7
+    assert (
+        list_kwargs["filter"]
+        == 'text:"deploy" AND createTime > "2026-03-18T00:00:00-03:00"'
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -271,10 +343,12 @@ async def test_download_uses_api_media_endpoint():
     # Verify we used the API endpoint with attachmentDataRef.resourceName
     call_args = mock_client.get.call_args
     url_used = call_args.args[0]
-    assert "chat.googleapis.com" in url_used
+    parsed = urlparse(url_used)
+    assert parsed.scheme == "https"
+    assert parsed.hostname == "chat.googleapis.com"
     assert "alt=media" in url_used
-    assert "spaces/S/attachments/A" in url_used
-    assert "/messages/" not in url_used
+    assert "spaces/S/attachments/A" in parsed.path
+    assert "/messages/" not in parsed.path
 
     # Verify Bearer token
     assert call_args.kwargs["headers"]["Authorization"] == "Bearer fake-access-token"

@@ -6,6 +6,8 @@ on:
       - "v*"
   workflow_dispatch:
 
+permissions: {}
+
 jobs:
   publish:
     runs-on: ubuntu-latest

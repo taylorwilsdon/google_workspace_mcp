@@ -9,7 +9,7 @@ import logging
 from typing import Dict, Any, List, Tuple, Optional
 from urllib.parse import urlparse
 
-from gdocs.docs_helpers import validate_operation
+from gdocs.docs_helpers import validate_operation, VALID_NAMED_STYLE_TYPES
 
 logger = logging.getLogger(__name__)
 
@@ -156,6 +156,7 @@ class ValidationManager:
         bold: Optional[bool] = None,
         italic: Optional[bool] = None,
         underline: Optional[bool] = None,
+        strikethrough: Optional[bool] = None,
         font_size: Optional[int] = None,
         font_family: Optional[str] = None,
         text_color: Optional[str] = None,
@@ -169,6 +170,7 @@ class ValidationManager:
             bold: Bold setting
             italic: Italic setting
             underline: Underline setting
+            strikethrough: Strikethrough setting
             font_size: Font size in points
             font_family: Font family name
             text_color: Text color in "#RRGGBB" format
@@ -183,6 +185,7 @@ class ValidationManager:
             bold,
             italic,
             underline,
+            strikethrough,
             font_size,
             font_family,
             text_color,
@@ -192,7 +195,7 @@ class ValidationManager:
         if all(param is None for param in formatting_params):
             return (
                 False,
-                "At least one formatting parameter must be provided (bold, italic, underline, font_size, font_family, text_color, background_color, or link_url)",
+                "At least one formatting parameter must be provided (bold, italic, underline, strikethrough, font_size, font_family, text_color, background_color, or link_url)",
             )
 
         # Validate boolean parameters
@@ -200,6 +203,7 @@ class ValidationManager:
             (bold, "bold"),
             (italic, "italic"),
             (underline, "underline"),
+            (strikethrough, "strikethrough"),
         ]:
             if param is not None and not isinstance(param, bool):
                 return (
@@ -316,19 +320,20 @@ class ValidationManager:
                 "At least one paragraph style parameter must be provided (heading_level, alignment, line_spacing, indent_first_line, indent_start, indent_end, space_above, space_below, or named_style_type)",
             )
 
+        if heading_level is not None and named_style_type is not None:
+            return (
+                False,
+                "heading_level and named_style_type are mutually exclusive; provide only one",
+            )
+
         if named_style_type is not None:
-            valid_styles = [
-                "NORMAL_TEXT", "TITLE", "SUBTITLE",
-                "HEADING_1", "HEADING_2", "HEADING_3",
-                "HEADING_4", "HEADING_5", "HEADING_6",
-            ]
-            if named_style_type not in valid_styles:
+            if named_style_type not in VALID_NAMED_STYLE_TYPES:
                 return (
                     False,
-                    f"Invalid named_style_type '{named_style_type}'. Must be one of: {', '.join(valid_styles)}",
+                    f"Invalid named_style_type '{named_style_type}'. Must be one of: {', '.join(VALID_NAMED_STYLE_TYPES)}",
                 )
 
-        if heading_level is not None:
+        if heading_level is not None and named_style_type is None:
             if not isinstance(heading_level, int):
                 return (
                     False,
@@ -617,6 +622,7 @@ class ValidationManager:
                     op.get("bold"),
                     op.get("italic"),
                     op.get("underline"),
+                    op.get("strikethrough"),
                     op.get("font_size"),
                     op.get("font_family"),
                     op.get("text_color"),

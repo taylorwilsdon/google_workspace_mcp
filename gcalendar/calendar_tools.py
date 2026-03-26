@@ -16,7 +16,7 @@ from googleapiclient.errors import HttpError
 from googleapiclient.discovery import build
 
 from auth.service_decorator import require_google_service
-from core.utils import handle_http_errors
+from core.utils import handle_http_errors, StringList
 
 from core.server import server
 
@@ -170,6 +170,21 @@ def _preserve_existing_fields(
             logger.info(f"[modify_event] Preserving existing {field_name}")
         elif new_value is not None:
             event_body[field_name] = new_value
+
+
+def _get_meeting_link(item: Dict[str, Any]) -> str:
+    """Extract video meeting link from event conference data or hangoutLink."""
+    conference_data = item.get("conferenceData")
+    if conference_data and "entryPoints" in conference_data:
+        for entry_point in conference_data["entryPoints"]:
+            if entry_point.get("entryPointType") == "video":
+                uri = entry_point.get("uri", "")
+                if uri:
+                    return uri
+    hangout_link = item.get("hangoutLink", "")
+    if hangout_link:
+        return hangout_link
+    return ""
 
 
 def _format_attendee_details(
@@ -448,6 +463,8 @@ async def get_events(
         )
         attendee_details_str = _format_attendee_details(attendees, indent="  ")
 
+        meeting_link = _get_meeting_link(item)
+
         event_details = (
             f"Event Details:\n"
             f"- Title: {summary}\n"
@@ -456,6 +473,10 @@ async def get_events(
             f"- Description: {description}\n"
             f"- Location: {location}\n"
             f"- Color ID: {color_id}\n"
+        )
+        if meeting_link:
+            event_details += f"- Meeting Link: {meeting_link}\n"
+        event_details += (
             f"- Attendees: {attendee_emails}\n"
             f"- Attendee Details: {attendee_details_str}\n"
         )
@@ -494,10 +515,16 @@ async def get_events(
             )
             attendee_details_str = _format_attendee_details(attendees, indent="    ")
 
+            meeting_link = _get_meeting_link(item)
+
             event_detail_parts = (
                 f'- "{summary}" (Starts: {start_time}, Ends: {end_time})\n'
                 f"  Description: {description}\n"
                 f"  Location: {location}\n"
+            )
+            if meeting_link:
+                event_detail_parts += f"  Meeting Link: {meeting_link}\n"
+            event_detail_parts += (
                 f"  Attendees: {attendee_emails}\n"
                 f"  Attendee Details: {attendee_details_str}\n"
             )
@@ -513,9 +540,12 @@ async def get_events(
             event_details_list.append(event_detail_parts)
         else:
             # Basic output format
-            event_details_list.append(
-                f'- "{summary}" (Starts: {start_time}, Ends: {end_time}) ID: {item_event_id} | Link: {link}'
-            )
+            meeting_link = _get_meeting_link(item)
+            basic_line = f'- "{summary}" (Starts: {start_time}, Ends: {end_time})'
+            if meeting_link:
+                basic_line += f" Meeting: {meeting_link}"
+            basic_line += f" ID: {item_event_id} | Link: {link}"
+            event_details_list.append(basic_line)
 
     if event_id:
         # Single event basic output
@@ -1092,9 +1122,9 @@ async def manage_event(
     calendar_id: str = "primary",
     description: Optional[str] = None,
     location: Optional[str] = None,
-    attendees: Optional[Union[List[str], List[Dict[str, Any]]]] = None,
+    attendees: Optional[Union[StringList, List[Dict[str, Any]]]] = None,
     timezone: Optional[str] = None,
-    attachments: Optional[List[str]] = None,
+    attachments: Optional[StringList] = None,
     add_google_meet: Optional[bool] = None,
     reminders: Optional[Union[str, List[Dict[str, Any]]]] = None,
     use_default_reminders: Optional[bool] = None,
@@ -1216,7 +1246,7 @@ async def query_freebusy(
     user_google_email: str,
     time_min: str,
     time_max: str,
-    calendar_ids: Optional[List[str]] = None,
+    calendar_ids: Optional[StringList] = None,
     group_expansion_max: Optional[int] = None,
     calendar_expansion_max: Optional[int] = None,
 ) -> str:

@@ -1,3 +1,4 @@
+import io
 import argparse
 import logging
 import os
@@ -5,6 +6,14 @@ import socket
 import sys
 from importlib import metadata, import_module
 from dotenv import load_dotenv
+
+# Prevent any stray startup output on macOS (e.g. platform identifiers) from
+# corrupting the MCP JSON-RPC handshake on stdout. We capture anything written
+# to stdout during module-level initialisation and replay it to stderr so that
+# diagnostic information is not lost.
+_original_stdout = sys.stdout
+if sys.platform == "darwin":
+    sys.stdout = io.StringIO()
 
 # Check for CLI mode early - before loading oauth_config
 # CLI mode requires OAuth 2.0 since there's no MCP session context
@@ -117,12 +126,36 @@ def narrow_permissions_to_services(
     }
 
 
+def _restore_stdout() -> None:
+    """Restore the real stdout and replay any captured output to stderr."""
+    captured_stdout = sys.stdout
+
+    # Idempotent: if already restored, nothing to do.
+    if captured_stdout is _original_stdout:
+        return
+
+    captured = ""
+    required_stringio_methods = ("getvalue", "write", "flush")
+    try:
+        if all(
+            callable(getattr(captured_stdout, method_name, None))
+            for method_name in required_stringio_methods
+        ):
+            captured = captured_stdout.getvalue()
+    finally:
+        sys.stdout = _original_stdout
+
+    if captured:
+        print(captured, end="", file=sys.stderr)
+
+
 def main():
     """
     Main entry point for the Google Workspace MCP server.
     Uses FastMCP's native streamable-http transport.
     Supports CLI mode for direct tool invocation without running the server.
     """
+    _restore_stdout()
     # Check if CLI mode is enabled - suppress startup messages
     if _CLI_MODE:
         # Suppress logging output in CLI mode for clean output
@@ -517,7 +550,12 @@ def main():
                 )
                 sys.exit(1)
 
-            server.run(transport="streamable-http", host=host, port=port)
+            server.run(
+                transport="streamable-http",
+                host=host,
+                port=port,
+                stateless_http=is_stateless_mode(),
+            )
         else:
             server.run()
     except KeyboardInterrupt:

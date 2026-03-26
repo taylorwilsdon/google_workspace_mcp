@@ -163,9 +163,18 @@ async def get_messages(
     space_id: str,
     page_size: int = 50,
     order_by: str = "createTime desc",
+    message_filter: Optional[str] = None,
 ) -> str:
     """
     Retrieves messages from a Google Chat space.
+
+    Args:
+        message_filter: Optional filter string using the Chat API filter syntax.
+                        Supports createTime and thread.name.
+                        Examples:
+                          'createTime > "2026-03-18T00:00:00-03:00"'
+                          'createTime > "2026-03-18T00:00:00-03:00" AND createTime < "2026-03-19T00:00:00-03:00"'
+                          'thread.name = spaces/X/threads/Y'
 
     Returns:
         str: Formatted messages from the specified space.
@@ -179,11 +188,11 @@ async def get_messages(
     space_name = space_info.get("displayName", "Unknown Space")
 
     # Get messages
+    list_params = {"parent": space_id, "pageSize": page_size, "orderBy": order_by}
+    if message_filter is not None:
+        list_params["filter"] = message_filter
     response = await asyncio.to_thread(
-        chat_service.spaces()
-        .messages()
-        .list(parent=space_id, pageSize=page_size, orderBy=order_by)
-        .execute
+        chat_service.spaces().messages().list(**list_params).execute
     )
 
     messages = response.get("messages", [])
@@ -316,60 +325,91 @@ async def search_messages(
     chat_service,
     people_service,
     user_google_email: str,
-    query: str,
+    query: Optional[str] = None,
     space_id: Optional[str] = None,
     page_size: int = 25,
+    time_filter: Optional[str] = None,
+    max_spaces: int = 10,
 ) -> str:
     """
-    Searches for messages in Google Chat spaces by text content.
+    Searches for messages in Google Chat spaces by text content and/or time range.
+
+    Args:
+        query: Optional text to search for. If omitted, only time_filter is applied.
+        space_id: Optional space to restrict the search to.
+        page_size: Maximum number of messages to return per space.
+        time_filter: Optional filter using Chat API createTime syntax.
+                     Examples:
+                       'createTime > "2026-03-18T00:00:00-03:00"'
+                       'createTime > "2026-03-18T00:00:00-03:00" AND createTime < "2026-03-19T00:00:00-03:00"'
+        max_spaces: Maximum number of spaces to search when space_id is not provided (default 10).
 
     Returns:
-        str: A formatted list of messages matching the search query.
+        str: A formatted list of messages matching the search criteria.
     """
-    logger.info(f"[search_messages] Email={user_google_email}, Query='{query}'")
+    logger.info(
+        f"[search_messages] Email={user_google_email}, Query='{query}', TimeFilter='{time_filter}'"
+    )
+
+    # Build API filter string (only createTime/thread.name operators are supported)
+    filter_str = time_filter
+
+    search_terms = []
+    if query:
+        search_terms.append(f'text "{query}"')
+    if time_filter:
+        search_terms.append(time_filter)
+    search_desc = " and ".join(search_terms) if search_terms else "all messages"
 
     # If specific space provided, search within that space
     if space_id:
+        list_params = {"parent": space_id, "pageSize": page_size}
+        if filter_str:
+            list_params["filter"] = filter_str
         response = await asyncio.to_thread(
-            chat_service.spaces()
-            .messages()
-            .list(parent=space_id, pageSize=page_size, filter=f'text:"{query}"')
-            .execute
+            chat_service.spaces().messages().list(**list_params).execute
         )
         messages = response.get("messages", [])
         context = f"space '{space_id}'"
     else:
-        # Search across all accessible spaces (this may require iterating through spaces)
-        # For simplicity, we'll search the user's spaces first
+        # Search across all accessible spaces
         spaces_response = await asyncio.to_thread(
             chat_service.spaces().list(pageSize=100).execute
         )
         spaces = spaces_response.get("spaces", [])
 
-        messages = []
-        for space in spaces[:10]:  # Limit to first 10 spaces to avoid timeout
+        async def fetch_space_messages(space: dict) -> List[dict]:
             try:
-                space_messages = await asyncio.to_thread(
-                    chat_service.spaces()
-                    .messages()
-                    .list(
-                        parent=space.get("name"), pageSize=5, filter=f'text:"{query}"'
-                    )
-                    .execute
+                list_params = {"parent": space.get("name"), "pageSize": page_size}
+                if filter_str:
+                    list_params["filter"] = filter_str
+                response = await asyncio.to_thread(
+                    chat_service.spaces().messages().list(**list_params).execute
                 )
-                space_msgs = space_messages.get("messages", [])
-                for msg in space_msgs:
-                    msg["_space_name"] = space.get("displayName", "Unknown")
-                messages.extend(space_msgs)
+                msgs = response.get("messages", [])
+                display = space.get("displayName", "Unknown")
+                for msg in msgs:
+                    msg["_space_name"] = display
+                return msgs
             except HttpError as e:
                 logger.debug(
                     "Skipping space %s during search: %s", space.get("name"), e
                 )
-                continue
+                return []
+
+        results = await asyncio.gather(
+            *(fetch_space_messages(s) for s in spaces[:max_spaces])
+        )
+        messages = [msg for batch in results for msg in batch]
         context = "all accessible spaces"
 
+    # Client-side text filtering (text: operator is not supported by the API)
+    if query:
+        query_lower = query.lower()
+        messages = [m for m in messages if query_lower in (m.get("text") or "").lower()]
+
     if not messages:
-        return f"No messages found matching '{query}' in {context}."
+        return f"No messages found matching '{search_desc}' in {context}."
 
     # Pre-resolve unique senders in parallel
     sender_lookup = {}
@@ -383,7 +423,7 @@ async def search_messages(
     )
     sender_map = dict(zip(sender_lookup.keys(), resolved_names))
 
-    output = [f"Found {len(messages)} messages matching '{query}' in {context}:"]
+    output = [f"Found {len(messages)} messages matching '{search_desc}' in {context}:"]
     for msg in messages:
         sender_obj = msg.get("sender", {})
         sender_key = sender_obj.get("name", "")

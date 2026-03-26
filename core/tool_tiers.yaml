@@ -61,6 +61,8 @@ docs:
     - insert_doc_elements
     - update_paragraph_style
     - get_doc_as_markdown
+    - list_document_comments
+    - manage_document_comment
   complete:
     - insert_doc_image
     - update_doc_headers_footers
@@ -68,8 +70,6 @@ docs:
     - inspect_doc_structure
     - create_table_with_data
     - debug_table_structure
-    - list_document_comments
-    - manage_document_comment
 
 sheets:
   core:

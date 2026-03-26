@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "workspace-mcp"
-version = "1.14.2"
+version = "1.15.0"
 description = "Comprehensive, highly performant Google Workspace Streamable HTTP & SSE MCP Server for Calendar, Gmail, Docs, Sheets, Slides & Drive"
 readme = "README.md"
 keywords = [ "mcp", "google", "workspace", "llm", "ai", "claude", "model", "context", "protocol", "server"]
@@ -12,13 +12,13 @@ license = "MIT"
 requires-python = ">=3.10"
 dependencies = [
  "fastapi>=0.115.12",
- "fastmcp>=3.0.2",
+ "fastmcp>=3.1.1",
  "google-api-python-client>=2.168.0",
  "google-auth-httplib2>=0.2.0",
  "google-auth-oauthlib>=1.2.2",
  "httpx>=0.28.1",
  "py-key-value-aio>=0.3.0",
- "pyjwt>=2.10.1",
+ "pyjwt>=2.12.0",
  "python-dotenv>=1.1.0",
  "pyyaml>=6.0.2",
  "cryptography>=45.0.0",
@@ -60,7 +60,7 @@ workspace-mcp = "main:main"
 
 [project.optional-dependencies]
 disk = [
-    "py-key-value-aio[disk]>=0.3.0",
+    "py-key-value-aio[filetree]>=0.3.0",
 ]
 valkey = [
     "py-key-value-aio[valkey]>=0.3.0",
@@ -85,7 +85,7 @@ dev = [
 
 [dependency-groups]
 disk = [
-    "py-key-value-aio[disk]>=0.3.0",
+    "py-key-value-aio[filetree]>=0.3.0",
 ]
 valkey = [
     "py-key-value-aio[valkey]>=0.3.0",

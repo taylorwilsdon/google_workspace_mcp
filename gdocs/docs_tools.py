@@ -31,6 +31,7 @@ from gdocs.docs_helpers import (
     create_insert_doc_tab_request,
     create_update_doc_tab_request,
     create_delete_doc_tab_request,
+    validate_suggestions_view_mode,
 )
 
 # Import document structure and table utilities
@@ -118,20 +119,32 @@ async def get_doc_content(
     docs_service: Any,
     user_google_email: str,
     document_id: str,
+    suggestions_view_mode: str = "DEFAULT_FOR_CURRENT_ACCESS",
 ) -> str:
     """
     Retrieves content of a Google Doc or a Drive file (like .docx) identified by document_id.
     - Native Google Docs: Fetches content via Docs API.
     - Office files (.docx, etc.) stored in Drive: Downloads via Drive API and extracts text.
 
+    Args:
+        user_google_email: User's Google email address
+        document_id: ID of the Google Doc (or full URL)
+        suggestions_view_mode: How to render suggestions in the returned content:
+            - "DEFAULT_FOR_CURRENT_ACCESS": Default based on user's access level
+            - "SUGGESTIONS_INLINE": Suggested changes appear inline in the document
+            - "PREVIEW_SUGGESTIONS_ACCEPTED": Preview as if all suggestions were accepted
+            - "PREVIEW_WITHOUT_SUGGESTIONS": Preview as if all suggestions were rejected
+
     Returns:
         str: The document content with metadata header.
     """
+    validation_error = validate_suggestions_view_mode(suggestions_view_mode)
+    if validation_error:
+        return validation_error
     logger.info(
         f"[get_doc_content] Invoked. Document/File ID: '{document_id}' for user '{user_google_email}'"
     )
 
-    # Step 2: Get file metadata from Drive
     file_metadata = await asyncio.to_thread(
         drive_service.files()
         .get(
@@ -149,22 +162,23 @@ async def get_doc_content(
         f"[get_doc_content] File '{file_name}' (ID: {document_id}) has mimeType: '{mime_type}'"
     )
 
-    body_text = ""  # Initialize body_text
+    body_text = ""
 
-    # Step 3: Process based on mimeType
     if mime_type == "application/vnd.google-apps.document":
         logger.info("[get_doc_content] Processing as native Google Doc.")
         doc_data = await asyncio.to_thread(
             docs_service.documents()
-            .get(documentId=document_id, includeTabsContent=True)
+            .get(
+                documentId=document_id,
+                includeTabsContent=True,
+                suggestionsViewMode=suggestions_view_mode,
+            )
             .execute
         )
-        # Tab header format constant
         TAB_HEADER_FORMAT = "\n--- TAB: {tab_name} (ID: {tab_id}) ---\n"
 
         def extract_text_from_elements(elements, tab_name=None, tab_id=None, depth=0):
             """Extract text from document elements (paragraphs, tables, etc.)"""
-            # Prevent infinite recursion by limiting depth
             if depth > 5:
                 return ""
             text_lines = []
@@ -207,13 +221,11 @@ async def get_doc_content(
                 props = tab.get("tabProperties", {})
                 tab_title = props.get("title", "Untitled Tab")
                 tab_id = props.get("tabId", "Unknown ID")
-                # Add indentation for nested tabs to show hierarchy
                 if level > 0:
                     tab_title = "    " * level + f"{tab_title}"
                 tab_body = tab.get("documentTab", {}).get("body", {}).get("content", [])
                 tab_text += extract_text_from_elements(tab_body, tab_title, tab_id)
 
-            # Process child tabs (nested tabs)
             child_tabs = tab.get("childTabs", [])
             for child_tab in child_tabs:
                 tab_text += process_tab_hierarchy(child_tab, level + 1)
@@ -222,13 +234,11 @@ async def get_doc_content(
 
         processed_text_lines = []
 
-        # Process main document body
         body_elements = doc_data.get("body", {}).get("content", [])
         main_content = extract_text_from_elements(body_elements)
         if main_content.strip():
             processed_text_lines.append(main_content)
 
-        # Process all tabs
         tabs = doc_data.get("tabs", [])
         for tab in tabs:
             tab_content = process_tab_hierarchy(tab)
@@ -375,6 +385,7 @@ async def modify_doc_text(
     bold: bool = None,
     italic: bool = None,
     underline: bool = None,
+    strikethrough: bool = None,
     font_size: int = None,
     font_family: str = None,
     text_color: str = None,
@@ -393,6 +404,7 @@ async def modify_doc_text(
         bold: Whether to make text bold (True/False/None to leave unchanged)
         italic: Whether to make text italic (True/False/None to leave unchanged)
         underline: Whether to underline text (True/False/None to leave unchanged)
+        strikethrough: Whether to strike through text (True/False/None to leave unchanged)
         font_size: Font size in points
         font_family: Font family name (e.g., "Arial", "Times New Roman")
         text_color: Foreground text color (#RRGGBB)
@@ -404,7 +416,7 @@ async def modify_doc_text(
     """
     logger.info(
         f"[modify_doc_text] Doc={document_id}, start={start_index}, end={end_index}, text={text is not None}, "
-        f"formatting={any(p is not None for p in [bold, italic, underline, font_size, font_family, text_color, background_color, link_url])}"
+        f"formatting={any(p is not None for p in [bold, italic, underline, strikethrough, font_size, font_family, text_color, background_color, link_url])}"
     )
 
     # Input validation
@@ -419,6 +431,7 @@ async def modify_doc_text(
         bold,
         italic,
         underline,
+        strikethrough,
         font_size,
         font_family,
         text_color,
@@ -426,7 +439,7 @@ async def modify_doc_text(
         link_url,
     ]
     if text is None and not any(p is not None for p in formatting_params):
-        return "Error: Must provide either 'text' to insert/replace, or formatting parameters (bold, italic, underline, font_size, font_family, text_color, background_color, link_url)."
+        return "Error: Must provide either 'text' to insert/replace, or formatting parameters (bold, italic, underline, strikethrough, font_size, font_family, text_color, background_color, link_url)."
 
     # Validate text formatting params if provided
     if any(p is not None for p in formatting_params):
@@ -434,6 +447,7 @@ async def modify_doc_text(
             bold,
             italic,
             underline,
+            strikethrough,
             font_size,
             font_family,
             text_color,
@@ -515,6 +529,7 @@ async def modify_doc_text(
                 bold,
                 italic,
                 underline,
+                strikethrough,
                 font_size,
                 font_family,
                 text_color,
@@ -529,6 +544,7 @@ async def modify_doc_text(
                 ("bold", bold),
                 ("italic", italic),
                 ("underline", underline),
+                ("strikethrough", strikethrough),
                 ("font_size", font_size),
                 ("font_family", font_family),
                 ("text_color", text_color),
@@ -860,14 +876,15 @@ async def batch_update_doc(
       delete_text      - required: start_index (int), end_index (int)
       replace_text     - required: start_index (int), end_index (int), text (str)
       format_text      - required: start_index (int), end_index (int)
-                         optional: bold, italic, underline, font_size, font_family,
-                                   text_color, background_color, link_url
+                         optional: bold, italic, underline, strikethrough, font_size,
+                                   font_family, text_color, background_color, link_url
       update_paragraph_style
                        - required: start_index (int), end_index (int)
                          optional: heading_level (0-6, 0=normal), alignment
                                    (START/CENTER/END/JUSTIFIED), line_spacing,
                                    indent_first_line, indent_start, indent_end,
-                                   space_above, space_below
+                                   space_above, space_below, named_style_type
+                                   ('NORMAL_TEXT'|'TITLE'|'SUBTITLE'|'HEADING_1'..'HEADING_6')
       insert_table     - required: index (int), rows (int), columns (int)
       insert_page_break- required: index (int)
       find_replace     - required: find_text (str), replace_text (str)
@@ -1463,6 +1480,7 @@ async def update_paragraph_style(
     indent_end: float = None,
     space_above: float = None,
     space_below: float = None,
+    named_style_type: str = None,
     list_type: str = None,
     list_nesting_level: int = None,
 ) -> str:
@@ -1488,6 +1506,8 @@ async def update_paragraph_style(
         indent_end: Right/end indent in points
         space_above: Space above paragraph in points (e.g., 12 for one line)
         space_below: Space below paragraph in points
+        named_style_type: Direct named style type - 'NORMAL_TEXT', 'TITLE', 'SUBTITLE',
+                         'HEADING_1' through 'HEADING_6'. Mutually exclusive with heading_level.
         list_type: Create a list from existing paragraphs ('UNORDERED' for bullets, 'ORDERED' for numbers)
         list_nesting_level: Nesting level for lists (0-8, where 0 is top level, default is 0)
                            Use higher levels for nested/indented list items
@@ -1546,12 +1566,36 @@ async def update_paragraph_style(
         if list_nesting_level < 0 or list_nesting_level > 8:
             return "Error: list_nesting_level must be between 0 and 8"
 
+    # Validate named_style_type
+    if named_style_type is not None and heading_level is not None:
+        return "Error: heading_level and named_style_type are mutually exclusive; provide only one"
+
+    if named_style_type is not None:
+        valid_styles = [
+            "NORMAL_TEXT",
+            "TITLE",
+            "SUBTITLE",
+            "HEADING_1",
+            "HEADING_2",
+            "HEADING_3",
+            "HEADING_4",
+            "HEADING_5",
+            "HEADING_6",
+        ]
+        if named_style_type not in valid_styles:
+            return f"Error: Invalid named_style_type '{named_style_type}'. Must be one of: {', '.join(valid_styles)}"
+
     # Build paragraph style object
     paragraph_style = {}
     fields = []
 
+    # Handle named_style_type (direct named style)
+    if named_style_type is not None:
+        paragraph_style["namedStyleType"] = named_style_type
+        fields.append("namedStyleType")
+
     # Handle heading level (named style)
-    if heading_level is not None:
+    elif heading_level is not None:
         if heading_level < 0 or heading_level > 6:
             return "Error: heading_level must be between 0 (normal text) and 6"
         if heading_level == 0:
@@ -1684,6 +1728,7 @@ async def get_doc_as_markdown(
     include_comments: bool = True,
     comment_mode: str = "inline",
     include_resolved: bool = False,
+    suggestions_view_mode: str = "DEFAULT_FOR_CURRENT_ACCESS",
 ) -> str:
     """
     Reads a Google Doc and returns it as clean Markdown with optional comment context.
@@ -1704,6 +1749,11 @@ async def get_doc_as_markdown(
             - "appendix": All comments grouped at the bottom with blockquoted anchor text
             - "none": No comments included
         include_resolved: Whether to include resolved comments (default: False)
+        suggestions_view_mode: How to render suggestions in the returned content:
+            - "DEFAULT_FOR_CURRENT_ACCESS": Default based on user's access level
+            - "SUGGESTIONS_INLINE": Suggested changes appear inline in the document
+            - "PREVIEW_SUGGESTIONS_ACCEPTED": Preview as if all suggestions were accepted
+            - "PREVIEW_WITHOUT_SUGGESTIONS": Preview as if all suggestions were rejected
 
     Returns:
         str: The document content as Markdown, optionally with comments
@@ -1717,13 +1767,22 @@ async def get_doc_as_markdown(
     if comment_mode not in valid_modes:
         return f"Error: comment_mode must be one of {valid_modes}, got '{comment_mode}'"
 
+    validation_error = validate_suggestions_view_mode(suggestions_view_mode)
+    if validation_error:
+        return validation_error
+
     logger.info(
         f"[get_doc_as_markdown] Doc={document_id}, comments={include_comments}, mode={comment_mode}"
     )
 
     # Fetch document content via Docs API
     doc = await asyncio.to_thread(
-        docs_service.documents().get(documentId=document_id).execute
+        docs_service.documents()
+        .get(
+            documentId=document_id,
+            suggestionsViewMode=suggestions_view_mode,
+        )
+        .execute
     )
 
     markdown = convert_doc_to_markdown(doc)

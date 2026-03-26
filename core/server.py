@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import logging
 import os
@@ -348,7 +349,7 @@ def configure_server_for_http():
                     )
             elif use_disk:
                 try:
-                    from key_value.aio.stores.disk import DiskStore
+                    from key_value.aio.stores.filetree import FileTreeStore
 
                     disk_directory = os.getenv(
                         "WORKSPACE_MCP_OAUTH_PROXY_DISK_DIRECTORY", ""
@@ -363,7 +364,7 @@ def configure_server_for_http():
                                 "~/.fastmcp/oauth-proxy"
                             )
 
-                    client_storage = DiskStore(directory=disk_directory)
+                    client_storage = FileTreeStore(data_directory=disk_directory)
 
                     jwt_signing_key = validate_and_derive_jwt_key(
                         jwt_signing_key_override, config.client_secret
@@ -379,7 +380,7 @@ def configure_server_for_http():
                         fernet=Fernet(key=storage_encryption_key),
                     )
                     logger.info(
-                        "OAuth 2.1: Using DiskStore for FastMCP OAuth proxy client_storage (directory=%s)",
+                        "OAuth 2.1: Using FileTreeStore for FastMCP OAuth proxy client_storage (directory=%s)",
                         disk_directory,
                     )
                 except ImportError as exc:
@@ -609,6 +610,23 @@ async def start_google_auth(
         return f"**Authentication Error:** {error_message}"
 
     try:
+        transport_mode = get_transport_mode()
+        if transport_mode == "stdio":
+            # Only stdio legacy OAuth depends on the standalone callback server.
+            from auth.oauth_callback_server import ensure_oauth_callback_available
+            from auth.oauth_config import get_oauth_config
+
+            config = get_oauth_config()
+            success, error_msg = await asyncio.to_thread(
+                ensure_oauth_callback_available,
+                transport_mode,
+                config.port,
+                config.base_uri,
+            )
+            if not success:
+                error_detail = f" ({error_msg})" if error_msg else ""
+                return f"**Error:** Cannot initiate OAuth flow - callback server unavailable{error_detail}"
+
         auth_message = await start_auth_flow(
             user_google_email=user_google_email,
             service_name=service_name,

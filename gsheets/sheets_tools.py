@@ -12,19 +12,17 @@ from typing import List, Optional, Union
 
 from auth.service_decorator import require_google_service
 from core.server import server
-from core.utils import handle_http_errors, UserInputError
+from core.utils import handle_http_errors, UserInputError, StringList
 from core.comments import create_comment_tools
 from gsheets.sheets_helpers import (
-    _a1_range_cell_count,
     CONDITION_TYPES,
     _a1_range_for_values,
     _build_boolean_rule,
     _build_gradient_rule,
     _fetch_detailed_sheet_errors,
-    _fetch_sheet_hyperlinks,
+    _fetch_grid_metadata,
     _fetch_sheets_with_rules,
     _format_conditional_rules_section,
-    _format_sheet_hyperlink_section,
     _format_sheet_error_section,
     _parse_a1_range,
     _parse_condition_values,
@@ -36,7 +34,6 @@ from gsheets.sheets_helpers import (
 
 # Configure module logger
 logger = logging.getLogger(__name__)
-MAX_HYPERLINK_FETCH_CELLS = 5000
 
 
 @server.tool()
@@ -179,6 +176,7 @@ async def read_sheet_values(
     spreadsheet_id: str,
     range_name: str = "A1:Z1000",
     include_hyperlinks: bool = False,
+    include_notes: bool = False,
 ) -> str:
     """
     Reads values from a specific range in a Google Sheet.
@@ -188,6 +186,8 @@ async def read_sheet_values(
         spreadsheet_id (str): The ID of the spreadsheet. Required.
         range_name (str): The range to read (e.g., "Sheet1!A1:D10", "A1:D10"). Defaults to "A1:Z1000".
         include_hyperlinks (bool): If True, also fetch hyperlink metadata for the range.
+            Defaults to False to avoid expensive includeGridData requests.
+        include_notes (bool): If True, also fetch cell notes for the range.
             Defaults to False to avoid expensive includeGridData requests.
 
     Returns:
@@ -211,41 +211,14 @@ async def read_sheet_values(
     resolved_range = result.get("range", range_name)
     detailed_range = _a1_range_for_values(resolved_range, values) or resolved_range
 
-    hyperlink_section = ""
-    if include_hyperlinks:
-        # Use a tight A1 range for includeGridData fetches to avoid expensive
-        # open-ended requests (e.g., A:Z).
-        hyperlink_range = _a1_range_for_values(resolved_range, values)
-        if not hyperlink_range:
-            logger.info(
-                "[read_sheet_values] Skipping hyperlink fetch for range '%s': unable to determine tight bounds",
-                resolved_range,
-            )
-        else:
-            cell_count = _a1_range_cell_count(hyperlink_range) or sum(
-                len(row) for row in values
-            )
-            if cell_count <= MAX_HYPERLINK_FETCH_CELLS:
-                try:
-                    hyperlinks = await _fetch_sheet_hyperlinks(
-                        service, spreadsheet_id, hyperlink_range
-                    )
-                    hyperlink_section = _format_sheet_hyperlink_section(
-                        hyperlinks=hyperlinks, range_label=hyperlink_range
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "[read_sheet_values] Failed fetching hyperlinks for range '%s': %s",
-                        hyperlink_range,
-                        exc,
-                    )
-            else:
-                logger.info(
-                    "[read_sheet_values] Skipping hyperlink fetch for large range '%s' (%d cells > %d limit)",
-                    hyperlink_range,
-                    cell_count,
-                    MAX_HYPERLINK_FETCH_CELLS,
-                )
+    hyperlink_section, notes_section = await _fetch_grid_metadata(
+        service,
+        spreadsheet_id,
+        resolved_range,
+        values,
+        include_hyperlinks=include_hyperlinks,
+        include_notes=include_notes,
+    )
 
     detailed_errors_section = ""
     if _values_contain_sheets_errors(values):
@@ -277,7 +250,7 @@ async def read_sheet_values(
     )
 
     logger.info(f"Successfully read {len(values)} rows for {user_google_email}.")
-    return text_output + hyperlink_section + detailed_errors_section
+    return text_output + hyperlink_section + notes_section + detailed_errors_section
 
 
 @server.tool()
@@ -1133,7 +1106,7 @@ async def create_spreadsheet(
     service,
     user_google_email: str,
     title: str,
-    sheet_names: Optional[List[str]] = None,
+    sheet_names: Optional[StringList] = None,
 ) -> str:
     """
     Creates a new Google Spreadsheet.
