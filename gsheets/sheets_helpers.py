@@ -309,6 +309,54 @@ def _a1_range_cell_count(a1_range: str) -> Optional[int]:
     return (end_col - start_col + 1) * (end_row - start_row + 1)
 
 
+def _extract_hyperlinks_from_grid(spreadsheet: dict) -> list[dict[str, str]]:
+    """
+    Extracts hyperlink information from spreadsheet grid data.
+
+    Iterates through the sheets and their grid data in the provided spreadsheet dictionary,
+    collecting all cells that contain hyperlinks. Returns a list of dictionaries, each containing:
+        - "cell": the A1 notation of the cell with the hyperlink,
+        - "text": the formatted display value of the cell,
+        - "url": the hyperlink URL.
+
+    Args:
+        spreadsheet (dict): The spreadsheet data as returned by the Sheets API with grid data
+            that includes formattedValue and hyperlink fields.
+
+    Returns:
+        list[dict[str, str]]: List of hyperlink details for each cell with a hyperlink.
+    """
+    hyperlinks: list[dict[str, str]] = []
+    for sheet in spreadsheet.get("sheets", []) or []:
+        sheet_title = sheet.get("properties", {}).get("title") or "Unknown"
+        for grid in sheet.get("data", []) or []:
+            start_row = _coerce_int(grid.get("startRow"), default=0)
+            start_col = _coerce_int(grid.get("startColumn"), default=0)
+            for row_offset, row_data in enumerate(grid.get("rowData", []) or []):
+                if not row_data:
+                    continue
+                for col_offset, cell_data in enumerate(
+                    row_data.get("values", []) or []
+                ):
+                    if not cell_data:
+                        continue
+                    url = cell_data.get("hyperlink")
+                    if not url:
+                        continue
+                    hyperlinks.append(
+                        {
+                            "cell": _format_a1_cell(
+                                sheet_title,
+                                start_row + row_offset,
+                                start_col + col_offset,
+                            ),
+                            "text": cell_data.get("formattedValue") or "",
+                            "url": url,
+                        }
+                    )
+    return hyperlinks
+
+
 def _extract_cell_errors_from_grid(spreadsheet: dict) -> list[dict[str, Optional[str]]]:
     """
     Extracts error information from spreadsheet grid data.

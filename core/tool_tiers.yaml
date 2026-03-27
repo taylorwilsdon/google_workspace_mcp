@@ -75,6 +75,7 @@ sheets:
   core:
     - create_spreadsheet
     - read_sheet_values
+    - read_sheet_hyperlinks
     - modify_sheet_values
   extended:
     - list_spreadsheets

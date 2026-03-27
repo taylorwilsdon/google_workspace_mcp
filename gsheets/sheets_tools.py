@@ -19,6 +19,7 @@ from gsheets.sheets_helpers import (
     _a1_range_for_values,
     _build_boolean_rule,
     _build_gradient_rule,
+    _extract_hyperlinks_from_grid,
     _fetch_detailed_sheet_errors,
     _fetch_grid_metadata,
     _fetch_sheets_with_rules,
@@ -251,6 +252,71 @@ async def read_sheet_values(
 
     logger.info(f"Successfully read {len(values)} rows for {user_google_email}.")
     return text_output + hyperlink_section + notes_section + detailed_errors_section
+
+
+@server.tool()
+@handle_http_errors("read_sheet_hyperlinks", is_read_only=True, service_type="sheets")
+@require_google_service("sheets", "sheets_read")
+async def read_sheet_hyperlinks(
+    service,
+    user_google_email: str,
+    spreadsheet_id: str,
+    range_name: str = "A1:Z1000",
+) -> str:
+    """
+    Reads hyperlinks embedded in cells of a Google Sheet range.
+
+    The standard read_sheet_values tool only returns plain text. This tool extracts
+    the underlying hyperlink URLs that are attached to cells (via Insert > Link or
+    HYPERLINK() formula).
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        spreadsheet_id (str): The ID of the spreadsheet. Required.
+        range_name (str): The range to read (e.g., "Sheet1!A1:D10", "A1:D10"). Defaults to "A1:Z1000".
+
+    Returns:
+        str: A formatted list of cells that contain hyperlinks, showing cell text and URL.
+    """
+    logger.info(
+        f"[read_sheet_hyperlinks] Invoked. Email: '{user_google_email}', Spreadsheet: {spreadsheet_id}, Range: {range_name}"
+    )
+
+    response = await asyncio.to_thread(
+        service.spreadsheets()
+        .get(
+            spreadsheetId=spreadsheet_id,
+            ranges=[range_name],
+            includeGridData=True,
+            fields="sheets(properties(title),data(startRow,startColumn,rowData(values(formattedValue,hyperlink))))",
+        )
+        .execute
+    )
+
+    hyperlinks = _extract_hyperlinks_from_grid(response)
+
+    if not hyperlinks:
+        return f"No hyperlinks found in range '{range_name}' for {user_google_email}."
+
+    lines = []
+    for item in hyperlinks:
+        cell = item.get("cell", "(unknown)")
+        text = item.get("text", "")
+        url = item.get("url", "")
+        lines.append(f'{cell}: "{text}" -> {url}')
+
+    # Limit output for readability
+    max_display = 100
+    text_output = (
+        f"Found {len(hyperlinks)} hyperlinks in range '{range_name}' for {user_google_email}:\n"
+        + "\n".join(lines[:max_display])
+        + (f"\n... and {len(hyperlinks) - max_display} more hyperlinks" if len(hyperlinks) > max_display else "")
+    )
+
+    logger.info(
+        f"[read_sheet_hyperlinks] Found {len(hyperlinks)} hyperlinks for {user_google_email}."
+    )
+    return text_output
 
 
 @server.tool()
