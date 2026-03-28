@@ -15,6 +15,8 @@ from core.tool_registry import set_enabled_tools as set_enabled_tool_names, wrap
 
 dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
 load_dotenv(dotenv_path=dotenv_path)
+dotenv_oauth_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env.oauth21')
+load_dotenv(dotenv_path=dotenv_oauth_path, override=False)
 
 # Suppress googleapiclient discovery cache warning
 logging.getLogger('googleapiclient.discovery_cache').setLevel(logging.ERROR)
@@ -87,6 +89,7 @@ def main():
     # Set port and base URI once for reuse throughout the function
     port = int(os.getenv("PORT", os.getenv("WORKSPACE_MCP_PORT", 8000)))
     base_uri = os.getenv("WORKSPACE_MCP_BASE_URI", "http://localhost")
+    callback_port = int(os.getenv("WORKSPACE_MCP_OAUTH_CALLBACK_PORT", str(port)))
     external_url = os.getenv("WORKSPACE_EXTERNAL_URL")
     display_url = external_url if external_url else f"{base_uri}:{port}"
 
@@ -257,9 +260,10 @@ def main():
             safe_print("🚀 Starting STDIO server")
             # Start minimal OAuth callback server for stdio mode
             from auth.oauth_callback_server import ensure_oauth_callback_available
-            success, error_msg = ensure_oauth_callback_available('stdio', port, base_uri)
+            success, error_msg = ensure_oauth_callback_available('stdio', callback_port, base_uri)
             if success:
-                safe_print(f"   OAuth callback server started on {display_url}/oauth2callback")
+                callback_display = f"{base_uri}:{callback_port}"
+                safe_print(f"   OAuth callback server started on {callback_display}/oauth2callback")
             else:
                 warning_msg = "   ⚠️  Warning: Failed to start OAuth callback server"
                 if error_msg:
