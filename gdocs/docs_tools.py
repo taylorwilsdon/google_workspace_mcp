@@ -46,6 +46,9 @@ from gdocs.managers import (
     BatchOperationManager
 )
 
+# Import suggestion-aware text extraction helpers
+from gdocs.docs_text import extract_sections, render_elements
+
 logger = logging.getLogger(__name__)
 
 @server.tool()
@@ -1187,3 +1190,175 @@ read_doc_comments = _comment_tools['read_comments']
 create_doc_comment = _comment_tools['create_comment']
 reply_to_comment = _comment_tools['reply_to_comment']
 resolve_comment = _comment_tools['resolve_comment']
+
+
+@server.tool()
+@handle_http_errors("list_doc_sections", is_read_only=True, service_type="docs")
+@require_multiple_services([
+    {"service_type": "drive", "scopes": "drive_read", "param_name": "drive_service"},
+    {"service_type": "docs", "scopes": "docs_read", "param_name": "docs_service"}
+])
+async def list_doc_sections(
+    drive_service: Any,
+    docs_service: Any,
+    user_google_email: str,
+    document_id: str,
+) -> str:
+    """
+    Lists the sections of a Google Doc based on its heading structure.
+
+    Returns a numbered table of contents (heading level + title) so that
+    get_doc_text can be called with a specific section_index.
+
+    If the document has no headings, returns the total character length and
+    a recommended chunk_size for use with get_doc_text's chunk_index parameter.
+
+    Only operates on native Google Docs (not .docx or other Drive files).
+    """
+    logger.info(f"[list_doc_sections] document_id={document_id} user={user_google_email}")
+
+    file_metadata = await asyncio.to_thread(
+        drive_service.files().get(
+            fileId=document_id, fields="name, mimeType", supportsAllDrives=True
+        ).execute
+    )
+    if file_metadata.get("mimeType") != "application/vnd.google-apps.document":
+        return (
+            "This tool only supports native Google Docs. "
+            "For Drive files (.docx etc.) use get_doc_content instead."
+        )
+
+    doc_data = await asyncio.to_thread(
+        docs_service.documents().get(
+            documentId=document_id, includeTabsContent=False
+        ).execute
+    )
+    body_elements = doc_data.get("body", {}).get("content", [])
+    sections = extract_sections(body_elements)
+
+    # No heading sections — report char length for chunk-based access
+    if not sections or (len(sections) == 1 and sections[0]["level"] == 0):
+        full_text = render_elements(body_elements, "original")
+        char_len = len(full_text)
+        chunk_size = 10000
+        num_chunks = -(-char_len // chunk_size)  # ceiling division
+        return (
+            f'Document "{file_metadata["name"]}" has no headings.\n'
+            f"Total characters: {char_len}\n"
+            f"Recommended chunk_size: {chunk_size} ({num_chunks} chunks)\n"
+            f"Use get_doc_text with chunk_index=0..{num_chunks - 1}"
+        )
+
+    lines = [f'Sections in "{file_metadata["name"]}":\n']
+    for s in sections:
+        indent = "  " * (s["level"] - 1) if s["level"] > 0 else ""
+        level_label = f"H{s['level']}" if s["level"] > 0 else "pre"
+        lines.append(f"  [{s['index']}] {indent}({level_label}) {s['title']}")
+    lines.append(f"\nTotal sections: {len(sections)}")
+    lines.append("Use get_doc_text with section_index=<index> to fetch a section.")
+    return "\n".join(lines)
+
+
+@server.tool()
+@handle_http_errors("get_doc_text", is_read_only=True, service_type="docs")
+@require_multiple_services([
+    {"service_type": "drive", "scopes": "drive_read", "param_name": "drive_service"},
+    {"service_type": "docs", "scopes": "docs_read", "param_name": "docs_service"}
+])
+async def get_doc_text(
+    drive_service: Any,
+    docs_service: Any,
+    user_google_email: str,
+    document_id: str,
+    mode: str,
+    section_index: int = None,
+    chunk_index: int = None,
+    chunk_size: int = 10000,
+) -> str:
+    """
+    Retrieves text from a Google Doc with suggestion awareness.
+
+    mode:
+      "original"  - text as it stands, excluding pending insertions,
+                    including text pending deletion
+      "accepted"  - text with all suggestions accepted: insertions included,
+                    deletions excluded
+
+    section_index: 0-based index from list_doc_sections. If provided, only
+                   that section's text is returned.
+    chunk_index:   0-based chunk number for documents without headings.
+                   chunk_size controls characters per chunk (default 10000).
+
+    If neither section_index nor chunk_index is provided, the full document
+    text is returned (may be very large).
+
+    Only operates on native Google Docs.
+    """
+    logger.info(
+        f"[get_doc_text] document_id={document_id} mode={mode} "
+        f"section_index={section_index} chunk_index={chunk_index} user={user_google_email}"
+    )
+
+    if mode not in ("original", "accepted"):
+        return 'Invalid mode. Use "original" or "accepted".'
+
+    file_metadata = await asyncio.to_thread(
+        drive_service.files().get(
+            fileId=document_id, fields="name, mimeType", supportsAllDrives=True
+        ).execute
+    )
+    if file_metadata.get("mimeType") != "application/vnd.google-apps.document":
+        return (
+            "This tool only supports native Google Docs. "
+            "For Drive files (.docx etc.) use get_doc_content instead."
+        )
+
+    doc_data = await asyncio.to_thread(
+        docs_service.documents().get(
+            documentId=document_id, includeTabsContent=False
+        ).execute
+    )
+    body_elements = doc_data.get("body", {}).get("content", [])
+    doc_name = file_metadata["name"]
+
+    # --- Section-based access ---
+    if section_index is not None:
+        sections = extract_sections(body_elements)
+        if section_index < 0 or section_index >= len(sections):
+            return (
+                f"section_index {section_index} is out of range. "
+                f"Document has {len(sections)} sections (0 to {len(sections) - 1})."
+            )
+        section = sections[section_index]
+        text = render_elements(section["elements"], mode)
+        header = (
+            f"[Section {section_index + 1}/{len(sections)}: "
+            f'"{section["title"]}" | mode: {mode}]\n\n'
+        )
+        return header + text
+
+    # --- Chunk-based access (headingless fallback) ---
+    if chunk_index is not None:
+        full_text = render_elements(body_elements, mode)
+        num_chunks = -(-len(full_text) // chunk_size)  # ceiling division
+        if num_chunks == 0:
+            return f'[Document "{doc_name}" is empty | mode: {mode}]'
+        if chunk_index < 0 or chunk_index >= num_chunks:
+            return (
+                f"chunk_index {chunk_index} is out of range. "
+                f"Document has {num_chunks} chunks of size {chunk_size} "
+                f"(0 to {num_chunks - 1})."
+            )
+        start = chunk_index * chunk_size
+        end = start + chunk_size
+        chunk_text = full_text[start:end]
+        header = (
+            f"[Chunk {chunk_index + 1}/{num_chunks} | "
+            f"mode: {mode} | chunk_size: {chunk_size}]\n\n"
+        )
+        return header + chunk_text
+
+    # --- Full document ---
+    text = render_elements(body_elements, mode)
+    header = f'[Full document: "{doc_name}" | mode: {mode}]\n\n'
+    return header + text
