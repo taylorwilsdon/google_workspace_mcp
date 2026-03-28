@@ -1,13 +1,23 @@
 """
-Suggestion-aware text extraction for Google Docs.
+Text extraction helpers for Google Docs.
+
+The suggestion mode (original vs accepted) is handled at the API level via
+the suggestionsViewMode parameter on documents().get(). These helpers simply
+extract plain text from whatever the API returns.
 
 Provides two public functions:
 - extract_sections: groups document body elements by heading boundaries
-- render_elements: renders elements to plain text, filtered by suggestion mode
+- render_elements: renders elements to plain text
 """
 from typing import Any
 
 HEADING_STYLES = {"HEADING_1", "HEADING_2", "HEADING_3", "HEADING_4", "HEADING_5", "HEADING_6"}
+
+# Maps the mode parameter to the Google Docs API suggestionsViewMode value
+SUGGESTIONS_VIEW_MODE = {
+    "original": "PREVIEW_WITHOUT_SUGGESTIONS",
+    "accepted": "PREVIEW_SUGGESTIONS_ACCEPTED",
+}
 
 
 def _heading_level(paragraph: dict[str, Any]) -> int | None:
@@ -18,27 +28,15 @@ def _heading_level(paragraph: dict[str, Any]) -> int | None:
     return None
 
 
-def _render_text_run(text_run: dict[str, Any], mode: str) -> str:
-    """
-    Return the textRun content filtered by suggestion mode.
-
-    original: skip textRuns that are pending insertions (suggestedInsertionIds non-empty)
-    accepted: skip textRuns that are pending deletions (suggestedDeletionIds non-empty)
-    """
-    if mode == "original" and text_run.get("suggestedInsertionIds"):
-        return ""
-    if mode == "accepted" and text_run.get("suggestedDeletionIds"):
-        return ""
-    return text_run.get("content", "")
-
-
-def render_elements(elements: list[dict[str, Any]], mode: str, depth: int = 0) -> str:
+def render_elements(elements: list[dict[str, Any]], depth: int = 0) -> str:
     """
     Render a list of document body elements to plain text.
 
+    Suggestion filtering is done by the API (suggestionsViewMode), so this
+    function simply extracts whatever text the API returned.
+
     Args:
         elements: List of document elements (paragraphs, tables, etc.)
-        mode: "original" or "accepted"
         depth: Recursion depth guard (max 5)
 
     Returns:
@@ -54,14 +52,14 @@ def render_elements(elements: list[dict[str, Any]], mode: str, depth: int = 0) -
             for pe in para_elements:
                 text_run = pe.get("textRun", {})
                 if text_run:
-                    line += _render_text_run(text_run, mode)
+                    line += text_run.get("content", "")
             if line.strip():
                 parts.append(line)
         elif "table" in element:
             table = element["table"]
             for row in table.get("tableRows", []):
                 for cell in row.get("tableCells", []):
-                    cell_text = render_elements(cell.get("content", []), mode, depth + 1)
+                    cell_text = render_elements(cell.get("content", []), depth + 1)
                     if cell_text.strip():
                         parts.append(cell_text)
     return "".join(parts)
@@ -72,9 +70,6 @@ def extract_sections(body_elements: list[dict[str, Any]]) -> list[dict[str, Any]
     Group document body elements into sections by heading boundaries.
 
     Content before the first heading is section 0 with title "(preamble)".
-    Each heading starts a new section; the section contains that heading element
-    and all elements up to (but not including) the next heading of equal or
-    higher level (lower number).
 
     Args:
         body_elements: The 'content' list from the document body.
@@ -82,10 +77,10 @@ def extract_sections(body_elements: list[dict[str, Any]]) -> list[dict[str, Any]
     Returns:
         List of section dicts:
             {
-                "index": int,       # 0-based
-                "level": int,       # heading level (0 for preamble)
-                "title": str,       # heading text (suggestions stripped, i.e. original mode)
-                "elements": list    # raw API elements for this section
+                "index": int,    # 0-based
+                "level": int,    # heading level (0 for preamble)
+                "title": str,    # heading text
+                "elements": list # raw API elements for this section
             }
     """
     sections: list[dict[str, Any]] = []
@@ -95,11 +90,9 @@ def extract_sections(body_elements: list[dict[str, Any]]) -> list[dict[str, Any]
         if "paragraph" in element:
             level = _heading_level(element["paragraph"])
             if level is not None:
-                # Save current section if it has content
                 if current["elements"]:
                     sections.append(current)
-                # Extract heading title using original mode (no pending insertions)
-                title = render_elements([element], "original").strip()
+                title = render_elements([element]).strip()
                 current = {
                     "index": len(sections),
                     "level": level,
@@ -109,7 +102,6 @@ def extract_sections(body_elements: list[dict[str, Any]]) -> list[dict[str, Any]
                 continue
         current["elements"].append(element)
 
-    # Append last section
     if current["elements"]:
         sections.append(current)
 

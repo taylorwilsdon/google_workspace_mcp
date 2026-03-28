@@ -46,8 +46,8 @@ from gdocs.managers import (
     BatchOperationManager
 )
 
-# Import suggestion-aware text extraction helpers
-from gdocs.docs_text import extract_sections, render_elements
+# Import text extraction helpers
+from gdocs.docs_text import extract_sections, render_elements, SUGGESTIONS_VIEW_MODE
 
 logger = logging.getLogger(__name__)
 
@@ -1230,7 +1230,9 @@ async def list_doc_sections(
 
     doc_data = await asyncio.to_thread(
         docs_service.documents().get(
-            documentId=document_id, includeTabsContent=False
+            documentId=document_id,
+            includeTabsContent=False,
+            suggestionsViewMode=SUGGESTIONS_VIEW_MODE["original"],
         ).execute
     )
     body_elements = doc_data.get("body", {}).get("content", [])
@@ -1238,7 +1240,7 @@ async def list_doc_sections(
 
     # No heading sections — report char length for chunk-based access
     if not sections or (len(sections) == 1 and sections[0]["level"] == 0):
-        full_text = render_elements(body_elements, "original")
+        full_text = render_elements(body_elements)
         char_len = len(full_text)
         chunk_size = 10000
         num_chunks = -(-char_len // chunk_size)  # ceiling division
@@ -1315,7 +1317,9 @@ async def get_doc_text(
 
     doc_data = await asyncio.to_thread(
         docs_service.documents().get(
-            documentId=document_id, includeTabsContent=False
+            documentId=document_id,
+            includeTabsContent=False,
+            suggestionsViewMode=SUGGESTIONS_VIEW_MODE[mode],
         ).execute
     )
     body_elements = doc_data.get("body", {}).get("content", [])
@@ -1330,7 +1334,7 @@ async def get_doc_text(
                 f"Document has {len(sections)} sections (0 to {len(sections) - 1})."
             )
         section = sections[section_index]
-        text = render_elements(section["elements"], mode)
+        text = render_elements(section["elements"])
         header = (
             f"[Section {section_index + 1}/{len(sections)}: "
             f'"{section["title"]}" | mode: {mode}]\n\n'
@@ -1339,7 +1343,7 @@ async def get_doc_text(
 
     # --- Chunk-based access (headingless fallback) ---
     if chunk_index is not None:
-        full_text = render_elements(body_elements, mode)
+        full_text = render_elements(body_elements)
         num_chunks = -(-len(full_text) // chunk_size)  # ceiling division
         if num_chunks == 0:
             return f'[Document "{doc_name}" is empty | mode: {mode}]'
@@ -1359,6 +1363,6 @@ async def get_doc_text(
         return header + chunk_text
 
     # --- Full document ---
-    text = render_elements(body_elements, mode)
+    text = render_elements(body_elements)
     header = f'[Full document: "{doc_name}" | mode: {mode}]\n\n'
     return header + text
