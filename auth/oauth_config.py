@@ -28,6 +28,10 @@ class OAuthConfig:
         self.port = int(os.getenv("PORT", os.getenv("WORKSPACE_MCP_PORT", "8000")))
         self.base_url = f"{self.base_uri}:{self.port}"
 
+        # OAuth callback port (defaults to main server port if not set)
+        self.callback_port = int(os.getenv("WORKSPACE_MCP_OAUTH_CALLBACK_PORT", str(self.port)))
+        self.callback_base_url = f"{self.base_uri}:{self.callback_port}"
+
         # External URL for reverse proxy scenarios
         self.external_url = os.getenv("WORKSPACE_EXTERNAL_URL")
 
@@ -70,7 +74,7 @@ class OAuthConfig:
         explicit_uri = os.getenv("GOOGLE_OAUTH_REDIRECT_URI")
         if explicit_uri:
             return explicit_uri
-        return f"{self.base_url}/oauth2callback"
+        return f"{self.callback_base_url}/oauth2callback"
 
     @staticmethod
     def _get_redirect_path(uri: str) -> str:
@@ -193,6 +197,7 @@ class OAuthConfig:
         """
         return {
             "base_url": self.base_url,
+            "callback_base_url": self.callback_base_url,
             "external_url": self.external_url,
             "effective_oauth_url": self.get_oauth_base_url(),
             "redirect_uri": self.redirect_uri,

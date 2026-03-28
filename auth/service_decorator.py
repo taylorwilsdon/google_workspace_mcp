@@ -41,6 +41,8 @@ from auth.scopes import (
     TASKS_SCOPE,
     TASKS_READONLY_SCOPE,
     CUSTOM_SEARCH_SCOPE,
+    CONTACTS_READONLY_SCOPE,
+    CONTACTS_SCOPE,
 )
 
 logger = logging.getLogger(__name__)
@@ -381,6 +383,7 @@ SERVICE_CONFIGS = {
     "slides": {"service": "slides", "version": "v1"},
     "tasks": {"service": "tasks", "version": "v1"},
     "customsearch": {"service": "customsearch", "version": "v1"},
+    "people": {"service": "people", "version": "v1"},
 }
 
 
@@ -420,6 +423,9 @@ SCOPE_GROUPS = {
     "tasks_read": TASKS_READONLY_SCOPE,
     # Custom Search scope
     "customsearch": CUSTOM_SEARCH_SCOPE,
+    # Contacts (People API) scopes
+    "contacts_read": CONTACTS_READONLY_SCOPE,
+    "contacts_write": CONTACTS_SCOPE,
 }
 
 

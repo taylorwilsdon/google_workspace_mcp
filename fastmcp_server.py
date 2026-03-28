@@ -45,6 +45,8 @@ def enforce_fastmcp_cloud_defaults():
 # Load environment variables
 dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
 load_dotenv(dotenv_path=dotenv_path)
+dotenv_oauth_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env.oauth21')
+load_dotenv(dotenv_path=dotenv_oauth_path, override=False)
 
 _fastmcp_cloud_overrides = enforce_fastmcp_cloud_defaults()
 

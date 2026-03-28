@@ -134,14 +134,23 @@ async def _read_comments_impl(service, app_name: str, file_id: str) -> str:
     """Implementation for reading comments from any Google Workspace file."""
     logger.info(f"[read_{app_name}_comments] Reading comments for {app_name} {file_id}")
 
-    response = await asyncio.to_thread(
-        service.comments().list(
+    comments = []
+    page_token = None
+    while True:
+        kwargs = dict(
             fileId=file_id,
-            fields="comments(id,content,author,createdTime,modifiedTime,resolved,replies(content,author,id,createdTime,modifiedTime))"
-        ).execute
-    )
-
-    comments = response.get('comments', [])
+            pageSize=100,
+            fields="nextPageToken,comments(id,content,author,createdTime,modifiedTime,resolved,replies(content,author,id,createdTime,modifiedTime))"
+        )
+        if page_token:
+            kwargs["pageToken"] = page_token
+        response = await asyncio.to_thread(
+            service.comments().list(**kwargs).execute
+        )
+        comments.extend(response.get('comments', []))
+        page_token = response.get('nextPageToken')
+        if not page_token:
+            break
 
     if not comments:
         return f"No comments found in {app_name} {file_id}"
