@@ -305,6 +305,7 @@ def main():
         "slides": lambda: import_module("gslides.slides_tools"),
         "tasks": lambda: import_module("gtasks.tasks_tools"),
         "contacts": lambda: import_module("gcontacts.contacts_tools"),
+        "groups": lambda: import_module("ggroups.groups_tools"),
         "search": lambda: import_module("gsearch.search_tools"),
         "appscript": lambda: import_module("gappsscript.apps_script_tools"),
     }
@@ -320,6 +321,7 @@ def main():
         "slides": "🖼️",
         "tasks": "✓",
         "contacts": "👤",
+        "groups": "👥",
         "search": "🔍",
         "appscript": "📜",
     }

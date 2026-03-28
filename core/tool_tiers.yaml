@@ -144,6 +144,18 @@ contacts:
     - manage_contacts_batch
     - manage_contact_group
 
+groups:
+  core:
+    - search_groups
+    - get_group
+    - list_group_members
+    - manage_group
+    - lookup_group
+  extended:
+    - manage_group_members
+  complete:
+    - list_groups
+
 search:
   core:
     - search_custom

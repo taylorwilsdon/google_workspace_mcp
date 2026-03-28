@@ -66,6 +66,12 @@ TASKS_READONLY_SCOPE = "https://www.googleapis.com/auth/tasks.readonly"
 CONTACTS_SCOPE = "https://www.googleapis.com/auth/contacts"
 CONTACTS_READONLY_SCOPE = "https://www.googleapis.com/auth/contacts.readonly"
 
+# Google Groups (Cloud Identity) scopes
+GROUPS_SCOPE = "https://www.googleapis.com/auth/cloud-identity.groups"
+GROUPS_READONLY_SCOPE = (
+    "https://www.googleapis.com/auth/cloud-identity.groups.readonly"
+)
+
 # Google Custom Search API scope
 CUSTOM_SEARCH_SCOPE = "https://www.googleapis.com/auth/cse"
 
@@ -98,6 +104,7 @@ SCOPE_HIERARCHY = {
     SLIDES_SCOPE: {SLIDES_READONLY_SCOPE},
     TASKS_SCOPE: {TASKS_READONLY_SCOPE},
     CONTACTS_SCOPE: {CONTACTS_READONLY_SCOPE},
+    GROUPS_SCOPE: {GROUPS_READONLY_SCOPE},
     CHAT_WRITE_SCOPE: {CHAT_READONLY_SCOPE},
     CHAT_SPACES_SCOPE: {CHAT_SPACES_READONLY_SCOPE},
     FORMS_BODY_SCOPE: {FORMS_BODY_READONLY_SCOPE},
@@ -173,6 +180,8 @@ TASKS_SCOPES = [TASKS_SCOPE, TASKS_READONLY_SCOPE]
 
 CONTACTS_SCOPES = [CONTACTS_SCOPE, CONTACTS_READONLY_SCOPE]
 
+GROUPS_SCOPES = [GROUPS_SCOPE, GROUPS_READONLY_SCOPE]
+
 CUSTOM_SEARCH_SCOPES = [CUSTOM_SEARCH_SCOPE]
 
 SCRIPT_SCOPES = [
@@ -197,6 +206,7 @@ TOOL_SCOPES_MAP = {
     "slides": SLIDES_SCOPES,
     "tasks": TASKS_SCOPES,
     "contacts": CONTACTS_SCOPES,
+    "groups": GROUPS_SCOPES,
     "search": CUSTOM_SEARCH_SCOPES,
     "appscript": SCRIPT_SCOPES,
 }
@@ -213,6 +223,7 @@ TOOL_READONLY_SCOPES_MAP = {
     "slides": [SLIDES_READONLY_SCOPE],
     "tasks": [TASKS_READONLY_SCOPE],
     "contacts": [CONTACTS_READONLY_SCOPE],
+    "groups": [GROUPS_READONLY_SCOPE],
     "search": CUSTOM_SEARCH_SCOPES,
     "appscript": [
         SCRIPT_PROJECTS_READONLY_SCOPE,
