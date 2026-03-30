@@ -533,6 +533,10 @@ uv run main.py --tools docs sheets --tool-tier complete    # Full access to Docs
 uv run main.py --permissions gmail:organize drive:full --tool-tier core
 ```
 
+## Hosted deployment
+
+A hosted deployment is available on [Fronteir AI](https://fronteir.ai/mcp/taylorwilsdon-google-workspace-mcp).
+
 ## 📋 Credential Configuration
 
 <details open>
