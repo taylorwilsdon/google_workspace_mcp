@@ -11,6 +11,7 @@ from gdocs.docs_markdown import (
     format_comments_inline,
     parse_drive_comments,
 )
+from gdocs.docs_structure import parse_document_structure
 
 
 # --- Fixtures ---
@@ -453,3 +454,369 @@ class TestAppendixComments:
 
     def test_empty(self):
         assert format_comments_appendix([]).strip() == ""
+
+
+# --- Smart chip fixtures ---
+
+RICH_LINK_DOC = {
+    "title": "Rich Link Test",
+    "body": {
+        "content": [
+            {"sectionBreak": {"sectionStyle": {}}},
+            {
+                "paragraph": {
+                    "elements": [
+                        {"textRun": {"content": "Meeting on ", "textStyle": {}}},
+                        {
+                            "richLink": {
+                                "richLinkProperties": {
+                                    "title": "March 28, 2026",
+                                    "uri": "https://calendar.google.com/event/abc123",
+                                }
+                            }
+                        },
+                        {"textRun": {"content": " confirmed.\n", "textStyle": {}}},
+                    ],
+                    "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+                }
+            },
+        ]
+    },
+}
+
+RICH_LINK_TITLE_ONLY_DOC = {
+    "title": "Rich Link Title Only",
+    "body": {
+        "content": [
+            {
+                "paragraph": {
+                    "elements": [
+                        {
+                            "richLink": {
+                                "richLinkProperties": {
+                                    "title": "March 28, 2026",
+                                }
+                            }
+                        },
+                        {"textRun": {"content": "\n", "textStyle": {}}},
+                    ],
+                    "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+                }
+            },
+        ]
+    },
+}
+
+RICH_LINK_URI_ONLY_DOC = {
+    "title": "Rich Link URI Only",
+    "body": {
+        "content": [
+            {
+                "paragraph": {
+                    "elements": [
+                        {
+                            "richLink": {
+                                "richLinkProperties": {
+                                    "uri": "https://docs.google.com/document/d/abc",
+                                }
+                            }
+                        },
+                        {"textRun": {"content": "\n", "textStyle": {}}},
+                    ],
+                    "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+                }
+            },
+        ]
+    },
+}
+
+PERSON_DOC = {
+    "title": "Person Chip Test",
+    "body": {
+        "content": [
+            {
+                "paragraph": {
+                    "elements": [
+                        {"textRun": {"content": "Assigned to ", "textStyle": {}}},
+                        {
+                            "person": {
+                                "personProperties": {
+                                    "name": "Jane Doe",
+                                    "email": "jane@example.com",
+                                }
+                            }
+                        },
+                        {"textRun": {"content": " for review.\n", "textStyle": {}}},
+                    ],
+                    "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+                }
+            },
+        ]
+    },
+}
+
+PERSON_EMAIL_ONLY_DOC = {
+    "title": "Person Email Only",
+    "body": {
+        "content": [
+            {
+                "paragraph": {
+                    "elements": [
+                        {
+                            "person": {
+                                "personProperties": {
+                                    "email": "unknown@example.com",
+                                }
+                            }
+                        },
+                        {"textRun": {"content": "\n", "textStyle": {}}},
+                    ],
+                    "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+                }
+            },
+        ]
+    },
+}
+
+MIXED_CHIPS_DOC = {
+    "title": "Mixed Chips",
+    "body": {
+        "content": [
+            {
+                "paragraph": {
+                    "elements": [
+                        {
+                            "person": {
+                                "personProperties": {
+                                    "name": "Alice",
+                                    "email": "alice@example.com",
+                                }
+                            }
+                        },
+                        {"textRun": {"content": " scheduled ", "textStyle": {}}},
+                        {
+                            "richLink": {
+                                "richLinkProperties": {
+                                    "title": "April 1, 2026",
+                                    "uri": "https://calendar.google.com/event/xyz",
+                                }
+                            }
+                        },
+                        {"textRun": {"content": "\n", "textStyle": {}}},
+                    ],
+                    "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+                }
+            },
+        ]
+    },
+}
+
+TABLE_WITH_CHIPS_DOC = {
+    "title": "Table with Chips",
+    "body": {
+        "content": [
+            {
+                "table": {
+                    "rows": 1,
+                    "columns": 2,
+                    "tableRows": [
+                        {
+                            "tableCells": [
+                                {
+                                    "content": [
+                                        {
+                                            "paragraph": {
+                                                "elements": [
+                                                    {
+                                                        "richLink": {
+                                                            "richLinkProperties": {
+                                                                "title": "March 28, 2026",
+                                                                "uri": "https://cal.google.com/e/1",
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "textRun": {
+                                                            "content": "\n",
+                                                            "textStyle": {},
+                                                        }
+                                                    },
+                                                ],
+                                                "paragraphStyle": {
+                                                    "namedStyleType": "NORMAL_TEXT"
+                                                },
+                                            }
+                                        }
+                                    ]
+                                },
+                                {
+                                    "content": [
+                                        {
+                                            "paragraph": {
+                                                "elements": [
+                                                    {
+                                                        "person": {
+                                                            "personProperties": {
+                                                                "name": "Bob",
+                                                                "email": "bob@example.com",
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "textRun": {
+                                                            "content": "\n",
+                                                            "textStyle": {},
+                                                        }
+                                                    },
+                                                ],
+                                                "paragraphStyle": {
+                                                    "namedStyleType": "NORMAL_TEXT"
+                                                },
+                                            }
+                                        }
+                                    ]
+                                },
+                            ]
+                        },
+                    ],
+                }
+            },
+        ]
+    },
+}
+
+
+# --- Smart chip tests ---
+
+
+class TestRichLink:
+    def test_rich_link_with_title_and_uri(self):
+        md = convert_doc_to_markdown(RICH_LINK_DOC)
+        assert "[March 28, 2026](https://calendar.google.com/event/abc123)" in md
+        assert "Meeting on" in md
+        assert "confirmed." in md
+
+    def test_rich_link_title_only(self):
+        md = convert_doc_to_markdown(RICH_LINK_TITLE_ONLY_DOC)
+        assert "March 28, 2026" in md
+
+    def test_rich_link_uri_only(self):
+        md = convert_doc_to_markdown(RICH_LINK_URI_ONLY_DOC)
+        assert "https://docs.google.com/document/d/abc" in md
+
+
+class TestPersonChip:
+    def test_person_with_name_and_email(self):
+        md = convert_doc_to_markdown(PERSON_DOC)
+        assert "Jane Doe (jane@example.com)" in md
+        assert "Assigned to" in md
+
+    def test_person_email_only(self):
+        md = convert_doc_to_markdown(PERSON_EMAIL_ONLY_DOC)
+        assert "unknown@example.com" in md
+
+
+class TestMixedChips:
+    def test_mixed_person_and_date(self):
+        md = convert_doc_to_markdown(MIXED_CHIPS_DOC)
+        assert "Alice (alice@example.com)" in md
+        assert "scheduled" in md
+        assert "[April 1, 2026](https://calendar.google.com/event/xyz)" in md
+
+
+class TestSmartChipsInTable:
+    def test_table_with_chips(self):
+        md = convert_doc_to_markdown(TABLE_WITH_CHIPS_DOC)
+        assert "[March 28, 2026](https://cal.google.com/e/1)" in md
+        assert "Bob (bob@example.com)" in md
+
+
+class TestStructureWithChips:
+    def test_structure_extracts_rich_link_text(self):
+        structure = parse_document_structure(RICH_LINK_DOC)
+        paragraphs = [e for e in structure["body"] if e["type"] == "paragraph"]
+        assert any("March 28, 2026" in p["text"] for p in paragraphs)
+
+    def test_structure_extracts_person_text(self):
+        structure = parse_document_structure(PERSON_DOC)
+        paragraphs = [e for e in structure["body"] if e["type"] == "paragraph"]
+        assert any("Jane Doe" in p["text"] for p in paragraphs)
+
+    def test_structure_extracts_date_element_text(self):
+        structure = parse_document_structure(DATE_ELEMENT_DOC)
+        paragraphs = [e for e in structure["body"] if e["type"] == "paragraph"]
+        assert any("Mar 28, 2026" in p["text"] for p in paragraphs)
+
+
+# --- Date element (date chip) fixtures ---
+
+DATE_ELEMENT_DOC = {
+    "title": "Date Element Test",
+    "body": {
+        "content": [
+            {
+                "paragraph": {
+                    "elements": [
+                        {"textRun": {"content": "Due by ", "textStyle": {}}},
+                        {
+                            "dateElement": {
+                                "dateId": "kix.m0mpxr9nmt8c",
+                                "textStyle": {},
+                                "dateElementProperties": {
+                                    "timestamp": "2026-03-28T12:00:00Z",
+                                    "locale": "en",
+                                    "dateFormat": "DATE_FORMAT_MONTH_DAY_YEAR_ABBREVIATED",
+                                    "timeFormat": "TIME_FORMAT_DISABLED",
+                                    "displayText": "Mar 28, 2026",
+                                },
+                            }
+                        },
+                        {"textRun": {"content": " please.\n", "textStyle": {}}},
+                    ],
+                    "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+                }
+            },
+        ]
+    },
+}
+
+DATE_ELEMENT_ONLY_DOC = {
+    "title": "Date Only",
+    "body": {
+        "content": [
+            {
+                "paragraph": {
+                    "elements": [
+                        {
+                            "dateElement": {
+                                "dateId": "kix.abc123",
+                                "textStyle": {},
+                                "dateElementProperties": {
+                                    "timestamp": "2026-01-15T12:00:00Z",
+                                    "locale": "en",
+                                    "dateFormat": "DATE_FORMAT_MONTH_DAY_YEAR_ABBREVIATED",
+                                    "timeFormat": "TIME_FORMAT_DISABLED",
+                                    "displayText": "Jan 15, 2026",
+                                },
+                            }
+                        },
+                        {"textRun": {"content": "\n", "textStyle": {}}},
+                    ],
+                    "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+                }
+            },
+        ]
+    },
+}
+
+
+class TestDateElement:
+    def test_date_chip_with_surrounding_text(self):
+        md = convert_doc_to_markdown(DATE_ELEMENT_DOC)
+        assert "Due by" in md
+        assert "Mar 28, 2026" in md
+        assert "please." in md
+
+    def test_date_chip_standalone(self):
+        md = convert_doc_to_markdown(DATE_ELEMENT_ONLY_DOC)
+        assert "Jan 15, 2026" in md

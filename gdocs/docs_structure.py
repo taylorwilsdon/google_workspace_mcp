@@ -92,7 +92,7 @@ def _parse_element(element: dict[str, Any]) -> Optional[dict[str, Any]]:
     if "paragraph" in element:
         paragraph = element["paragraph"]
         element_info["type"] = "paragraph"
-        element_info["text"] = _extract_paragraph_text(paragraph)
+        element_info["text"] = extract_paragraph_text(paragraph)
         element_info["style"] = paragraph.get("paragraphStyle", {})
 
     elif "table" in element:
@@ -162,12 +162,31 @@ def _parse_table_cells(table: dict[str, Any]) -> list[list[dict[str, Any]]]:
     return cells
 
 
-def _extract_paragraph_text(paragraph: dict[str, Any]) -> str:
+def extract_paragraph_text(paragraph: dict[str, Any]) -> str:
     """Extract text from a paragraph element."""
     text_parts = []
     for element in paragraph.get("elements", []):
         if "textRun" in element:
             text_parts.append(element["textRun"].get("content", ""))
+        elif "dateElement" in element:
+            props = element["dateElement"].get("dateElementProperties", {})
+            text_parts.append(props.get("displayText", ""))
+        elif "richLink" in element:
+            props = element["richLink"].get("richLinkProperties", {})
+            title = props.get("title", "")
+            uri = props.get("uri", "")
+            if title and uri:
+                text_parts.append(f"{title} ({uri})")
+            else:
+                text_parts.append(title or uri)
+        elif "person" in element:
+            props = element["person"].get("personProperties", {})
+            name = props.get("name", "")
+            email = props.get("email", "")
+            if name and email:
+                text_parts.append(f"{name} ({email})")
+            else:
+                text_parts.append(name or email)
     return "".join(text_parts)
 
 
@@ -176,7 +195,7 @@ def _extract_cell_text(cell: dict[str, Any]) -> str:
     text_parts = []
     for element in cell.get("content", []):
         if "paragraph" in element:
-            text_parts.append(_extract_paragraph_text(element["paragraph"]))
+            text_parts.append(extract_paragraph_text(element["paragraph"]))
     return "".join(text_parts)
 
 

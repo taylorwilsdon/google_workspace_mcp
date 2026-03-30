@@ -41,6 +41,7 @@ from gdocs.docs_structure import (
     parse_document_structure,
     find_tables,
     analyze_document_complexity,
+    extract_paragraph_text,
 )
 from gdocs.docs_tables import extract_table_as_data
 from gdocs.docs_markdown import (
@@ -193,13 +194,7 @@ async def get_doc_content(
 
             for element in elements:
                 if "paragraph" in element:
-                    paragraph = element.get("paragraph", {})
-                    para_elements = paragraph.get("elements", [])
-                    current_line_text = ""
-                    for pe in para_elements:
-                        text_run = pe.get("textRun", {})
-                        if text_run and "content" in text_run:
-                            current_line_text += text_run["content"]
+                    current_line_text = extract_paragraph_text(element["paragraph"])
                     if current_line_text.strip():
                         text_lines.append(current_line_text)
                 elif "table" in element:

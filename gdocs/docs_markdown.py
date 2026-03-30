@@ -122,7 +122,34 @@ def _convert_paragraph_text(
     for elem in para.get("elements", []):
         if "textRun" in elem:
             parts.append(_convert_text_run(elem["textRun"], skip_strikethrough))
+        elif "richLink" in elem:
+            parts.append(_convert_rich_link(elem["richLink"]))
+        elif "person" in elem:
+            parts.append(_convert_person(elem["person"]))
+        elif "dateElement" in elem:
+            props = elem["dateElement"].get("dateElementProperties", {})
+            parts.append(props.get("displayText", ""))
     return "".join(parts).strip()
+
+
+def _convert_rich_link(rich_link: dict[str, Any]) -> str:
+    """Convert a richLink element (URL chip) to markdown."""
+    props = rich_link.get("richLinkProperties", {})
+    title = props.get("title", "")
+    uri = props.get("uri", "")
+    if title and uri:
+        return f"[{title}]({uri})"
+    return title or uri
+
+
+def _convert_person(person: dict[str, Any]) -> str:
+    """Convert a person element (person chip) to markdown."""
+    props = person.get("personProperties", {})
+    name = props.get("name", "")
+    email = props.get("email", "")
+    if name and email:
+        return f"{name} ({email})"
+    return name or email
 
 
 def _convert_text_run(
