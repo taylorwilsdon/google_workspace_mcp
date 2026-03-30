@@ -1265,6 +1265,32 @@ async def manage_event(
 # ---------------------------------------------------------------------------
 
 
+def _ooo_time_entry(
+    time_str: str, is_end: bool = False, timezone: Optional[str] = None
+) -> Dict[str, str]:
+    """Build a start/end dict for an OOO event.
+
+    Google Calendar API requires dateTime (not date) for outOfOffice events.
+    If a date-only string (YYYY-MM-DD) is given, convert it:
+      - start → YYYY-MM-DDT00:00:00
+      - end   → (next day)T00:00:00  (so a single date covers the full day)
+    """
+    if "T" not in time_str:
+        if is_end:
+            # End date is exclusive in date-only format, but for dateTime we
+            # need the same semantics: "2026-04-06" → full day Apr 5 means
+            # end at midnight of Apr 6, which is already what the user passes.
+            time_str = f"{time_str}T00:00:00"
+        else:
+            time_str = f"{time_str}T00:00:00"
+        logger.info(f"[ooo_time_entry] Converted date-only to dateTime: {time_str}")
+
+    entry: Dict[str, str] = {"dateTime": time_str}
+    if timezone:
+        entry["timeZone"] = timezone
+    return entry
+
+
 async def _create_ooo_event_impl(
     service,
     user_google_email: str,
@@ -1274,6 +1300,7 @@ async def _create_ooo_event_impl(
     summary: Optional[str] = None,
     auto_decline_mode: Optional[str] = None,
     decline_message: Optional[str] = None,
+    timezone: Optional[str] = None,
 ) -> str:
     """Internal implementation for creating an Out of Office calendar event."""
     logger.info(
@@ -1288,14 +1315,8 @@ async def _create_ooo_event_impl(
     event_body: Dict[str, Any] = {
         "eventType": "outOfOffice",
         "summary": effective_summary,
-        "start": (
-            {"date": start_time}
-            if "T" not in start_time
-            else {"dateTime": start_time}
-        ),
-        "end": (
-            {"date": end_time} if "T" not in end_time else {"dateTime": end_time}
-        ),
+        "start": _ooo_time_entry(start_time, is_end=False, timezone=timezone),
+        "end": _ooo_time_entry(end_time, is_end=True, timezone=timezone),
         "outOfOfficeProperties": {
             "autoDeclineMode": effective_decline_mode,
             "declineMessage": decline_message or "",
@@ -1412,6 +1433,7 @@ async def _update_ooo_event_impl(
     summary: Optional[str] = None,
     auto_decline_mode: Optional[str] = None,
     decline_message: Optional[str] = None,
+    timezone: Optional[str] = None,
 ) -> str:
     """Internal implementation for updating an Out of Office calendar event."""
     logger.info(
@@ -1435,15 +1457,9 @@ async def _update_ooo_event_impl(
     if summary is not None:
         patch_body["summary"] = summary
     if start_time is not None:
-        patch_body["start"] = (
-            {"date": start_time}
-            if "T" not in start_time
-            else {"dateTime": start_time}
-        )
+        patch_body["start"] = _ooo_time_entry(start_time, is_end=False, timezone=timezone)
     if end_time is not None:
-        patch_body["end"] = (
-            {"date": end_time} if "T" not in end_time else {"dateTime": end_time}
-        )
+        patch_body["end"] = _ooo_time_entry(end_time, is_end=True, timezone=timezone)
 
     if auto_decline_mode is not None or decline_message is not None:
         existing_ooo_props = existing_event.get("outOfOfficeProperties", {})
@@ -1547,6 +1563,7 @@ async def manage_out_of_office(
     summary: Optional[str] = None,
     auto_decline_mode: Optional[str] = None,
     decline_message: Optional[str] = None,
+    timezone: Optional[str] = None,
     time_min: Optional[str] = None,
     time_max: Optional[str] = None,
     max_results: int = 10,
@@ -1560,11 +1577,12 @@ async def manage_out_of_office(
     Args:
         user_google_email (str): The user's Google email address. Required.
         action (str): Action to perform - "create", "list", "update", or "delete".
-        start_time (Optional[str]): Start date/time. Use 'YYYY-MM-DD' for full-day or RFC3339 for partial-day (e.g., '2024-04-05T09:00:00Z'). Required for create.
-        end_time (Optional[str]): End date/time (exclusive for full-day events). Same format as start_time. Required for create.
+        start_time (Optional[str]): Start date/time. Use 'YYYY-MM-DD' for full-day or RFC3339 for partial-day (e.g., '2024-04-05T09:00:00Z'). Date-only values are auto-converted to dateTime (midnight-to-midnight). Required for create.
+        end_time (Optional[str]): End date/time (exclusive). Same format as start_time. For a single full day on April 5, use start_time='2026-04-05' and end_time='2026-04-06'. Required for create.
         summary (Optional[str]): Display text on the calendar. Defaults to "Out of Office".
         auto_decline_mode (Optional[str]): How to handle conflicting invitations. One of: "declineAllConflictingInvitations" (default), "declineOnlyNewConflictingInvitations", "declineNone".
         decline_message (Optional[str]): Message included when auto-declining invitations.
+        timezone (Optional[str]): Timezone for the event (e.g., "America/New_York", "Europe/London"). Recommended when using date-only format. If omitted, the calendar's default timezone is used.
         time_min (Optional[str]): For "list" action: start of time range. Defaults to current time.
         time_max (Optional[str]): For "list" action: end of time range.
         max_results (int): For "list" action: maximum events to return. Defaults to 10.
@@ -1589,6 +1607,7 @@ async def manage_out_of_office(
             summary=summary,
             auto_decline_mode=auto_decline_mode,
             decline_message=decline_message,
+            timezone=timezone,
         )
     elif action_lower == "list":
         return await _list_ooo_events_impl(
@@ -1612,6 +1631,7 @@ async def manage_out_of_office(
             summary=summary,
             auto_decline_mode=auto_decline_mode,
             decline_message=decline_message,
+            timezone=timezone,
         )
     elif action_lower == "delete":
         if not event_id:
