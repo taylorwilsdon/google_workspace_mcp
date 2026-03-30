@@ -205,7 +205,7 @@ def _parse_segment(segment_data: dict[str, Any]) -> dict[str, Any]:
     text_parts = []
     for element in content:
         if "paragraph" in element:
-            text_parts.append(_extract_paragraph_text(element["paragraph"]))
+            text_parts.append(extract_paragraph_text(element["paragraph"]))
 
     return {
         "content": content,
