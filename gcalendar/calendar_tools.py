@@ -1103,6 +1103,60 @@ async def _delete_event_impl(
     return confirmation_message
 
 
+async def _rsvp_event_impl(
+    service,
+    user_google_email: str,
+    event_id: str,
+    response: str,
+    calendar_id: str = "primary",
+    comment: Optional[str] = None,
+    send_updates: str = "all",
+) -> str:
+    """Internal implementation for responding to a calendar event invitation."""
+    valid_responses = {"accepted", "declined", "tentative", "needsAction"}
+    if response not in valid_responses:
+        raise ValueError(
+            f"Invalid response '{response}'. Must be one of: {sorted(valid_responses)}"
+        )
+
+    existing_event = await asyncio.to_thread(
+        lambda: service.events().get(calendarId=calendar_id, eventId=event_id).execute()
+    )
+
+    attendees = existing_event.get("attendees")
+    if not attendees:
+        raise Exception("This event has no attendee list; cannot update RSVP.")
+
+    if existing_event.get("organizer", {}).get("self"):
+        raise Exception(
+            "You are the organizer of this event. Organizers cannot respond to their own invitations."
+        )
+
+    user_index = next((i for i, a in enumerate(attendees) if a.get("self")), None)
+    if user_index is None:
+        raise Exception(f"{user_google_email} was not found in the event's attendee list.")
+
+    updated_attendees = [dict(a) for a in attendees]
+    updated_attendees[user_index]["responseStatus"] = response
+    if comment is not None:
+        updated_attendees[user_index]["comment"] = comment
+
+    updated_event = await asyncio.to_thread(
+        lambda: service.events().patch(
+            calendarId=calendar_id,
+            eventId=event_id,
+            body={"attendees": updated_attendees},
+            sendUpdates=send_updates,
+        ).execute()
+    )
+
+    summary = updated_event.get("summary", "Unknown event")
+    logger.info(
+        f"[rsvp_event] RSVP for '{summary}' (ID: {event_id}) set to '{response}' for {user_google_email}."
+    )
+    return f"Successfully updated RSVP for '{summary}' (ID: {event_id}) to '{response}' for {user_google_email}."
+
+
 # ---------------------------------------------------------------------------
 # Consolidated event management tool
 # ---------------------------------------------------------------------------
@@ -1231,6 +1285,48 @@ async def manage_event(
         raise ValueError(
             f"Invalid action '{action_lower}'. Must be 'create', 'update', or 'delete'."
         )
+
+
+@server.tool()
+@handle_http_errors("rsvp_event", service_type="calendar")
+@require_google_service("calendar", "calendar_events")
+async def rsvp_event(
+    service,
+    user_google_email: str,
+    event_id: str,
+    response: str,
+    calendar_id: str = "primary",
+    comment: Optional[str] = None,
+    send_updates: str = "all",
+) -> str:
+    """
+    Respond to a calendar event invitation (accept, decline, tentative, or reset).
+
+    Uses events.patch with only the attendees array — the correct approach for
+    non-organizer RSVP updates. manage_event's "update" action uses events.update
+    (PUT), which requires organizer permission and cannot be used for RSVP.
+
+    Args:
+        user_google_email (str): The authenticated user's Google email. Required.
+        event_id (str): The ID of the event to respond to. Required.
+        response (str): One of "accepted", "declined", "tentative", "needsAction".
+        calendar_id (str): Calendar containing the event. Defaults to "primary".
+        comment (Optional[str]): Optional message to include with the response.
+        send_updates (str): Notification behavior — "all" (default), "externalOnly",
+            or "none".
+
+    Returns:
+        str: Confirmation with event title and updated response status.
+    """
+    return await _rsvp_event_impl(
+        service=service,
+        user_google_email=user_google_email,
+        event_id=event_id,
+        response=response,
+        calendar_id=calendar_id,
+        comment=comment,
+        send_updates=send_updates,
+    )
 
 
 # ---------------------------------------------------------------------------
