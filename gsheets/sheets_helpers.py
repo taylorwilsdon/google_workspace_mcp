@@ -961,6 +961,84 @@ def _format_sheet_notes_section(
     return f"\n\nCell notes in range '{range_label}':\n" + "\n".join(lines) + suffix
 
 
+async def _fetch_cell_formulas(
+    service,
+    spreadsheet_id: str,
+    resolved_range: str,
+) -> tuple[str, List[List[object]]]:
+    """Fetch formula strings for cells in the given range.
+
+    Makes a second values().get() call with valueRenderOption="FORMULA" and
+    returns a formatted section listing any cells whose value starts with "=".
+    Cells containing plain values are silently skipped.
+
+    Returns an empty section and empty values list if the request fails.
+    """
+    try:
+        result = await asyncio.to_thread(
+            service.spreadsheets()
+            .values()
+            .get(
+                spreadsheetId=spreadsheet_id,
+                range=resolved_range,
+                valueRenderOption="FORMULA",
+            )
+            .execute
+        )
+    except Exception as exc:
+        logger.warning(
+            "[read_sheet_values] Failed fetching formula values for range '%s': %s",
+            resolved_range,
+            exc,
+        )
+        return "", []
+
+    formula_values = result.get("values", [])
+    formulas: list[dict[str, str]] = []
+
+    sheet_name, range_part = _split_sheet_and_range(resolved_range)
+    start_part = range_part.split(":")[0] if ":" in range_part else range_part
+    start_col_idx, start_row_idx = _parse_a1_part(start_part)
+    base_col = start_col_idx if start_col_idx is not None else 0
+    base_row = start_row_idx if start_row_idx is not None else 0
+
+    for row_offset, formula_row in enumerate(formula_values):
+        for col_offset, cell_value in enumerate(formula_row):
+            if isinstance(cell_value, str) and cell_value.startswith("="):
+                abs_col = base_col + col_offset
+                abs_row = base_row + row_offset
+                cell_ref = f"{_index_to_column(abs_col)}{abs_row + 1}"
+                if sheet_name:
+                    cell_ref = f"{_quote_sheet_title_for_a1(sheet_name)}!{cell_ref}"
+                formulas.append({"cell": cell_ref, "formula": cell_value})
+
+    return (
+        _format_sheet_formula_section(formulas=formulas, range_label=resolved_range),
+        formula_values,
+    )
+
+
+def _format_sheet_formula_section(
+    *, formulas: list[dict[str, str]], range_label: str, max_details: int = 50
+) -> str:
+    """Format a list of formula cells into a human-readable section."""
+    if not formulas:
+        return ""
+
+    lines = []
+    for item in formulas[:max_details]:
+        cell = item.get("cell") or "(unknown cell)"
+        formula = item.get("formula") or "(empty formula)"
+        lines.append(f"- {cell}: {formula}")
+
+    suffix = (
+        f"\n... and {len(formulas) - max_details} more formula cells"
+        if len(formulas) > max_details
+        else ""
+    )
+    return f"\n\nFormula cells in range '{range_label}':\n" + "\n".join(lines) + suffix
+
+
 async def _fetch_grid_metadata(
     service,
     spreadsheet_id: str,
