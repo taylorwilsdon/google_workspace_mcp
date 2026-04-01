@@ -1,4 +1,6 @@
 import base64
+from email import policy
+from email.parser import BytesParser
 import os
 import sys
 from unittest.mock import Mock
@@ -30,6 +32,53 @@ def _thread_response(*message_ids):
             for message_id in message_ids
         ]
     }
+
+
+def _encode_part(text: str) -> str:
+    return base64.urlsafe_b64encode(text.encode("utf-8")).decode()
+
+
+def _thread_message(
+    message_id: str,
+    *,
+    subject: str = "Meeting tomorrow",
+    from_value: str = "sender@example.com",
+    reply_to: str | None = None,
+    to_value: str = "user@example.com",
+    cc_value: str | None = None,
+    date: str = "Fri, 28 Mar 2026 10:00:00 -0400",
+    text: str | None = None,
+    html: str | None = None,
+):
+    headers = [
+        {"name": "Message-ID", "value": message_id},
+        {"name": "Subject", "value": subject},
+        {"name": "From", "value": from_value},
+        {"name": "To", "value": to_value},
+        {"name": "Date", "value": date},
+    ]
+    if reply_to:
+        headers.append({"name": "Reply-To", "value": reply_to})
+    if cc_value:
+        headers.append({"name": "Cc", "value": cc_value})
+
+    payload = {"headers": headers}
+    parts = []
+    if text is not None:
+        parts.append({"mimeType": "text/plain", "body": {"data": _encode_part(text)}})
+    if html is not None:
+        parts.append({"mimeType": "text/html", "body": {"data": _encode_part(html)}})
+    if parts:
+        payload["mimeType"] = "multipart/alternative"
+        payload["parts"] = parts
+
+    return {"payload": payload}
+
+
+def _parse_raw_message(raw_message: str):
+    return BytesParser(policy=policy.default).parsebytes(
+        base64.urlsafe_b64decode(raw_message)
+    )
 
 
 @pytest.mark.asyncio
@@ -121,6 +170,160 @@ async def test_draft_gmail_message_appends_gmail_signature_html():
 
     assert "<p>Hello</p>" in raw_text
     assert "Best,<br>Alice" in raw_text
+
+
+@pytest.mark.asyncio
+async def test_draft_gmail_message_builds_threaded_html_reply_as_multipart_alternative():
+    mock_service = Mock()
+    mock_service.users().drafts().create().execute.return_value = {"id": "draft_reply"}
+    mock_service.users().threads().get().execute.return_value = _thread_response(
+        "<msg1@example.com>",
+        "<msg2@example.com>",
+    )
+
+    await _unwrap(draft_gmail_message)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        to="recipient@example.com",
+        subject="Meeting tomorrow",
+        body="<p>Thanks for the update.</p>",
+        body_format="html",
+        thread_id="thread123",
+        include_signature=False,
+    )
+
+    create_kwargs = (
+        mock_service.users.return_value.drafts.return_value.create.call_args.kwargs
+    )
+    raw_message = create_kwargs["body"]["message"]["raw"]
+    parsed = _parse_raw_message(raw_message)
+
+    assert parsed["Subject"] == "Re: Meeting tomorrow"
+    assert parsed["To"] == "recipient@example.com"
+    assert parsed["In-Reply-To"] == "<msg2@example.com>"
+    assert parsed["References"] == "<msg1@example.com> <msg2@example.com>"
+    assert parsed.get_content_type() == "multipart/alternative"
+    assert parsed.get_body(preferencelist=("plain",)).get_content().strip() == (
+        "Thanks for the update."
+    )
+    assert parsed.get_body(preferencelist=("html",)).get_content().strip() == (
+        "<p>Thanks for the update.</p>"
+    )
+
+
+@pytest.mark.asyncio
+async def test_draft_gmail_message_builds_html_attachments_with_mixed_top_level():
+    mock_service = Mock()
+    mock_service.users().drafts().create().execute.return_value = {
+        "id": "draft_attachments"
+    }
+
+    await _unwrap(draft_gmail_message)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        to="recipient@example.com",
+        subject="Attachment test",
+        body="<p>Please see attached.</p>",
+        body_format="html",
+        attachments=[
+            {
+                "filename": "a.pdf",
+                "content": "cGRmMQ==",
+                "mime_type": "application/pdf",
+            },
+            {
+                "filename": "b.pdf",
+                "content": "cGRmMg==",
+                "mime_type": "application/pdf",
+            },
+        ],
+        include_signature=False,
+    )
+
+    create_kwargs = (
+        mock_service.users.return_value.drafts.return_value.create.call_args.kwargs
+    )
+    raw_message = create_kwargs["body"]["message"]["raw"]
+    parsed = _parse_raw_message(raw_message)
+    attachments = list(parsed.iter_attachments())
+
+    assert parsed.get_content_type() == "multipart/mixed"
+    assert parsed.get_body(preferencelist=("html",)).get_content().strip() == (
+        "<p>Please see attached.</p>"
+    )
+    assert parsed.get_body(preferencelist=("plain",)).get_content().strip() == (
+        "Please see attached."
+    )
+    assert [attachment.get_filename() for attachment in attachments] == [
+        "a.pdf",
+        "b.pdf",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_draft_gmail_message_autofills_reply_recipient_from_thread_target():
+    mock_service = Mock()
+    mock_service.users().drafts().create().execute.return_value = {"id": "draft_reply"}
+    mock_service.users().threads().get().execute.return_value = {
+        "messages": [
+            _thread_message(
+                "<msg1@example.com>",
+                from_value="Alice Example <alice@example.com>",
+                reply_to="reply@example.com",
+            )
+        ]
+    }
+
+    await _unwrap(draft_gmail_message)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        subject="Meeting tomorrow",
+        body="Thanks for the update.",
+        thread_id="thread123",
+        include_signature=False,
+    )
+
+    create_kwargs = (
+        mock_service.users.return_value.drafts.return_value.create.call_args.kwargs
+    )
+    parsed = _parse_raw_message(create_kwargs["body"]["message"]["raw"])
+
+    assert parsed["To"] == "reply@example.com"
+
+
+@pytest.mark.asyncio
+async def test_draft_gmail_message_fetches_thread_once_when_quoting_reply():
+    mock_service = Mock()
+    mock_service.users().drafts().create().execute.return_value = {"id": "draft_reply"}
+    mock_service.users().threads().get().execute.return_value = {
+        "messages": [
+            _thread_message(
+                "<msg1@example.com>",
+                from_value="Alice Example <alice@example.com>",
+                text="Original plain text",
+                html="<p>Original html</p>",
+            )
+        ]
+    }
+    mock_service.users.return_value.threads.return_value.get.reset_mock()
+
+    await _unwrap(draft_gmail_message)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        to="recipient@example.com",
+        subject="Meeting tomorrow",
+        body="<p>Thanks for the update.</p>",
+        body_format="html",
+        thread_id="thread123",
+        quote_original=True,
+        include_signature=False,
+    )
+
+    assert mock_service.users.return_value.threads.return_value.get.call_count == 1
+    thread_get_kwargs = (
+        mock_service.users.return_value.threads.return_value.get.call_args.kwargs
+    )
+    assert thread_get_kwargs["format"] == "full"
 
 
 @pytest.mark.asyncio

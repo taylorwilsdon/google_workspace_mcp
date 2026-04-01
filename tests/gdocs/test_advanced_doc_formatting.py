@@ -116,7 +116,11 @@ class TestAdvancedStructureParsing:
             {
                 "body": {
                     "content": [
-                        {"startIndex": 0, "endIndex": 1, "sectionBreak": {"sectionStyle": {}}},
+                        {
+                            "startIndex": 0,
+                            "endIndex": 1,
+                            "sectionBreak": {"sectionStyle": {}},
+                        },
                         {
                             "startIndex": 1,
                             "endIndex": 6,
@@ -253,7 +257,9 @@ class TestAdvancedPublicToolWiring:
         assert request["text"] == "Header text"
 
     @pytest.mark.asyncio
-    async def test_batch_update_doc_supports_named_range_and_document_style(self, service):
+    async def test_batch_update_doc_supports_named_range_and_document_style(
+        self, service
+    ):
         await _unwrap(docs_tools.batch_update_doc)(
             service=service,
             user_google_email="user@example.com",
