@@ -1197,6 +1197,201 @@ async def create_sheet(
     return text_output
 
 
+@server.tool()
+@handle_http_errors("list_sheet_tables", is_read_only=True, service_type="sheets")
+@require_google_service("sheets", "sheets_read")
+async def list_sheet_tables(
+    service,
+    user_google_email: str,
+    spreadsheet_id: str,
+) -> str:
+    """
+    Lists all structured tables in a spreadsheet with their IDs, names, ranges,
+    and column details. Use this to find table IDs for append_table_rows.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        spreadsheet_id (str): The ID of the spreadsheet. Required.
+
+    Returns:
+        str: Formatted list of tables with their IDs, names, ranges, and columns.
+    """
+    logger.info(
+        f"[list_sheet_tables] Invoked. Email: '{user_google_email}', "
+        f"Spreadsheet: {spreadsheet_id}"
+    )
+
+    spreadsheet = await asyncio.to_thread(
+        service.spreadsheets()
+        .get(
+            spreadsheetId=spreadsheet_id,
+            fields="sheets(properties(title,sheetId),tables)",
+        )
+        .execute
+    )
+
+    tables_found = []
+    for sheet in spreadsheet.get("sheets", []):
+        sheet_title = sheet.get("properties", {}).get("title", "Unknown")
+        for table in sheet.get("tables", []):
+            table_id = table.get("tableId")
+            name = table.get("name", "Unnamed")
+            range_info = table.get("range", {})
+
+            start_row = range_info.get("startRowIndex", 0)
+            end_row = range_info.get("endRowIndex", "?")
+            start_col = range_info.get("startColumnIndex", 0)
+            end_col = range_info.get("endColumnIndex", "?")
+
+            columns = []
+            for col in table.get("columnProperties", []):
+                col_name = col.get("columnName", "")
+                columns.append(col_name)
+
+            tables_found.append(
+                f"  Table ID: {table_id}\n"
+                f"  Name: {name}\n"
+                f"  Sheet: {sheet_title}\n"
+                f"  Range: rows {start_row}-{end_row}, cols {start_col}-{end_col}\n"
+                f"  Columns: {', '.join(columns) if columns else 'N/A'}"
+            )
+
+    if not tables_found:
+        text_output = (
+            f"No structured tables found in spreadsheet {spreadsheet_id} "
+            f"for {user_google_email}."
+        )
+    else:
+        text_output = (
+            f"Found {len(tables_found)} table(s) in spreadsheet {spreadsheet_id} "
+            f"for {user_google_email}:\n\n"
+            + "\n\n".join(tables_found)
+        )
+
+    logger.info(
+        f"[list_sheet_tables] Found {len(tables_found)} tables for {user_google_email}"
+    )
+    return text_output
+
+
+@server.tool()
+@handle_http_errors("append_table_rows", service_type="sheets")
+@require_google_service("sheets", "sheets_write")
+async def append_table_rows(
+    service,
+    user_google_email: str,
+    spreadsheet_id: str,
+    table_id: str,
+    values: Union[str, List[List[str]]],
+    value_input_option: str = "USER_ENTERED",
+) -> str:
+    """
+    Appends rows to a structured table in a Google Sheet. The rows are added
+    to the end of the table body, automatically extending the table range.
+
+    Use list_sheet_tables first to find the table ID.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        spreadsheet_id (str): The ID of the spreadsheet. Required.
+        table_id (str): The ID of the table to append to (get from list_sheet_tables). Required.
+        values (Union[str, List[List[str]]]): 2D array of values to append. Each inner
+            list is one row. Can be a JSON string or Python list. Required.
+        value_input_option (str): How to interpret input values ("RAW" or "USER_ENTERED").
+            Defaults to "USER_ENTERED".
+
+    Returns:
+        str: Confirmation message with the number of rows appended.
+    """
+    logger.info(
+        f"[append_table_rows] Invoked. Email: '{user_google_email}', "
+        f"Spreadsheet: {spreadsheet_id}, Table: {table_id}"
+    )
+
+    # Parse values if JSON string
+    if isinstance(values, str):
+        try:
+            values = json.loads(values)
+        except json.JSONDecodeError as e:
+            raise UserInputError(f"Invalid JSON in values parameter: {e}")
+
+    if not values or not isinstance(values, list):
+        raise UserInputError("values must be a non-empty 2D list of cell values.")
+
+    # Build cell data for appendCells
+    rows = []
+    for row_values in values:
+        if not isinstance(row_values, list):
+            raise UserInputError(
+                "Each row in values must be a list. "
+                "Expected format: [[\"val1\", \"val2\"], [\"val3\", \"val4\"]]"
+            )
+        cells = []
+        for val in row_values:
+            if value_input_option == "USER_ENTERED":
+                cells.append({"userEnteredValue": {"stringValue": str(val)}})
+            else:
+                cells.append({"userEnteredValue": {"stringValue": str(val)}})
+        rows.append({"values": cells})
+
+    request_body = {
+        "requests": [
+            {
+                "appendCells": {
+                    "sheetId": None,  # Will be resolved below
+                    "tableId": table_id,
+                    "rows": rows,
+                    "fields": "userEnteredValue",
+                }
+            }
+        ]
+    }
+
+    # Get the sheet ID for the table
+    spreadsheet = await asyncio.to_thread(
+        service.spreadsheets()
+        .get(
+            spreadsheetId=spreadsheet_id,
+            fields="sheets(properties(sheetId),tables(tableId))",
+        )
+        .execute
+    )
+
+    sheet_id = None
+    for sheet in spreadsheet.get("sheets", []):
+        for table in sheet.get("tables", []):
+            if table.get("tableId") == table_id:
+                sheet_id = sheet["properties"]["sheetId"]
+                break
+        if sheet_id is not None:
+            break
+
+    if sheet_id is None:
+        raise UserInputError(
+            f"Table '{table_id}' not found in spreadsheet {spreadsheet_id}. "
+            f"Use list_sheet_tables to find valid table IDs."
+        )
+
+    request_body["requests"][0]["appendCells"]["sheetId"] = sheet_id
+
+    await asyncio.to_thread(
+        service.spreadsheets()
+        .batchUpdate(spreadsheetId=spreadsheet_id, body=request_body)
+        .execute
+    )
+
+    num_rows = len(values)
+    text_output = (
+        f"Successfully appended {num_rows} row(s) to table '{table_id}' "
+        f"in spreadsheet {spreadsheet_id} for {user_google_email}."
+    )
+
+    logger.info(
+        f"[append_table_rows] Appended {num_rows} rows for {user_google_email}"
+    )
+    return text_output
+
+
 # Create comment management tools for sheets
 _comment_tools = create_comment_tools("spreadsheet", "spreadsheet_id")
 
