@@ -1276,14 +1276,19 @@ def _ooo_time_entry(
       - end   → (next day)T00:00:00  (so a single date covers the full day)
     """
     if "T" not in time_str:
-        if is_end:
-            # End date is exclusive in date-only format, but for dateTime we
-            # need the same semantics: "2026-04-06" → full day Apr 5 means
-            # end at midnight of Apr 6, which is already what the user passes.
-            time_str = f"{time_str}T00:00:00"
-        else:
-            time_str = f"{time_str}T00:00:00"
+        # End date is already expected to be exclusive by the caller, so both
+        # date-only forms convert to midnight on the provided day.
+        time_str = f"{time_str}T00:00:00"
         logger.info(f"[ooo_time_entry] Converted date-only to dateTime: {time_str}")
+
+    has_explicit_offset = time_str.endswith("Z") or bool(
+        re.search(r"[+-]\d{2}:\d{2}$", time_str)
+    )
+    if not has_explicit_offset and not timezone:
+        raise ValueError(
+            "Out of Office events require either a timezone parameter or a "
+            "start/end timestamp with an explicit UTC offset."
+        )
 
     entry: Dict[str, str] = {"dateTime": time_str}
     if timezone:
@@ -1321,7 +1326,6 @@ async def _create_ooo_event_impl(
             "autoDeclineMode": effective_decline_mode,
             "declineMessage": decline_message or "",
         },
-        "visibility": "public",
         "transparency": "opaque",
     }
 
@@ -1527,8 +1531,9 @@ async def _delete_ooo_event_impl(
             )
         )
         if existing_event.get("eventType") != "outOfOffice":
-            logger.warning(
-                f"[delete_ooo_event] Event '{event_id}' is type '{existing_event.get('eventType', 'default')}', not outOfOffice"
+            raise ValueError(
+                f"Event '{event_id}' is not an Out of Office event (type: '{existing_event.get('eventType', 'default')}'). "
+                f"Use manage_event to delete regular events."
             )
     except HttpError as get_error:
         if get_error.resp.status == 404:
@@ -1584,7 +1589,7 @@ async def manage_out_of_office(
         summary (Optional[str]): Display text on the calendar. Defaults to "Out of Office".
         auto_decline_mode (Optional[str]): How to handle conflicting invitations. One of: "declineAllConflictingInvitations" (default), "declineOnlyNewConflictingInvitations", "declineNone".
         decline_message (Optional[str]): Message included when auto-declining invitations.
-        timezone (Optional[str]): Timezone for the event (e.g., "America/New_York", "Europe/London"). Recommended when using date-only format. If omitted, the calendar's default timezone is used.
+        timezone (Optional[str]): Timezone for the event (e.g., "America/New_York", "Europe/London"). Required when using date-only values or dateTime values without an explicit UTC offset.
         time_min (Optional[str]): For "list" action: start of time range. Defaults to current time.
         time_max (Optional[str]): For "list" action: end of time range.
         max_results (int): For "list" action: maximum events to return. Defaults to 10.

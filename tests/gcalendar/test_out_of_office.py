@@ -62,13 +62,23 @@ class TestValidateAutoDeclineMode:
 
 
 class TestOooTimeEntry:
-    def test_date_only_start_converts_to_midnight(self):
-        result = _ooo_time_entry("2026-04-05", is_end=False)
-        assert result == {"dateTime": "2026-04-05T00:00:00"}
+    def test_date_only_start_converts_to_midnight_when_timezone_provided(self):
+        result = _ooo_time_entry(
+            "2026-04-05", is_end=False, timezone="America/New_York"
+        )
+        assert result == {
+            "dateTime": "2026-04-05T00:00:00",
+            "timeZone": "America/New_York",
+        }
 
-    def test_date_only_end_converts_to_midnight(self):
-        result = _ooo_time_entry("2026-04-06", is_end=True)
-        assert result == {"dateTime": "2026-04-06T00:00:00"}
+    def test_date_only_end_converts_to_midnight_when_timezone_provided(self):
+        result = _ooo_time_entry(
+            "2026-04-06", is_end=True, timezone="America/New_York"
+        )
+        assert result == {
+            "dateTime": "2026-04-06T00:00:00",
+            "timeZone": "America/New_York",
+        }
 
     def test_datetime_passed_through_unchanged(self):
         result = _ooo_time_entry("2026-04-05T09:00:00Z", is_end=False)
@@ -92,9 +102,13 @@ class TestOooTimeEntry:
             "timeZone": "Europe/London",
         }
 
-    def test_no_timezone_when_none(self):
-        result = _ooo_time_entry("2026-04-05", is_end=False, timezone=None)
-        assert "timeZone" not in result
+    def test_rejects_date_only_without_timezone(self):
+        with pytest.raises(ValueError, match="require either a timezone"):
+            _ooo_time_entry("2026-04-05", is_end=False, timezone=None)
+
+    def test_rejects_naive_datetime_without_timezone(self):
+        with pytest.raises(ValueError, match="require either a timezone"):
+            _ooo_time_entry("2026-04-05T09:00:00", is_end=False, timezone=None)
 
 
 # ---------------------------------------------------------------------------
@@ -121,6 +135,7 @@ async def test_create_ooo_full_day_sends_correct_event_body():
         user_google_email="user@example.com",
         start_time="2026-04-05",
         end_time="2026-04-12",
+        timezone="America/New_York",
     )
 
     # Verify the API was called with the correct event body
@@ -129,9 +144,15 @@ async def test_create_ooo_full_day_sends_correct_event_body():
 
     assert body["eventType"] == "outOfOffice"
     assert body["summary"] == "Out of Office"
-    assert body["start"] == {"dateTime": "2026-04-05T00:00:00"}
-    assert body["end"] == {"dateTime": "2026-04-12T00:00:00"}
-    assert body["visibility"] == "public"
+    assert body["start"] == {
+        "dateTime": "2026-04-05T00:00:00",
+        "timeZone": "America/New_York",
+    }
+    assert body["end"] == {
+        "dateTime": "2026-04-12T00:00:00",
+        "timeZone": "America/New_York",
+    }
+    assert "visibility" not in body
     assert body["transparency"] == "opaque"
     assert (
         body["outOfOfficeProperties"]["autoDeclineMode"]
@@ -170,6 +191,7 @@ async def test_create_ooo_with_custom_params_sends_correct_body():
         summary="Vacation",
         auto_decline_mode="declineOnlyNewConflictingInvitations",
         decline_message="On vacation, contact backup@example.com",
+        timezone="America/New_York",
     )
 
     call_args = mock_service.events().insert.call_args
@@ -177,8 +199,14 @@ async def test_create_ooo_with_custom_params_sends_correct_body():
 
     assert body["eventType"] == "outOfOffice"
     assert body["summary"] == "Vacation"
-    assert body["start"] == {"dateTime": "2026-05-01T00:00:00"}
-    assert body["end"] == {"dateTime": "2026-05-08T00:00:00"}
+    assert body["start"] == {
+        "dateTime": "2026-05-01T00:00:00",
+        "timeZone": "America/New_York",
+    }
+    assert body["end"] == {
+        "dateTime": "2026-05-08T00:00:00",
+        "timeZone": "America/New_York",
+    }
     assert (
         body["outOfOfficeProperties"]["autoDeclineMode"]
         == "declineOnlyNewConflictingInvitations"
@@ -237,6 +265,7 @@ async def test_create_ooo_custom_calendar_id():
         start_time="2026-04-05",
         end_time="2026-04-12",
         calendar_id="custom_calendar_id",
+        timezone="America/New_York",
     )
 
     call_args = mock_service.events().insert.call_args
@@ -255,6 +284,21 @@ async def test_create_ooo_invalid_decline_mode_never_calls_api():
             start_time="2026-04-05",
             end_time="2026-04-12",
             auto_decline_mode="badValue",
+            timezone="America/New_York",
+        )
+
+
+@pytest.mark.asyncio
+async def test_create_ooo_date_only_requires_timezone():
+    """Date-only OOO input must be anchored with a timezone."""
+    mock_service = _create_mock_service()
+
+    with pytest.raises(ValueError, match="require either a timezone"):
+        await _create_ooo_event_impl(
+            service=mock_service,
+            user_google_email="user@example.com",
+            start_time="2026-04-05",
+            end_time="2026-04-12",
         )
 
 
@@ -396,6 +440,7 @@ async def test_update_ooo_uses_patch_not_update():
         user_google_email="user@example.com",
         event_id="ooo123",
         end_time="2026-04-14",
+        timezone="America/New_York",
     )
 
     # Verify patch was called with the right event_id
@@ -581,4 +626,20 @@ async def test_delete_ooo_event_not_found_raises():
             service=mock_service,
             user_google_email="user@example.com",
             event_id="nonexistent",
+        )
+
+
+@pytest.mark.asyncio
+async def test_delete_non_ooo_event_raises_error():
+    """Delete refuses to act on regular events."""
+    mock_service = _create_mock_service()
+    mock_service.events().get().execute = Mock(
+        return_value={"id": "regular123", "eventType": "default"}
+    )
+
+    with pytest.raises(ValueError, match="not an Out of Office event"):
+        await _delete_ooo_event_impl(
+            service=mock_service,
+            user_google_email="user@example.com",
+            event_id="regular123",
         )
