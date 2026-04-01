@@ -12,6 +12,7 @@ import uuid
 import json
 from typing import List, Optional, Dict, Any, Union
 
+import pytz
 from googleapiclient.errors import HttpError
 from googleapiclient.discovery import build
 
@@ -290,13 +291,13 @@ def _format_attachment_details(
 
 # Helper function to ensure time strings for API calls are correctly formatted
 def _correct_time_format_for_api(
-    time_str: Optional[str], param_name: str
+    time_str: Optional[str], param_name: str, timezone: Optional[str] = None
 ) -> Optional[str]:
     if not time_str:
         return None
 
     logger.info(
-        f"_correct_time_format_for_api: Processing {param_name} with value '{time_str}'"
+        f"_correct_time_format_for_api: Processing {param_name} with value '{time_str}', timezone: '{timezone}'"
     )
 
     # Handle date-only format (YYYY-MM-DD)
@@ -304,8 +305,22 @@ def _correct_time_format_for_api(
         try:
             # Validate it's a proper date
             datetime.datetime.strptime(time_str, "%Y-%m-%d")
-            # For date-only, append T00:00:00Z to make it RFC3339 compliant
-            formatted = f"{time_str}T00:00:00Z"
+            # For date-only, convert using the provided timezone, or UTC if not provided
+            if timezone:
+                try:
+                    tz = pytz.timezone(timezone)
+                    # Parse the date and create a datetime at midnight in the specified timezone
+                    date_obj = datetime.datetime.strptime(time_str, "%Y-%m-%d")
+                    dt = tz.localize(date_obj)
+                    # Convert to UTC and format as RFC3339
+                    formatted = dt.astimezone(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+                except pytz.exceptions.UnknownTimeZoneError:
+                    logger.warning(
+                        f"Could not apply timezone '{timezone}', falling back to UTC for {param_name}"
+                    )
+                    formatted = f"{time_str}T00:00:00Z"
+            else:
+                formatted = f"{time_str}T00:00:00Z"
             logger.info(
                 f"Formatting date-only {param_name} '{time_str}' to RFC3339: '{formatted}'"
             )
@@ -426,7 +441,7 @@ async def get_events(
     else:
         # Handle multiple events retrieval with time filtering
         # Ensure time_min and time_max are correctly formatted for the API
-        formatted_time_min = _correct_time_format_for_api(time_min, "time_min")
+        formatted_time_min = _correct_time_format_for_api(time_min, "time_min", None)
         if formatted_time_min:
             effective_time_min = formatted_time_min
         else:
@@ -441,7 +456,7 @@ async def get_events(
                 f"time_min processing: original='{time_min}', formatted='{formatted_time_min}', effective='{effective_time_min}'"
             )
 
-        effective_time_max = _correct_time_format_for_api(time_max, "time_max")
+        effective_time_max = _correct_time_format_for_api(time_max, "time_max", None)
         if time_max:
             logger.info(
                 f"time_max processing: original='{time_max}', formatted='{effective_time_max}'"
@@ -1369,20 +1384,33 @@ async def _list_ooo_events_impl(
     time_min: Optional[str] = None,
     time_max: Optional[str] = None,
     max_results: int = 10,
+    timezone: Optional[str] = None,
 ) -> str:
     """Internal implementation for listing Out of Office calendar events."""
     logger.info(
-        f"[list_ooo_events] Invoked. Email: '{user_google_email}', time_min: {time_min}, time_max: {time_max}"
+        f"[list_ooo_events] Invoked. Email: '{user_google_email}', time_min: {time_min}, time_max: {time_max}, timezone: {timezone}"
     )
 
-    formatted_time_min = _correct_time_format_for_api(time_min, "time_min")
+    formatted_time_min = _correct_time_format_for_api(time_min, "time_min", timezone)
     if formatted_time_min:
         effective_time_min = formatted_time_min
     else:
-        utc_now = datetime.datetime.now(datetime.timezone.utc)
-        effective_time_min = utc_now.isoformat().replace("+00:00", "Z")
+        if timezone:
+            try:
+                tz = pytz.timezone(timezone)
+                now = datetime.datetime.now(tz)
+                effective_time_min = now.astimezone(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+            except pytz.exceptions.UnknownTimeZoneError:
+                logger.warning(
+                    f"Could not apply timezone '{timezone}', falling back to UTC"
+                )
+                utc_now = datetime.datetime.now(datetime.timezone.utc)
+                effective_time_min = utc_now.isoformat().replace("+00:00", "Z")
+        else:
+            utc_now = datetime.datetime.now(datetime.timezone.utc)
+            effective_time_min = utc_now.isoformat().replace("+00:00", "Z")
 
-    effective_time_max = _correct_time_format_for_api(time_max, "time_max")
+    effective_time_max = _correct_time_format_for_api(time_max, "time_max", timezone)
 
     request_params: Dict[str, Any] = {
         "calendarId": calendar_id,
@@ -1541,9 +1569,7 @@ async def _delete_ooo_event_impl(
                 f"Event not found. The event with ID '{event_id}' could not be found in calendar '{calendar_id}'."
             )
         else:
-            logger.warning(
-                f"[delete_ooo_event] Error verifying event, proceeding with deletion: {get_error}"
-            )
+            raise
 
     await asyncio.to_thread(
         lambda: (
@@ -1622,6 +1648,7 @@ async def manage_out_of_office(
             time_min=time_min,
             time_max=time_max,
             max_results=max_results,
+            timezone=timezone,
         )
     elif action_lower == "update":
         if not event_id:
@@ -1689,8 +1716,8 @@ async def query_freebusy(
     )
 
     # Format time parameters
-    formatted_time_min = _correct_time_format_for_api(time_min, "time_min")
-    formatted_time_max = _correct_time_format_for_api(time_max, "time_max")
+    formatted_time_min = _correct_time_format_for_api(time_min, "time_min", None)
+    formatted_time_max = _correct_time_format_for_api(time_max, "time_max", None)
 
     # Default to primary calendar if no calendar IDs provided
     if not calendar_ids:
