@@ -1326,9 +1326,9 @@ async def _create_ooo_event_impl(
     }
 
     created_event = await asyncio.to_thread(
-        lambda: service.events()
-        .insert(calendarId=calendar_id, body=event_body)
-        .execute()
+        lambda: (
+            service.events().insert(calendarId=calendar_id, body=event_body).execute()
+        )
     )
 
     event_id = created_event.get("id", "N/A")
@@ -1441,9 +1441,7 @@ async def _update_ooo_event_impl(
     )
 
     existing_event = await asyncio.to_thread(
-        lambda: service.events()
-        .get(calendarId=calendar_id, eventId=event_id)
-        .execute()
+        lambda: service.events().get(calendarId=calendar_id, eventId=event_id).execute()
     )
 
     if existing_event.get("eventType") != "outOfOffice":
@@ -1457,7 +1455,9 @@ async def _update_ooo_event_impl(
     if summary is not None:
         patch_body["summary"] = summary
     if start_time is not None:
-        patch_body["start"] = _ooo_time_entry(start_time, is_end=False, timezone=timezone)
+        patch_body["start"] = _ooo_time_entry(
+            start_time, is_end=False, timezone=timezone
+        )
     if end_time is not None:
         patch_body["end"] = _ooo_time_entry(end_time, is_end=True, timezone=timezone)
 
@@ -1480,9 +1480,11 @@ async def _update_ooo_event_impl(
         return f"No changes specified for Out of Office event '{event_id}'."
 
     updated_event = await asyncio.to_thread(
-        lambda: service.events()
-        .patch(calendarId=calendar_id, eventId=event_id, body=patch_body)
-        .execute()
+        lambda: (
+            service.events()
+            .patch(calendarId=calendar_id, eventId=event_id, body=patch_body)
+            .execute()
+        )
     )
 
     link = updated_event.get("htmlLink", "N/A")
@@ -1520,9 +1522,9 @@ async def _delete_ooo_event_impl(
 
     try:
         existing_event = await asyncio.to_thread(
-            lambda: service.events()
-            .get(calendarId=calendar_id, eventId=event_id)
-            .execute()
+            lambda: (
+                service.events().get(calendarId=calendar_id, eventId=event_id).execute()
+            )
         )
         if existing_event.get("eventType") != "outOfOffice":
             logger.warning(
@@ -1539,9 +1541,9 @@ async def _delete_ooo_event_impl(
             )
 
     await asyncio.to_thread(
-        lambda: service.events()
-        .delete(calendarId=calendar_id, eventId=event_id)
-        .execute()
+        lambda: (
+            service.events().delete(calendarId=calendar_id, eventId=event_id).execute()
+        )
     )
 
     confirmation = f"Successfully deleted Out of Office event (ID: {event_id}) from calendar '{calendar_id}' for {user_google_email}."
@@ -1595,9 +1597,7 @@ async def manage_out_of_office(
     action_lower = action.lower().strip()
     if action_lower == "create":
         if not start_time or not end_time:
-            raise ValueError(
-                "start_time and end_time are required for create action"
-            )
+            raise ValueError("start_time and end_time are required for create action")
         return await _create_ooo_event_impl(
             service=service,
             user_google_email=user_google_email,

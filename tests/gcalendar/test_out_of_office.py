@@ -75,12 +75,22 @@ class TestOooTimeEntry:
         assert result == {"dateTime": "2026-04-05T09:00:00Z"}
 
     def test_timezone_added_when_provided(self):
-        result = _ooo_time_entry("2026-04-05", is_end=False, timezone="America/New_York")
-        assert result == {"dateTime": "2026-04-05T00:00:00", "timeZone": "America/New_York"}
+        result = _ooo_time_entry(
+            "2026-04-05", is_end=False, timezone="America/New_York"
+        )
+        assert result == {
+            "dateTime": "2026-04-05T00:00:00",
+            "timeZone": "America/New_York",
+        }
 
     def test_timezone_added_to_datetime_input(self):
-        result = _ooo_time_entry("2026-04-05T09:00:00", is_end=False, timezone="Europe/London")
-        assert result == {"dateTime": "2026-04-05T09:00:00", "timeZone": "Europe/London"}
+        result = _ooo_time_entry(
+            "2026-04-05T09:00:00", is_end=False, timezone="Europe/London"
+        )
+        assert result == {
+            "dateTime": "2026-04-05T09:00:00",
+            "timeZone": "Europe/London",
+        }
 
     def test_no_timezone_when_none(self):
         result = _ooo_time_entry("2026-04-05", is_end=False, timezone=None)
@@ -123,7 +133,10 @@ async def test_create_ooo_full_day_sends_correct_event_body():
     assert body["end"] == {"dateTime": "2026-04-12T00:00:00"}
     assert body["visibility"] == "public"
     assert body["transparency"] == "opaque"
-    assert body["outOfOfficeProperties"]["autoDeclineMode"] == "declineAllConflictingInvitations"
+    assert (
+        body["outOfOfficeProperties"]["autoDeclineMode"]
+        == "declineAllConflictingInvitations"
+    )
     assert body["outOfOfficeProperties"]["declineMessage"] == ""
 
     # Verify calendarId
@@ -166,8 +179,14 @@ async def test_create_ooo_with_custom_params_sends_correct_body():
     assert body["summary"] == "Vacation"
     assert body["start"] == {"dateTime": "2026-05-01T00:00:00"}
     assert body["end"] == {"dateTime": "2026-05-08T00:00:00"}
-    assert body["outOfOfficeProperties"]["autoDeclineMode"] == "declineOnlyNewConflictingInvitations"
-    assert body["outOfOfficeProperties"]["declineMessage"] == "On vacation, contact backup@example.com"
+    assert (
+        body["outOfOfficeProperties"]["autoDeclineMode"]
+        == "declineOnlyNewConflictingInvitations"
+    )
+    assert (
+        body["outOfOfficeProperties"]["declineMessage"]
+        == "On vacation, contact backup@example.com"
+    )
 
     assert "Vacation" in result
     assert "declineOnlyNewConflictingInvitations" in result
