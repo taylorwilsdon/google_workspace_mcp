@@ -159,6 +159,7 @@ _VALID_AUTO_DECLINE_MODES = {
 }
 
 _VALID_FOCUS_TIME_CHAT_STATUSES = {
+    "available",
     "doNotDisturb",
 }
 
@@ -1939,8 +1940,7 @@ async def _update_focus_time_event_impl(
         }
         if chat_status is not None:
             validated = _validate_chat_status(chat_status, "update_focus_time_event")
-            if validated:
-                updated_ft_props["chatStatus"] = validated
+            updated_ft_props["chatStatus"] = validated
         elif existing_ft_props.get("chatStatus"):
             updated_ft_props["chatStatus"] = existing_ft_props["chatStatus"]
         patch_body["focusTimeProperties"] = updated_ft_props
