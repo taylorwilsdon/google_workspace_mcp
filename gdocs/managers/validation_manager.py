@@ -629,8 +629,7 @@ class ValidationManager:
             if document_mode.upper() not in VALID_DOCUMENT_MODES:
                 return (
                     False,
-                    "document_mode must be one of: "
-                    f"{', '.join(VALID_DOCUMENT_MODES)}",
+                    f"document_mode must be one of: {', '.join(VALID_DOCUMENT_MODES)}",
                 )
 
         return True, ""
@@ -1261,7 +1260,10 @@ class ValidationManager:
                         f"Operation {i + 1} (create_bullet_list): list_type must be UNORDERED, ORDERED, CHECKBOX, or NONE",
                     )
                 bullet_preset = op.get("bullet_preset")
-                if bullet_preset is not None and bullet_preset not in VALID_BULLET_PRESETS:
+                if (
+                    bullet_preset is not None
+                    and bullet_preset not in VALID_BULLET_PRESETS
+                ):
                     return (
                         False,
                         f"Operation {i + 1} (create_bullet_list): bullet_preset must be one of {', '.join(VALID_BULLET_PRESETS)}",
