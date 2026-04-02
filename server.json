@@ -3,7 +3,7 @@
   "name": "io.github.taylorwilsdon/workspace-mcp",
   "description": "Google Workspace MCP server for Gmail, Drive, Calendar, Docs, Sheets, Slides, Forms, Tasks, Chat.",
   "status": "active",
-  "version": "1.17.0",
+  "version": "1.17.1",
   "packages": [
     {
       "registryType": "pypi",
@@ -11,7 +11,7 @@
       "transport": {
         "type": "stdio"
       },
-      "version": "1.17.0"
+      "version": "1.17.1"
     }
   ]
 }
