@@ -72,9 +72,7 @@ class TestOooTimeEntry:
         }
 
     def test_date_only_end_converts_to_midnight_when_timezone_provided(self):
-        result = _ooo_time_entry(
-            "2026-04-06", is_end=True, timezone="America/New_York"
-        )
+        result = _ooo_time_entry("2026-04-06", is_end=True, timezone="America/New_York")
         assert result == {
             "dateTime": "2026-04-06T00:00:00",
             "timeZone": "America/New_York",

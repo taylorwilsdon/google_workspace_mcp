@@ -318,7 +318,11 @@ def _correct_time_format_for_api(
                     date_obj = datetime.datetime.strptime(time_str, "%Y-%m-%d")
                     dt = tz.localize(date_obj)
                     # Convert to UTC and format as RFC3339
-                    formatted = dt.astimezone(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+                    formatted = (
+                        dt.astimezone(datetime.timezone.utc)
+                        .isoformat()
+                        .replace("+00:00", "Z")
+                    )
                 except pytz.exceptions.UnknownTimeZoneError:
                     logger.warning(
                         f"Could not apply timezone '{timezone}', falling back to UTC for {param_name}"
@@ -1418,7 +1422,11 @@ async def _list_ooo_events_impl(
             try:
                 tz = pytz.timezone(timezone)
                 now = datetime.datetime.now(tz)
-                effective_time_min = now.astimezone(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+                effective_time_min = (
+                    now.astimezone(datetime.timezone.utc)
+                    .isoformat()
+                    .replace("+00:00", "Z")
+                )
             except pytz.exceptions.UnknownTimeZoneError:
                 logger.warning(
                     f"Could not apply timezone '{timezone}', falling back to UTC"
@@ -1723,7 +1731,9 @@ def _focus_time_time_entry(
     """
     if "T" not in time_str:
         time_str = f"{time_str}T00:00:00"
-        logger.info(f"[focus_time_time_entry] Converted date-only to dateTime: {time_str}")
+        logger.info(
+            f"[focus_time_time_entry] Converted date-only to dateTime: {time_str}"
+        )
 
     has_explicit_offset = time_str.endswith("Z") or bool(
         re.search(r"[+-]\d{2}:\d{2}$", time_str)
@@ -1740,7 +1750,9 @@ def _focus_time_time_entry(
     return entry
 
 
-def _validate_chat_status(chat_status: Optional[str], function_name: str) -> Optional[str]:
+def _validate_chat_status(
+    chat_status: Optional[str], function_name: str
+) -> Optional[str]:
     """Validate chat status for Focus Time events."""
     if chat_status is None:
         return None
@@ -1852,7 +1864,11 @@ async def _list_focus_time_events_impl(
             try:
                 tz = pytz.timezone(timezone)
                 now = datetime.datetime.now(tz)
-                effective_time_min = now.astimezone(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+                effective_time_min = (
+                    now.astimezone(datetime.timezone.utc)
+                    .isoformat()
+                    .replace("+00:00", "Z")
+                )
             except pytz.exceptions.UnknownTimeZoneError:
                 logger.warning(
                     f"Could not apply timezone '{timezone}', falling back to UTC"
@@ -1949,11 +1965,17 @@ async def _update_focus_time_event_impl(
             start_time, is_end=False, timezone=timezone
         )
     if end_time is not None:
-        patch_body["end"] = _focus_time_time_entry(end_time, is_end=True, timezone=timezone)
+        patch_body["end"] = _focus_time_time_entry(
+            end_time, is_end=True, timezone=timezone
+        )
     if recurrence is not None:
         patch_body["recurrence"] = recurrence
 
-    if auto_decline_mode is not None or decline_message is not None or chat_status is not None:
+    if (
+        auto_decline_mode is not None
+        or decline_message is not None
+        or chat_status is not None
+    ):
         existing_ft_props = existing_event.get("focusTimeProperties", {})
         updated_ft_props: Dict[str, str] = {
             "autoDeclineMode": _validate_auto_decline_mode(
