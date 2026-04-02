@@ -1,0 +1,23 @@
+{
+  "name": "google-workspace-mcp",
+  "version": "0.1.0",
+  "description": "Control Gmail, Calendar, Docs, Sheets and more from Codex",
+  "author": {
+    "name": "taylorwilsdon",
+    "url": "https://github.com/taylorwilsdon/google_workspace_mcp"
+  },
+  "homepage": "https://github.com/taylorwilsdon/google_workspace_mcp",
+  "repository": "https://github.com/taylorwilsdon/google_workspace_mcp",
+  "keywords": [
+    "mcp",
+    "codex"
+  ],
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Google Workspace MCP",
+    "shortDescription": "Control Gmail, Calendar, Docs, Sheets and more from Codex",
+    "longDescription": "Control Gmail, Google Calendar, Docs, Sheets, Slides, Chat, Forms, Tasks and Drive with AI.",
+    "category": "Productivity",
+    "websiteURL": "https://github.com/taylorwilsdon/google_workspace_mcp"
+  }
+}
