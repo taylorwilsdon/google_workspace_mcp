@@ -68,8 +68,7 @@ def _convert_tabs_to_markdown(tabs: list[dict[str, Any]]) -> str:
     sections: list[str] = []
     for title, tab_doc in all_tab_docs:
         tab_md = _convert_body_to_markdown(tab_doc)
-        if tab_md.strip():
-            sections.append(f"# {title}\n\n{tab_md}")
+        sections.append(f"# {title}\n\n{tab_md}")
 
     return "\n".join(sections).rstrip("\n") + "\n"
 
@@ -194,6 +193,7 @@ def _convert_paragraph_text(
     footnotes_meta: dict[str, Any] | None = None,
     inline_objects: dict[str, Any] | None = None,
     footnote_defs: list[tuple[str, str]] | None = None,
+    active_footnotes: set[str] | None = None,
 ) -> str:
     """Convert paragraph elements to inline markdown text."""
     parts: list[str] = []
@@ -213,7 +213,11 @@ def _convert_paragraph_text(
         elif "footnoteReference" in elem:
             parts.append(
                 _convert_footnote_reference(
-                    elem["footnoteReference"], footnotes_meta, footnote_defs
+                    elem["footnoteReference"],
+                    footnotes_meta,
+                    inline_objects,
+                    footnote_defs,
+                    active_footnotes,
                 )
             )
         elif "horizontalRule" in elem:
@@ -300,10 +304,7 @@ def _convert_inline_object(
     if not inline_objects or obj_id not in inline_objects:
         return ""
     obj = inline_objects[obj_id]
-    props = (
-        obj.get("inlineObjectProperties", {})
-        .get("embeddedObject", {})
-    )
+    props = obj.get("inlineObjectProperties", {}).get("embeddedObject", {})
     title = props.get("title", "") or props.get("description", "")
     uri = props.get("imageProperties", {}).get("contentUri", "")
     if uri:
@@ -314,7 +315,9 @@ def _convert_inline_object(
 def _convert_footnote_reference(
     ref: dict[str, Any],
     footnotes_meta: dict[str, Any] | None,
+    inline_objects: dict[str, Any] | None,
     footnote_defs: list[tuple[str, str]] | None,
+    active_footnotes: set[str] | None = None,
 ) -> str:
     """Convert a footnote reference to a markdown footnote marker.
 
@@ -324,25 +327,55 @@ def _convert_footnote_reference(
     if not fn_id:
         return ""
     if footnotes_meta and footnote_defs is not None and fn_id in footnotes_meta:
-        fn_content = footnotes_meta[fn_id].get("content", [])
-        fn_text = _extract_footnote_text(fn_content)
-        # Avoid duplicates if the same footnote is referenced multiple times
+        # Avoid duplicates if the same footnote is referenced multiple times.
         existing_ids = {fid for fid, _ in footnote_defs}
         if fn_id not in existing_ids:
-            footnote_defs.append((fn_id, fn_text))
+            next_active = set(active_footnotes or ())
+            if fn_id not in next_active:
+                next_active.add(fn_id)
+                fn_content = footnotes_meta[fn_id].get("content", [])
+                fn_text = _convert_footnote_content(
+                    fn_content,
+                    footnotes_meta=footnotes_meta,
+                    inline_objects=inline_objects,
+                    footnote_defs=footnote_defs,
+                    active_footnotes=next_active,
+                )
+                footnote_defs.append((fn_id, fn_text))
     return f"[^{fn_id}]"
 
 
-def _extract_footnote_text(content: list[dict[str, Any]]) -> str:
-    """Extract plain text from footnote content elements."""
+def _convert_footnote_content(
+    content: list[dict[str, Any]],
+    *,
+    footnotes_meta: dict[str, Any] | None,
+    inline_objects: dict[str, Any] | None,
+    footnote_defs: list[tuple[str, str]] | None,
+    active_footnotes: set[str] | None = None,
+) -> str:
+    """Convert footnote content with the same inline handling as body paragraphs."""
     parts: list[str] = []
     for element in content:
         if "paragraph" in element:
-            for elem in element["paragraph"].get("elements", []):
-                if "textRun" in elem:
-                    text = elem["textRun"].get("content", "").strip()
-                    if text:
-                        parts.append(text)
+            text = _convert_paragraph_text(
+                element["paragraph"],
+                footnotes_meta=footnotes_meta,
+                inline_objects=inline_objects,
+                footnote_defs=footnote_defs,
+                active_footnotes=active_footnotes,
+            )
+            if text.strip():
+                parts.append(text.strip())
+        elif "table" in element:
+            table_text = _convert_table(
+                element["table"],
+                footnotes_meta=footnotes_meta,
+                inline_objects=inline_objects,
+                footnote_defs=footnote_defs,
+                active_footnotes=active_footnotes,
+            )
+            if table_text.strip():
+                parts.append(table_text.replace("\n", " "))
     return " ".join(parts)
 
 
@@ -442,6 +475,7 @@ def _convert_table(
     footnotes_meta: dict[str, Any] | None = None,
     inline_objects: dict[str, Any] | None = None,
     footnote_defs: list[tuple[str, str]] | None = None,
+    active_footnotes: set[str] | None = None,
 ) -> str:
     """Convert a table element to markdown."""
     rows = table.get("tableRows", [])
@@ -457,6 +491,7 @@ def _convert_table(
                 footnotes_meta=footnotes_meta,
                 inline_objects=inline_objects,
                 footnote_defs=footnote_defs,
+                active_footnotes=active_footnotes,
             )
             cells.append(cell_text)
         md_rows.append("| " + " | ".join(cells) + " |")
@@ -474,6 +509,7 @@ def _extract_cell_text(
     footnotes_meta: dict[str, Any] | None = None,
     inline_objects: dict[str, Any] | None = None,
     footnote_defs: list[tuple[str, str]] | None = None,
+    active_footnotes: set[str] | None = None,
 ) -> str:
     """Extract text from a table cell."""
     parts: list[str] = []
@@ -484,6 +520,7 @@ def _extract_cell_text(
                 footnotes_meta=footnotes_meta,
                 inline_objects=inline_objects,
                 footnote_defs=footnote_defs,
+                active_footnotes=active_footnotes,
             )
             if text.strip():
                 parts.append(text.strip())

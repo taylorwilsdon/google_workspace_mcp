@@ -403,11 +403,7 @@ class TestSmartChips:
                     {
                         "paragraph": {
                             "elements": [
-                                {
-                                    "person": {
-                                        "personProperties": {"name": "Bob Jones"}
-                                    }
-                                }
+                                {"person": {"personProperties": {"name": "Bob Jones"}}}
                             ],
                             "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
                         }
@@ -428,9 +424,7 @@ class TestSmartChips:
                             "elements": [
                                 {
                                     "person": {
-                                        "personProperties": {
-                                            "email": "bob@example.com"
-                                        }
+                                        "personProperties": {"email": "bob@example.com"}
                                     }
                                 }
                             ],
@@ -562,11 +556,7 @@ class TestSmartChips:
                     {
                         "paragraph": {
                             "elements": [
-                                {
-                                    "inlineObjectElement": {
-                                        "inlineObjectId": "kix.obj1"
-                                    }
-                                }
+                                {"inlineObjectElement": {"inlineObjectId": "kix.obj1"}}
                             ],
                             "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
                         }
@@ -582,9 +572,7 @@ class TestSmartChips:
             "title": "Test",
             "inlineObjects": {
                 "kix.obj1": {
-                    "inlineObjectProperties": {
-                        "embeddedObject": {"title": "Chart"}
-                    }
+                    "inlineObjectProperties": {"embeddedObject": {"title": "Chart"}}
                 }
             },
             "body": {
@@ -592,11 +580,7 @@ class TestSmartChips:
                     {
                         "paragraph": {
                             "elements": [
-                                {
-                                    "inlineObjectElement": {
-                                        "inlineObjectId": "kix.obj1"
-                                    }
-                                }
+                                {"inlineObjectElement": {"inlineObjectId": "kix.obj1"}}
                             ],
                             "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
                         }
@@ -639,9 +623,7 @@ class TestSmartChips:
                                         "textStyle": {},
                                     }
                                 },
-                                {
-                                    "footnoteReference": {"footnoteId": "kix.fn1"}
-                                },
+                                {"footnoteReference": {"footnoteId": "kix.fn1"}},
                                 {
                                     "textRun": {
                                         "content": " and more text.\n",
@@ -658,6 +640,142 @@ class TestSmartChips:
         md = convert_doc_to_markdown(doc)
         assert "Important claim[^kix.fn1] and more text." in md
         assert "[^kix.fn1]: See the appendix." in md
+
+    def test_footnote_reference_preserves_rich_inline_content(self):
+        doc = {
+            "title": "Test",
+            "inlineObjects": {
+                "kix.inline1": {
+                    "inlineObjectProperties": {
+                        "embeddedObject": {
+                            "title": "Chart",
+                            "imageProperties": {
+                                "contentUri": "https://cdn.example.com/chart.png"
+                            },
+                        }
+                    }
+                }
+            },
+            "footnotes": {
+                "kix.fn1": {
+                    "content": [
+                        {
+                            "paragraph": {
+                                "elements": [
+                                    {
+                                        "textRun": {
+                                            "content": "See ",
+                                            "textStyle": {},
+                                        }
+                                    },
+                                    {
+                                        "textRun": {
+                                            "content": "styled",
+                                            "textStyle": {"bold": True},
+                                        }
+                                    },
+                                    {
+                                        "textRun": {
+                                            "content": " ",
+                                            "textStyle": {},
+                                        }
+                                    },
+                                    {
+                                        "textRun": {
+                                            "content": "link",
+                                            "textStyle": {
+                                                "link": {
+                                                    "url": "https://example.com/link"
+                                                }
+                                            },
+                                        }
+                                    },
+                                    {
+                                        "textRun": {
+                                            "content": " ",
+                                            "textStyle": {},
+                                        }
+                                    },
+                                    {
+                                        "person": {
+                                            "personProperties": {
+                                                "name": "Ada Lovelace",
+                                                "email": "ada@example.com",
+                                            }
+                                        }
+                                    },
+                                    {
+                                        "textRun": {
+                                            "content": " ",
+                                            "textStyle": {},
+                                        }
+                                    },
+                                    {
+                                        "richLink": {
+                                            "richLinkProperties": {
+                                                "title": "Project Plan",
+                                                "uri": "https://example.com/plan",
+                                            }
+                                        }
+                                    },
+                                    {
+                                        "textRun": {
+                                            "content": " ",
+                                            "textStyle": {},
+                                        }
+                                    },
+                                    {
+                                        "inlineObjectElement": {
+                                            "inlineObjectId": "kix.inline1"
+                                        }
+                                    },
+                                    {
+                                        "textRun": {
+                                            "content": "\n",
+                                            "textStyle": {},
+                                        }
+                                    },
+                                ]
+                            }
+                        }
+                    ]
+                }
+            },
+            "body": {
+                "content": [
+                    {
+                        "paragraph": {
+                            "elements": [
+                                {
+                                    "textRun": {
+                                        "content": "Important claim",
+                                        "textStyle": {},
+                                    }
+                                },
+                                {"footnoteReference": {"footnoteId": "kix.fn1"}},
+                                {
+                                    "textRun": {
+                                        "content": ".\n",
+                                        "textStyle": {},
+                                    }
+                                },
+                            ],
+                            "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+                        }
+                    }
+                ]
+            },
+        }
+
+        md = convert_doc_to_markdown(doc)
+
+        assert "Important claim[^kix.fn1]." in md
+        assert (
+            "[^kix.fn1]: See **styled** [link](https://example.com/link) "
+            "[Ada Lovelace](mailto:ada@example.com) "
+            "[Project Plan](https://example.com/plan) "
+            "![Chart](https://cdn.example.com/chart.png)"
+        ) in md
 
     def test_horizontal_rule(self):
         doc = {
@@ -837,6 +955,19 @@ class TestDocumentTabs:
         assert "First tab content" in md
         assert "# Details" in md
         assert "Second tab content" in md
+
+    def test_multi_tab_keeps_empty_tabs(self):
+        """Empty tabs should still render a heading in multi-tab docs."""
+        doc = {
+            "tabs": [
+                _make_tab("Overview", "t1", "First tab content"),
+                _make_tab("Empty", "t2", ""),
+            ]
+        }
+        md = convert_doc_to_markdown(doc)
+        assert "# Overview" in md
+        assert "First tab content" in md
+        assert "# Empty" in md
 
     def test_child_tabs(self):
         """Child tabs should be flattened and rendered."""
