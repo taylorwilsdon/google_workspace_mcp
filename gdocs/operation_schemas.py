@@ -64,9 +64,7 @@ class InsertTextOperation(SegmentTargetDocOperation):
     @model_validator(mode="after")
     def validate_location(self) -> "InsertTextOperation":
         if self.end_of_segment == (self.index is not None):
-            raise ValueError(
-                "Provide exactly one of 'index' or 'end_of_segment=true'."
-            )
+            raise ValueError("Provide exactly one of 'index' or 'end_of_segment=true'.")
         return self
 
 
@@ -152,9 +150,7 @@ class InsertTableOperation(SegmentTargetDocOperation):
     @model_validator(mode="after")
     def validate_location(self) -> "InsertTableOperation":
         if self.end_of_segment == (self.index is not None):
-            raise ValueError(
-                "Provide exactly one of 'index' or 'end_of_segment=true'."
-            )
+            raise ValueError("Provide exactly one of 'index' or 'end_of_segment=true'.")
         return self
 
 
@@ -172,9 +168,7 @@ class InsertPageBreakOperation(StrictDocOperation):
     @model_validator(mode="after")
     def validate_location(self) -> "InsertPageBreakOperation":
         if self.end_of_segment == (self.index is not None):
-            raise ValueError(
-                "Provide exactly one of 'index' or 'end_of_segment=true'."
-            )
+            raise ValueError("Provide exactly one of 'index' or 'end_of_segment=true'.")
         return self
 
 
@@ -193,9 +187,7 @@ class InsertSectionBreakOperation(StrictDocOperation):
     @model_validator(mode="after")
     def validate_location(self) -> "InsertSectionBreakOperation":
         if self.end_of_segment == (self.index is not None):
-            raise ValueError(
-                "Provide exactly one of 'index' or 'end_of_segment=true'."
-            )
+            raise ValueError("Provide exactly one of 'index' or 'end_of_segment=true'.")
         return self
 
 
@@ -321,9 +313,7 @@ class InsertImageOperation(SegmentTargetDocOperation):
     @model_validator(mode="after")
     def validate_location(self) -> "InsertImageOperation":
         if self.end_of_segment == (self.index is not None):
-            raise ValueError(
-                "Provide exactly one of 'index' or 'end_of_segment=true'."
-            )
+            raise ValueError("Provide exactly one of 'index' or 'end_of_segment=true'.")
         return self
 
 

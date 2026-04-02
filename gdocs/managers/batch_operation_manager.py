@@ -203,8 +203,10 @@ class BatchOperationManager:
                     "For normal header/footer text, use update_doc_headers_footers instead."
                 )
 
-            if section_breaks[section_break_index].get("sectionStyle", {}).get(
-                style_field
+            if (
+                section_breaks[section_break_index]
+                .get("sectionStyle", {})
+                .get(style_field)
             ):
                 return (
                     "Batch operation failed: the requested section-scoped header/footer "
@@ -658,9 +660,7 @@ class BatchOperationManager:
                 op.get("header_footer_type", "DEFAULT"),
                 op.get("section_break_index"),
             )
-            description = (
-                f"create {op['section_type']} ({op.get('header_footer_type', 'DEFAULT')})"
-            )
+            description = f"create {op['section_type']} ({op.get('header_footer_type', 'DEFAULT')})"
 
         elif op_type == "insert_image":
             request = create_insert_image_request(
@@ -796,8 +796,10 @@ class BatchOperationManager:
             op.get("type") == "create_header_footer" for op in operations
         )
 
-        if requested_header_footer_creation and "already exists" in lowered and (
-            "createheader" in lowered or "createfooter" in lowered
+        if (
+            requested_header_footer_creation
+            and "already exists" in lowered
+            and ("createheader" in lowered or "createfooter" in lowered)
         ):
             return (
                 "Batch operation failed: the requested header/footer already exists. "

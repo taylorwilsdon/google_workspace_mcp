@@ -427,9 +427,9 @@ def build_paragraph_style(
         fields.append("spacingMode")
 
     if shading_color is not None:
-        paragraph_style["shading"] = {"backgroundColor": _build_optional_color(
-            shading_color, "shading_color"
-        )}
+        paragraph_style["shading"] = {
+            "backgroundColor": _build_optional_color(shading_color, "shading_color")
+        }
         fields.append("shading")
 
     return paragraph_style, fields
@@ -575,9 +575,7 @@ def build_section_style(
 
     if column_count is not None or column_spacing is not None:
         if column_count is None:
-            raise ValueError(
-                "column_count is required when specifying section columns"
-            )
+            raise ValueError("column_count is required when specifying section columns")
         if column_count < 1 or column_count > 3:
             raise ValueError("column_count must be between 1 and 3")
 
@@ -1468,16 +1466,36 @@ def validate_operation(operation: Dict[str, Any]) -> tuple[bool, str]:
         if field not in operation:
             return False, f"Missing required field: {field}"
 
-    if op_type in {"insert_text", "insert_table", "insert_page_break", "insert_section_break", "insert_image"}:
+    if op_type in {
+        "insert_text",
+        "insert_table",
+        "insert_page_break",
+        "insert_section_break",
+        "insert_image",
+    }:
         end_of_segment = operation.get("end_of_segment", False)
         if end_of_segment and "index" in operation:
             return (
                 False,
                 "Cannot specify both 'index' and 'end_of_segment=true'. Use one or the other.",
             )
-        if not end_of_segment and "index" not in operation and op_type != "insert_image":
-            return False, "Missing required field: index (or set end_of_segment=true to append)"
-        if op_type == "insert_image" and not end_of_segment and "index" not in operation:
-            return False, "Missing required field: index (or set end_of_segment=true to append)"
+        if (
+            not end_of_segment
+            and "index" not in operation
+            and op_type != "insert_image"
+        ):
+            return (
+                False,
+                "Missing required field: index (or set end_of_segment=true to append)",
+            )
+        if (
+            op_type == "insert_image"
+            and not end_of_segment
+            and "index" not in operation
+        ):
+            return (
+                False,
+                "Missing required field: index (or set end_of_segment=true to append)",
+            )
 
     return True, ""
