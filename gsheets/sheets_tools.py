@@ -1227,6 +1227,18 @@ async def create_sheet(
     return text_output
 
 
+def _to_extended_value(val) -> dict:
+    """Convert a Python value to a Sheets API ExtendedValue dict."""
+    if isinstance(val, bool):
+        return {"boolValue": val}
+    if isinstance(val, (int, float)):
+        return {"numberValue": val}
+    s = str(val)
+    if s.startswith("="):
+        return {"formulaValue": s}
+    return {"stringValue": s}
+
+
 @server.tool()
 @handle_http_errors("list_sheet_tables", is_read_only=True, service_type="sheets")
 @require_google_service("sheets", "sheets_read")
@@ -1312,8 +1324,7 @@ async def append_table_rows(
     user_google_email: str,
     spreadsheet_id: str,
     table_id: str,
-    values: Union[str, List[List[str]]],
-    value_input_option: str = "USER_ENTERED",
+    values: Union[str, List[List]],
 ) -> str:
     """
     Appends rows to a structured table in a Google Sheet. The rows are added
@@ -1325,10 +1336,8 @@ async def append_table_rows(
         user_google_email (str): The user's Google email address. Required.
         spreadsheet_id (str): The ID of the spreadsheet. Required.
         table_id (str): The ID of the table to append to (get from list_sheet_tables). Required.
-        values (Union[str, List[List[str]]]): 2D array of values to append. Each inner
+        values (Union[str, List[List]]): 2D array of values to append. Each inner
             list is one row. Can be a JSON string or Python list. Required.
-        value_input_option (str): How to interpret input values ("RAW" or "USER_ENTERED").
-            Defaults to "USER_ENTERED".
 
     Returns:
         str: Confirmation message with the number of rows appended.
@@ -1348,36 +1357,7 @@ async def append_table_rows(
     if not values or not isinstance(values, list):
         raise UserInputError("values must be a non-empty 2D list of cell values.")
 
-    # Build cell data for appendCells
-    rows = []
-    for row_values in values:
-        if not isinstance(row_values, list):
-            raise UserInputError(
-                "Each row in values must be a list. "
-                "Expected format: [[\"val1\", \"val2\"], [\"val3\", \"val4\"]]"
-            )
-        cells = []
-        for val in row_values:
-            if value_input_option == "USER_ENTERED":
-                cells.append({"userEnteredValue": {"stringValue": str(val)}})
-            else:
-                cells.append({"userEnteredValue": {"stringValue": str(val)}})
-        rows.append({"values": cells})
-
-    request_body = {
-        "requests": [
-            {
-                "appendCells": {
-                    "sheetId": None,  # Will be resolved below
-                    "tableId": table_id,
-                    "rows": rows,
-                    "fields": "userEnteredValue",
-                }
-            }
-        ]
-    }
-
-    # Get the sheet ID for the table
+    # Resolve the sheet ID for the table before building the request
     spreadsheet = await asyncio.to_thread(
         service.spreadsheets()
         .get(
@@ -1402,7 +1382,31 @@ async def append_table_rows(
             f"Use list_sheet_tables to find valid table IDs."
         )
 
-    request_body["requests"][0]["appendCells"]["sheetId"] = sheet_id
+    # Build cell data for appendCells
+    rows = []
+    for row_values in values:
+        if not isinstance(row_values, list):
+            raise UserInputError(
+                "Each row in values must be a list. "
+                "Expected format: [[\"val1\", \"val2\"], [\"val3\", \"val4\"]]"
+            )
+        cells = []
+        for val in row_values:
+            cells.append({"userEnteredValue": _to_extended_value(val)})
+        rows.append({"values": cells})
+
+    request_body = {
+        "requests": [
+            {
+                "appendCells": {
+                    "sheetId": sheet_id,
+                    "tableId": table_id,
+                    "rows": rows,
+                    "fields": "userEnteredValue",
+                }
+            }
+        ]
+    }
 
     await asyncio.to_thread(
         service.spreadsheets()

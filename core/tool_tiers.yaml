@@ -82,8 +82,10 @@ sheets:
     - list_spreadsheets
     - get_spreadsheet_info
     - format_sheet_range
+    - list_sheet_tables
   complete:
     - create_sheet
+    - append_table_rows
     - list_spreadsheet_comments
     - manage_spreadsheet_comment
     - manage_conditional_formatting
