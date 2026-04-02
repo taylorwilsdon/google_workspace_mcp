@@ -158,6 +158,11 @@ _VALID_AUTO_DECLINE_MODES = {
     "declineNone",
 }
 
+_VALID_FOCUS_TIME_CHAT_STATUSES = {
+    "doNotDisturb",
+}
+
+
 
 def _validate_auto_decline_mode(mode: Optional[str], function_name: str) -> str:
     """Validate and return auto decline mode, defaulting to declineAllConflictingInvitations.
@@ -1669,6 +1674,444 @@ async def manage_out_of_office(
         if not event_id:
             raise ValueError("event_id is required for delete action")
         return await _delete_ooo_event_impl(
+            service=service,
+            user_google_email=user_google_email,
+            event_id=event_id,
+            calendar_id=calendar_id,
+        )
+    else:
+        raise ValueError(
+            f"Invalid action '{action_lower}'. Must be 'create', 'list', 'update', or 'delete'."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Focus Time event helpers
+# ---------------------------------------------------------------------------
+
+
+def _focus_time_time_entry(
+    time_str: str, is_end: bool = False, timezone: Optional[str] = None
+) -> Dict[str, str]:
+    """Build a start/end dict for a Focus Time event.
+
+    Google Calendar API requires dateTime (not date) for focusTime events.
+    If a date-only string (YYYY-MM-DD) is given, convert it:
+      - start → YYYY-MM-DDT00:00:00
+      - end   → (next day)T00:00:00  (so a single date covers the full day)
+    """
+    if "T" not in time_str:
+        time_str = f"{time_str}T00:00:00"
+        logger.info(f"[focus_time_time_entry] Converted date-only to dateTime: {time_str}")
+
+    has_explicit_offset = time_str.endswith("Z") or bool(
+        re.search(r"[+-]\d{2}:\d{2}$", time_str)
+    )
+    if not has_explicit_offset and not timezone:
+        raise ValueError(
+            "Focus Time events require either a timezone parameter or a "
+            "start/end timestamp with an explicit UTC offset."
+        )
+
+    entry: Dict[str, str] = {"dateTime": time_str}
+    if timezone:
+        entry["timeZone"] = timezone
+    return entry
+
+
+def _validate_chat_status(chat_status: Optional[str], function_name: str) -> Optional[str]:
+    """Validate chat status for Focus Time events."""
+    if chat_status is None:
+        return None
+    if chat_status not in _VALID_FOCUS_TIME_CHAT_STATUSES:
+        raise ValueError(
+            f"[{function_name}] Invalid chat_status '{chat_status}'. "
+            f"Must be one of: {', '.join(sorted(_VALID_FOCUS_TIME_CHAT_STATUSES))}"
+        )
+    return chat_status
+
+
+async def _create_focus_time_event_impl(
+    service,
+    user_google_email: str,
+    start_time: str,
+    end_time: str,
+    calendar_id: str = "primary",
+    summary: Optional[str] = None,
+    auto_decline_mode: Optional[str] = None,
+    decline_message: Optional[str] = None,
+    chat_status: Optional[str] = None,
+    timezone: Optional[str] = None,
+) -> str:
+    """Internal implementation for creating a Focus Time calendar event."""
+    logger.info(
+        f"[create_focus_time_event] Invoked. Email: '{user_google_email}', Start: {start_time}, End: {end_time}"
+    )
+
+    effective_summary = summary or "Focus Time"
+    effective_decline_mode = _validate_auto_decline_mode(
+        auto_decline_mode, "create_focus_time_event"
+    )
+    validated_chat_status = _validate_chat_status(chat_status, "create_focus_time_event")
+
+    focus_time_props: Dict[str, str] = {
+        "autoDeclineMode": effective_decline_mode,
+        "declineMessage": decline_message or "",
+    }
+    if validated_chat_status:
+        focus_time_props["chatStatus"] = validated_chat_status
+
+    event_body: Dict[str, Any] = {
+        "eventType": "focusTime",
+        "summary": effective_summary,
+        "start": _focus_time_time_entry(start_time, is_end=False, timezone=timezone),
+        "end": _focus_time_time_entry(end_time, is_end=True, timezone=timezone),
+        "focusTimeProperties": focus_time_props,
+        "transparency": "opaque",
+    }
+
+    created_event = await asyncio.to_thread(
+        lambda: (
+            service.events().insert(calendarId=calendar_id, body=event_body).execute()
+        )
+    )
+
+    event_id = created_event.get("id", "N/A")
+    link = created_event.get("htmlLink", "N/A")
+
+    start_display = created_event.get("start", {}).get(
+        "date", created_event.get("start", {}).get("dateTime", "N/A")
+    )
+    end_display = created_event.get("end", {}).get(
+        "date", created_event.get("end", {}).get("dateTime", "N/A")
+    )
+
+    confirmation = (
+        f"Successfully created Focus Time event for {user_google_email}.\n"
+        f"- Summary: {effective_summary}\n"
+        f"- Start: {start_display}\n"
+        f"- End: {end_display}\n"
+        f"- Auto-decline: {effective_decline_mode}\n"
+        f"- Decline message: {decline_message or '(none)'}\n"
+        f"- Chat status: {validated_chat_status or '(default)'}\n"
+        f"- Event ID: {event_id}\n"
+        f"- Link: {link}"
+    )
+
+    logger.info(
+        f"Focus Time event created successfully for {user_google_email}. ID: {event_id}"
+    )
+    return confirmation
+
+
+async def _list_focus_time_events_impl(
+    service,
+    user_google_email: str,
+    calendar_id: str = "primary",
+    time_min: Optional[str] = None,
+    time_max: Optional[str] = None,
+    max_results: int = 10,
+    timezone: Optional[str] = None,
+) -> str:
+    """Internal implementation for listing Focus Time calendar events."""
+    logger.info(
+        f"[list_focus_time_events] Invoked. Email: '{user_google_email}', time_min: {time_min}, time_max: {time_max}, timezone: {timezone}"
+    )
+
+    formatted_time_min = _correct_time_format_for_api(time_min, "time_min", timezone)
+    if formatted_time_min:
+        effective_time_min = formatted_time_min
+    else:
+        if timezone:
+            try:
+                tz = pytz.timezone(timezone)
+                now = datetime.datetime.now(tz)
+                effective_time_min = now.astimezone(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+            except pytz.exceptions.UnknownTimeZoneError:
+                logger.warning(
+                    f"Could not apply timezone '{timezone}', falling back to UTC"
+                )
+                utc_now = datetime.datetime.now(datetime.timezone.utc)
+                effective_time_min = utc_now.isoformat().replace("+00:00", "Z")
+        else:
+            utc_now = datetime.datetime.now(datetime.timezone.utc)
+            effective_time_min = utc_now.isoformat().replace("+00:00", "Z")
+
+    effective_time_max = _correct_time_format_for_api(time_max, "time_max", timezone)
+
+    request_params: Dict[str, Any] = {
+        "calendarId": calendar_id,
+        "timeMin": effective_time_min,
+        "maxResults": max_results,
+        "singleEvents": True,
+        "orderBy": "startTime",
+        "eventTypes": ["focusTime"],
+    }
+    if effective_time_max:
+        request_params["timeMax"] = effective_time_max
+
+    events_result = await asyncio.to_thread(
+        lambda: service.events().list(**request_params).execute()
+    )
+    items = events_result.get("items", [])
+
+    if not items:
+        return f"No Focus Time events found for {user_google_email}."
+
+    lines = [f"Found {len(items)} Focus Time event(s) for {user_google_email}:\n"]
+    for i, item in enumerate(items, 1):
+        summary = item.get("summary", "Focus Time")
+        start = item.get("start", {}).get(
+            "date", item.get("start", {}).get("dateTime", "N/A")
+        )
+        end = item.get("end", {}).get(
+            "date", item.get("end", {}).get("dateTime", "N/A")
+        )
+        event_id = item.get("id", "N/A")
+        ft_props = item.get("focusTimeProperties", {})
+        decline_mode = ft_props.get("autoDeclineMode", "N/A")
+        decline_msg = ft_props.get("declineMessage", "")
+        chat_st = ft_props.get("chatStatus", "")
+
+        lines.append(f'{i}. "{summary}" ({start} to {end})')
+        lines.append(f"   Auto-decline: {decline_mode}")
+        if decline_msg:
+            lines.append(f"   Decline message: {decline_msg}")
+        if chat_st:
+            lines.append(f"   Chat status: {chat_st}")
+        lines.append(f"   Event ID: {event_id}")
+        lines.append("")
+
+    return "\n".join(lines).rstrip()
+
+
+async def _update_focus_time_event_impl(
+    service,
+    user_google_email: str,
+    event_id: str,
+    calendar_id: str = "primary",
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+    summary: Optional[str] = None,
+    auto_decline_mode: Optional[str] = None,
+    decline_message: Optional[str] = None,
+    chat_status: Optional[str] = None,
+    timezone: Optional[str] = None,
+) -> str:
+    """Internal implementation for updating a Focus Time calendar event."""
+    logger.info(
+        f"[update_focus_time_event] Invoked. Email: '{user_google_email}', Event ID: {event_id}"
+    )
+
+    existing_event = await asyncio.to_thread(
+        lambda: service.events().get(calendarId=calendar_id, eventId=event_id).execute()
+    )
+
+    if existing_event.get("eventType") != "focusTime":
+        raise ValueError(
+            f"Event '{event_id}' is not a Focus Time event (type: '{existing_event.get('eventType', 'default')}'). "
+            f"Use manage_event to update regular events."
+        )
+
+    patch_body: Dict[str, Any] = {}
+
+    if summary is not None:
+        patch_body["summary"] = summary
+    if start_time is not None:
+        patch_body["start"] = _focus_time_time_entry(
+            start_time, is_end=False, timezone=timezone
+        )
+    if end_time is not None:
+        patch_body["end"] = _focus_time_time_entry(end_time, is_end=True, timezone=timezone)
+
+    if auto_decline_mode is not None or decline_message is not None or chat_status is not None:
+        existing_ft_props = existing_event.get("focusTimeProperties", {})
+        updated_ft_props: Dict[str, str] = {
+            "autoDeclineMode": _validate_auto_decline_mode(
+                auto_decline_mode, "update_focus_time_event"
+            )
+            if auto_decline_mode is not None
+            else existing_ft_props.get(
+                "autoDeclineMode", "declineAllConflictingInvitations"
+            ),
+            "declineMessage": decline_message
+            if decline_message is not None
+            else existing_ft_props.get("declineMessage", ""),
+        }
+        if chat_status is not None:
+            validated = _validate_chat_status(chat_status, "update_focus_time_event")
+            if validated:
+                updated_ft_props["chatStatus"] = validated
+        elif existing_ft_props.get("chatStatus"):
+            updated_ft_props["chatStatus"] = existing_ft_props["chatStatus"]
+        patch_body["focusTimeProperties"] = updated_ft_props
+
+    if not patch_body:
+        return f"No changes specified for Focus Time event '{event_id}'."
+
+    updated_event = await asyncio.to_thread(
+        lambda: (
+            service.events()
+            .patch(calendarId=calendar_id, eventId=event_id, body=patch_body)
+            .execute()
+        )
+    )
+
+    link = updated_event.get("htmlLink", "N/A")
+    start_display = updated_event.get("start", {}).get(
+        "date", updated_event.get("start", {}).get("dateTime", "N/A")
+    )
+    end_display = updated_event.get("end", {}).get(
+        "date", updated_event.get("end", {}).get("dateTime", "N/A")
+    )
+
+    confirmation = (
+        f"Successfully updated Focus Time event (ID: {event_id}) for {user_google_email}.\n"
+        f"- Summary: {updated_event.get('summary', 'Focus Time')}\n"
+        f"- Start: {start_display}\n"
+        f"- End: {end_display}\n"
+        f"- Link: {link}"
+    )
+
+    logger.info(
+        f"Focus Time event updated successfully for {user_google_email}. ID: {event_id}"
+    )
+    return confirmation
+
+
+async def _delete_focus_time_event_impl(
+    service,
+    user_google_email: str,
+    event_id: str,
+    calendar_id: str = "primary",
+) -> str:
+    """Internal implementation for deleting a Focus Time calendar event."""
+    logger.info(
+        f"[delete_focus_time_event] Invoked. Email: '{user_google_email}', Event ID: {event_id}"
+    )
+
+    try:
+        existing_event = await asyncio.to_thread(
+            lambda: (
+                service.events().get(calendarId=calendar_id, eventId=event_id).execute()
+            )
+        )
+        if existing_event.get("eventType") != "focusTime":
+            raise ValueError(
+                f"Event '{event_id}' is not a Focus Time event (type: '{existing_event.get('eventType', 'default')}'). "
+                f"Use manage_event to delete regular events."
+            )
+    except HttpError as get_error:
+        if get_error.resp.status == 404:
+            raise Exception(
+                f"Event not found. The event with ID '{event_id}' could not be found in calendar '{calendar_id}'."
+            )
+        else:
+            raise
+
+    await asyncio.to_thread(
+        lambda: (
+            service.events().delete(calendarId=calendar_id, eventId=event_id).execute()
+        )
+    )
+
+    confirmation = f"Successfully deleted Focus Time event (ID: {event_id}) from calendar '{calendar_id}' for {user_google_email}."
+    logger.info(
+        f"Focus Time event deleted successfully for {user_google_email}. ID: {event_id}"
+    )
+    return confirmation
+
+
+@server.tool()
+@handle_http_errors("manage_focus_time", service_type="calendar")
+@require_google_service("calendar", "calendar_events")
+async def manage_focus_time(
+    service,
+    user_google_email: str,
+    action: str,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+    summary: Optional[str] = None,
+    auto_decline_mode: Optional[str] = None,
+    decline_message: Optional[str] = None,
+    chat_status: Optional[str] = None,
+    timezone: Optional[str] = None,
+    time_min: Optional[str] = None,
+    time_max: Optional[str] = None,
+    max_results: int = 10,
+    event_id: Optional[str] = None,
+    calendar_id: str = "primary",
+) -> str:
+    """
+    Manages Focus Time events on Google Calendar. These special events auto-decline
+    meeting invitations and set the user's chat status to Do Not Disturb, helping
+    protect blocks of uninterrupted work time.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        action (str): Action to perform - "create", "list", "update", or "delete".
+        start_time (Optional[str]): Start date/time. Use 'YYYY-MM-DD' for full-day or RFC3339 for partial-day (e.g., '2024-04-05T09:00:00Z'). Date-only values are auto-converted to dateTime (midnight-to-midnight). Required for create.
+        end_time (Optional[str]): End date/time (exclusive). Same format as start_time. For a single full day on April 5, use start_time='2026-04-05' and end_time='2026-04-06'. Required for create.
+        summary (Optional[str]): Display text on the calendar. Defaults to "Focus Time".
+        auto_decline_mode (Optional[str]): How to handle conflicting invitations. One of: "declineAllConflictingInvitations" (default), "declineOnlyNewConflictingInvitations", "declineNone".
+        decline_message (Optional[str]): Message included when auto-declining invitations.
+        chat_status (Optional[str]): Google Chat status during the focus time. Currently supports: "doNotDisturb".
+        timezone (Optional[str]): Timezone for the event (e.g., "America/New_York", "Europe/London"). Required when using date-only values or dateTime values without an explicit UTC offset.
+        time_min (Optional[str]): For "list" action: start of time range. Defaults to current time.
+        time_max (Optional[str]): For "list" action: end of time range.
+        max_results (int): For "list" action: maximum events to return. Defaults to 10.
+        event_id (Optional[str]): Event ID. Required for "update" and "delete" actions.
+        calendar_id (str): Calendar ID. Defaults to 'primary'. Focus Time events are typically on the primary calendar.
+
+    Returns:
+        str: Confirmation message with event details, or a formatted list of Focus Time events.
+    """
+    action_lower = action.lower().strip()
+    if action_lower == "create":
+        if not start_time or not end_time:
+            raise ValueError("start_time and end_time are required for create action")
+        return await _create_focus_time_event_impl(
+            service=service,
+            user_google_email=user_google_email,
+            start_time=start_time,
+            end_time=end_time,
+            calendar_id=calendar_id,
+            summary=summary,
+            auto_decline_mode=auto_decline_mode,
+            decline_message=decline_message,
+            chat_status=chat_status,
+            timezone=timezone,
+        )
+    elif action_lower == "list":
+        return await _list_focus_time_events_impl(
+            service=service,
+            user_google_email=user_google_email,
+            calendar_id=calendar_id,
+            time_min=time_min,
+            time_max=time_max,
+            max_results=max_results,
+            timezone=timezone,
+        )
+    elif action_lower == "update":
+        if not event_id:
+            raise ValueError("event_id is required for update action")
+        return await _update_focus_time_event_impl(
+            service=service,
+            user_google_email=user_google_email,
+            event_id=event_id,
+            calendar_id=calendar_id,
+            start_time=start_time,
+            end_time=end_time,
+            summary=summary,
+            auto_decline_mode=auto_decline_mode,
+            decline_message=decline_message,
+            chat_status=chat_status,
+            timezone=timezone,
+        )
+    elif action_lower == "delete":
+        if not event_id:
+            raise ValueError("event_id is required for delete action")
+        return await _delete_focus_time_event_impl(
             service=service,
             user_google_email=user_google_email,
             event_id=event_id,
