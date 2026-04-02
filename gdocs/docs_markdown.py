@@ -170,7 +170,12 @@ def _convert_body_to_markdown(doc: dict[str, Any]) -> str:
                 ordered_counters.clear()
                 lines.append("")
                 prev_was_list = False
-            table_md = _convert_table(element["table"])
+            table_md = _convert_table(
+                element["table"],
+                footnotes_meta=footnotes_meta,
+                inline_objects=inline_objects,
+                footnote_defs=footnote_defs,
+            )
             lines.append(table_md)
             lines.append("")
 
@@ -431,7 +436,13 @@ def _is_checked(para: dict[str, Any]) -> bool:
     return False
 
 
-def _convert_table(table: dict[str, Any]) -> str:
+def _convert_table(
+    table: dict[str, Any],
+    *,
+    footnotes_meta: dict[str, Any] | None = None,
+    inline_objects: dict[str, Any] | None = None,
+    footnote_defs: list[tuple[str, str]] | None = None,
+) -> str:
     """Convert a table element to markdown."""
     rows = table.get("tableRows", [])
     if not rows:
@@ -441,7 +452,12 @@ def _convert_table(table: dict[str, Any]) -> str:
     for i, row in enumerate(rows):
         cells: list[str] = []
         for cell in row.get("tableCells", []):
-            cell_text = _extract_cell_text(cell)
+            cell_text = _extract_cell_text(
+                cell,
+                footnotes_meta=footnotes_meta,
+                inline_objects=inline_objects,
+                footnote_defs=footnote_defs,
+            )
             cells.append(cell_text)
         md_rows.append("| " + " | ".join(cells) + " |")
 
@@ -452,12 +468,23 @@ def _convert_table(table: dict[str, Any]) -> str:
     return "\n".join(md_rows)
 
 
-def _extract_cell_text(cell: dict[str, Any]) -> str:
+def _extract_cell_text(
+    cell: dict[str, Any],
+    *,
+    footnotes_meta: dict[str, Any] | None = None,
+    inline_objects: dict[str, Any] | None = None,
+    footnote_defs: list[tuple[str, str]] | None = None,
+) -> str:
     """Extract text from a table cell."""
     parts: list[str] = []
     for content_elem in cell.get("content", []):
         if "paragraph" in content_elem:
-            text = _convert_paragraph_text(content_elem["paragraph"])
+            text = _convert_paragraph_text(
+                content_elem["paragraph"],
+                footnotes_meta=footnotes_meta,
+                inline_objects=inline_objects,
+                footnote_defs=footnote_defs,
+            )
             if text.strip():
                 parts.append(text.strip())
     cell_text = " ".join(parts)

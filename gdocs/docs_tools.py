@@ -33,6 +33,7 @@ from gdocs.docs_helpers import (
     create_insert_doc_tab_request,
     create_update_doc_tab_request,
     create_delete_doc_tab_request,
+    create_update_paragraph_style_request,
     validate_suggestions_view_mode,
 )
 
