@@ -163,7 +163,6 @@ _VALID_FOCUS_TIME_CHAT_STATUSES = {
 }
 
 
-
 def _validate_auto_decline_mode(mode: Optional[str], function_name: str) -> str:
     """Validate and return auto decline mode, defaulting to declineAllConflictingInvitations.
 
