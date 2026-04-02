@@ -221,6 +221,33 @@ async def test_create_ooo_with_custom_params_sends_correct_body():
 
 
 @pytest.mark.asyncio
+async def test_create_ooo_supports_recurrence():
+    """Verify recurring OOO series sends recurrence rules to the API."""
+    mock_service = _create_mock_service()
+    mock_service.events().insert().execute = Mock(
+        return_value={
+            "id": "oooRecurring",
+            "htmlLink": "https://calendar.google.com/event?eid=oooRecurring",
+            "summary": "Weekly OOO",
+            "start": {"dateTime": "2026-05-01T09:00:00-04:00"},
+            "end": {"dateTime": "2026-05-01T17:00:00-04:00"},
+        }
+    )
+
+    await _create_ooo_event_impl(
+        service=mock_service,
+        user_google_email="user@example.com",
+        start_time="2026-05-01T09:00:00-04:00",
+        end_time="2026-05-01T17:00:00-04:00",
+        summary="Weekly OOO",
+        recurrence=["RRULE:FREQ=WEEKLY;BYDAY=FR;COUNT=4"],
+    )
+
+    body = mock_service.events().insert.call_args[1]["body"]
+    assert body["recurrence"] == ["RRULE:FREQ=WEEKLY;BYDAY=FR;COUNT=4"]
+
+
+@pytest.mark.asyncio
 async def test_create_ooo_partial_day_uses_datetime_not_date():
     """Verify partial-day OOO uses dateTime keys, not date keys."""
     mock_service = _create_mock_service()
@@ -533,6 +560,42 @@ async def test_update_ooo_preserves_existing_decline_mode_when_only_message_chan
     # Decline mode should be preserved from existing event
     assert ooo_props["autoDeclineMode"] == "declineNone"
     assert ooo_props["declineMessage"] == "New message"
+
+
+@pytest.mark.asyncio
+async def test_update_ooo_can_patch_recurrence():
+    """Recurring OOO rules should be patchable independently."""
+    mock_service = _create_mock_service()
+    mock_service.events().get().execute = Mock(
+        return_value={
+            "id": "ooo123",
+            "eventType": "outOfOffice",
+            "outOfOfficeProperties": {
+                "autoDeclineMode": "declineNone",
+                "declineMessage": "Away",
+            },
+        }
+    )
+    mock_service.events().patch().execute = Mock(
+        return_value={
+            "id": "ooo123",
+            "htmlLink": "link",
+            "summary": "Out of Office",
+            "start": {"dateTime": "2026-04-05T09:00:00Z"},
+            "end": {"dateTime": "2026-04-05T17:00:00Z"},
+        }
+    )
+
+    await _update_ooo_event_impl(
+        service=mock_service,
+        user_google_email="user@example.com",
+        event_id="ooo123",
+        recurrence=["RRULE:FREQ=WEEKLY;COUNT=6"],
+    )
+
+    patch_body = mock_service.events().patch.call_args[1]["body"]
+    assert patch_body["recurrence"] == ["RRULE:FREQ=WEEKLY;COUNT=6"]
+    assert "outOfOfficeProperties" not in patch_body
 
 
 @pytest.mark.asyncio

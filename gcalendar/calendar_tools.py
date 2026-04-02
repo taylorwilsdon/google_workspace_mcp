@@ -635,6 +635,7 @@ async def _create_event_impl(
     use_default_reminders: bool = True,
     transparency: Optional[str] = None,
     visibility: Optional[str] = None,
+    recurrence: Optional[List[str]] = None,
     guests_can_modify: Optional[bool] = None,
     guests_can_invite_others: Optional[bool] = None,
     guests_can_see_other_guests: Optional[bool] = None,
@@ -657,6 +658,8 @@ async def _create_event_impl(
         ),
         "end": ({"date": end_time} if "T" not in end_time else {"dateTime": end_time}),
     }
+    if recurrence:
+        event_body["recurrence"] = recurrence
     if location:
         event_body["location"] = location
     if description:
@@ -883,6 +886,7 @@ async def _modify_event_impl(
     transparency: Optional[str] = None,
     visibility: Optional[str] = None,
     color_id: Optional[str] = None,
+    recurrence: Optional[List[str]] = None,
     guests_can_modify: Optional[bool] = None,
     guests_can_invite_others: Optional[bool] = None,
     guests_can_see_other_guests: Optional[bool] = None,
@@ -920,6 +924,8 @@ async def _modify_event_impl(
 
     if color_id is not None:
         event_body["colorId"] = color_id
+    if recurrence is not None:
+        event_body["recurrence"] = recurrence
 
     # Handle reminders
     if reminders is not None or use_default_reminders is not None:
@@ -1028,6 +1034,7 @@ async def _modify_event_impl(
                 # Use the already-normalized attendee objects (if provided); otherwise preserve existing
                 "attendees": event_body.get("attendees"),
                 "colorId": event_body.get("colorId"),
+                "recurrence": recurrence,
             },
         )
 
@@ -1178,6 +1185,7 @@ async def manage_event(
     transparency: Optional[str] = None,
     visibility: Optional[str] = None,
     color_id: Optional[str] = None,
+    recurrence: Optional[StringList] = None,
     guests_can_modify: Optional[bool] = None,
     guests_can_invite_others: Optional[bool] = None,
     guests_can_see_other_guests: Optional[bool] = None,
@@ -1204,6 +1212,7 @@ async def manage_event(
         transparency (Optional[str]): "opaque" (busy) or "transparent" (free).
         visibility (Optional[str]): "default", "public", "private", or "confidential".
         color_id (Optional[str]): Event color ID (1-11, update only).
+        recurrence (Optional[List[str]]): RFC5545 recurrence rules for a recurring event, e.g. ["RRULE:FREQ=WEEKLY;COUNT=10"].
         guests_can_modify (Optional[bool]): Whether attendees can modify.
         guests_can_invite_others (Optional[bool]): Whether attendees can invite others.
         guests_can_see_other_guests (Optional[bool]): Whether attendees can see other guests.
@@ -1239,6 +1248,7 @@ async def manage_event(
             guests_can_modify=guests_can_modify,
             guests_can_invite_others=guests_can_invite_others,
             guests_can_see_other_guests=guests_can_see_other_guests,
+            recurrence=recurrence,
         )
     elif action_lower == "update":
         if not event_id:
@@ -1261,6 +1271,7 @@ async def manage_event(
             transparency=transparency,
             visibility=visibility,
             color_id=color_id,
+            recurrence=recurrence,
             guests_can_modify=guests_can_modify,
             guests_can_invite_others=guests_can_invite_others,
             guests_can_see_other_guests=guests_can_see_other_guests,
@@ -1325,6 +1336,7 @@ async def _create_ooo_event_impl(
     summary: Optional[str] = None,
     auto_decline_mode: Optional[str] = None,
     decline_message: Optional[str] = None,
+    recurrence: Optional[List[str]] = None,
     timezone: Optional[str] = None,
 ) -> str:
     """Internal implementation for creating an Out of Office calendar event."""
@@ -1348,6 +1360,8 @@ async def _create_ooo_event_impl(
         },
         "transparency": "opaque",
     }
+    if recurrence:
+        event_body["recurrence"] = recurrence
 
     created_event = await asyncio.to_thread(
         lambda: (
@@ -1470,6 +1484,7 @@ async def _update_ooo_event_impl(
     summary: Optional[str] = None,
     auto_decline_mode: Optional[str] = None,
     decline_message: Optional[str] = None,
+    recurrence: Optional[List[str]] = None,
     timezone: Optional[str] = None,
 ) -> str:
     """Internal implementation for updating an Out of Office calendar event."""
@@ -1497,6 +1512,8 @@ async def _update_ooo_event_impl(
         )
     if end_time is not None:
         patch_body["end"] = _ooo_time_entry(end_time, is_end=True, timezone=timezone)
+    if recurrence is not None:
+        patch_body["recurrence"] = recurrence
 
     if auto_decline_mode is not None or decline_message is not None:
         existing_ooo_props = existing_event.get("outOfOfficeProperties", {})
@@ -1601,6 +1618,7 @@ async def manage_out_of_office(
     summary: Optional[str] = None,
     auto_decline_mode: Optional[str] = None,
     decline_message: Optional[str] = None,
+    recurrence: Optional[StringList] = None,
     timezone: Optional[str] = None,
     time_min: Optional[str] = None,
     time_max: Optional[str] = None,
@@ -1620,12 +1638,13 @@ async def manage_out_of_office(
         summary (Optional[str]): Display text on the calendar. Defaults to "Out of Office".
         auto_decline_mode (Optional[str]): How to handle conflicting invitations. One of: "declineAllConflictingInvitations" (default), "declineOnlyNewConflictingInvitations", "declineNone".
         decline_message (Optional[str]): Message included when auto-declining invitations.
+        recurrence (Optional[List[str]]): RFC5545 recurrence rules for a recurring Out of Office series, e.g. ["RRULE:FREQ=WEEKLY;COUNT=10"].
         timezone (Optional[str]): Timezone for the event (e.g., "America/New_York", "Europe/London"). Required when using date-only values or dateTime values without an explicit UTC offset.
-        time_min (Optional[str]): For "list" action: start of time range. Defaults to current time.
+        time_min (Optional[str]): For "list" action: start of time range. Defaults to current time. Recurring series are expanded into individual instances in the requested range.
         time_max (Optional[str]): For "list" action: end of time range.
         max_results (int): For "list" action: maximum events to return. Defaults to 10.
         event_id (Optional[str]): Event ID. Required for "update" and "delete" actions.
-        calendar_id (str): Calendar ID. Defaults to 'primary'. OOO events are typically on the primary calendar.
+        calendar_id (str): Calendar ID. Defaults to 'primary'. Out of Office status events live on primary calendars, so use 'primary' or a user's primary calendar ID/email rather than a secondary calendar ID.
 
     Returns:
         str: Confirmation message with event details, or a formatted list of OOO events.
@@ -1643,6 +1662,7 @@ async def manage_out_of_office(
             summary=summary,
             auto_decline_mode=auto_decline_mode,
             decline_message=decline_message,
+            recurrence=recurrence,
             timezone=timezone,
         )
     elif action_lower == "list":
@@ -1668,6 +1688,7 @@ async def manage_out_of_office(
             summary=summary,
             auto_decline_mode=auto_decline_mode,
             decline_message=decline_message,
+            recurrence=recurrence,
             timezone=timezone,
         )
     elif action_lower == "delete":
@@ -1741,6 +1762,7 @@ async def _create_focus_time_event_impl(
     auto_decline_mode: Optional[str] = None,
     decline_message: Optional[str] = None,
     chat_status: Optional[str] = None,
+    recurrence: Optional[List[str]] = None,
     timezone: Optional[str] = None,
 ) -> str:
     """Internal implementation for creating a Focus Time calendar event."""
@@ -1752,7 +1774,9 @@ async def _create_focus_time_event_impl(
     effective_decline_mode = _validate_auto_decline_mode(
         auto_decline_mode, "create_focus_time_event"
     )
-    validated_chat_status = _validate_chat_status(chat_status, "create_focus_time_event")
+    validated_chat_status = _validate_chat_status(
+        chat_status or "doNotDisturb", "create_focus_time_event"
+    )
 
     focus_time_props: Dict[str, str] = {
         "autoDeclineMode": effective_decline_mode,
@@ -1769,6 +1793,8 @@ async def _create_focus_time_event_impl(
         "focusTimeProperties": focus_time_props,
         "transparency": "opaque",
     }
+    if recurrence:
+        event_body["recurrence"] = recurrence
 
     created_event = await asyncio.to_thread(
         lambda: (
@@ -1896,6 +1922,7 @@ async def _update_focus_time_event_impl(
     auto_decline_mode: Optional[str] = None,
     decline_message: Optional[str] = None,
     chat_status: Optional[str] = None,
+    recurrence: Optional[List[str]] = None,
     timezone: Optional[str] = None,
 ) -> str:
     """Internal implementation for updating a Focus Time calendar event."""
@@ -1923,6 +1950,8 @@ async def _update_focus_time_event_impl(
         )
     if end_time is not None:
         patch_body["end"] = _focus_time_time_entry(end_time, is_end=True, timezone=timezone)
+    if recurrence is not None:
+        patch_body["recurrence"] = recurrence
 
     if auto_decline_mode is not None or decline_message is not None or chat_status is not None:
         existing_ft_props = existing_event.get("focusTimeProperties", {})
@@ -2034,6 +2063,7 @@ async def manage_focus_time(
     auto_decline_mode: Optional[str] = None,
     decline_message: Optional[str] = None,
     chat_status: Optional[str] = None,
+    recurrence: Optional[StringList] = None,
     timezone: Optional[str] = None,
     time_min: Optional[str] = None,
     time_max: Optional[str] = None,
@@ -2043,8 +2073,8 @@ async def manage_focus_time(
 ) -> str:
     """
     Manages Focus Time events on Google Calendar. These special events auto-decline
-    meeting invitations and set the user's chat status to Do Not Disturb, helping
-    protect blocks of uninterrupted work time.
+    meeting invitations and, by default, set the user's chat status to Do Not
+    Disturb, helping protect blocks of uninterrupted work time.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
@@ -2054,13 +2084,14 @@ async def manage_focus_time(
         summary (Optional[str]): Display text on the calendar. Defaults to "Focus Time".
         auto_decline_mode (Optional[str]): How to handle conflicting invitations. One of: "declineAllConflictingInvitations" (default), "declineOnlyNewConflictingInvitations", "declineNone".
         decline_message (Optional[str]): Message included when auto-declining invitations.
-        chat_status (Optional[str]): Google Chat status during the focus time. Currently supports: "doNotDisturb".
+        chat_status (Optional[str]): Google Chat status during the focus time. Supports "doNotDisturb" (default) and "available".
+        recurrence (Optional[List[str]]): RFC5545 recurrence rules for a recurring Focus Time series, e.g. ["RRULE:FREQ=WEEKLY;COUNT=10"].
         timezone (Optional[str]): Timezone for the event (e.g., "America/New_York", "Europe/London"). Required when using date-only values or dateTime values without an explicit UTC offset.
-        time_min (Optional[str]): For "list" action: start of time range. Defaults to current time.
+        time_min (Optional[str]): For "list" action: start of time range. Defaults to current time. Recurring series are expanded into individual instances in the requested range.
         time_max (Optional[str]): For "list" action: end of time range.
         max_results (int): For "list" action: maximum events to return. Defaults to 10.
         event_id (Optional[str]): Event ID. Required for "update" and "delete" actions.
-        calendar_id (str): Calendar ID. Defaults to 'primary'. Focus Time events are typically on the primary calendar.
+        calendar_id (str): Calendar ID. Defaults to 'primary'. Focus Time status events live on primary calendars, so use 'primary' or a user's primary calendar ID/email rather than a secondary calendar ID.
 
     Returns:
         str: Confirmation message with event details, or a formatted list of Focus Time events.
@@ -2079,6 +2110,7 @@ async def manage_focus_time(
             auto_decline_mode=auto_decline_mode,
             decline_message=decline_message,
             chat_status=chat_status,
+            recurrence=recurrence,
             timezone=timezone,
         )
     elif action_lower == "list":
@@ -2105,6 +2137,7 @@ async def manage_focus_time(
             auto_decline_mode=auto_decline_mode,
             decline_message=decline_message,
             chat_status=chat_status,
+            recurrence=recurrence,
             timezone=timezone,
         )
     elif action_lower == "delete":
