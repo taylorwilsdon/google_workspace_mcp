@@ -298,6 +298,7 @@ def _format_attachment_details(
 def _correct_time_format_for_api(
     time_str: Optional[str], param_name: str, timezone: Optional[str] = None
 ) -> Optional[str]:
+    """Normalize a time string into RFC3339 format suitable for the Google Calendar API."""
     if not time_str:
         return None
 
