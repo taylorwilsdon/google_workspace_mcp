@@ -37,3 +37,12 @@ ecosystem.config.cjs
 
 # ---- Agent instructions (not for distribution) -------------------------
 .github/instructions/
+
+# Local testing and auth scripts
+start_auth_server.py
+start_desktop_auth.py
+test_auth*.py
+auth_output.txt
+*.log
+.opencode/
+conductor/

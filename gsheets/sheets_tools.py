@@ -291,7 +291,7 @@ async def modify_sheet_values(
     user_google_email: str,
     spreadsheet_id: str,
     range_name: str,
-    values: Optional[Union[str, List[List[str]]]] = None,
+    values: Optional[str] = None,
     value_input_option: str = "USER_ENTERED",
     clear_values: bool = False,
 ) -> str:
@@ -302,7 +302,7 @@ async def modify_sheet_values(
         user_google_email (str): The user's Google email address. Required.
         spreadsheet_id (str): The ID of the spreadsheet. Required.
         range_name (str): The range to modify (e.g., "Sheet1!A1:D10", "A1:D10"). Required.
-        values (Optional[Union[str, List[List[str]]]]): 2D array of values to write/update. Can be a JSON string or Python list. Required unless clear_values=True.
+        values (Optional[str]): 2D array of values to write/update. Must be a JSON string. Required unless clear_values=True.
         value_input_option (str): How to interpret input values ("RAW" or "USER_ENTERED"). Defaults to "USER_ENTERED".
         clear_values (bool): If True, clears the range instead of writing values. Defaults to False.
 
@@ -741,11 +741,11 @@ async def manage_conditional_formatting(
     action: str,
     range_name: Optional[str] = None,
     condition_type: Optional[str] = None,
-    condition_values: Optional[Union[str, List[Union[str, int, float]]]] = None,
+    condition_values: Optional[str] = None,
     background_color: Optional[str] = None,
     text_color: Optional[str] = None,
     rule_index: Optional[int] = None,
-    gradient_points: Optional[Union[str, List[dict]]] = None,
+    gradient_points: Optional[str] = None,
     sheet_name: Optional[str] = None,
 ) -> str:
     """
@@ -763,8 +763,8 @@ async def manage_conditional_formatting(
         condition_type (Optional[str]): Sheets condition type (e.g., NUMBER_GREATER,
             TEXT_CONTAINS, DATE_BEFORE, CUSTOM_FORMULA). Required for "add".
             Optional for "update" (preserves existing type if omitted).
-        condition_values (Optional[Union[str, List[Union[str, int, float]]]]): Values
-            for the condition; accepts a list or a JSON string representing a list.
+        condition_values (Optional[str]): Values
+            for the condition; accepts a JSON string representing a list.
             Depends on condition_type. Used by "add" and "update".
         background_color (Optional[str]): Hex background color to apply when
             condition matches. Used by "add" and "update".
@@ -772,7 +772,7 @@ async def manage_conditional_formatting(
             Used by "add" and "update".
         rule_index (Optional[int]): 0-based index of the rule. For "add", optionally
             specifies insertion position. Required for "update" and "delete".
-        gradient_points (Optional[Union[str, List[dict]]]): List (or JSON list) of
+        gradient_points (Optional[str]): JSON string of
             gradient points for a color scale. If provided, a gradient rule is created
             and boolean parameters are ignored. Used by "add" and "update".
         sheet_name (Optional[str]): Sheet name to locate the rule when range_name is

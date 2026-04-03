@@ -10,7 +10,7 @@ import asyncio
 import re
 import uuid
 import json
-from typing import List, Optional, Dict, Any, Union
+from typing import List, Optional, Dict, Any
 
 import pytz
 from googleapiclient.errors import HttpError
@@ -27,40 +27,40 @@ logger = logging.getLogger(__name__)
 
 
 def _parse_reminders_json(
-    reminders_input: Optional[Union[str, List[Dict[str, Any]]]], function_name: str
-) -> List[Dict[str, Any]]:
+    reminders_input: Optional[str], function_name: str
+) -> Optional[List[Dict[str, Any]]]:
     """
-    Parse reminders from JSON string or list object and validate them.
+    Parse reminders from JSON string and validate them.
 
     Args:
-        reminders_input: JSON string containing reminder objects or list of reminder objects
+        reminders_input: JSON string containing a list of reminder objects
         function_name: Name of calling function for logging
 
     Returns:
-        List of validated reminder objects
+        List of validated reminder objects, or None if input is empty
+
+    Raises:
+        ValueError: If JSON is invalid or data structure is incorrect
     """
     if not reminders_input:
-        return []
+        return None
 
-    # Handle both string (JSON) and list inputs
+    # Handle string (JSON) inputs
     if isinstance(reminders_input, str):
         try:
             reminders = json.loads(reminders_input)
             if not isinstance(reminders, list):
-                logger.warning(
+                raise ValueError(
                     f"[{function_name}] Reminders must be a JSON array, got {type(reminders).__name__}"
                 )
-                return []
         except json.JSONDecodeError as e:
-            logger.warning(f"[{function_name}] Invalid JSON for reminders: {e}")
-            return []
+            raise ValueError(f"[{function_name}] Invalid JSON for reminders: {e}")
     elif isinstance(reminders_input, list):
         reminders = reminders_input
     else:
-        logger.warning(
-            f"[{function_name}] Reminders must be a JSON string or list, got {type(reminders_input).__name__}"
+        raise ValueError(
+            f"[{function_name}] Reminders must be a JSON string, got {type(reminders_input).__name__}"
         )
-        return []
 
     # Validate reminders
     if len(reminders) > 5:
@@ -76,24 +76,21 @@ def _parse_reminders_json(
             or "method" not in reminder
             or "minutes" not in reminder
         ):
-            logger.warning(
-                f"[{function_name}] Invalid reminder format: {reminder}, skipping"
+            raise ValueError(
+                f"[{function_name}] Invalid reminder format: {reminder}. Expected dict with 'method' and 'minutes'"
             )
-            continue
 
         method = reminder["method"].lower()
         if method not in ["popup", "email"]:
-            logger.warning(
-                f"[{function_name}] Invalid reminder method '{method}', must be 'popup' or 'email', skipping"
+            raise ValueError(
+                f"[{function_name}] Invalid reminder method '{method}', must be 'popup' or 'email'"
             )
-            continue
 
         minutes = reminder["minutes"]
         if not isinstance(minutes, int) or minutes < 0 or minutes > 40320:
-            logger.warning(
-                f"[{function_name}] Invalid reminder minutes '{minutes}', must be integer 0-40320, skipping"
+            raise ValueError(
+                f"[{function_name}] Invalid reminder minutes '{minutes}', must be integer 0-40320"
             )
-            continue
 
         validated_reminders.append({"method": method, "minutes": minutes})
 
@@ -635,7 +632,7 @@ async def _create_event_impl(
     timezone: Optional[str] = None,
     attachments: Optional[List[str]] = None,
     add_google_meet: bool = False,
-    reminders: Optional[Union[str, List[Dict[str, Any]]]] = None,
+    reminders: Optional[str] = None,
     use_default_reminders: bool = True,
     transparency: Optional[str] = None,
     visibility: Optional[str] = None,
@@ -681,7 +678,7 @@ async def _create_event_impl(
         # If custom reminders are provided, automatically disable default reminders
         effective_use_default = use_default_reminders and reminders is None
 
-        reminder_data = {"useDefault": effective_use_default}
+        reminder_data: Dict[str, Any] = {"useDefault": effective_use_default}
         if reminders is not None:
             validated_reminders = _parse_reminders_json(reminders, "create_event")
             if validated_reminders:
@@ -844,7 +841,7 @@ async def _create_event_impl(
 
 
 def _normalize_attendees(
-    attendees: Optional[Union[List[str], List[Dict[str, Any]]]],
+    attendees: Optional[List[str]],
 ) -> Optional[List[Dict[str, Any]]]:
     """
     Normalize attendees input to list of attendee objects.
@@ -882,10 +879,10 @@ async def _modify_event_impl(
     end_time: Optional[str] = None,
     description: Optional[str] = None,
     location: Optional[str] = None,
-    attendees: Optional[Union[List[str], List[Dict[str, Any]]]] = None,
+    attendees: Optional[List[str]] = None,
     timezone: Optional[str] = None,
     add_google_meet: Optional[bool] = None,
-    reminders: Optional[Union[str, List[Dict[str, Any]]]] = None,
+    reminders: Optional[str] = None,
     use_default_reminders: Optional[bool] = None,
     transparency: Optional[str] = None,
     visibility: Optional[str] = None,
@@ -964,11 +961,7 @@ async def _modify_event_impl(
                 )
 
             validated_reminders = _parse_reminders_json(reminders, "modify_event")
-            if reminders and not validated_reminders:
-                logger.warning(
-                    "[modify_event] Reminders provided but failed validation. No custom reminders will be set."
-                )
-            elif validated_reminders:
+            if validated_reminders:
                 reminder_data["overrides"] = validated_reminders
                 logger.info(
                     f"[modify_event] Updated reminders with {len(validated_reminders)} custom reminders"
@@ -1198,7 +1191,9 @@ async def _rsvp_event_impl(
 
     user_index = next((i for i, a in enumerate(attendees) if a.get("self")), None)
     if user_index is None:
-        raise Exception(f"{user_google_email} was not found in the event's attendee list.")
+        raise Exception(
+            f"{user_google_email} was not found in the event's attendee list."
+        )
 
     updated_attendees = [dict(a) for a in attendees]
     updated_attendees[user_index]["responseStatus"] = response
@@ -1206,12 +1201,14 @@ async def _rsvp_event_impl(
         updated_attendees[user_index]["comment"] = comment
 
     updated_event = await asyncio.to_thread(
-        lambda: service.events().patch(
+        lambda: service.events()
+        .patch(
             calendarId=calendar_id,
             eventId=event_id,
             body={"attendees": updated_attendees},
             sendUpdates=send_updates,
-        ).execute()
+        )
+        .execute()
     )
 
     summary = updated_event.get("summary", "Unknown event")
@@ -1240,11 +1237,11 @@ async def manage_event(
     calendar_id: str = "primary",
     description: Optional[str] = None,
     location: Optional[str] = None,
-    attendees: Optional[Union[StringList, List[Dict[str, Any]]]] = None,
+    attendees: Optional[List[str]] = None,
     timezone: Optional[str] = None,
     attachments: Optional[StringList] = None,
     add_google_meet: Optional[bool] = None,
-    reminders: Optional[Union[str, List[Dict[str, Any]]]] = None,
+    reminders: Optional[str] = None,
     use_default_reminders: Optional[bool] = None,
     transparency: Optional[str] = None,
     visibility: Optional[str] = None,
@@ -1270,11 +1267,11 @@ async def manage_event(
         calendar_id (str): Calendar ID (default: 'primary').
         description (Optional[str]): Event description.
         location (Optional[str]): Event location.
-        attendees (Optional[Union[List[str], List[Dict[str, Any]]]]): Attendee email addresses or objects.
+        attendees (Optional[List[str]]): List of attendee email addresses as strings.
         timezone (Optional[str]): Timezone (e.g., "America/New_York").
         attachments (Optional[List[str]]): List of Google Drive file URLs or IDs to attach.
         add_google_meet (Optional[bool]): Whether to add/remove Google Meet.
-        reminders (Optional[Union[str, List[Dict[str, Any]]]]): Custom reminder objects.
+        reminders (Optional[str]): JSON string of reminder objects (e.g., '[{"method": "email", "minutes": 10}]').
         use_default_reminders (Optional[bool]): Whether to use default reminders.
         transparency (Optional[str]): "opaque" (busy) or "transparent" (free).
         visibility (Optional[str]): "default", "public", "private", or "confidential".
