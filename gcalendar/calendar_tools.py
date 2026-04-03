@@ -2378,6 +2378,7 @@ async def create_calendar(
     user_google_email: str,
     summary: str,
     description: Optional[str] = None,
+    timezone: Optional[str] = None,
 ) -> str:
     """
     Creates a new secondary Google Calendar.
@@ -2386,9 +2387,10 @@ async def create_calendar(
         user_google_email (str): The user's Google email address. Required.
         summary (str): The title/name of the new calendar.
         description (Optional[str]): An optional description for the calendar.
+        timezone (Optional[str]): IANA timezone for the calendar (e.g. 'America/New_York').
 
     Returns:
-        str: The ID of the newly created calendar.
+        str: The ID and summary of the newly created calendar.
     """
     logger.info(
         f"[create_calendar] Invoked. Email: '{user_google_email}', summary: '{summary}'"
@@ -2397,13 +2399,16 @@ async def create_calendar(
     body: Dict[str, Any] = {"summary": summary}
     if description:
         body["description"] = description
+    if timezone:
+        body["timeZone"] = timezone
 
     result = await asyncio.to_thread(
         lambda: service.calendars().insert(body=body).execute()
     )
 
     calendar_id = result["id"]
+    calendar_summary = result.get("summary", summary)
     logger.info(
-        f"[create_calendar] Created calendar '{summary}' with ID: {calendar_id}"
+        f"[create_calendar] Created calendar '{calendar_summary}' with ID: {calendar_id}"
     )
-    return calendar_id
+    return f"Created calendar '{calendar_summary}' (ID: {calendar_id})"
