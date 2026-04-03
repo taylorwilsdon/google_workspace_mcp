@@ -82,7 +82,9 @@ class TestHeaderFooterGuardrails:
         requests = docs_api.batchUpdate.call_args.kwargs["body"]["requests"]
         assert len(requests) == 1
         assert "insertText" in requests[0]
-        assert requests[0]["insertText"]["endOfSegmentLocation"] == {"segmentId": "hdr-123"}
+        assert requests[0]["insertText"]["endOfSegmentLocation"] == {
+            "segmentId": "hdr-123"
+        }
 
     @pytest.mark.asyncio
     async def test_batch_update_doc_duplicate_header_creation_returns_guidance(self):
@@ -142,7 +144,7 @@ class TestHeaderFooterGuardrails:
                 resp=Mock(status=400),
                 content=(
                     b'{"error":{"message":"Invalid requests[0].insertText: Segment '
-                    b'with ID kix.header was not found. If a segment ID is '
+                    b"with ID kix.header was not found. If a segment ID is "
                     b'provided, it must be a header, footer or footnote ID."}}'
                 ),
             )

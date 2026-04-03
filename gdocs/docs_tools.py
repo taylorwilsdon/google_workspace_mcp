@@ -9,7 +9,7 @@ import asyncio
 import io
 import inspect
 import re
-from typing import List, Dict, Any, Optional
+from typing import List, Any, Optional
 
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
@@ -33,7 +33,9 @@ from gdocs.docs_helpers import (
     create_insert_doc_tab_request,
     create_update_doc_tab_request,
     create_delete_doc_tab_request,
+    create_update_paragraph_style_request,
     validate_suggestions_view_mode,
+    create_update_paragraph_style_request,
 )
 
 # Import document structure and table utilities
@@ -385,9 +387,7 @@ async def create_doc(
     if content:
         content_note = f"Initial content: {len(content)} characters inserted."
     else:
-        content_note = (
-            "Document is empty (body starts at index 1, total length 2)."
-        )
+        content_note = "Document is empty (body starts at index 1, total length 2)."
     msg = (
         f"Created Google Doc '{title}' (ID: {doc_id}) for {user_google_email}. "
         f"{content_note} "
@@ -568,7 +568,10 @@ async def modify_doc_text(
             # Text insertion
             actual_index = (
                 1
-                if start_index == 0 and not end_of_segment and segment_id is None and tab_id is None
+                if start_index == 0
+                and not end_of_segment
+                and segment_id is None
+                and tab_id is None
                 else start_index
             )
             requests.append(
@@ -969,9 +972,7 @@ async def update_doc_headers_footers(
 
     if success:
         link = f"https://docs.google.com/document/d/{document_id}/edit"
-        return (
-            f"{message}. Runtime: {HEADER_FOOTER_RUNTIME_CANARY}. Link: {link}"
-        )
+        return f"{message}. Runtime: {HEADER_FOOTER_RUNTIME_CANARY}. Link: {link}"
     else:
         return f"Error: {message}. Runtime: {HEADER_FOOTER_RUNTIME_CANARY}"
 
@@ -1566,7 +1567,9 @@ async def debug_docs_runtime_info(
     return json.dumps(
         {
             "runtime_canary": HEADER_FOOTER_RUNTIME_CANARY,
-            "docs_tools_file": inspect.getsourcefile(inspect.getmodule(debug_docs_runtime_info)),
+            "docs_tools_file": inspect.getsourcefile(
+                inspect.getmodule(debug_docs_runtime_info)
+            ),
             "header_footer_manager_file": inspect.getsourcefile(
                 header_footer_manager_module
             ),
@@ -2134,7 +2137,9 @@ async def update_paragraph_style(
     if named_style_type is not None:
         summary_parts.append(named_style_type)
     elif heading_level is not None:
-        summary_parts.append("NORMAL_TEXT" if heading_level == 0 else f"HEADING_{heading_level}")
+        summary_parts.append(
+            "NORMAL_TEXT" if heading_level == 0 else f"HEADING_{heading_level}"
+        )
     detail_labels = [
         name
         for name, value in [
@@ -2236,15 +2241,25 @@ async def get_doc_as_markdown(
         f"[get_doc_as_markdown] Doc={document_id}, comments={include_comments}, mode={comment_mode}"
     )
 
-    # Fetch document content via Docs API
-    doc = await asyncio.to_thread(
-        docs_service.documents()
-        .get(
-            documentId=document_id,
-            suggestionsViewMode=suggestions_view_mode,
+    # Fetch document content via Docs API (includeTabsContent for multi-tab docs)
+    try:
+        doc = await asyncio.wait_for(
+            asyncio.to_thread(
+                docs_service.documents()
+                .get(
+                    documentId=document_id,
+                    includeTabsContent=True,
+                    suggestionsViewMode=suggestions_view_mode,
+                )
+                .execute
+            ),
+            timeout=30,
         )
-        .execute
-    )
+    except (TimeoutError, asyncio.TimeoutError):
+        return (
+            f"Error: Timed out fetching document {document_id} from Google Docs API. "
+            "The document may be too large or there may be a network issue. Please try again."
+        )
 
     markdown = convert_doc_to_markdown(doc)
 

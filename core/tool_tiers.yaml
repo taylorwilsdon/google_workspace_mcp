@@ -47,6 +47,8 @@ calendar:
     - rsvp_event
   extended:
     - query_freebusy
+    - manage_out_of_office
+    - manage_focus_time
   complete: []
 
 docs:
