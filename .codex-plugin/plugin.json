@@ -19,5 +19,6 @@
     "longDescription": "Control Gmail, Google Calendar, Docs, Sheets, Slides, Chat, Forms, Tasks and Drive with AI.",
     "category": "Productivity",
     "websiteURL": "https://github.com/taylorwilsdon/google_workspace_mcp"
-  }
+  },
+  "skills": "./skills/"
 }

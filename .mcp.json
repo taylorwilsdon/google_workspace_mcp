@@ -3,7 +3,7 @@
     "google-workspace-mcp": {
       "command": "uvx",
       "args": [
-        "workspace-mcp",
+        "workspace-mcp@1.17.1",
         "--tool-tier",
         "core"
       ]
