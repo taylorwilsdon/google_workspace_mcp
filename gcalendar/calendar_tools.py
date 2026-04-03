@@ -1177,6 +1177,12 @@ async def _rsvp_event_impl(
             f"Invalid response '{response}'. Must be one of: {sorted(valid_responses)}"
         )
 
+    valid_send_updates = {"all", "externalOnly", "none"}
+    if send_updates not in valid_send_updates:
+        raise ValueError(
+            f"Invalid send_updates '{send_updates}'. Must be one of: {sorted(valid_send_updates)}"
+        )
+
     existing_event = await asyncio.to_thread(
         lambda: service.events().get(calendarId=calendar_id, eventId=event_id).execute()
     )
@@ -1247,13 +1253,16 @@ async def manage_event(
     guests_can_modify: Optional[bool] = None,
     guests_can_invite_others: Optional[bool] = None,
     guests_can_see_other_guests: Optional[bool] = None,
+    response: Optional[str] = None,
+    rsvp_comment: Optional[str] = None,
+    send_updates: Optional[str] = None,
 ) -> str:
     """
-    Manages calendar events. Supports creating, updating, and deleting events.
+    Manages calendar events. Supports creating, updating, deleting, and RSVP.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
-        action (str): Action to perform - "create", "update", or "delete".
+        action (str): Action to perform - "create", "update", "delete", or "rsvp".
         summary (Optional[str]): Event title (required for create).
         start_time (Optional[str]): Start time in RFC3339 format (required for create).
         end_time (Optional[str]): End time in RFC3339 format (required for create).
@@ -1274,6 +1283,9 @@ async def manage_event(
         guests_can_modify (Optional[bool]): Whether attendees can modify.
         guests_can_invite_others (Optional[bool]): Whether attendees can invite others.
         guests_can_see_other_guests (Optional[bool]): Whether attendees can see other guests.
+        response (Optional[str]): RSVP response — "accepted", "declined", "tentative", or "needsAction" (rsvp action only).
+        rsvp_comment (Optional[str]): Optional message to include with the RSVP response (rsvp action only).
+        send_updates (Optional[str]): Notification behavior for RSVP — "all" (default), "externalOnly", or "none" (rsvp action only).
 
     Returns:
         str: Confirmation message with event details.
@@ -1343,52 +1355,24 @@ async def manage_event(
             event_id=event_id,
             calendar_id=calendar_id,
         )
+    elif action_lower == "rsvp":
+        if not event_id:
+            raise ValueError("event_id is required for rsvp action")
+        if not response:
+            raise ValueError("response is required for rsvp action")
+        return await _rsvp_event_impl(
+            service=service,
+            user_google_email=user_google_email,
+            event_id=event_id,
+            response=response,
+            calendar_id=calendar_id,
+            comment=rsvp_comment,
+            send_updates=send_updates or "all",
+        )
     else:
         raise ValueError(
-            f"Invalid action '{action_lower}'. Must be 'create', 'update', or 'delete'."
+            f"Invalid action '{action_lower}'. Must be 'create', 'update', 'delete', or 'rsvp'."
         )
-
-
-@server.tool()
-@handle_http_errors("rsvp_event", service_type="calendar")
-@require_google_service("calendar", "calendar_events")
-async def rsvp_event(
-    service,
-    user_google_email: str,
-    event_id: str,
-    response: str,
-    calendar_id: str = "primary",
-    comment: Optional[str] = None,
-    send_updates: str = "all",
-) -> str:
-    """
-    Respond to a calendar event invitation (accept, decline, tentative, or reset).
-
-    Uses events.patch with only the attendees array — the correct approach for
-    non-organizer RSVP updates. manage_event's "update" action uses events.update
-    (PUT), which requires organizer permission and cannot be used for RSVP.
-
-    Args:
-        user_google_email (str): The authenticated user's Google email. Required.
-        event_id (str): The ID of the event to respond to. Required.
-        response (str): One of "accepted", "declined", "tentative", "needsAction".
-        calendar_id (str): Calendar containing the event. Defaults to "primary".
-        comment (Optional[str]): Optional message to include with the response.
-        send_updates (str): Notification behavior — "all" (default), "externalOnly",
-            or "none".
-
-    Returns:
-        str: Confirmation with event title and updated response status.
-    """
-    return await _rsvp_event_impl(
-        service=service,
-        user_google_email=user_google_email,
-        event_id=event_id,
-        response=response,
-        calendar_id=calendar_id,
-        comment=comment,
-        send_updates=send_updates,
-    )
 
 
 # ---------------------------------------------------------------------------

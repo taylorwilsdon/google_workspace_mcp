@@ -44,7 +44,6 @@ calendar:
     - list_calendars
     - get_events
     - manage_event
-    - rsvp_event
   extended:
     - query_freebusy
     - manage_out_of_office
