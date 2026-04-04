@@ -181,10 +181,13 @@ def configure_file_logging(logger_name: str = None) -> bool:
     # Configure file logging for normal mode
     try:
         target_logger = logging.getLogger(logger_name)
-        log_file_dir = os.path.dirname(os.path.abspath(__file__))
-        # Go up one level since we're in core/ subdirectory
-        log_file_dir = os.path.dirname(log_file_dir)
-        log_file_path = os.path.join(log_file_dir, "mcp_server_debug.log")
+
+        # Write logs to user-specific directory, not the package directory
+        log_dir = os.path.join(
+            os.path.expanduser("~"), ".google_workspace_mcp", "logs"
+        )
+        os.makedirs(log_dir, mode=0o700, exist_ok=True)
+        log_file_path = os.path.join(log_dir, "mcp_server_debug.log")
 
         file_handler = logging.FileHandler(log_file_path, mode="a")
         file_handler.setLevel(logging.DEBUG)
@@ -196,12 +199,16 @@ def configure_file_logging(logger_name: str = None) -> bool:
         file_handler.setFormatter(file_formatter)
         target_logger.addHandler(file_handler)
 
+        # Restrict log file permissions after creation
+        os.chmod(log_file_path, 0o600)
+
         logger = logging.getLogger(logger_name)
         logger.debug(f"Detailed file logging configured to: {log_file_path}")
         return True
 
     except Exception as e:
+        log_file_path_str = locals().get("log_file_path", "<unknown>")
         sys.stderr.write(
-            f"CRITICAL: Failed to set up file logging to '{log_file_path}': {e}\n"
+            f"CRITICAL: Failed to set up file logging to '{log_file_path_str}': {e}\n"
         )
         return False
