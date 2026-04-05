@@ -7,9 +7,9 @@ multiple Google Docs API calls for complex table manipulations.
 
 import logging
 import asyncio
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 
-from gdocs.docs_helpers import create_insert_table_request
+from gdocs.docs_helpers import create_insert_table_request, create_insert_text_request
 from gdocs.docs_structure import find_tables
 from gdocs.docs_tables import validate_table_data
 
@@ -41,7 +41,7 @@ class TableOperationManager:
         table_data: List[List[str]],
         index: int,
         bold_headers: bool = True,
-        tab_id: str = None,
+        tab_id: Optional[str] = None,
     ) -> Tuple[bool, str, Dict[str, Any]]:
         """
         Creates a table and populates it with data in a reliable multi-step process.
@@ -79,16 +79,26 @@ class TableOperationManager:
             if not fresh_tables:
                 return False, "Could not find table after creation", {}
 
-            # Step 3: Populate each cell with proper index refreshing
-            population_count = await self._populate_table_cells(
-                document_id, table_data, bold_headers, tab_id
+            # Step 3: Find the newly created table by insertion index
+            # The table should be at or near the requested index
+            target_table = self._find_table_near_index(fresh_tables, index)
+            if not target_table:
+                return (
+                    False,
+                    f"Could not locate newly created table near index {index}",
+                    {},
+                )
+
+            # Step 4: Populate all cells in a single batch operation
+            population_count = await self._populate_table_cells_batch(
+                document_id, target_table, table_data, bold_headers, tab_id
             )
 
             metadata = {
                 "rows": rows,
                 "columns": cols,
                 "populated_cells": population_count,
-                "table_index": len(fresh_tables) - 1,
+                "total_cells": rows * cols,
             }
 
             return (
@@ -102,7 +112,12 @@ class TableOperationManager:
             return False, f"Table creation failed: {str(e)}", {}
 
     async def _create_empty_table(
-        self, document_id: str, index: int, rows: int, cols: int, tab_id: str = None
+        self,
+        document_id: str,
+        index: int,
+        rows: int,
+        cols: int,
+        tab_id: Optional[str] = None,
     ) -> None:
         """Create an empty table at the specified index."""
         logger.debug(f"Creating {rows}x{cols} table at index {index}")
@@ -119,7 +134,7 @@ class TableOperationManager:
         )
 
     async def _get_document_tables(
-        self, document_id: str, tab_id: str = None
+        self, document_id: str, tab_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """Get fresh document structure and extract table information."""
         doc = await asyncio.to_thread(
@@ -148,150 +163,160 @@ class TableOperationManager:
                     return found
         return None
 
-    async def _populate_table_cells(
+    @staticmethod
+    def _find_table_near_index(
+        tables: List[Dict[str, Any]], target_index: int
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Find the table whose start_index is closest to the target insertion index.
+
+        When a table is inserted at an index, the table's actual start_index
+        will be at or very near the requested index. We find the best match
+        rather than blindly using tables[-1].
+        """
+        if not tables:
+            return None
+
+        best_match = None
+        best_distance = float("inf")
+
+        for table in tables:
+            distance = abs(table["start_index"] - target_index)
+            if distance < best_distance:
+                best_distance = distance
+                best_match = table
+
+        # If the closest table is very far from the target, something is wrong.
+        # Return None so the caller can fail cleanly rather than populate
+        # the wrong table.
+        if best_distance > 10:
+            logger.warning(
+                f"Closest table to index {target_index} is at {best_match['start_index']} "
+                f"(distance={best_distance}). This may indicate an index mismatch."
+            )
+            return None
+
+        return best_match
+
+    async def _populate_table_cells_batch(
         self,
         document_id: str,
+        table: Dict[str, Any],
         table_data: List[List[str]],
         bold_headers: bool,
-        tab_id: str = None,
+        tab_id: Optional[str] = None,
     ) -> int:
         """
-        Populate table cells with data, refreshing structure after each insertion.
+        Populate all table cells in a single batchUpdate call.
 
-        This prevents index shifting issues by getting fresh cell positions
-        before each insertion.
+        Builds all insertText and updateTextStyle requests at once,
+        processing cells in reverse document order to avoid index shifting.
         """
+        cells = table.get("cells", [])
+        if not cells:
+            logger.warning("No cell information found in table")
+            return 0
+
+        requests = []
         population_count = 0
 
+        # Build a list of (row_idx, col_idx, cell, text, should_bold) tuples
+        # then sort by insertion_index descending so insertions don't shift later indices
+        cell_operations = []
+
         for row_idx, row_data in enumerate(table_data):
-            logger.debug(f"Processing row {row_idx}: {len(row_data)} cells")
+            if row_idx >= len(cells):
+                logger.warning(
+                    f"Data has more rows ({len(table_data)}) than table ({len(cells)})"
+                )
+                break
 
             for col_idx, cell_text in enumerate(row_data):
+                if col_idx >= len(cells[row_idx]):
+                    logger.warning(
+                        f"Data has more columns ({len(row_data)}) than table row {row_idx} ({len(cells[row_idx])})"
+                    )
+                    break
+
                 if not cell_text:  # Skip empty cells
                     continue
 
-                try:
-                    # CRITICAL: Refresh document structure before each insertion
-                    success = await self._populate_single_cell(
-                        document_id,
-                        row_idx,
-                        col_idx,
-                        cell_text,
-                        bold_headers and row_idx == 0,
-                        tab_id,
+                cell = cells[row_idx][col_idx]
+                insertion_index = cell.get("insertion_index")
+
+                if insertion_index is None:
+                    logger.warning(
+                        f"No insertion_index for cell ({row_idx},{col_idx}), skipping"
                     )
+                    continue
 
-                    if success:
-                        population_count += 1
-                        logger.debug(f"Populated cell ({row_idx},{col_idx})")
-                    else:
-                        logger.warning(f"Failed to populate cell ({row_idx},{col_idx})")
-
-                except Exception as e:
-                    logger.error(
-                        f"Error populating cell ({row_idx},{col_idx}): {str(e)}"
-                    )
-
-        return population_count
-
-    async def _populate_single_cell(
-        self,
-        document_id: str,
-        row_idx: int,
-        col_idx: int,
-        cell_text: str,
-        apply_bold: bool = False,
-        tab_id: str = None,
-    ) -> bool:
-        """
-        Populate a single cell with text, with optional bold formatting.
-
-        Returns True if successful, False otherwise.
-        """
-        try:
-            # Get fresh table structure to avoid index shifting issues
-            tables = await self._get_document_tables(document_id, tab_id)
-            if not tables:
-                return False
-
-            table = tables[-1]  # Use the last table (newly created one)
-            cells = table.get("cells", [])
-
-            # Bounds checking
-            if row_idx >= len(cells) or col_idx >= len(cells[row_idx]):
-                logger.error(f"Cell ({row_idx},{col_idx}) out of bounds")
-                return False
-
-            cell = cells[row_idx][col_idx]
-            insertion_index = cell.get("insertion_index")
-
-            if not insertion_index:
-                logger.warning(f"No insertion_index for cell ({row_idx},{col_idx})")
-                return False
-
-            # Insert text
-            await asyncio.to_thread(
-                self.service.documents()
-                .batchUpdate(
-                    documentId=document_id,
-                    body={
-                        "requests": [
-                            {
-                                "insertText": {
-                                    "location": {"index": insertion_index},
-                                    "text": cell_text,
-                                }
-                            }
-                        ]
-                    },
+                should_bold = bold_headers and row_idx == 0
+                cell_operations.append(
+                    (insertion_index, row_idx, col_idx, cell_text, should_bold)
                 )
-                .execute
+
+        # Sort by insertion_index descending — process last cells first
+        # so that earlier insertions don't shift the indices of later ones
+        cell_operations.sort(key=lambda x: x[0], reverse=True)
+
+        for (
+            insertion_index,
+            row_idx,
+            col_idx,
+            cell_text,
+            should_bold,
+        ) in cell_operations:
+            # Insert text using the helper that properly handles tab_id
+            requests.append(
+                create_insert_text_request(
+                    index=insertion_index, text=cell_text, tab_id=tab_id
+                )
             )
 
-            # Apply bold formatting if requested
-            if apply_bold:
-                await self._apply_bold_formatting(
-                    document_id, insertion_index, insertion_index + len(cell_text)
-                )
+            # Apply bold formatting if this is a header cell
+            if should_bold:
+                style_request = {
+                    "updateTextStyle": {
+                        "range": {
+                            "startIndex": insertion_index,
+                            "endIndex": insertion_index + len(cell_text),
+                        },
+                        "textStyle": {"bold": True},
+                        "fields": "bold",
+                    }
+                }
+                if tab_id:
+                    style_request["updateTextStyle"]["range"]["tabId"] = tab_id
+                requests.append(style_request)
 
-            return True
+            population_count += 1
 
-        except Exception as e:
-            logger.error(f"Failed to populate single cell: {str(e)}")
-            return False
+        if not requests:
+            logger.warning("No cell population requests generated")
+            return 0
 
-    async def _apply_bold_formatting(
-        self, document_id: str, start_index: int, end_index: int
-    ) -> None:
-        """Apply bold formatting to a text range."""
+        logger.debug(
+            f"Sending {len(requests)} requests to populate {population_count} cells"
+        )
+
+        # Execute all insertions in a single batchUpdate
         await asyncio.to_thread(
             self.service.documents()
             .batchUpdate(
                 documentId=document_id,
-                body={
-                    "requests": [
-                        {
-                            "updateTextStyle": {
-                                "range": {
-                                    "startIndex": start_index,
-                                    "endIndex": end_index,
-                                },
-                                "textStyle": {"bold": True},
-                                "fields": "bold",
-                            }
-                        }
-                    ]
-                },
+                body={"requests": requests},
             )
             .execute
         )
+
+        return population_count
 
     async def populate_existing_table(
         self,
         document_id: str,
         table_index: int,
         table_data: List[List[str]],
-        clear_existing: bool = False,
+        tab_id: Optional[str] = None,
     ) -> Tuple[bool, str, Dict[str, Any]]:
         """
         Populate an existing table with data.
@@ -300,14 +325,14 @@ class TableOperationManager:
             document_id: ID of the document
             table_index: Index of the table to populate (0-based)
             table_data: 2D list of data to insert
-            clear_existing: Whether to clear existing content first
+            tab_id: Optional tab ID for targeting a specific tab
 
         Returns:
             Tuple of (success, message, metadata)
         """
         try:
-            tables = await self._get_document_tables(document_id)
-            if table_index >= len(tables):
+            tables = await self._get_document_tables(document_id, tab_id)
+            if table_index < 0 or table_index >= len(tables):
                 return (
                     False,
                     f"Table index {table_index} not found. Document has {len(tables)} tables",
@@ -329,9 +354,9 @@ class TableOperationManager:
                     {},
                 )
 
-            # Populate cells
-            population_count = await self._populate_existing_table_cells(
-                document_id, table_index, table_data
+            # Populate cells using batch operation
+            population_count = await self._populate_existing_table_cells_batch(
+                document_id, table_info, table_data, tab_id
             )
 
             metadata = {
@@ -350,56 +375,59 @@ class TableOperationManager:
         except Exception as e:
             return False, f"Failed to populate existing table: {str(e)}", {}
 
-    async def _populate_existing_table_cells(
-        self, document_id: str, table_index: int, table_data: List[List[str]]
+    async def _populate_existing_table_cells_batch(
+        self,
+        document_id: str,
+        table_info: Dict[str, Any],
+        table_data: List[List[str]],
+        tab_id: Optional[str] = None,
     ) -> int:
-        """Populate cells in an existing table."""
+        """Populate cells in an existing table using a single batch operation."""
+        cells = table_info.get("cells", [])
+        if not cells:
+            return 0
+
+        requests = []
         population_count = 0
 
+        # Build operations list sorted by index descending
+        cell_operations = []
+
         for row_idx, row_data in enumerate(table_data):
+            if row_idx >= len(cells):
+                break
+
             for col_idx, cell_text in enumerate(row_data):
                 if not cell_text:
                     continue
 
-                # Get fresh table structure for each cell
-                tables = await self._get_document_tables(document_id)
-                if table_index >= len(tables):
-                    break
-
-                table = tables[table_index]
-                cells = table.get("cells", [])
-
-                if row_idx >= len(cells) or col_idx >= len(cells[row_idx]):
+                if col_idx >= len(cells[row_idx]):
                     continue
 
                 cell = cells[row_idx][col_idx]
-
-                # For existing tables, append to existing content
+                # For existing tables, insert at end of existing content
                 cell_end = cell["end_index"] - 1  # Don't include cell end marker
+                cell_operations.append((cell_end, cell_text))
 
-                try:
-                    await asyncio.to_thread(
-                        self.service.documents()
-                        .batchUpdate(
-                            documentId=document_id,
-                            body={
-                                "requests": [
-                                    {
-                                        "insertText": {
-                                            "location": {"index": cell_end},
-                                            "text": cell_text,
-                                        }
-                                    }
-                                ]
-                            },
-                        )
-                        .execute
-                    )
-                    population_count += 1
+        # Sort by index descending to avoid shifting
+        cell_operations.sort(key=lambda x: x[0], reverse=True)
 
-                except Exception as e:
-                    logger.error(
-                        f"Failed to populate existing cell ({row_idx},{col_idx}): {str(e)}"
-                    )
+        for cell_end, cell_text in cell_operations:
+            requests.append(
+                create_insert_text_request(
+                    index=cell_end, text=cell_text, tab_id=tab_id
+                )
+            )
+            population_count += 1
+
+        if requests:
+            await asyncio.to_thread(
+                self.service.documents()
+                .batchUpdate(
+                    documentId=document_id,
+                    body={"requests": requests},
+                )
+                .execute
+            )
 
         return population_count

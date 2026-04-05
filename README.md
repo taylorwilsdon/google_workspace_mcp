@@ -125,6 +125,12 @@ Workspace MCP is the single most complete MCP server that integrates all major G
 
 > Set credentials → pick a launch command → connect your client
 
+<div align="center">
+
+> 💡 **New to Workspace MCP?** Check out the **[Interactive Quick Start Guide →](https://workspacemcp.com/quick-start)** with step-by-step setup, screenshots, and troubleshooting tips!
+
+</div>
+
 ```bash
 # 1. Credentials
 export GOOGLE_OAUTH_CLIENT_ID="..."
@@ -153,7 +159,7 @@ uv run main.py --tools gmail drive calendar
 | `OAUTHLIB_INSECURE_TRANSPORT` | **required**&ast; | Set to `1` for development — allows `http://` redirect |
 | `USER_GOOGLE_EMAIL` | | Default email for single-user auth |
 | `GOOGLE_CLIENT_SECRET_PATH` | | Custom path to `client_secret.json` |
-| `GOOGLE_MCP_CREDENTIALS_DIR` | | Credential storage directory — default `~/.google_workspace_mcp/credentials` |
+| `GOOGLE_MCP_CREDENTIALS_DIR` | | Credential directory — default `~/.google_workspace_mcp/credentials` |
 | **🖥️ Server** | | |
 | `WORKSPACE_MCP_BASE_URI` | | Base server URI (no port) — default `http://localhost` |
 | `WORKSPACE_MCP_PORT` | | Listening port — default `8000` |
@@ -609,6 +615,12 @@ cp .env.oauth21 .env
 ## 🧰 Available Tools
 
 > **Note**: All tools support automatic authentication via `@require_google_service()` decorators with 30-minute service caching.
+
+<div align="center">
+
+> 📖 **Looking for detailed parameters?** Visit the **[Complete Documentation →](https://workspacemcp.com/docs)** for comprehensive tool reference, examples, and API guides!
+
+</div>
 
 #### 📅 Google Calendar <sub>[`calendar_tools.py`](gcalendar/calendar_tools.py)</sub>
 

@@ -298,6 +298,7 @@ def _format_attachment_details(
 def _correct_time_format_for_api(
     time_str: Optional[str], param_name: str, timezone: Optional[str] = None
 ) -> Optional[str]:
+    """Normalize a time string into RFC3339 format suitable for the Google Calendar API."""
     if not time_str:
         return None
 
@@ -365,6 +366,31 @@ def _correct_time_format_for_api(
     # If it already has timezone info or doesn't match our patterns, return as is
     logger.info(f"{param_name} '{time_str}' doesn't need formatting, using as is.")
     return time_str
+
+
+def _strip_utc_offset(datetime_str: str) -> str:
+    """Strip UTC offset from an RFC3339 dateTime string, returning a naive local time.
+
+    When an IANA timezone (e.g. America/Los_Angeles) is provided alongside a dateTime,
+    the Google Calendar API uses the explicit offset from dateTime for scheduling and
+    only uses the IANA timezone for recurrence expansion. This means an LLM-generated
+    offset that doesn't account for DST (e.g. -08:00 during PDT) will place the event
+    at the wrong wall-clock time.
+
+    By stripping the offset and keeping only the naive local time + IANA timeZone,
+    Google Calendar resolves the correct DST-aware offset automatically.
+
+    Examples:
+        "2026-03-19T12:00:00-08:00" → "2026-03-19T12:00:00"
+        "2026-03-19T12:00:00-07:00" → "2026-03-19T12:00:00"
+        "2026-03-19T12:00:00Z"      → "2026-03-19T12:00:00"
+        "2026-03-19T12:00:00"       → "2026-03-19T12:00:00" (no-op)
+    """
+    # Strip trailing Z
+    if datetime_str.endswith("Z"):
+        return datetime_str[:-1]
+    # Strip +HH:MM or -HH:MM offset at end (e.g. -07:00, +05:30)
+    return re.sub(r"[+-]\d{2}:\d{2}$", "", datetime_str)
 
 
 @server.tool()
@@ -655,12 +681,24 @@ async def _create_event_impl(
         logger.info(
             f"[create_event] Parsed attachments list from string: {attachments}"
         )
+    # When an IANA timezone is provided, strip any UTC offset from dateTime values
+    # so Google Calendar resolves the correct DST-aware offset from the IANA name.
+    effective_start = start_time
+    effective_end = end_time
+    if timezone and "T" in start_time:
+        effective_start = _strip_utc_offset(start_time)
+    if timezone and "T" in end_time:
+        effective_end = _strip_utc_offset(end_time)
     event_body: Dict[str, Any] = {
         "summary": summary,
         "start": (
-            {"date": start_time} if "T" not in start_time else {"dateTime": start_time}
+            {"date": start_time}
+            if "T" not in start_time
+            else {"dateTime": effective_start}
         ),
-        "end": ({"date": end_time} if "T" not in end_time else {"dateTime": end_time}),
+        "end": (
+            {"date": end_time} if "T" not in end_time else {"dateTime": effective_end}
+        ),
     }
     if recurrence:
         event_body["recurrence"] = recurrence
@@ -905,14 +943,22 @@ async def _modify_event_impl(
     if summary is not None:
         event_body["summary"] = summary
     if start_time is not None:
+        effective_start = start_time
+        if timezone is not None and "T" in start_time:
+            effective_start = _strip_utc_offset(start_time)
         event_body["start"] = (
-            {"date": start_time} if "T" not in start_time else {"dateTime": start_time}
+            {"date": start_time}
+            if "T" not in start_time
+            else {"dateTime": effective_start}
         )
         if timezone is not None and "dateTime" in event_body["start"]:
             event_body["start"]["timeZone"] = timezone
     if end_time is not None:
+        effective_end = end_time
+        if timezone is not None and "T" in end_time:
+            effective_end = _strip_utc_offset(end_time)
         event_body["end"] = (
-            {"date": end_time} if "T" not in end_time else {"dateTime": end_time}
+            {"date": end_time} if "T" not in end_time else {"dateTime": effective_end}
         )
         if timezone is not None and "dateTime" in event_body["end"]:
             event_body["end"]["timeZone"] = timezone
@@ -1198,7 +1244,9 @@ async def _rsvp_event_impl(
 
     user_index = next((i for i, a in enumerate(attendees) if a.get("self")), None)
     if user_index is None:
-        raise Exception(f"{user_google_email} was not found in the event's attendee list.")
+        raise Exception(
+            f"{user_google_email} was not found in the event's attendee list."
+        )
 
     updated_attendees = [dict(a) for a in attendees]
     updated_attendees[user_index]["responseStatus"] = response
@@ -1206,12 +1254,16 @@ async def _rsvp_event_impl(
         updated_attendees[user_index]["comment"] = comment
 
     updated_event = await asyncio.to_thread(
-        lambda: service.events().patch(
-            calendarId=calendar_id,
-            eventId=event_id,
-            body={"attendees": updated_attendees},
-            sendUpdates=send_updates,
-        ).execute()
+        lambda: (
+            service.events()
+            .patch(
+                calendarId=calendar_id,
+                eventId=event_id,
+                body={"attendees": updated_attendees},
+                sendUpdates=send_updates,
+            )
+            .execute()
+        )
     )
 
     summary = updated_event.get("summary", "Unknown event")

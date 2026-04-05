@@ -1306,8 +1306,7 @@ async def list_sheet_tables(
     else:
         text_output = (
             f"Found {len(tables_found)} table(s) in spreadsheet {spreadsheet_id} "
-            f"for {user_google_email}:\n\n"
-            + "\n\n".join(tables_found)
+            f"for {user_google_email}:\n\n" + "\n\n".join(tables_found)
         )
 
     logger.info(
@@ -1388,7 +1387,7 @@ async def append_table_rows(
         if not isinstance(row_values, list):
             raise UserInputError(
                 "Each row in values must be a list. "
-                "Expected format: [[\"val1\", \"val2\"], [\"val3\", \"val4\"]]"
+                'Expected format: [["val1", "val2"], ["val3", "val4"]]'
             )
         cells = []
         for val in row_values:
@@ -1420,9 +1419,7 @@ async def append_table_rows(
         f"in spreadsheet {spreadsheet_id} for {user_google_email}."
     )
 
-    logger.info(
-        f"[append_table_rows] Appended {num_rows} rows for {user_google_email}"
-    )
+    logger.info(f"[append_table_rows] Appended {num_rows} rows for {user_google_email}")
     return text_output
 
 

@@ -128,6 +128,11 @@ class UpdateTableCellStyleOperation(StrictDocOperation):
     background_color: Optional[str] = None
     border_color: Optional[str] = None
     border_width: Optional[float] = None
+    padding_top: Optional[float] = None
+    padding_bottom: Optional[float] = None
+    padding_left: Optional[float] = None
+    padding_right: Optional[float] = None
+    content_alignment: Optional[str] = None
     row_index: Optional[int] = None
     column_index: Optional[int] = None
     row_span: Optional[int] = None
@@ -152,6 +157,58 @@ class InsertTableOperation(SegmentTargetDocOperation):
         if self.end_of_segment == (self.index is not None):
             raise ValueError("Provide exactly one of 'index' or 'end_of_segment=true'.")
         return self
+
+
+class InsertTableRowOperation(StrictDocOperation):
+    type: Literal["insert_table_row"]
+    table_start_index: int
+    row_index: int
+    insert_below: bool = True
+
+
+class DeleteTableRowOperation(StrictDocOperation):
+    type: Literal["delete_table_row"]
+    table_start_index: int
+    row_index: int
+
+
+class InsertTableColumnOperation(StrictDocOperation):
+    type: Literal["insert_table_column"]
+    table_start_index: int
+    column_index: int
+    insert_right: bool = True
+
+
+class DeleteTableColumnOperation(StrictDocOperation):
+    type: Literal["delete_table_column"]
+    table_start_index: int
+    column_index: int
+
+
+class MergeTableCellsOperation(StrictDocOperation):
+    type: Literal["merge_table_cells"]
+    table_start_index: int
+    row_index: int
+    column_index: int
+    row_span: int
+    column_span: int
+
+
+class UnmergeTableCellsOperation(StrictDocOperation):
+    type: Literal["unmerge_table_cells"]
+    table_start_index: int
+    row_index: int
+    column_index: int
+    row_span: int
+    column_span: int
+
+
+class UpdateTableColumnPropertiesOperation(StrictDocOperation):
+    type: Literal["update_table_column_properties"]
+    table_start_index: int
+    column_indices: list[int]
+    width: Optional[float] = None
+    width_type: Optional[str] = None
 
 
 class InsertPageBreakOperation(StrictDocOperation):
@@ -350,6 +407,13 @@ BatchDocOperation = Annotated[
         UpdateParagraphStyleOperation,
         UpdateTableCellStyleOperation,
         InsertTableOperation,
+        InsertTableRowOperation,
+        DeleteTableRowOperation,
+        InsertTableColumnOperation,
+        DeleteTableColumnOperation,
+        MergeTableCellsOperation,
+        UnmergeTableCellsOperation,
+        UpdateTableColumnPropertiesOperation,
         InsertPageBreakOperation,
         InsertSectionBreakOperation,
         FindReplaceOperation,

@@ -595,6 +595,11 @@ def build_table_cell_style(
     background_color: str = None,
     border_color: str = None,
     border_width: float = None,
+    padding_top: float = None,
+    padding_bottom: float = None,
+    padding_left: float = None,
+    padding_right: float = None,
+    content_alignment: str = None,
 ) -> tuple[Dict[str, Any], list[str]]:
     """
     Build a table cell style object for Google Docs API requests.
@@ -603,6 +608,11 @@ def build_table_cell_style(
         background_color: Cell background color as hex string "#RRGGBB"
         border_color: Cell border color as hex string "#RRGGBB"
         border_width: Cell border width in points
+        padding_top: Top padding in points
+        padding_bottom: Bottom padding in points
+        padding_left: Left padding in points
+        padding_right: Right padding in points
+        content_alignment: Vertical content alignment ("TOP", "MIDDLE", "BOTTOM")
 
     Returns:
         Tuple of (table_cell_style_dict, list_of_field_names)
@@ -628,6 +638,20 @@ def build_table_cell_style(
         rgb = _normalize_color(background_color, "background_color")
         table_cell_style["backgroundColor"] = {"color": {"rgbColor": rgb}}
         fields.append("backgroundColor")
+
+    for padding_value, api_key in (
+        (padding_top, "paddingTop"),
+        (padding_bottom, "paddingBottom"),
+        (padding_left, "paddingLeft"),
+        (padding_right, "paddingRight"),
+    ):
+        if padding_value is not None:
+            table_cell_style[api_key] = {"magnitude": padding_value, "unit": "PT"}
+            fields.append(api_key)
+
+    if content_alignment is not None:
+        table_cell_style["contentAlignment"] = content_alignment.upper()
+        fields.append("contentAlignment")
 
     return table_cell_style, fields
 
@@ -916,6 +940,11 @@ def create_update_table_cell_style_request(
     background_color: str = None,
     border_color: str = None,
     border_width: float = None,
+    padding_top: float = None,
+    padding_bottom: float = None,
+    padding_left: float = None,
+    padding_right: float = None,
+    content_alignment: str = None,
     row_index: int = None,
     column_index: int = None,
     row_span: int = None,
@@ -930,6 +959,11 @@ def create_update_table_cell_style_request(
         background_color: Cell background color as hex string "#RRGGBB"
         border_color: Cell border color as hex string "#RRGGBB"
         border_width: Cell border width in points
+        padding_top: Top padding in points
+        padding_bottom: Bottom padding in points
+        padding_left: Left padding in points
+        padding_right: Right padding in points
+        content_alignment: Vertical content alignment ("TOP", "MIDDLE", "BOTTOM")
         row_index: Optional starting row index for a sub-range
         column_index: Optional starting column index for a sub-range
         row_span: Optional row span for a sub-range (defaults to 1)
@@ -944,6 +978,11 @@ def create_update_table_cell_style_request(
         background_color=background_color,
         border_color=border_color,
         border_width=border_width,
+        padding_top=padding_top,
+        padding_bottom=padding_bottom,
+        padding_left=padding_left,
+        padding_right=padding_right,
+        content_alignment=content_alignment,
     )
     if not table_cell_style:
         return None
@@ -1420,6 +1459,183 @@ def create_create_header_footer_request(
     raise ValueError("section_type must be 'header' or 'footer'")
 
 
+def create_insert_table_row_request(
+    table_start_index: int,
+    row_index: int,
+    insert_below: bool = True,
+    tab_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build an insertTableRow request."""
+    location: Dict[str, Any] = {"index": table_start_index}
+    if tab_id:
+        location["tabId"] = tab_id
+    return {
+        "insertTableRow": {
+            "tableCellLocation": {
+                "tableStartLocation": location,
+                "rowIndex": row_index,
+                "columnIndex": 0,
+            },
+            "insertBelow": insert_below,
+        }
+    }
+
+
+def create_delete_table_row_request(
+    table_start_index: int,
+    row_index: int,
+    tab_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build a deleteTableRow request."""
+    location: Dict[str, Any] = {"index": table_start_index}
+    if tab_id:
+        location["tabId"] = tab_id
+    return {
+        "deleteTableRow": {
+            "tableCellLocation": {
+                "tableStartLocation": location,
+                "rowIndex": row_index,
+                "columnIndex": 0,
+            }
+        }
+    }
+
+
+def create_insert_table_column_request(
+    table_start_index: int,
+    column_index: int,
+    insert_right: bool = True,
+    tab_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build an insertTableColumn request."""
+    location: Dict[str, Any] = {"index": table_start_index}
+    if tab_id:
+        location["tabId"] = tab_id
+    return {
+        "insertTableColumn": {
+            "tableCellLocation": {
+                "tableStartLocation": location,
+                "rowIndex": 0,
+                "columnIndex": column_index,
+            },
+            "insertRight": insert_right,
+        }
+    }
+
+
+def create_delete_table_column_request(
+    table_start_index: int,
+    column_index: int,
+    tab_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build a deleteTableColumn request."""
+    location: Dict[str, Any] = {"index": table_start_index}
+    if tab_id:
+        location["tabId"] = tab_id
+    return {
+        "deleteTableColumn": {
+            "tableCellLocation": {
+                "tableStartLocation": location,
+                "rowIndex": 0,
+                "columnIndex": column_index,
+            }
+        }
+    }
+
+
+def _build_table_range(
+    table_start_index: int,
+    row_index: int,
+    column_index: int,
+    row_span: int,
+    column_span: int,
+    tab_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build a tableRange object used by merge/unmerge requests."""
+    location: Dict[str, Any] = {"index": table_start_index}
+    if tab_id:
+        location["tabId"] = tab_id
+    return {
+        "tableRange": {
+            "tableCellLocation": {
+                "tableStartLocation": location,
+                "rowIndex": row_index,
+                "columnIndex": column_index,
+            },
+            "rowSpan": row_span,
+            "columnSpan": column_span,
+        }
+    }
+
+
+def create_merge_table_cells_request(
+    table_start_index: int,
+    row_index: int,
+    column_index: int,
+    row_span: int,
+    column_span: int,
+    tab_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build a mergeTableCells request."""
+    return {
+        "mergeTableCells": _build_table_range(
+            table_start_index, row_index, column_index, row_span, column_span, tab_id
+        )
+    }
+
+
+def create_unmerge_table_cells_request(
+    table_start_index: int,
+    row_index: int,
+    column_index: int,
+    row_span: int,
+    column_span: int,
+    tab_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build an unmergeTableCells request."""
+    return {
+        "unmergeTableCells": _build_table_range(
+            table_start_index, row_index, column_index, row_span, column_span, tab_id
+        )
+    }
+
+
+def create_update_table_column_properties_request(
+    table_start_index: int,
+    column_indices: list,
+    width: float = None,
+    width_type: str = None,
+    tab_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Build an updateTableColumnProperties request. Returns None if no properties set."""
+    location: Dict[str, Any] = {"index": table_start_index}
+    if tab_id:
+        location["tabId"] = tab_id
+
+    properties: Dict[str, Any] = {}
+    fields = []
+
+    if width is not None:
+        properties["width"] = {"magnitude": width, "unit": "PT"}
+        fields.append("width")
+
+    if width_type is not None:
+        properties["widthType"] = width_type
+        fields.append("widthType")
+
+    if not fields:
+        return None
+
+    return {
+        "updateTableColumnProperties": {
+            "tableStartLocation": location,
+            "columnIndices": column_indices,
+            "tableColumnProperties": properties,
+            "fields": ",".join(fields),
+        }
+    }
+
+
 def validate_operation(operation: Dict[str, Any]) -> tuple[bool, str]:
     """
     Validate a batch operation dictionary.
@@ -1457,6 +1673,25 @@ def validate_operation(operation: Dict[str, Any]) -> tuple[bool, str]:
         "insert_doc_tab": ["title", "index"],
         "delete_doc_tab": ["tab_id"],
         "update_doc_tab": ["tab_id", "title"],
+        "insert_table_row": ["table_start_index", "row_index"],
+        "delete_table_row": ["table_start_index", "row_index"],
+        "insert_table_column": ["table_start_index", "column_index"],
+        "delete_table_column": ["table_start_index", "column_index"],
+        "merge_table_cells": [
+            "table_start_index",
+            "row_index",
+            "column_index",
+            "row_span",
+            "column_span",
+        ],
+        "unmerge_table_cells": [
+            "table_start_index",
+            "row_index",
+            "column_index",
+            "row_span",
+            "column_span",
+        ],
+        "update_table_column_properties": ["table_start_index", "column_indices"],
     }
 
     if op_type not in required_fields:

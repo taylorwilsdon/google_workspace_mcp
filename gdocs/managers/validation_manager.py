@@ -739,11 +739,18 @@ class ValidationManager:
 
         return True, ""
 
+    VALID_CONTENT_ALIGNMENTS = ("TOP", "MIDDLE", "BOTTOM")
+
     def validate_table_cell_style_params(
         self,
         background_color: Optional[str] = None,
         border_color: Optional[str] = None,
         border_width: Optional[float] = None,
+        padding_top: Optional[float] = None,
+        padding_bottom: Optional[float] = None,
+        padding_left: Optional[float] = None,
+        padding_right: Optional[float] = None,
+        content_alignment: Optional[str] = None,
         row_index: Optional[int] = None,
         column_index: Optional[int] = None,
         row_span: Optional[int] = None,
@@ -756,6 +763,11 @@ class ValidationManager:
             background_color: Cell background color in "#RRGGBB" format
             border_color: Border color in "#RRGGBB" format
             border_width: Border width in points
+            padding_top: Top padding in points (non-negative)
+            padding_bottom: Bottom padding in points (non-negative)
+            padding_left: Left padding in points (non-negative)
+            padding_right: Right padding in points (non-negative)
+            content_alignment: Vertical alignment ("TOP", "MIDDLE", "BOTTOM")
             row_index: Optional starting row index for a targeted cell range
             column_index: Optional starting column index for a targeted cell range
             row_span: Optional row span for a targeted cell range
@@ -765,11 +777,23 @@ class ValidationManager:
             Tuple of (is_valid, error_message)
         """
         if all(
-            param is None for param in (background_color, border_color, border_width)
+            param is None
+            for param in (
+                background_color,
+                border_color,
+                border_width,
+                padding_top,
+                padding_bottom,
+                padding_left,
+                padding_right,
+                content_alignment,
+            )
         ):
             return (
                 False,
-                "At least one table cell style parameter must be provided (background_color, border_color, or border_width)",
+                "At least one table cell style parameter must be provided "
+                "(background_color, border_color, border_width, padding_top, "
+                "padding_bottom, padding_left, padding_right, or content_alignment)",
             )
 
         is_valid, error_msg = self.validate_color_param(
@@ -790,6 +814,38 @@ class ValidationManager:
                 )
             if border_width <= 0:
                 return False, f"border_width must be positive, got {border_width}"
+
+        for padding_value, padding_name in (
+            (padding_top, "padding_top"),
+            (padding_bottom, "padding_bottom"),
+            (padding_left, "padding_left"),
+            (padding_right, "padding_right"),
+        ):
+            if padding_value is not None:
+                if isinstance(padding_value, bool) or not isinstance(
+                    padding_value, (int, float)
+                ):
+                    return (
+                        False,
+                        f"{padding_name} must be a number, got {type(padding_value).__name__}",
+                    )
+                if padding_value < 0:
+                    return (
+                        False,
+                        f"{padding_name} must be non-negative, got {padding_value}",
+                    )
+
+        if content_alignment is not None:
+            if not isinstance(content_alignment, str):
+                return (
+                    False,
+                    f"content_alignment must be a string, got {type(content_alignment).__name__}",
+                )
+            if content_alignment.upper() not in self.VALID_CONTENT_ALIGNMENTS:
+                return (
+                    False,
+                    f"content_alignment must be one of: {', '.join(self.VALID_CONTENT_ALIGNMENTS)}",
+                )
 
         has_range_start = row_index is not None or column_index is not None
         has_range_span = row_span is not None or column_span is not None
@@ -1130,6 +1186,11 @@ class ValidationManager:
                     op.get("background_color"),
                     op.get("border_color"),
                     op.get("border_width"),
+                    op.get("padding_top"),
+                    op.get("padding_bottom"),
+                    op.get("padding_left"),
+                    op.get("padding_right"),
+                    op.get("content_alignment"),
                     op.get("row_index"),
                     op.get("column_index"),
                     op.get("row_span"),

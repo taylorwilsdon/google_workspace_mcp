@@ -31,6 +31,13 @@ from gdocs.docs_helpers import (
     create_insert_doc_tab_request,
     create_delete_doc_tab_request,
     create_update_doc_tab_request,
+    create_insert_table_row_request,
+    create_delete_table_row_request,
+    create_insert_table_column_request,
+    create_delete_table_column_request,
+    create_merge_table_cells_request,
+    create_unmerge_table_cells_request,
+    create_update_table_column_properties_request,
     validate_operation,
 )
 from gdocs.managers.validation_manager import ValidationManager
@@ -450,6 +457,11 @@ class BatchOperationManager:
                     background_color=op.get("background_color"),
                     border_color=op.get("border_color"),
                     border_width=op.get("border_width"),
+                    padding_top=op.get("padding_top"),
+                    padding_bottom=op.get("padding_bottom"),
+                    padding_left=op.get("padding_left"),
+                    padding_right=op.get("padding_right"),
+                    content_alignment=op.get("content_alignment"),
                     row_index=op.get("row_index"),
                     column_index=op.get("column_index"),
                     row_span=op.get("row_span"),
@@ -464,6 +476,11 @@ class BatchOperationManager:
                 background_color=op.get("background_color"),
                 border_color=op.get("border_color"),
                 border_width=op.get("border_width"),
+                padding_top=op.get("padding_top"),
+                padding_bottom=op.get("padding_bottom"),
+                padding_left=op.get("padding_left"),
+                padding_right=op.get("padding_right"),
+                content_alignment=op.get("content_alignment"),
                 row_index=op.get("row_index"),
                 column_index=op.get("column_index"),
                 row_span=op.get("row_span"),
@@ -479,9 +496,25 @@ class BatchOperationManager:
                 ("background_color", "background"),
                 ("border_color", "border color"),
                 ("border_width", "border width"),
+                ("padding_top", "padding top"),
+                ("padding_bottom", "padding bottom"),
+                ("padding_left", "padding left"),
+                ("padding_right", "padding right"),
+                ("content_alignment", "content alignment"),
             ]:
                 if op.get(param) is not None:
-                    value = f"{op[param]}pt" if param == "border_width" else op[param]
+                    value = (
+                        f"{op[param]}pt"
+                        if param
+                        in (
+                            "border_width",
+                            "padding_top",
+                            "padding_bottom",
+                            "padding_left",
+                            "padding_right",
+                        )
+                        else op[param]
+                    )
                     style_changes.append(f"{name}: {value}")
 
             if op.get("row_index") is not None:
@@ -694,6 +727,91 @@ class BatchOperationManager:
             request = create_update_doc_tab_request(op["tab_id"], op["title"])
             description = f"rename tab '{op['tab_id']}' to '{op['title']}'"
 
+        elif op_type == "insert_table_row":
+            request = create_insert_table_row_request(
+                table_start_index=op["table_start_index"],
+                row_index=op["row_index"],
+                insert_below=op.get("insert_below", True),
+                tab_id=tab_id,
+            )
+            direction = "below" if op.get("insert_below", True) else "above"
+            description = f"insert row {direction} row {op['row_index']} in table at {op['table_start_index']}"
+
+        elif op_type == "delete_table_row":
+            request = create_delete_table_row_request(
+                table_start_index=op["table_start_index"],
+                row_index=op["row_index"],
+                tab_id=tab_id,
+            )
+            description = (
+                f"delete row {op['row_index']} from table at {op['table_start_index']}"
+            )
+
+        elif op_type == "insert_table_column":
+            request = create_insert_table_column_request(
+                table_start_index=op["table_start_index"],
+                column_index=op["column_index"],
+                insert_right=op.get("insert_right", True),
+                tab_id=tab_id,
+            )
+            direction = "right of" if op.get("insert_right", True) else "left of"
+            description = f"insert column {direction} column {op['column_index']} in table at {op['table_start_index']}"
+
+        elif op_type == "delete_table_column":
+            request = create_delete_table_column_request(
+                table_start_index=op["table_start_index"],
+                column_index=op["column_index"],
+                tab_id=tab_id,
+            )
+            description = f"delete column {op['column_index']} from table at {op['table_start_index']}"
+
+        elif op_type == "merge_table_cells":
+            request = create_merge_table_cells_request(
+                table_start_index=op["table_start_index"],
+                row_index=op["row_index"],
+                column_index=op["column_index"],
+                row_span=op["row_span"],
+                column_span=op["column_span"],
+                tab_id=tab_id,
+            )
+            description = (
+                f"merge cells at ({op['row_index']},{op['column_index']}) "
+                f"span {op['row_span']}x{op['column_span']} in table at {op['table_start_index']}"
+            )
+
+        elif op_type == "unmerge_table_cells":
+            request = create_unmerge_table_cells_request(
+                table_start_index=op["table_start_index"],
+                row_index=op["row_index"],
+                column_index=op["column_index"],
+                row_span=op["row_span"],
+                column_span=op["column_span"],
+                tab_id=tab_id,
+            )
+            description = (
+                f"unmerge cells at ({op['row_index']},{op['column_index']}) "
+                f"span {op['row_span']}x{op['column_span']} in table at {op['table_start_index']}"
+            )
+
+        elif op_type == "update_table_column_properties":
+            request = create_update_table_column_properties_request(
+                table_start_index=op["table_start_index"],
+                column_indices=op["column_indices"],
+                width=op.get("width"),
+                width_type=op.get("width_type"),
+                tab_id=tab_id,
+            )
+
+            if not request:
+                raise ValueError(
+                    "update_table_column_properties requires at least one of: width, width_type"
+                )
+
+            description = (
+                f"update column properties for columns {op['column_indices']} "
+                f"in table at {op['table_start_index']}"
+            )
+
         else:
             supported_types = [
                 "insert_text",
@@ -717,6 +835,13 @@ class BatchOperationManager:
                 "insert_doc_tab",
                 "delete_doc_tab",
                 "update_doc_tab",
+                "insert_table_row",
+                "delete_table_row",
+                "insert_table_column",
+                "delete_table_column",
+                "merge_table_cells",
+                "unmerge_table_cells",
+                "update_table_column_properties",
             ]
             raise ValueError(
                 f"Unsupported operation type '{op_type}'. Supported: {', '.join(supported_types)}"
@@ -882,6 +1007,11 @@ class BatchOperationManager:
                         "background_color",
                         "border_color",
                         "border_width",
+                        "padding_top",
+                        "padding_bottom",
+                        "padding_left",
+                        "padding_right",
+                        "content_alignment",
                         "row_index",
                         "column_index",
                         "row_span",
@@ -1002,6 +1132,53 @@ class BatchOperationManager:
                 "update_doc_tab": {
                     "required": ["tab_id", "title"],
                     "description": "Rename a document tab",
+                },
+                "insert_table_row": {
+                    "required": ["table_start_index", "row_index"],
+                    "optional": ["insert_below", "tab_id"],
+                    "description": "Insert a row above or below a reference row in a table",
+                },
+                "delete_table_row": {
+                    "required": ["table_start_index", "row_index"],
+                    "optional": ["tab_id"],
+                    "description": "Delete a row from a table",
+                },
+                "insert_table_column": {
+                    "required": ["table_start_index", "column_index"],
+                    "optional": ["insert_right", "tab_id"],
+                    "description": "Insert a column to the left or right of a reference column in a table",
+                },
+                "delete_table_column": {
+                    "required": ["table_start_index", "column_index"],
+                    "optional": ["tab_id"],
+                    "description": "Delete a column from a table",
+                },
+                "merge_table_cells": {
+                    "required": [
+                        "table_start_index",
+                        "row_index",
+                        "column_index",
+                        "row_span",
+                        "column_span",
+                    ],
+                    "optional": ["tab_id"],
+                    "description": "Merge a rectangular range of cells in a table",
+                },
+                "unmerge_table_cells": {
+                    "required": [
+                        "table_start_index",
+                        "row_index",
+                        "column_index",
+                        "row_span",
+                        "column_span",
+                    ],
+                    "optional": ["tab_id"],
+                    "description": "Unmerge cells in a table that were previously merged",
+                },
+                "update_table_column_properties": {
+                    "required": ["table_start_index", "column_indices"],
+                    "optional": ["width", "width_type", "tab_id"],
+                    "description": "Update column width and width type for specified columns in a table",
                 },
             },
             "example_operations": [
