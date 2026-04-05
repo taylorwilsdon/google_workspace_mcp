@@ -6,7 +6,7 @@ Covers file permissions, directory permissions, and path traversal prevention.
 import json
 import os
 import stat
-import tempfile
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -34,8 +34,6 @@ class TestFilePermissions:
 
     def test_credential_file_created_with_0600(self, cred_store):
         """store_credential writes JSON with mode 0600."""
-        from unittest.mock import MagicMock
-
         mock_creds = MagicMock()
         mock_creds.token = "tok"
         mock_creds.refresh_token = "rtok"
@@ -54,8 +52,6 @@ class TestFilePermissions:
 
     def test_credential_file_content_valid(self, cred_store):
         """Stored credential file contains valid JSON with expected keys."""
-        from unittest.mock import MagicMock
-
         mock_creds = MagicMock()
         mock_creds.token = "access_token_value"
         mock_creds.refresh_token = "refresh_token_value"
