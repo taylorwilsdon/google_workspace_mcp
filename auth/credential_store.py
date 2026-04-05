@@ -131,8 +131,9 @@ class LocalDirectoryCredentialStore(CredentialStore):
         creds_path = os.path.join(self.base_dir, f"{safe_email}.json")
 
         # Verify resolved path is still under base_dir
+        base_resolved = os.path.realpath(str(self.base_dir))
         resolved = os.path.realpath(creds_path)
-        if not resolved.startswith(os.path.realpath(str(self.base_dir))):
+        if not resolved.startswith(base_resolved + os.sep):
             raise ValueError(f"Invalid credential path: {creds_path}")
 
         return creds_path

@@ -189,6 +189,10 @@ def configure_file_logging(logger_name: str = None) -> bool:
         os.makedirs(log_dir, mode=0o700, exist_ok=True)
         log_file_path = os.path.join(log_dir, "mcp_server_debug.log")
 
+        # Pre-create log file with restrictive permissions to avoid TOCTOU race
+        fd = os.open(log_file_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        os.close(fd)
+
         file_handler = logging.FileHandler(log_file_path, mode="a")
         file_handler.setLevel(logging.DEBUG)
 
@@ -198,9 +202,6 @@ def configure_file_logging(logger_name: str = None) -> bool:
         )
         file_handler.setFormatter(file_formatter)
         target_logger.addHandler(file_handler)
-
-        # Restrict log file permissions after creation
-        os.chmod(log_file_path, 0o600)
 
         logger = logging.getLogger(logger_name)
         logger.debug(f"Detailed file logging configured to: {log_file_path}")
