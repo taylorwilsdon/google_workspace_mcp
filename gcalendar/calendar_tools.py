@@ -2420,3 +2420,47 @@ async def query_freebusy(
         f"[query_freebusy] Successfully retrieved free/busy information for {len(calendars)} calendar(s)"
     )
     return result_text
+
+
+@server.tool()
+@handle_http_errors("create_calendar", is_read_only=False, service_type="calendar")
+@require_google_service("calendar", "calendar")
+async def create_calendar(
+    service,
+    user_google_email: str,
+    summary: str,
+    description: Optional[str] = None,
+    timezone: Optional[str] = None,
+) -> str:
+    """
+    Creates a new secondary Google Calendar.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        summary (str): The title/name of the new calendar.
+        description (Optional[str]): An optional description for the calendar.
+        timezone (Optional[str]): IANA timezone for the calendar (e.g. 'America/New_York').
+
+    Returns:
+        str: The ID and summary of the newly created calendar.
+    """
+    logger.info(
+        f"[create_calendar] Invoked. Email: '{user_google_email}', summary: '{summary}'"
+    )
+
+    body: Dict[str, Any] = {"summary": summary}
+    if description:
+        body["description"] = description
+    if timezone:
+        body["timeZone"] = timezone
+
+    result = await asyncio.to_thread(
+        lambda: service.calendars().insert(body=body).execute()
+    )
+
+    calendar_id = result["id"]
+    calendar_summary = result.get("summary", summary)
+    logger.info(
+        f"[create_calendar] Created calendar '{calendar_summary}' with ID: {calendar_id}"
+    )
+    return f"Created calendar '{calendar_summary}' (ID: {calendar_id})"
