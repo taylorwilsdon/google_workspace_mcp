@@ -869,7 +869,23 @@ def get_credentials(
         logger.info(
             "[get_credentials] Single-user mode: bypassing session mapping, finding any credentials"
         )
-        credentials, found_user_email = _find_any_credentials(credentials_base_dir)
+        # If a specific email was requested, try to load that user's credentials first
+        # to avoid session binding conflicts when multiple credential files exist
+        if user_google_email:
+            credential_store = get_credential_store()
+            credentials = credential_store.get_credential(user_google_email)
+            if credentials:
+                logger.info(
+                    f"[get_credentials] Single-user mode: found credentials for requested user {user_google_email}"
+                )
+                found_user_email = user_google_email
+            else:
+                logger.info(
+                    f"[get_credentials] Single-user mode: no credentials for {user_google_email}, falling back to any"
+                )
+                credentials, found_user_email = _find_any_credentials(credentials_base_dir)
+        else:
+            credentials, found_user_email = _find_any_credentials(credentials_base_dir)
         if not credentials:
             logger.info(
                 f"[get_credentials] Single-user mode: No credentials found in {credentials_base_dir}"
