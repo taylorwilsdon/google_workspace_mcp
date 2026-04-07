@@ -87,6 +87,7 @@ sheets:
   complete:
     - create_sheet
     - append_table_rows
+    - resize_sheet_dimensions
     - list_spreadsheet_comments
     - manage_spreadsheet_comment
     - manage_conditional_formatting

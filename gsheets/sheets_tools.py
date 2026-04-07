@@ -1424,6 +1424,58 @@ async def append_table_rows(
     return text_output
 
 
+def _build_column_visibility_requests(sheet_id, letters, hidden, label):
+    """Build updateDimensionProperties requests to hide/unhide columns."""
+    if not isinstance(letters, list):
+        raise UserInputError(f"{label} must be a list of column letters.")
+    reqs = []
+    for col_letter in letters:
+        col_idx = _column_to_index(str(col_letter).upper())
+        if col_idx is None:
+            raise UserInputError(f"Invalid column letter in {label}: '{col_letter}'.")
+        reqs.append(
+            {
+                "updateDimensionProperties": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "dimension": "COLUMNS",
+                        "startIndex": col_idx,
+                        "endIndex": col_idx + 1,
+                    },
+                    "properties": {"hiddenByUser": hidden},
+                    "fields": "hiddenByUser",
+                }
+            }
+        )
+    return reqs
+
+
+def _build_row_visibility_requests(sheet_id, row_nums, hidden, label):
+    """Build updateDimensionProperties requests to hide/unhide rows."""
+    if not isinstance(row_nums, list):
+        raise UserInputError(f"{label} must be a list of row numbers.")
+    reqs = []
+    for row_num in row_nums:
+        row_num = int(row_num)
+        if row_num < 1:
+            raise UserInputError(f"Row number must be >= 1 in {label}, got {row_num}.")
+        reqs.append(
+            {
+                "updateDimensionProperties": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "dimension": "ROWS",
+                        "startIndex": row_num - 1,
+                        "endIndex": row_num,
+                    },
+                    "properties": {"hiddenByUser": hidden},
+                    "fields": "hiddenByUser",
+                }
+            }
+        )
+    return reqs
+
+
 async def _resize_sheet_dimensions_impl(
     service,
     spreadsheet_id: str,
@@ -1475,13 +1527,24 @@ async def _resize_sheet_dimensions_impl(
     Returns:
         Dictionary with keys: spreadsheet_id, summary.
     """
-    has_any = any([
-        column_sizes, row_sizes, auto_resize_columns, auto_resize_rows,
-        frozen_row_count is not None, frozen_column_count is not None,
-        hide_columns, unhide_columns, hide_rows, unhide_rows,
-        insert_rows is not None, insert_columns is not None,
-        delete_rows, delete_columns,
-    ])
+    has_any = any(
+        [
+            column_sizes,
+            row_sizes,
+            auto_resize_columns,
+            auto_resize_rows,
+            frozen_row_count is not None,
+            frozen_column_count is not None,
+            hide_columns,
+            unhide_columns,
+            hide_rows,
+            unhide_rows,
+            insert_rows is not None,
+            insert_columns is not None,
+            delete_rows,
+            delete_columns,
+        ]
+    )
     if not has_any:
         raise UserInputError(
             "Provide at least one of: column_sizes, row_sizes, "
@@ -1491,66 +1554,25 @@ async def _resize_sheet_dimensions_impl(
             "delete_rows, or delete_columns."
         )
 
-    # Parse JSON strings
-    if isinstance(column_sizes, str):
+    # Parse JSON string parameters
+    def _parse_json(value, name):
+        if not isinstance(value, str):
+            return value
         try:
-            column_sizes = json.loads(column_sizes)
+            return json.loads(value)
         except json.JSONDecodeError as e:
-            raise UserInputError(f"Invalid JSON for column_sizes: {e}")
+            raise UserInputError(f"Invalid JSON for {name}: {e}")
 
-    if isinstance(row_sizes, str):
-        try:
-            row_sizes = json.loads(row_sizes)
-        except json.JSONDecodeError as e:
-            raise UserInputError(f"Invalid JSON for row_sizes: {e}")
-
-    if isinstance(auto_resize_columns, str):
-        try:
-            auto_resize_columns = json.loads(auto_resize_columns)
-        except json.JSONDecodeError as e:
-            raise UserInputError(f"Invalid JSON for auto_resize_columns: {e}")
-
-    if isinstance(auto_resize_rows, str):
-        try:
-            auto_resize_rows = json.loads(auto_resize_rows)
-        except json.JSONDecodeError as e:
-            raise UserInputError(f"Invalid JSON for auto_resize_rows: {e}")
-
-    if isinstance(hide_columns, str):
-        try:
-            hide_columns = json.loads(hide_columns)
-        except json.JSONDecodeError as e:
-            raise UserInputError(f"Invalid JSON for hide_columns: {e}")
-
-    if isinstance(unhide_columns, str):
-        try:
-            unhide_columns = json.loads(unhide_columns)
-        except json.JSONDecodeError as e:
-            raise UserInputError(f"Invalid JSON for unhide_columns: {e}")
-
-    if isinstance(hide_rows, str):
-        try:
-            hide_rows = json.loads(hide_rows)
-        except json.JSONDecodeError as e:
-            raise UserInputError(f"Invalid JSON for hide_rows: {e}")
-
-    if isinstance(unhide_rows, str):
-        try:
-            unhide_rows = json.loads(unhide_rows)
-        except json.JSONDecodeError as e:
-            raise UserInputError(f"Invalid JSON for unhide_rows: {e}")
-
-    if isinstance(delete_rows, str):
-        try:
-            delete_rows = json.loads(delete_rows)
-        except json.JSONDecodeError as e:
-            raise UserInputError(f"Invalid JSON for delete_rows: {e}")
-
-    if isinstance(delete_columns, str):
-        try:
-            delete_columns = json.loads(delete_columns)
-        except json.JSONDecodeError as e:
-            raise UserInputError(f"Invalid JSON for delete_columns: {e}")
+    column_sizes = _parse_json(column_sizes, "column_sizes")
+    row_sizes = _parse_json(row_sizes, "row_sizes")
+    auto_resize_columns = _parse_json(auto_resize_columns, "auto_resize_columns")
+    auto_resize_rows = _parse_json(auto_resize_rows, "auto_resize_rows")
+    hide_columns = _parse_json(hide_columns, "hide_columns")
+    unhide_columns = _parse_json(unhide_columns, "unhide_columns")
+    hide_rows = _parse_json(hide_rows, "hide_rows")
+    unhide_rows = _parse_json(unhide_rows, "unhide_rows")
+    delete_rows = _parse_json(delete_rows, "delete_rows")
+    delete_columns = _parse_json(delete_columns, "delete_columns")
 
     # Get sheet metadata to resolve sheet ID
     metadata = await asyncio.to_thread(
@@ -1585,7 +1607,9 @@ async def _resize_sheet_dimensions_impl(
     # Build column resize requests
     if column_sizes:
         if not isinstance(column_sizes, dict):
-            raise UserInputError("column_sizes must be a dict mapping column letters to pixel widths.")
+            raise UserInputError(
+                "column_sizes must be a dict mapping column letters to pixel widths."
+            )
         for col_letter, pixel_size in column_sizes.items():
             col_idx = _column_to_index(col_letter.upper())
             if col_idx is None:
@@ -1594,18 +1618,20 @@ async def _resize_sheet_dimensions_impl(
                 raise UserInputError(
                     f"Pixel size for column '{col_letter}' must be a positive number."
                 )
-            requests.append({
-                "updateDimensionProperties": {
-                    "range": {
-                        "sheetId": sheet_id,
-                        "dimension": "COLUMNS",
-                        "startIndex": col_idx,
-                        "endIndex": col_idx + 1,
-                    },
-                    "properties": {"pixelSize": int(pixel_size)},
-                    "fields": "pixelSize",
+            requests.append(
+                {
+                    "updateDimensionProperties": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "dimension": "COLUMNS",
+                            "startIndex": col_idx,
+                            "endIndex": col_idx + 1,
+                        },
+                        "properties": {"pixelSize": int(pixel_size)},
+                        "fields": "pixelSize",
+                    }
                 }
-            })
+            )
         applied_parts.append(
             f"resized columns: {', '.join(f'{k}={v}px' for k, v in column_sizes.items())}"
         )
@@ -1613,7 +1639,9 @@ async def _resize_sheet_dimensions_impl(
     # Build row resize requests
     if row_sizes:
         if not isinstance(row_sizes, dict):
-            raise UserInputError("row_sizes must be a dict mapping row numbers to pixel heights.")
+            raise UserInputError(
+                "row_sizes must be a dict mapping row numbers to pixel heights."
+            )
         for row_num_str, pixel_size in row_sizes.items():
             row_num = int(row_num_str)
             if row_num < 1:
@@ -1622,18 +1650,20 @@ async def _resize_sheet_dimensions_impl(
                 raise UserInputError(
                     f"Pixel size for row {row_num} must be a positive number."
                 )
-            requests.append({
-                "updateDimensionProperties": {
-                    "range": {
-                        "sheetId": sheet_id,
-                        "dimension": "ROWS",
-                        "startIndex": row_num - 1,
-                        "endIndex": row_num,
-                    },
-                    "properties": {"pixelSize": int(pixel_size)},
-                    "fields": "pixelSize",
+            requests.append(
+                {
+                    "updateDimensionProperties": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "dimension": "ROWS",
+                            "startIndex": row_num - 1,
+                            "endIndex": row_num,
+                        },
+                        "properties": {"pixelSize": int(pixel_size)},
+                        "fields": "pixelSize",
+                    }
                 }
-            })
+            )
         applied_parts.append(
             f"resized rows: {', '.join(f'{k}={v}px' for k, v in row_sizes.items())}"
         )
@@ -1641,21 +1671,25 @@ async def _resize_sheet_dimensions_impl(
     # Build auto-resize column requests
     if auto_resize_columns:
         if not isinstance(auto_resize_columns, list):
-            raise UserInputError("auto_resize_columns must be a list of column letters.")
+            raise UserInputError(
+                "auto_resize_columns must be a list of column letters."
+            )
         for col_letter in auto_resize_columns:
             col_idx = _column_to_index(str(col_letter).upper())
             if col_idx is None:
                 raise UserInputError(f"Invalid column letter: '{col_letter}'.")
-            requests.append({
-                "autoResizeDimensions": {
-                    "dimensions": {
-                        "sheetId": sheet_id,
-                        "dimension": "COLUMNS",
-                        "startIndex": col_idx,
-                        "endIndex": col_idx + 1,
+            requests.append(
+                {
+                    "autoResizeDimensions": {
+                        "dimensions": {
+                            "sheetId": sheet_id,
+                            "dimension": "COLUMNS",
+                            "startIndex": col_idx,
+                            "endIndex": col_idx + 1,
+                        }
                     }
                 }
-            })
+            )
         applied_parts.append(
             f"auto-resized columns: {', '.join(str(c) for c in auto_resize_columns)}"
         )
@@ -1668,16 +1702,18 @@ async def _resize_sheet_dimensions_impl(
             row_num = int(row_num)
             if row_num < 1:
                 raise UserInputError(f"Row number must be >= 1, got {row_num}.")
-            requests.append({
-                "autoResizeDimensions": {
-                    "dimensions": {
-                        "sheetId": sheet_id,
-                        "dimension": "ROWS",
-                        "startIndex": row_num - 1,
-                        "endIndex": row_num,
+            requests.append(
+                {
+                    "autoResizeDimensions": {
+                        "dimensions": {
+                            "sheetId": sheet_id,
+                            "dimension": "ROWS",
+                            "startIndex": row_num - 1,
+                            "endIndex": row_num,
+                        }
                     }
                 }
-            })
+            )
         applied_parts.append(
             f"auto-resized rows: {', '.join(str(r) for r in auto_resize_rows)}"
         )
@@ -1691,7 +1727,8 @@ async def _resize_sheet_dimensions_impl(
         grid_properties["frozenRowCount"] = frozen_row_count
         grid_fields.append("gridProperties.frozenRowCount")
         applied_parts.append(
-            f"froze {frozen_row_count} row(s)" if frozen_row_count > 0
+            f"froze {frozen_row_count} row(s)"
+            if frozen_row_count > 0
             else "unfroze rows"
         )
 
@@ -1701,77 +1738,54 @@ async def _resize_sheet_dimensions_impl(
         grid_properties["frozenColumnCount"] = frozen_column_count
         grid_fields.append("gridProperties.frozenColumnCount")
         applied_parts.append(
-            f"froze {frozen_column_count} column(s)" if frozen_column_count > 0
+            f"froze {frozen_column_count} column(s)"
+            if frozen_column_count > 0
             else "unfroze columns"
         )
 
     if grid_properties:
-        requests.append({
-            "updateSheetProperties": {
-                "properties": {
-                    "sheetId": sheet_id,
-                    "gridProperties": grid_properties,
-                },
-                "fields": ",".join(grid_fields),
+        requests.append(
+            {
+                "updateSheetProperties": {
+                    "properties": {
+                        "sheetId": sheet_id,
+                        "gridProperties": grid_properties,
+                    },
+                    "fields": ",".join(grid_fields),
+                }
             }
-        })
+        )
 
     # Build hide/unhide column requests
-    def _build_hide_unhide_requests(letters, dimension, hidden, label):
-        if not isinstance(letters, list):
-            raise UserInputError(f"{label} must be a list of column letters.")
-        for col_letter in letters:
-            col_idx = _column_to_index(str(col_letter).upper())
-            if col_idx is None:
-                raise UserInputError(f"Invalid column letter in {label}: '{col_letter}'.")
-            requests.append({
-                "updateDimensionProperties": {
-                    "range": {
-                        "sheetId": sheet_id,
-                        "dimension": dimension,
-                        "startIndex": col_idx,
-                        "endIndex": col_idx + 1,
-                    },
-                    "properties": {"hiddenByUser": hidden},
-                    "fields": "hiddenByUser",
-                }
-            })
-
     if hide_columns:
-        _build_hide_unhide_requests(hide_columns, "COLUMNS", True, "hide_columns")
+        requests.extend(
+            _build_column_visibility_requests(
+                sheet_id, hide_columns, True, "hide_columns"
+            )
+        )
         applied_parts.append(f"hid columns: {', '.join(str(c) for c in hide_columns)}")
 
     if unhide_columns:
-        _build_hide_unhide_requests(unhide_columns, "COLUMNS", False, "unhide_columns")
-        applied_parts.append(f"unhid columns: {', '.join(str(c) for c in unhide_columns)}")
+        requests.extend(
+            _build_column_visibility_requests(
+                sheet_id, unhide_columns, False, "unhide_columns"
+            )
+        )
+        applied_parts.append(
+            f"unhid columns: {', '.join(str(c) for c in unhide_columns)}"
+        )
 
     # Build hide/unhide row requests
-    def _build_row_hide_unhide_requests(row_nums, hidden, label):
-        if not isinstance(row_nums, list):
-            raise UserInputError(f"{label} must be a list of row numbers.")
-        for row_num in row_nums:
-            row_num = int(row_num)
-            if row_num < 1:
-                raise UserInputError(f"Row number must be >= 1 in {label}, got {row_num}.")
-            requests.append({
-                "updateDimensionProperties": {
-                    "range": {
-                        "sheetId": sheet_id,
-                        "dimension": "ROWS",
-                        "startIndex": row_num - 1,
-                        "endIndex": row_num,
-                    },
-                    "properties": {"hiddenByUser": hidden},
-                    "fields": "hiddenByUser",
-                }
-            })
-
     if hide_rows:
-        _build_row_hide_unhide_requests(hide_rows, True, "hide_rows")
+        requests.extend(
+            _build_row_visibility_requests(sheet_id, hide_rows, True, "hide_rows")
+        )
         applied_parts.append(f"hid rows: {', '.join(str(r) for r in hide_rows)}")
 
     if unhide_rows:
-        _build_row_hide_unhide_requests(unhide_rows, False, "unhide_rows")
+        requests.extend(
+            _build_row_visibility_requests(sheet_id, unhide_rows, False, "unhide_rows")
+        )
         applied_parts.append(f"unhid rows: {', '.join(str(r) for r in unhide_rows)}")
 
     # Build insert row requests
@@ -1780,32 +1794,40 @@ async def _resize_sheet_dimensions_impl(
             raise UserInputError("insert_rows must be a positive integer.")
         if insert_rows_at is not None:
             if not isinstance(insert_rows_at, int) or insert_rows_at < 1:
-                raise UserInputError("insert_rows_at must be a positive integer (1-based).")
+                raise UserInputError(
+                    "insert_rows_at must be a positive integer (1-based)."
+                )
             start_idx = insert_rows_at - 1
         else:
             start_idx = None
 
         if start_idx is not None:
-            requests.append({
-                "insertDimension": {
-                    "range": {
+            requests.append(
+                {
+                    "insertDimension": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "dimension": "ROWS",
+                            "startIndex": start_idx,
+                            "endIndex": start_idx + insert_rows,
+                        },
+                        "inheritFromBefore": start_idx > 0,
+                    }
+                }
+            )
+            applied_parts.append(
+                f"inserted {insert_rows} row(s) at row {insert_rows_at}"
+            )
+        else:
+            requests.append(
+                {
+                    "appendDimension": {
                         "sheetId": sheet_id,
                         "dimension": "ROWS",
-                        "startIndex": start_idx,
-                        "endIndex": start_idx + insert_rows,
-                    },
-                    "inheritFromBefore": start_idx > 0,
+                        "length": insert_rows,
+                    }
                 }
-            })
-            applied_parts.append(f"inserted {insert_rows} row(s) at row {insert_rows_at}")
-        else:
-            requests.append({
-                "appendDimension": {
-                    "sheetId": sheet_id,
-                    "dimension": "ROWS",
-                    "length": insert_rows,
-                }
-            })
+            )
             applied_parts.append(f"appended {insert_rows} row(s)")
 
     # Build insert column requests
@@ -1815,27 +1837,35 @@ async def _resize_sheet_dimensions_impl(
         if insert_columns_at is not None:
             col_idx = _column_to_index(str(insert_columns_at).upper())
             if col_idx is None:
-                raise UserInputError(f"Invalid column letter for insert_columns_at: '{insert_columns_at}'.")
-            requests.append({
-                "insertDimension": {
-                    "range": {
+                raise UserInputError(
+                    f"Invalid column letter for insert_columns_at: '{insert_columns_at}'."
+                )
+            requests.append(
+                {
+                    "insertDimension": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "dimension": "COLUMNS",
+                            "startIndex": col_idx,
+                            "endIndex": col_idx + insert_columns,
+                        },
+                        "inheritFromBefore": col_idx > 0,
+                    }
+                }
+            )
+            applied_parts.append(
+                f"inserted {insert_columns} column(s) at column {insert_columns_at}"
+            )
+        else:
+            requests.append(
+                {
+                    "appendDimension": {
                         "sheetId": sheet_id,
                         "dimension": "COLUMNS",
-                        "startIndex": col_idx,
-                        "endIndex": col_idx + insert_columns,
-                    },
-                    "inheritFromBefore": col_idx > 0,
+                        "length": insert_columns,
+                    }
                 }
-            })
-            applied_parts.append(f"inserted {insert_columns} column(s) at column {insert_columns_at}")
-        else:
-            requests.append({
-                "appendDimension": {
-                    "sheetId": sheet_id,
-                    "dimension": "COLUMNS",
-                    "length": insert_columns,
-                }
-            })
+            )
             applied_parts.append(f"appended {insert_columns} column(s)")
 
     # Build delete row requests (process in reverse to keep indices stable)
@@ -1845,17 +1875,21 @@ async def _resize_sheet_dimensions_impl(
         sorted_rows = sorted([int(r) for r in delete_rows], reverse=True)
         for row_num in sorted_rows:
             if row_num < 1:
-                raise UserInputError(f"Row number must be >= 1 in delete_rows, got {row_num}.")
-            requests.append({
-                "deleteDimension": {
-                    "range": {
-                        "sheetId": sheet_id,
-                        "dimension": "ROWS",
-                        "startIndex": row_num - 1,
-                        "endIndex": row_num,
+                raise UserInputError(
+                    f"Row number must be >= 1 in delete_rows, got {row_num}."
+                )
+            requests.append(
+                {
+                    "deleteDimension": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "dimension": "ROWS",
+                            "startIndex": row_num - 1,
+                            "endIndex": row_num,
+                        }
                     }
                 }
-            })
+            )
         applied_parts.append(f"deleted rows: {', '.join(str(r) for r in delete_rows)}")
 
     # Build delete column requests (process in reverse to keep indices stable)
@@ -1866,22 +1900,28 @@ async def _resize_sheet_dimensions_impl(
         for col_letter in delete_columns:
             col_idx = _column_to_index(str(col_letter).upper())
             if col_idx is None:
-                raise UserInputError(f"Invalid column letter in delete_columns: '{col_letter}'.")
+                raise UserInputError(
+                    f"Invalid column letter in delete_columns: '{col_letter}'."
+                )
             col_indices.append((col_letter, col_idx))
         # Sort by index descending to keep indices stable during deletion
         col_indices.sort(key=lambda x: x[1], reverse=True)
         for _, col_idx in col_indices:
-            requests.append({
-                "deleteDimension": {
-                    "range": {
-                        "sheetId": sheet_id,
-                        "dimension": "COLUMNS",
-                        "startIndex": col_idx,
-                        "endIndex": col_idx + 1,
+            requests.append(
+                {
+                    "deleteDimension": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "dimension": "COLUMNS",
+                            "startIndex": col_idx,
+                            "endIndex": col_idx + 1,
+                        }
                     }
                 }
-            })
-        applied_parts.append(f"deleted columns: {', '.join(str(c) for c in delete_columns)}")
+            )
+        applied_parts.append(
+            f"deleted columns: {', '.join(str(c) for c in delete_columns)}"
+        )
 
     # Execute batch update
     await asyncio.to_thread(
