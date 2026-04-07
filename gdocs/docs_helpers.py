@@ -610,7 +610,7 @@ def create_bullet_list_request(
     Args:
         start_index: Start of text range to convert to list
         end_index: End of text range to convert to list
-        list_type: Type of list ("UNORDERED" or "ORDERED")
+        list_type: Type of list ("UNORDERED", "ORDERED", or "CHECKLIST")
         nesting_level: Nesting level (0-8, where 0 is top level). If None or 0, no tabs added.
         paragraph_start_indices: Optional paragraph start positions for ranges with
             multiple paragraphs. If omitted, only start_index is tab-prefixed.
@@ -620,11 +620,12 @@ def create_bullet_list_request(
         List of request dictionaries (insertText for nesting tabs if needed,
         then createParagraphBullets)
     """
-    bullet_preset = (
-        "BULLET_DISC_CIRCLE_SQUARE"
-        if list_type == "UNORDERED"
-        else "NUMBERED_DECIMAL_ALPHA_ROMAN"
-    )
+    if list_type == "CHECKLIST":
+        bullet_preset = "BULLET_CHECKBOX"
+    elif list_type == "ORDERED":
+        bullet_preset = "NUMBERED_DECIMAL_ALPHA_ROMAN"
+    else:
+        bullet_preset = "BULLET_DISC_CIRCLE_SQUARE"
 
     # Validate nesting level
     if nesting_level is not None:

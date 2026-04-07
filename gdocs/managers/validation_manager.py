@@ -37,7 +37,7 @@ class ValidationManager:
             "font_size_range": (1, 400),  # Google Docs font size limits
             "valid_header_footer_types": ["DEFAULT", "FIRST_PAGE_ONLY", "EVEN_PAGE"],
             "valid_section_types": ["header", "footer"],
-            "valid_list_types": ["UNORDERED", "ORDERED"],
+            "valid_list_types": ["UNORDERED", "ORDERED", "CHECKLIST"],
             "valid_element_types": ["table", "list", "page_break"],
             "valid_alignments": ["START", "CENTER", "END", "JUSTIFIED"],
             "heading_level_range": (0, 6),

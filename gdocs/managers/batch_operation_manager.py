@@ -309,9 +309,9 @@ class BatchOperationManager:
 
         elif op_type == "create_bullet_list":
             list_type = op.get("list_type", "UNORDERED")
-            if list_type not in ("UNORDERED", "ORDERED", "NONE"):
+            if list_type not in ("UNORDERED", "ORDERED", "CHECKLIST", "NONE"):
                 raise ValueError(
-                    f"Invalid list_type '{list_type}'. Must be 'UNORDERED', 'ORDERED', or 'NONE'"
+                    f"Invalid list_type '{list_type}'. Must be 'UNORDERED', 'ORDERED', 'CHECKLIST', or 'NONE'"
                 )
             if list_type == "NONE":
                 request = create_delete_bullet_list_request(
@@ -327,7 +327,7 @@ class BatchOperationManager:
                     op.get("paragraph_start_indices"),
                     tab_id,
                 )
-                style = "bulleted" if list_type == "UNORDERED" else "numbered"
+                style = {"UNORDERED": "bulleted", "ORDERED": "numbered", "CHECKLIST": "checklist"}[list_type]
                 description = (
                     f"create {style} list {op['start_index']}-{op['end_index']}"
                 )
@@ -503,7 +503,7 @@ class BatchOperationManager:
                         "nesting_level",
                         "paragraph_start_indices",
                     ],
-                    "description": "Apply or remove native bullet/numbered list formatting (list_type: UNORDERED, ORDERED, or NONE to remove; nesting_level: 0-8)",
+                    "description": "Apply or remove native bullet/numbered/checklist formatting (list_type: UNORDERED, ORDERED, CHECKLIST, or NONE to remove; nesting_level: 0-8)",
                 },
                 "insert_doc_tab": {
                     "required": ["title", "index"],

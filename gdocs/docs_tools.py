@@ -645,7 +645,7 @@ async def insert_doc_elements(
         index: Position to insert element (0-based)
         rows: Number of rows for table (required for table)
         columns: Number of columns for table (required for table)
-        list_type: Type of list ("UNORDERED", "ORDERED") (required for list)
+        list_type: Type of list ("UNORDERED", "ORDERED", "CHECKLIST") (required for list)
         text: Initial text content for list items
 
     Returns:
@@ -672,7 +672,7 @@ async def insert_doc_elements(
 
     elif element_type == "list":
         if not list_type:
-            return "Error: 'list_type' parameter is required for list insertion ('UNORDERED' or 'ORDERED')."
+            return "Error: 'list_type' parameter is required for list insertion ('UNORDERED', 'ORDERED', or 'CHECKLIST')."
 
         if not text:
             text = "List item"
@@ -890,9 +890,9 @@ async def batch_update_doc(
       find_replace     - required: find_text (str), replace_text (str)
                          optional: match_case (bool, default false)
       create_bullet_list - required: start_index (int), end_index (int)
-                         optional: list_type ('UNORDERED'|'ORDERED'|'NONE', default UNORDERED),
+                         optional: list_type ('UNORDERED'|'ORDERED'|'CHECKLIST'|'NONE', default UNORDERED),
                                    nesting_level (0-8), paragraph_start_indices (list[int])
-                         Use list_type='NONE' to remove existing bullet/list formatting
+                         Use 'CHECKLIST' for checkbox lists, 'NONE' to remove existing formatting
       insert_doc_tab   - required: title (str), index (int)
                          optional: parent_tab_id (str)
       delete_doc_tab   - required: tab_id (str)
@@ -1508,7 +1508,7 @@ async def update_paragraph_style(
         space_below: Space below paragraph in points
         named_style_type: Direct named style type - 'NORMAL_TEXT', 'TITLE', 'SUBTITLE',
                          'HEADING_1' through 'HEADING_6'. Mutually exclusive with heading_level.
-        list_type: Create a list from existing paragraphs ('UNORDERED' for bullets, 'ORDERED' for numbers)
+        list_type: Create a list from existing paragraphs ('UNORDERED' for bullets, 'ORDERED' for numbers, 'CHECKLIST' for checkboxes)
         list_nesting_level: Nesting level for lists (0-8, where 0 is top level, default is 0)
                            Use higher levels for nested/indented list items
 
@@ -1551,7 +1551,7 @@ async def update_paragraph_style(
         # Coerce non-string inputs to string before normalization to avoid AttributeError
         if not isinstance(list_type_value, str):
             list_type_value = str(list_type_value)
-        valid_list_types = ["UNORDERED", "ORDERED"]
+        valid_list_types = ["UNORDERED", "ORDERED", "CHECKLIST"]
         normalized_list_type = list_type_value.upper()
         if normalized_list_type not in valid_list_types:
             return f"Error: list_type must be one of: {', '.join(valid_list_types)}"
