@@ -1456,7 +1456,12 @@ def _build_row_visibility_requests(sheet_id, row_nums, hidden, label):
         raise UserInputError(f"{label} must be a list of row numbers.")
     reqs = []
     for row_num in row_nums:
-        row_num = int(row_num)
+        try:
+            row_num = int(row_num)
+        except ValueError as exc:
+            raise UserInputError(
+                f"Row number must be an integer in {label}, got {row_num}."
+            ) from exc
         if row_num < 1:
             raise UserInputError(f"Row number must be >= 1 in {label}, got {row_num}.")
         reqs.append(
@@ -1643,7 +1648,12 @@ async def _resize_sheet_dimensions_impl(
                 "row_sizes must be a dict mapping row numbers to pixel heights."
             )
         for row_num_str, pixel_size in row_sizes.items():
-            row_num = int(row_num_str)
+            try:
+                row_num = int(row_num_str)
+            except ValueError as exc:
+                raise UserInputError(
+                    f"Row number must be an integer >= 1, got {row_num_str}."
+                ) from exc
             if row_num < 1:
                 raise UserInputError(f"Row number must be >= 1, got {row_num}.")
             if not isinstance(pixel_size, (int, float)) or pixel_size <= 0:
@@ -1699,17 +1709,22 @@ async def _resize_sheet_dimensions_impl(
         if not isinstance(auto_resize_rows, list):
             raise UserInputError("auto_resize_rows must be a list of row numbers.")
         for row_num in auto_resize_rows:
-            row_num = int(row_num)
-            if row_num < 1:
-                raise UserInputError(f"Row number must be >= 1, got {row_num}.")
+            try:
+                parsed_row_num = int(row_num)
+            except ValueError as exc:
+                raise UserInputError(
+                    f"Row number must be an integer >= 1, got {row_num}."
+                ) from exc
+            if parsed_row_num < 1:
+                raise UserInputError(f"Row number must be >= 1, got {parsed_row_num}.")
             requests.append(
                 {
                     "autoResizeDimensions": {
                         "dimensions": {
                             "sheetId": sheet_id,
                             "dimension": "ROWS",
-                            "startIndex": row_num - 1,
-                            "endIndex": row_num,
+                            "startIndex": parsed_row_num - 1,
+                            "endIndex": parsed_row_num,
                         }
                     }
                 }
@@ -1872,7 +1887,15 @@ async def _resize_sheet_dimensions_impl(
     if delete_rows:
         if not isinstance(delete_rows, list):
             raise UserInputError("delete_rows must be a list of row numbers.")
-        sorted_rows = sorted([int(r) for r in delete_rows], reverse=True)
+        parsed_delete_rows = []
+        for row_num in delete_rows:
+            try:
+                parsed_delete_rows.append(int(row_num))
+            except ValueError as exc:
+                raise UserInputError(
+                    f"Row number must be an integer >= 1 in delete_rows, got {row_num}."
+                ) from exc
+        sorted_rows = sorted(parsed_delete_rows, reverse=True)
         for row_num in sorted_rows:
             if row_num < 1:
                 raise UserInputError(

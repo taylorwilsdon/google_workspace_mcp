@@ -247,6 +247,132 @@ async def test_hide_rows():
 
 
 @pytest.mark.asyncio
+async def test_insert_rows_at_position():
+    """Test inserting rows at a specific 1-based row index."""
+    mock_service = create_mock_service()
+
+    result = await _resize_sheet_dimensions_impl(
+        service=mock_service,
+        spreadsheet_id="test_123",
+        insert_rows=2,
+        insert_rows_at=3,
+    )
+
+    assert "inserted 2 row(s) at row 3" in result["summary"]
+
+    call_args = mock_service.spreadsheets().batchUpdate.call_args
+    request = call_args[1]["body"]["requests"][0]["insertDimension"]
+    assert request["range"]["dimension"] == "ROWS"
+    assert request["range"]["startIndex"] == 2
+    assert request["range"]["endIndex"] == 4
+    assert request["inheritFromBefore"] is True
+
+
+@pytest.mark.asyncio
+async def test_append_rows():
+    """Test appending rows to the end of the sheet."""
+    mock_service = create_mock_service()
+
+    result = await _resize_sheet_dimensions_impl(
+        service=mock_service,
+        spreadsheet_id="test_123",
+        insert_rows=3,
+    )
+
+    assert "appended 3 row(s)" in result["summary"]
+
+    call_args = mock_service.spreadsheets().batchUpdate.call_args
+    request = call_args[1]["body"]["requests"][0]["appendDimension"]
+    assert request["dimension"] == "ROWS"
+    assert request["length"] == 3
+
+
+@pytest.mark.asyncio
+async def test_insert_columns_at_position():
+    """Test inserting columns at a specific column letter."""
+    mock_service = create_mock_service()
+
+    result = await _resize_sheet_dimensions_impl(
+        service=mock_service,
+        spreadsheet_id="test_123",
+        insert_columns=2,
+        insert_columns_at="C",
+    )
+
+    assert "inserted 2 column(s) at column C" in result["summary"]
+
+    call_args = mock_service.spreadsheets().batchUpdate.call_args
+    request = call_args[1]["body"]["requests"][0]["insertDimension"]
+    assert request["range"]["dimension"] == "COLUMNS"
+    assert request["range"]["startIndex"] == 2
+    assert request["range"]["endIndex"] == 4
+    assert request["inheritFromBefore"] is True
+
+
+@pytest.mark.asyncio
+async def test_append_columns():
+    """Test appending columns to the end of the sheet."""
+    mock_service = create_mock_service()
+
+    result = await _resize_sheet_dimensions_impl(
+        service=mock_service,
+        spreadsheet_id="test_123",
+        insert_columns=4,
+    )
+
+    assert "appended 4 column(s)" in result["summary"]
+
+    call_args = mock_service.spreadsheets().batchUpdate.call_args
+    request = call_args[1]["body"]["requests"][0]["appendDimension"]
+    assert request["dimension"] == "COLUMNS"
+    assert request["length"] == 4
+
+
+@pytest.mark.asyncio
+async def test_delete_rows_orders_requests_descending():
+    """Test deleting rows in descending order to avoid index shifting."""
+    mock_service = create_mock_service()
+
+    result = await _resize_sheet_dimensions_impl(
+        service=mock_service,
+        spreadsheet_id="test_123",
+        delete_rows=[2, 5, 3],
+    )
+
+    assert "deleted rows" in result["summary"]
+
+    call_args = mock_service.spreadsheets().batchUpdate.call_args
+    requests = call_args[1]["body"]["requests"]
+    delete_requests = [request["deleteDimension"] for request in requests]
+    assert [request["range"]["startIndex"] for request in delete_requests] == [4, 2, 1]
+    assert [request["range"]["endIndex"] for request in delete_requests] == [5, 3, 2]
+    assert all(request["range"]["dimension"] == "ROWS" for request in delete_requests)
+
+
+@pytest.mark.asyncio
+async def test_delete_columns_orders_requests_descending():
+    """Test deleting columns in descending order to avoid index shifting."""
+    mock_service = create_mock_service()
+
+    result = await _resize_sheet_dimensions_impl(
+        service=mock_service,
+        spreadsheet_id="test_123",
+        delete_columns=["B", "D", "A"],
+    )
+
+    assert "deleted columns" in result["summary"]
+
+    call_args = mock_service.spreadsheets().batchUpdate.call_args
+    requests = call_args[1]["body"]["requests"]
+    delete_requests = [request["deleteDimension"] for request in requests]
+    assert [request["range"]["startIndex"] for request in delete_requests] == [3, 1, 0]
+    assert [request["range"]["endIndex"] for request in delete_requests] == [4, 2, 1]
+    assert all(
+        request["range"]["dimension"] == "COLUMNS" for request in delete_requests
+    )
+
+
+@pytest.mark.asyncio
 async def test_json_string_column_sizes():
     """Test column_sizes accepts JSON string input."""
     mock_service = create_mock_service()
@@ -383,4 +509,73 @@ async def test_negative_frozen_row_count_raises_error():
             service=mock_service,
             spreadsheet_id="test_123",
             frozen_row_count=-1,
+        )
+
+
+@pytest.mark.asyncio
+async def test_row_sizes_non_integer_key_raises_user_input_error():
+    """Test row_sizes rejects non-integer row keys with UserInputError."""
+    mock_service = create_mock_service()
+
+    from core.utils import UserInputError
+
+    with pytest.raises(
+        UserInputError, match=r"Row number must be an integer >= 1, got abc\."
+    ):
+        await _resize_sheet_dimensions_impl(
+            service=mock_service,
+            spreadsheet_id="test_123",
+            row_sizes={"abc": 40},
+        )
+
+
+@pytest.mark.asyncio
+async def test_auto_resize_rows_non_integer_value_raises_user_input_error():
+    """Test auto_resize_rows rejects non-integer values with UserInputError."""
+    mock_service = create_mock_service()
+
+    from core.utils import UserInputError
+
+    with pytest.raises(
+        UserInputError, match=r"Row number must be an integer >= 1, got abc\."
+    ):
+        await _resize_sheet_dimensions_impl(
+            service=mock_service,
+            spreadsheet_id="test_123",
+            auto_resize_rows=["abc"],
+        )
+
+
+@pytest.mark.asyncio
+async def test_hide_rows_non_integer_value_raises_user_input_error():
+    """Test hide_rows rejects non-integer values with UserInputError."""
+    mock_service = create_mock_service()
+
+    from core.utils import UserInputError
+
+    with pytest.raises(
+        UserInputError, match=r"Row number must be an integer in hide_rows, got abc\."
+    ):
+        await _resize_sheet_dimensions_impl(
+            service=mock_service,
+            spreadsheet_id="test_123",
+            hide_rows=["abc"],
+        )
+
+
+@pytest.mark.asyncio
+async def test_delete_rows_non_integer_value_raises_user_input_error():
+    """Test delete_rows rejects non-integer values with UserInputError."""
+    mock_service = create_mock_service()
+
+    from core.utils import UserInputError
+
+    with pytest.raises(
+        UserInputError,
+        match=r"Row number must be an integer >= 1 in delete_rows, got abc\.",
+    ):
+        await _resize_sheet_dimensions_impl(
+            service=mock_service,
+            spreadsheet_id="test_123",
+            delete_rows=["abc"],
         )
