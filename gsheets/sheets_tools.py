@@ -17,6 +17,7 @@ from core.comments import create_comment_tools
 from gsheets.sheets_helpers import (
     CONDITION_TYPES,
     _a1_range_for_values,
+    _column_to_index,
     _build_boolean_rule,
     _build_gradient_rule,
     _fetch_cell_formulas,
@@ -1421,6 +1422,583 @@ async def append_table_rows(
 
     logger.info(f"[append_table_rows] Appended {num_rows} rows for {user_google_email}")
     return text_output
+
+
+async def _resize_sheet_dimensions_impl(
+    service,
+    spreadsheet_id: str,
+    sheet_name: Optional[str] = None,
+    column_sizes: Optional[Union[str, dict]] = None,
+    row_sizes: Optional[Union[str, dict]] = None,
+    auto_resize_columns: Optional[Union[str, List[str]]] = None,
+    auto_resize_rows: Optional[Union[str, List[int]]] = None,
+    frozen_row_count: Optional[int] = None,
+    frozen_column_count: Optional[int] = None,
+    hide_columns: Optional[Union[str, List[str]]] = None,
+    unhide_columns: Optional[Union[str, List[str]]] = None,
+    hide_rows: Optional[Union[str, List[int]]] = None,
+    unhide_rows: Optional[Union[str, List[int]]] = None,
+    insert_rows: Optional[int] = None,
+    insert_rows_at: Optional[int] = None,
+    insert_columns: Optional[int] = None,
+    insert_columns_at: Optional[str] = None,
+    delete_rows: Optional[Union[str, List[int]]] = None,
+    delete_columns: Optional[Union[str, List[str]]] = None,
+) -> dict:
+    """Internal implementation for resize_sheet_dimensions.
+
+    Manages sheet-level dimension properties: resize columns/rows, auto-resize
+    to fit content, freeze rows/columns, hide/unhide rows/columns, and
+    insert/delete rows/columns.
+
+    Args:
+        service: Google Sheets API service client.
+        spreadsheet_id: The ID of the spreadsheet.
+        sheet_name: Sheet name to target. Defaults to the first sheet.
+        column_sizes: Dict mapping column letters to pixel widths.
+        row_sizes: Dict mapping 1-based row numbers to pixel heights.
+        auto_resize_columns: List of column letters to auto-resize to fit content.
+        auto_resize_rows: List of 1-based row numbers to auto-resize to fit content.
+        frozen_row_count: Number of rows to freeze from the top (0 to unfreeze).
+        frozen_column_count: Number of columns to freeze from the left (0 to unfreeze).
+        hide_columns: List of column letters to hide.
+        unhide_columns: List of column letters to unhide.
+        hide_rows: List of 1-based row numbers to hide.
+        unhide_rows: List of 1-based row numbers to unhide.
+        insert_rows: Number of rows to insert.
+        insert_rows_at: 1-based row number to insert before. Appends to end if omitted.
+        insert_columns: Number of columns to insert.
+        insert_columns_at: Column letter to insert before (e.g. "C"). Appends to end if omitted.
+        delete_rows: List of 1-based row numbers to delete.
+        delete_columns: List of column letters to delete.
+
+    Returns:
+        Dictionary with keys: spreadsheet_id, summary.
+    """
+    has_any = any([
+        column_sizes, row_sizes, auto_resize_columns, auto_resize_rows,
+        frozen_row_count is not None, frozen_column_count is not None,
+        hide_columns, unhide_columns, hide_rows, unhide_rows,
+        insert_rows is not None, insert_columns is not None,
+        delete_rows, delete_columns,
+    ])
+    if not has_any:
+        raise UserInputError(
+            "Provide at least one of: column_sizes, row_sizes, "
+            "auto_resize_columns, auto_resize_rows, frozen_row_count, "
+            "frozen_column_count, hide_columns, unhide_columns, "
+            "hide_rows, unhide_rows, insert_rows, insert_columns, "
+            "delete_rows, or delete_columns."
+        )
+
+    # Parse JSON strings
+    if isinstance(column_sizes, str):
+        try:
+            column_sizes = json.loads(column_sizes)
+        except json.JSONDecodeError as e:
+            raise UserInputError(f"Invalid JSON for column_sizes: {e}")
+
+    if isinstance(row_sizes, str):
+        try:
+            row_sizes = json.loads(row_sizes)
+        except json.JSONDecodeError as e:
+            raise UserInputError(f"Invalid JSON for row_sizes: {e}")
+
+    if isinstance(auto_resize_columns, str):
+        try:
+            auto_resize_columns = json.loads(auto_resize_columns)
+        except json.JSONDecodeError as e:
+            raise UserInputError(f"Invalid JSON for auto_resize_columns: {e}")
+
+    if isinstance(auto_resize_rows, str):
+        try:
+            auto_resize_rows = json.loads(auto_resize_rows)
+        except json.JSONDecodeError as e:
+            raise UserInputError(f"Invalid JSON for auto_resize_rows: {e}")
+
+    if isinstance(hide_columns, str):
+        try:
+            hide_columns = json.loads(hide_columns)
+        except json.JSONDecodeError as e:
+            raise UserInputError(f"Invalid JSON for hide_columns: {e}")
+
+    if isinstance(unhide_columns, str):
+        try:
+            unhide_columns = json.loads(unhide_columns)
+        except json.JSONDecodeError as e:
+            raise UserInputError(f"Invalid JSON for unhide_columns: {e}")
+
+    if isinstance(hide_rows, str):
+        try:
+            hide_rows = json.loads(hide_rows)
+        except json.JSONDecodeError as e:
+            raise UserInputError(f"Invalid JSON for hide_rows: {e}")
+
+    if isinstance(unhide_rows, str):
+        try:
+            unhide_rows = json.loads(unhide_rows)
+        except json.JSONDecodeError as e:
+            raise UserInputError(f"Invalid JSON for unhide_rows: {e}")
+
+    if isinstance(delete_rows, str):
+        try:
+            delete_rows = json.loads(delete_rows)
+        except json.JSONDecodeError as e:
+            raise UserInputError(f"Invalid JSON for delete_rows: {e}")
+
+    if isinstance(delete_columns, str):
+        try:
+            delete_columns = json.loads(delete_columns)
+        except json.JSONDecodeError as e:
+            raise UserInputError(f"Invalid JSON for delete_columns: {e}")
+
+    # Get sheet metadata to resolve sheet ID
+    metadata = await asyncio.to_thread(
+        service.spreadsheets()
+        .get(
+            spreadsheetId=spreadsheet_id,
+            fields="sheets(properties(sheetId,title))",
+        )
+        .execute
+    )
+    sheets = metadata.get("sheets", [])
+    if not sheets:
+        raise UserInputError("No sheets found in spreadsheet.")
+
+    # Find target sheet
+    target_sheet = None
+    if sheet_name:
+        for sheet in sheets:
+            if sheet.get("properties", {}).get("title") == sheet_name:
+                target_sheet = sheet
+                break
+        if not target_sheet:
+            raise UserInputError(f"Sheet '{sheet_name}' not found.")
+    else:
+        target_sheet = sheets[0]
+
+    sheet_id = target_sheet["properties"]["sheetId"]
+
+    requests = []
+    applied_parts = []
+
+    # Build column resize requests
+    if column_sizes:
+        if not isinstance(column_sizes, dict):
+            raise UserInputError("column_sizes must be a dict mapping column letters to pixel widths.")
+        for col_letter, pixel_size in column_sizes.items():
+            col_idx = _column_to_index(col_letter.upper())
+            if col_idx is None:
+                raise UserInputError(f"Invalid column letter: '{col_letter}'.")
+            if not isinstance(pixel_size, (int, float)) or pixel_size <= 0:
+                raise UserInputError(
+                    f"Pixel size for column '{col_letter}' must be a positive number."
+                )
+            requests.append({
+                "updateDimensionProperties": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "dimension": "COLUMNS",
+                        "startIndex": col_idx,
+                        "endIndex": col_idx + 1,
+                    },
+                    "properties": {"pixelSize": int(pixel_size)},
+                    "fields": "pixelSize",
+                }
+            })
+        applied_parts.append(
+            f"resized columns: {', '.join(f'{k}={v}px' for k, v in column_sizes.items())}"
+        )
+
+    # Build row resize requests
+    if row_sizes:
+        if not isinstance(row_sizes, dict):
+            raise UserInputError("row_sizes must be a dict mapping row numbers to pixel heights.")
+        for row_num_str, pixel_size in row_sizes.items():
+            row_num = int(row_num_str)
+            if row_num < 1:
+                raise UserInputError(f"Row number must be >= 1, got {row_num}.")
+            if not isinstance(pixel_size, (int, float)) or pixel_size <= 0:
+                raise UserInputError(
+                    f"Pixel size for row {row_num} must be a positive number."
+                )
+            requests.append({
+                "updateDimensionProperties": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "dimension": "ROWS",
+                        "startIndex": row_num - 1,
+                        "endIndex": row_num,
+                    },
+                    "properties": {"pixelSize": int(pixel_size)},
+                    "fields": "pixelSize",
+                }
+            })
+        applied_parts.append(
+            f"resized rows: {', '.join(f'{k}={v}px' for k, v in row_sizes.items())}"
+        )
+
+    # Build auto-resize column requests
+    if auto_resize_columns:
+        if not isinstance(auto_resize_columns, list):
+            raise UserInputError("auto_resize_columns must be a list of column letters.")
+        for col_letter in auto_resize_columns:
+            col_idx = _column_to_index(str(col_letter).upper())
+            if col_idx is None:
+                raise UserInputError(f"Invalid column letter: '{col_letter}'.")
+            requests.append({
+                "autoResizeDimensions": {
+                    "dimensions": {
+                        "sheetId": sheet_id,
+                        "dimension": "COLUMNS",
+                        "startIndex": col_idx,
+                        "endIndex": col_idx + 1,
+                    }
+                }
+            })
+        applied_parts.append(
+            f"auto-resized columns: {', '.join(str(c) for c in auto_resize_columns)}"
+        )
+
+    # Build auto-resize row requests
+    if auto_resize_rows:
+        if not isinstance(auto_resize_rows, list):
+            raise UserInputError("auto_resize_rows must be a list of row numbers.")
+        for row_num in auto_resize_rows:
+            row_num = int(row_num)
+            if row_num < 1:
+                raise UserInputError(f"Row number must be >= 1, got {row_num}.")
+            requests.append({
+                "autoResizeDimensions": {
+                    "dimensions": {
+                        "sheetId": sheet_id,
+                        "dimension": "ROWS",
+                        "startIndex": row_num - 1,
+                        "endIndex": row_num,
+                    }
+                }
+            })
+        applied_parts.append(
+            f"auto-resized rows: {', '.join(str(r) for r in auto_resize_rows)}"
+        )
+
+    # Build freeze requests
+    grid_properties = {}
+    grid_fields = []
+    if frozen_row_count is not None:
+        if not isinstance(frozen_row_count, int) or frozen_row_count < 0:
+            raise UserInputError("frozen_row_count must be a non-negative integer.")
+        grid_properties["frozenRowCount"] = frozen_row_count
+        grid_fields.append("gridProperties.frozenRowCount")
+        applied_parts.append(
+            f"froze {frozen_row_count} row(s)" if frozen_row_count > 0
+            else "unfroze rows"
+        )
+
+    if frozen_column_count is not None:
+        if not isinstance(frozen_column_count, int) or frozen_column_count < 0:
+            raise UserInputError("frozen_column_count must be a non-negative integer.")
+        grid_properties["frozenColumnCount"] = frozen_column_count
+        grid_fields.append("gridProperties.frozenColumnCount")
+        applied_parts.append(
+            f"froze {frozen_column_count} column(s)" if frozen_column_count > 0
+            else "unfroze columns"
+        )
+
+    if grid_properties:
+        requests.append({
+            "updateSheetProperties": {
+                "properties": {
+                    "sheetId": sheet_id,
+                    "gridProperties": grid_properties,
+                },
+                "fields": ",".join(grid_fields),
+            }
+        })
+
+    # Build hide/unhide column requests
+    def _build_hide_unhide_requests(letters, dimension, hidden, label):
+        if not isinstance(letters, list):
+            raise UserInputError(f"{label} must be a list of column letters.")
+        for col_letter in letters:
+            col_idx = _column_to_index(str(col_letter).upper())
+            if col_idx is None:
+                raise UserInputError(f"Invalid column letter in {label}: '{col_letter}'.")
+            requests.append({
+                "updateDimensionProperties": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "dimension": dimension,
+                        "startIndex": col_idx,
+                        "endIndex": col_idx + 1,
+                    },
+                    "properties": {"hiddenByUser": hidden},
+                    "fields": "hiddenByUser",
+                }
+            })
+
+    if hide_columns:
+        _build_hide_unhide_requests(hide_columns, "COLUMNS", True, "hide_columns")
+        applied_parts.append(f"hid columns: {', '.join(str(c) for c in hide_columns)}")
+
+    if unhide_columns:
+        _build_hide_unhide_requests(unhide_columns, "COLUMNS", False, "unhide_columns")
+        applied_parts.append(f"unhid columns: {', '.join(str(c) for c in unhide_columns)}")
+
+    # Build hide/unhide row requests
+    def _build_row_hide_unhide_requests(row_nums, hidden, label):
+        if not isinstance(row_nums, list):
+            raise UserInputError(f"{label} must be a list of row numbers.")
+        for row_num in row_nums:
+            row_num = int(row_num)
+            if row_num < 1:
+                raise UserInputError(f"Row number must be >= 1 in {label}, got {row_num}.")
+            requests.append({
+                "updateDimensionProperties": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "dimension": "ROWS",
+                        "startIndex": row_num - 1,
+                        "endIndex": row_num,
+                    },
+                    "properties": {"hiddenByUser": hidden},
+                    "fields": "hiddenByUser",
+                }
+            })
+
+    if hide_rows:
+        _build_row_hide_unhide_requests(hide_rows, True, "hide_rows")
+        applied_parts.append(f"hid rows: {', '.join(str(r) for r in hide_rows)}")
+
+    if unhide_rows:
+        _build_row_hide_unhide_requests(unhide_rows, False, "unhide_rows")
+        applied_parts.append(f"unhid rows: {', '.join(str(r) for r in unhide_rows)}")
+
+    # Build insert row requests
+    if insert_rows is not None:
+        if not isinstance(insert_rows, int) or insert_rows < 1:
+            raise UserInputError("insert_rows must be a positive integer.")
+        if insert_rows_at is not None:
+            if not isinstance(insert_rows_at, int) or insert_rows_at < 1:
+                raise UserInputError("insert_rows_at must be a positive integer (1-based).")
+            start_idx = insert_rows_at - 1
+        else:
+            start_idx = None
+
+        if start_idx is not None:
+            requests.append({
+                "insertDimension": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "dimension": "ROWS",
+                        "startIndex": start_idx,
+                        "endIndex": start_idx + insert_rows,
+                    },
+                    "inheritFromBefore": start_idx > 0,
+                }
+            })
+            applied_parts.append(f"inserted {insert_rows} row(s) at row {insert_rows_at}")
+        else:
+            requests.append({
+                "appendDimension": {
+                    "sheetId": sheet_id,
+                    "dimension": "ROWS",
+                    "length": insert_rows,
+                }
+            })
+            applied_parts.append(f"appended {insert_rows} row(s)")
+
+    # Build insert column requests
+    if insert_columns is not None:
+        if not isinstance(insert_columns, int) or insert_columns < 1:
+            raise UserInputError("insert_columns must be a positive integer.")
+        if insert_columns_at is not None:
+            col_idx = _column_to_index(str(insert_columns_at).upper())
+            if col_idx is None:
+                raise UserInputError(f"Invalid column letter for insert_columns_at: '{insert_columns_at}'.")
+            requests.append({
+                "insertDimension": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "dimension": "COLUMNS",
+                        "startIndex": col_idx,
+                        "endIndex": col_idx + insert_columns,
+                    },
+                    "inheritFromBefore": col_idx > 0,
+                }
+            })
+            applied_parts.append(f"inserted {insert_columns} column(s) at column {insert_columns_at}")
+        else:
+            requests.append({
+                "appendDimension": {
+                    "sheetId": sheet_id,
+                    "dimension": "COLUMNS",
+                    "length": insert_columns,
+                }
+            })
+            applied_parts.append(f"appended {insert_columns} column(s)")
+
+    # Build delete row requests (process in reverse to keep indices stable)
+    if delete_rows:
+        if not isinstance(delete_rows, list):
+            raise UserInputError("delete_rows must be a list of row numbers.")
+        sorted_rows = sorted([int(r) for r in delete_rows], reverse=True)
+        for row_num in sorted_rows:
+            if row_num < 1:
+                raise UserInputError(f"Row number must be >= 1 in delete_rows, got {row_num}.")
+            requests.append({
+                "deleteDimension": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "dimension": "ROWS",
+                        "startIndex": row_num - 1,
+                        "endIndex": row_num,
+                    }
+                }
+            })
+        applied_parts.append(f"deleted rows: {', '.join(str(r) for r in delete_rows)}")
+
+    # Build delete column requests (process in reverse to keep indices stable)
+    if delete_columns:
+        if not isinstance(delete_columns, list):
+            raise UserInputError("delete_columns must be a list of column letters.")
+        col_indices = []
+        for col_letter in delete_columns:
+            col_idx = _column_to_index(str(col_letter).upper())
+            if col_idx is None:
+                raise UserInputError(f"Invalid column letter in delete_columns: '{col_letter}'.")
+            col_indices.append((col_letter, col_idx))
+        # Sort by index descending to keep indices stable during deletion
+        col_indices.sort(key=lambda x: x[1], reverse=True)
+        for _, col_idx in col_indices:
+            requests.append({
+                "deleteDimension": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "dimension": "COLUMNS",
+                        "startIndex": col_idx,
+                        "endIndex": col_idx + 1,
+                    }
+                }
+            })
+        applied_parts.append(f"deleted columns: {', '.join(str(c) for c in delete_columns)}")
+
+    # Execute batch update
+    await asyncio.to_thread(
+        service.spreadsheets()
+        .batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests})
+        .execute
+    )
+
+    return {
+        "spreadsheet_id": spreadsheet_id,
+        "summary": "; ".join(applied_parts),
+    }
+
+
+@server.tool()
+@handle_http_errors("resize_sheet_dimensions", service_type="sheets")
+@require_google_service("sheets", "sheets_write")
+async def resize_sheet_dimensions(
+    service,
+    user_google_email: str,
+    spreadsheet_id: str,
+    sheet_name: Optional[str] = None,
+    column_sizes: Optional[Union[str, dict]] = None,
+    row_sizes: Optional[Union[str, dict]] = None,
+    auto_resize_columns: Optional[Union[str, List[str]]] = None,
+    auto_resize_rows: Optional[Union[str, List[int]]] = None,
+    frozen_row_count: Optional[int] = None,
+    frozen_column_count: Optional[int] = None,
+    hide_columns: Optional[Union[str, List[str]]] = None,
+    unhide_columns: Optional[Union[str, List[str]]] = None,
+    hide_rows: Optional[Union[str, List[int]]] = None,
+    unhide_rows: Optional[Union[str, List[int]]] = None,
+    insert_rows: Optional[int] = None,
+    insert_rows_at: Optional[int] = None,
+    insert_columns: Optional[int] = None,
+    insert_columns_at: Optional[str] = None,
+    delete_rows: Optional[Union[str, List[int]]] = None,
+    delete_columns: Optional[Union[str, List[str]]] = None,
+) -> str:
+    """
+    Manages sheet-level dimension properties: resize columns/rows, auto-resize
+    to fit content, freeze rows/columns, hide/unhide rows/columns, and
+    insert/delete rows/columns.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        spreadsheet_id (str): The ID of the spreadsheet. Required.
+        sheet_name (Optional[str]): Sheet name to target. Defaults to the
+            first sheet if not provided.
+        column_sizes (Optional[Union[str, dict]]): Dict mapping column letters
+            to pixel widths. Example: {"A": 200, "C": 300}. Can be a JSON
+            string or Python dict.
+        row_sizes (Optional[Union[str, dict]]): Dict mapping 1-based row
+            numbers to pixel heights. Example: {"1": 40, "3": 60}. Can be
+            a JSON string or Python dict.
+        auto_resize_columns (Optional[Union[str, List[str]]]): List of column
+            letters to auto-resize to fit content. Example: ["A", "B"].
+        auto_resize_rows (Optional[Union[str, List[int]]]): List of 1-based
+            row numbers to auto-resize to fit content. Example: [1, 2].
+        frozen_row_count (Optional[int]): Number of rows to freeze from the
+            top. Use 0 to unfreeze all rows.
+        frozen_column_count (Optional[int]): Number of columns to freeze from
+            the left. Use 0 to unfreeze all columns.
+        hide_columns (Optional[Union[str, List[str]]]): List of column letters
+            to hide. Example: ["C", "D"].
+        unhide_columns (Optional[Union[str, List[str]]]): List of column
+            letters to unhide. Example: ["C", "D"].
+        hide_rows (Optional[Union[str, List[int]]]): List of 1-based row
+            numbers to hide. Example: [3, 4].
+        unhide_rows (Optional[Union[str, List[int]]]): List of 1-based row
+            numbers to unhide. Example: [3, 4].
+        insert_rows (Optional[int]): Number of rows to insert.
+        insert_rows_at (Optional[int]): 1-based row number to insert before.
+            Appends to the end of the sheet if omitted.
+        insert_columns (Optional[int]): Number of columns to insert.
+        insert_columns_at (Optional[str]): Column letter to insert before
+            (e.g. "C"). Appends to the end if omitted.
+        delete_rows (Optional[Union[str, List[int]]]): List of 1-based row
+            numbers to delete. Example: [5, 6].
+        delete_columns (Optional[Union[str, List[str]]]): List of column
+            letters to delete. Example: ["E", "F"].
+
+    Returns:
+        str: Confirmation of the applied dimension changes.
+    """
+    logger.info(
+        "[resize_sheet_dimensions] Invoked. Email: '%s', Spreadsheet: %s",
+        user_google_email,
+        spreadsheet_id,
+    )
+
+    result = await _resize_sheet_dimensions_impl(
+        service=service,
+        spreadsheet_id=spreadsheet_id,
+        sheet_name=sheet_name,
+        column_sizes=column_sizes,
+        row_sizes=row_sizes,
+        auto_resize_columns=auto_resize_columns,
+        auto_resize_rows=auto_resize_rows,
+        frozen_row_count=frozen_row_count,
+        frozen_column_count=frozen_column_count,
+        hide_columns=hide_columns,
+        unhide_columns=unhide_columns,
+        hide_rows=hide_rows,
+        unhide_rows=unhide_rows,
+        insert_rows=insert_rows,
+        insert_rows_at=insert_rows_at,
+        insert_columns=insert_columns,
+        insert_columns_at=insert_columns_at,
+        delete_rows=delete_rows,
+        delete_columns=delete_columns,
+    )
+
+    return (
+        f"Applied dimension changes in spreadsheet {result['spreadsheet_id']} "
+        f"for {user_google_email}: {result['summary']}."
+    )
 
 
 # Create comment management tools for sheets
