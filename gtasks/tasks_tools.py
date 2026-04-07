@@ -98,16 +98,15 @@ def _adjust_due_max_for_tasks_api(due_max: str) -> str:
 
 def _validate_rfc3339_date(due: str) -> None:
     """Validate that due is a full RFC 3339 datetime (date-only strings are rejected by the API)."""
+    error_msg = f"Invalid due date format. Expected RFC 3339 datetime (e.g., '2026-04-25T00:00:00Z'), got '{due}'"
     if "T" not in due:
-        raise UserInputError(
-            f"Invalid due date format. Expected RFC 3339 datetime (e.g., '2026-04-25T00:00:00Z'), got '{due}'"
-        )
+        raise UserInputError(error_msg)
     try:
-        datetime.fromisoformat(due.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(due[:-1] + "+00:00" if due.endswith("Z") else due)
     except ValueError:
-        raise UserInputError(
-            f"Invalid due date format. Expected RFC 3339 datetime (e.g., '2026-04-25T00:00:00Z'), got '{due}'"
-        )
+        raise UserInputError(error_msg)
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise UserInputError(error_msg)
 
 
 @server.tool()  # type: ignore
