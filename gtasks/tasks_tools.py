@@ -96,6 +96,21 @@ def _adjust_due_max_for_tasks_api(due_max: str) -> str:
     return adjusted.isoformat()
 
 
+def _validate_rfc3339_date(due: str) -> None:
+    """Validate that due is a full RFC 3339 datetime (date-only strings are rejected by the API)."""
+    error_msg = f"Invalid due date format. Expected RFC 3339 datetime (e.g., '2026-04-25T00:00:00Z'), got '{due}'"
+    if "T" not in due:
+        raise UserInputError(error_msg)
+    try:
+        parsed = datetime.fromisoformat(
+            due[:-1] + "+00:00" if due.endswith("Z") else due
+        )
+    except ValueError:
+        raise UserInputError(error_msg) from None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise UserInputError(error_msg)
+
+
 @server.tool()  # type: ignore
 @require_google_service("tasks", "tasks_read")  # type: ignore
 @handle_http_errors("list_task_lists", service_type="tasks")  # type: ignore
@@ -886,6 +901,9 @@ async def manage_task(
     allowed_statuses = {"needsAction", "completed"}
     if status is not None and status not in allowed_statuses:
         raise UserInputError("invalid status: must be 'needsAction' or 'completed'")
+
+    if due is not None:
+        _validate_rfc3339_date(due)
 
     valid_actions = ("create", "update", "delete", "move")
     if action not in valid_actions:
