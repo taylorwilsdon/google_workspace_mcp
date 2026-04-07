@@ -102,9 +102,11 @@ def _validate_rfc3339_date(due: str) -> None:
     if "T" not in due:
         raise UserInputError(error_msg)
     try:
-        parsed = datetime.fromisoformat(due[:-1] + "+00:00" if due.endswith("Z") else due)
+        parsed = datetime.fromisoformat(
+            due[:-1] + "+00:00" if due.endswith("Z") else due
+        )
     except ValueError:
-        raise UserInputError(error_msg)
+        raise UserInputError(error_msg) from None
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise UserInputError(error_msg)
 
