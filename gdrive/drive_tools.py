@@ -25,7 +25,12 @@ from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 from auth.service_decorator import require_google_service
 from auth.oauth_config import is_stateless_mode
 from core.attachment_storage import get_attachment_storage, get_attachment_url
-from core.utils import extract_office_xml_text, handle_http_errors, validate_file_path
+from core.utils import (
+    extract_office_xml_text,
+    handle_http_errors,
+    UserInputError,
+    validate_file_path,
+)
 from core.server import server
 from core.config import get_transport_mode
 from gdrive.drive_helpers import (
@@ -604,6 +609,26 @@ async def create_drive_file(
     logger.info(
         f"[create_drive_file] Invoked. Email: '{user_google_email}', File Name: {file_name}, Folder ID: {folder_id}, fileUrl: {fileUrl}"
     )
+
+    # Auto-detect MIME type from file extension when caller uses the default
+    if mime_type == "text/plain":
+        _ext_mime_map = {
+            ".md": "text/markdown",
+            ".markdown": "text/markdown",
+            ".csv": "text/csv",
+            ".html": "text/html",
+            ".htm": "text/html",
+            ".xml": "text/xml",
+            ".json": "application/json",
+            ".yaml": "text/yaml",
+            ".yml": "text/yaml",
+        }
+        _ext = Path(file_name).suffix.lower()
+        if _ext in _ext_mime_map:
+            mime_type = _ext_mime_map[_ext]
+            logger.info(
+                f"[create_drive_file] Auto-detected MIME type '{mime_type}' from extension '{_ext}'"
+            )
 
     if content is None and fileUrl is None and mime_type != FOLDER_MIME_TYPE:
         raise Exception("You must provide either 'content' or 'fileUrl'.")
@@ -1711,6 +1736,190 @@ async def update_drive_file(
     output_parts.append(f"View file: {updated_file.get('webViewLink', '#')}")
 
     return "\n".join(output_parts)
+
+
+UPDATABLE_TEXT_MIME_TYPES = {
+    "text/plain",
+    "text/markdown",
+    "text/x-markdown",
+    "text/csv",
+    "text/html",
+    "text/xml",
+    "text/yaml",
+    "application/json",
+    "application/xml",
+    "application/x-yaml",
+}
+
+
+@server.tool()
+@handle_http_errors(
+    "update_drive_file_content", is_read_only=False, service_type="drive"
+)
+@require_google_service("drive", "drive_file")
+async def update_drive_file_content(
+    service,
+    user_google_email: str,
+    file_id: str,
+    content: str,
+    mime_type: Optional[str] = None,
+) -> str:
+    """
+    Updates the content of an existing text-based file in Google Drive.
+
+    Overwrites the entire file content. Works with uploaded text files
+    (.md, .txt, .csv, .json, .html, .xml, .yaml). Does NOT work with
+    native Google Docs/Sheets/Slides — use modify_doc_text or
+    batch_update_doc for those.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        file_id (str): The ID of the file to update. Required.
+        content (str): The new file content. Overwrites existing content entirely.
+        mime_type (Optional[str]): MIME type for the upload. Defaults to the
+            file's existing MIME type. If provided, changes the stored MIME type.
+
+    Returns:
+        str: Confirmation message with file name, ID, character count, and link.
+    """
+    logger.info(
+        f"[update_drive_file_content] Updating content of {file_id} for {user_google_email}"
+    )
+
+    resolved_file_id, current_file = await resolve_drive_item(
+        service,
+        file_id,
+        extra_fields="name, mimeType, webViewLink",
+    )
+    file_id = resolved_file_id
+    current_mime = current_file.get("mimeType", "text/plain")
+
+    if current_mime.startswith("application/vnd.google-apps"):
+        raise UserInputError(
+            f"Cannot update content of native Google file (type: {current_mime}). "
+            "Use modify_doc_text or batch_update_doc for Google Docs, "
+            "or modify_sheet_values for Google Sheets."
+        )
+
+    if current_mime not in UPDATABLE_TEXT_MIME_TYPES:
+        raise UserInputError(
+            f"Cannot update content of file with MIME type '{current_mime}'. "
+            "Only text-based files are supported: "
+            ".md, .txt, .csv, .json, .html, .xml, .yaml"
+        )
+
+    if mime_type is not None:
+        mime_type = mime_type.strip()
+        if not mime_type:
+            raise UserInputError("mime_type cannot be empty when provided.")
+        if mime_type not in UPDATABLE_TEXT_MIME_TYPES:
+            raise UserInputError(
+                f"Cannot use MIME type '{mime_type}' for content update. "
+                "Only text-based MIME types are supported: "
+                + ", ".join(sorted(UPDATABLE_TEXT_MIME_TYPES))
+            )
+        content_mime = mime_type
+    else:
+        content_mime = current_mime
+
+    media = MediaIoBaseUpload(
+        io.BytesIO(content.encode("utf-8")),
+        mimetype=content_mime,
+        resumable=False,
+    )
+
+    update_kwargs: Dict[str, Any] = {
+        "fileId": file_id,
+        "media_body": media,
+        "fields": "id, name, mimeType, modifiedTime, webViewLink",
+        "supportsAllDrives": True,
+    }
+    if mime_type is not None:
+        update_kwargs["body"] = {"mimeType": content_mime}
+
+    updated_file = await asyncio.to_thread(
+        service.files().update(**update_kwargs).execute
+    )
+
+    file_name = updated_file.get("name", current_file.get("name", "unknown"))
+    char_count = len(content)
+
+    output_parts = [
+        f"Updated content of '{file_name}' (ID: {file_id}, {char_count} characters)",
+        f"Modified: {updated_file.get('modifiedTime', 'unknown')}",
+        f"View file: {updated_file.get('webViewLink', '#')}",
+    ]
+
+    return "\n".join(output_parts)
+
+
+@server.tool()
+@handle_http_errors("delete_drive_file", is_read_only=False, service_type="drive")
+@require_google_service("drive", "drive_file")
+async def delete_drive_file(
+    service,
+    user_google_email: str,
+    file_id: str,
+    permanent: bool = False,
+) -> str:
+    """
+    Deletes a file from Google Drive. Use this tool when asked to delete,
+    remove, or trash a file.
+
+    By default moves the file to trash (recoverable for 30 days).
+    Set permanent=True to permanently delete (not recoverable).
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        file_id (str): The ID of the file to delete. Required.
+        permanent (bool): If True, permanently deletes the file (not recoverable).
+            If False (default), moves to trash. If already trashed, returns a
+            message indicating the file is already in trash.
+
+    Returns:
+        str: Confirmation message describing what happened.
+    """
+    logger.info(
+        f"[delete_drive_file] Deleting {file_id} for {user_google_email} (permanent={permanent})"
+    )
+
+    resolved_file_id, current_file = await resolve_drive_item(
+        service,
+        file_id,
+        extra_fields="name, mimeType, trashed",
+    )
+    file_id = resolved_file_id
+    file_name = current_file.get("name", "unknown")
+    already_trashed = current_file.get("trashed", False)
+
+    if permanent:
+        await asyncio.to_thread(
+            service.files()
+            .delete(
+                fileId=file_id,
+                supportsAllDrives=True,
+            )
+            .execute
+        )
+        return f"Permanently deleted '{file_name}' (ID: {file_id})."
+
+    if already_trashed:
+        return (
+            f"File '{file_name}' (ID: {file_id}) is already in trash. "
+            "Use permanent=True to permanently delete it."
+        )
+
+    await asyncio.to_thread(
+        service.files()
+        .update(
+            fileId=file_id,
+            body={"trashed": True},
+            fields="id",
+            supportsAllDrives=True,
+        )
+        .execute
+    )
+    return f"Moved '{file_name}' (ID: {file_id}) to trash. Use permanent=True to permanently delete."
 
 
 @server.tool()

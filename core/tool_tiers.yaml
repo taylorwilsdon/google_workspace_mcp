@@ -33,6 +33,8 @@ drive:
     - list_drive_items
     - copy_drive_file
     - update_drive_file
+    - update_drive_file_content
+    - delete_drive_file
     - manage_drive_access
     - set_drive_file_permissions
   complete:
