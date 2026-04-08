@@ -183,6 +183,7 @@ def build_drive_list_params(
     corpora: Optional[str] = None,
     page_token: Optional[str] = None,
     detailed: bool = True,
+    order_by: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Helper function to build common list parameters for Drive API calls.
@@ -196,6 +197,8 @@ def build_drive_list_params(
         page_token: Optional page token for pagination (from a previous nextPageToken)
         detailed: Whether to request size, modifiedTime, and webViewLink fields.
                   Defaults to True to preserve existing behavior.
+        order_by: Optional ordering for results (e.g., 'modifiedTime desc',
+                  'viewedByMeTime desc'). Defaults to None (Drive API default).
 
     Returns:
         Dictionary of parameters for Drive API list calls
@@ -214,6 +217,9 @@ def build_drive_list_params(
 
     if page_token:
         list_params["pageToken"] = page_token
+
+    if order_by:
+        list_params["orderBy"] = order_by
 
     if drive_id:
         list_params["driveId"] = drive_id
