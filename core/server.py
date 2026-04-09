@@ -85,8 +85,18 @@ def _compute_scope_fingerprint() -> str:
 
 # Custom FastMCP that adds secure middleware stack for OAuth 2.1
 class SecureFastMCP(FastMCP):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._event_store = None
+
+    def set_event_store(self, event_store):
+        self._event_store = event_store
+
     def http_app(self, **kwargs) -> "Starlette":
-        """Override to add secure middleware stack for OAuth 2.1."""
+        """Override to add secure middleware stack and event_store for OAuth 2.1."""
+        if self._event_store and "event_store" not in kwargs:
+            kwargs["event_store"] = self._event_store
+
         app = super().http_app(**kwargs)
 
         # Add middleware in order (first added = outermost layer)
@@ -110,9 +120,10 @@ When using Google Workspace tools, always use `{USER_GOOGLE_EMAIL}` as the `user
     logger.info(f"Server instructions configured for user: {USER_GOOGLE_EMAIL}")
 
 server = SecureFastMCP(
-    name="google_workspace",
+    name="Samba TV - Google Workspace",
     auth=None,
     instructions=_server_instructions,
+    website_url="https://workspace-mcp-201626763325.us-central1.run.app",
 )
 
 # Add the AuthInfo middleware to inject authentication into FastMCP context
@@ -335,7 +346,34 @@ def configure_server_for_http():
                     logger.info(
                         "OAuth 2.1: Applied Fernet encryption wrapper to Valkey client_storage (key derived from FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY or GOOGLE_OAUTH_CLIENT_SECRET)."
                     )
+                    # Verify Valkey is reachable before proceeding
+                    try:
+                        # Use the underlying ValkeyStore (before encryption wrapper)
+                        # to perform a startup connectivity check
+                        _raw_store = client_storage._key_value if hasattr(client_storage, '_key_value') else client_storage
+                        _glide_client = getattr(_raw_store, '_client', None)
+                        if _glide_client is not None:
+                            loop = asyncio.get_event_loop()
+                            if loop.is_running():
+                                import concurrent.futures
+                                with concurrent.futures.ThreadPoolExecutor() as pool:
+                                    pool.submit(asyncio.run, _glide_client.set(b"__startup_ping__", b"1")).result(timeout=10)
+                            else:
+                                loop.run_until_complete(_glide_client.set(b"__startup_ping__", b"1"))
+                            logger.info("OAuth 2.1: Valkey connectivity verified")
+                        else:
+                            logger.warning("OAuth 2.1: Could not verify Valkey connectivity (no Glide client reference)")
+                    except Exception as ping_exc:
+                        raise RuntimeError(
+                            f"Valkey storage configured but not reachable at {valkey_host}:{valkey_port}: {ping_exc}. "
+                            "Check VPC connector and Memorystore IP."
+                        ) from ping_exc
                 except ImportError as exc:
+                    if storage_backend == "valkey":
+                        raise RuntimeError(
+                            f"Valkey storage explicitly requested but dependencies not installed: {exc}. "
+                            "Install 'workspace-mcp[valkey]' or fix the Dockerfile."
+                        ) from exc
                     logger.warning(
                         "OAuth 2.1: Valkey client_storage requested but Valkey dependencies are not installed (%s). "
                         "Install 'workspace-mcp[valkey]' (or 'py-key-value-aio[valkey]', which includes 'valkey-glide') "
@@ -343,6 +381,10 @@ def configure_server_for_http():
                         exc,
                     )
                 except ValueError as exc:
+                    if storage_backend == "valkey":
+                        raise RuntimeError(
+                            f"Valkey storage explicitly requested but configuration is invalid: {exc}"
+                        ) from exc
                     logger.warning(
                         "OAuth 2.1: Invalid Valkey configuration; falling back to default storage (%s).",
                         exc,
@@ -458,6 +500,12 @@ def configure_server_for_http():
         set_auth_provider(None)
         _ensure_legacy_callback_route()
 
+    # Configure EventStore for session resumability (all transport modes)
+    from core.event_store import InMemoryEventStore
+
+    server.set_event_store(InMemoryEventStore())
+    logger.info("EventStore configured: InMemoryEventStore")
+
 
 def get_auth_provider() -> Optional[GoogleProvider]:
     """Gets the global authentication provider instance."""
@@ -471,14 +519,16 @@ async def health_check(request: Request):
         version = metadata.version("workspace-mcp")
     except metadata.PackageNotFoundError:
         version = "dev"
-    return JSONResponse(
-        {
-            "status": "healthy",
-            "service": "workspace-mcp",
-            "version": version,
-            "transport": get_transport_mode(),
-        }
-    )
+    health_data = {
+        "status": "healthy",
+        "service": "workspace-mcp",
+        "version": version,
+        "transport": get_transport_mode(),
+    }
+    storage_backend = os.getenv("WORKSPACE_MCP_OAUTH_PROXY_STORAGE_BACKEND", "").strip().lower()
+    if storage_backend:
+        health_data["storage_backend"] = storage_backend
+    return JSONResponse(health_data)
 
 
 @server.custom_route("/attachments/{file_id}", methods=["GET"])

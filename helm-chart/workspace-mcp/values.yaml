@@ -119,6 +119,25 @@ toolTier: ""
 # Single-user mode configuration
 singleUserMode: false
 
+# Valkey/Redis configuration for OAuth session persistence
+valkey:
+  enabled: false
+  host: ""
+  port: 6379
+  db: 0
+  useTls: false
+  # username: ""
+  # password: ""
+  # requestTimeoutMs: 5000
+  # connectionTimeoutMs: 10000
+
+# Storage backend: memory (default), disk, valkey
+oauthProxyStorageBackend: ""
+
+# Transport stateless override (defaults to statelessMode if unset)
+# Set to "false" with Valkey to enable persistent MCP sessions
+statelessHttp: ""
+
 # Command configuration
 command:
   # Set disableArgs to true to remove the args section entirely (uses Dockerfile defaults)

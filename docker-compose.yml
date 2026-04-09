@@ -1,4 +1,18 @@
 services:
+  valkey:
+    image: valkey/valkey:8-alpine
+    container_name: gws_valkey
+    ports:
+      - "6379:6379"
+    volumes:
+      - valkey_data:/data
+    command: valkey-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   gws_mcp:
     build: .
     container_name: gws_mcp
@@ -6,11 +20,18 @@ services:
       - "8000:8000"
     environment:
       - GOOGLE_MCP_CREDENTIALS_DIR=/app/store_creds
+      - WORKSPACE_MCP_OAUTH_PROXY_STORAGE_BACKEND=valkey
+      - WORKSPACE_MCP_OAUTH_PROXY_VALKEY_HOST=valkey
+      - WORKSPACE_MCP_OAUTH_PROXY_VALKEY_PORT=6379
     volumes:
       - ./client_secret.json:/app/client_secret.json:ro
       - store_creds:/app/store_creds:rw
     env_file:
       - .env
+    depends_on:
+      valkey:
+        condition: service_healthy
 
 volumes:
   store_creds:
+  valkey_data:
