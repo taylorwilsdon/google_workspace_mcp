@@ -2,6 +2,7 @@ import inspect
 import json
 import logging
 import os
+import urllib.parse
 
 import re
 from functools import wraps
@@ -246,6 +247,31 @@ def _get_service_account_credentials(
         ) from e
 
 
+def _inject_quota_user(service, user_email):
+    """Inject quotaUser on every Google API request for per-user quota attribution.
+
+    Google attributes quota to the project's global bucket by default. Passing
+    quotaUser=<email> shifts attribution to a per-user bucket, preventing
+    multi-tenant deployments from hitting the global 429 ceiling.
+
+    See: https://cloud.google.com/apis/docs/capping-api-usage#quotauser
+    Portions derived from Mail-0/Zero (https://github.com/Mail-0/Zero) —
+    Copyright (c) 2025 Zero Email, MIT License
+    (apps/server/src/lib/driver/google.ts:579-581)
+    """
+    if not user_email:
+        return service
+    original_request = service._http.request
+    quoted_email = urllib.parse.quote(user_email)
+
+    def _quota_request(uri, *args, **kwargs):
+        sep = "&" if "?" in uri else "?"
+        return original_request(f"{uri}{sep}quotaUser={quoted_email}", *args, **kwargs)
+
+    service._http.request = _quota_request
+    return service
+
+
 async def _authenticate_service(
     use_oauth21: bool,
     service_name: str,
@@ -276,9 +302,10 @@ async def _authenticate_service(
             )
         credentials = _get_service_account_credentials(resolved_scopes, canonical_email)
         service = build(service_name, service_version, credentials=credentials)
+        service = _inject_quota_user(service, canonical_email)
         logger.info(
             f"[{tool_name}] Authenticated {service_name} for "
-            f"{canonical_email} via service-account"
+            f"{canonical_email} via service-account (quotaUser={canonical_email})"
         )
         return service, canonical_email
 
@@ -361,9 +388,10 @@ async def get_authenticated_google_service_oauth21(
             )
 
         service = build(service_name, version, credentials=credentials)
+        service = _inject_quota_user(service, resolved_email)
         logger.info(
             f"[{tool_name}] Authenticated {service_name} for "
-            f"{resolved_email} via oauth2.1"
+            f"{resolved_email} via oauth2.1 (quotaUser={resolved_email})"
         )
         return service, resolved_email
 
@@ -394,9 +422,10 @@ async def get_authenticated_google_service_oauth21(
         )
 
     service = build(service_name, version, credentials=credentials)
+    service = _inject_quota_user(service, user_google_email)
     logger.info(
         f"[{tool_name}] Authenticated {service_name} for "
-        f"{user_google_email} via oauth2.1"
+        f"{user_google_email} via oauth2.1 (quotaUser={user_google_email})"
     )
 
     return service, user_google_email

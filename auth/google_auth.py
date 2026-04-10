@@ -1195,7 +1195,10 @@ async def get_authenticated_google_service(
         raise GoogleAuthenticationError(auth_response)
 
     try:
+        from auth.service_decorator import _inject_quota_user
+
         service = build(service_name, version, credentials=credentials)
+        service = _inject_quota_user(service, user_google_email)
         log_user_email = user_google_email
 
         # Try to get email from credentials if needed for validation
