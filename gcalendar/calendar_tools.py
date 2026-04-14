@@ -12,6 +12,7 @@ import uuid
 import json
 from typing import List, Optional, Dict, Any, Union
 
+import pytz
 from googleapiclient.errors import HttpError
 from googleapiclient.discovery import build
 
@@ -151,6 +152,38 @@ def _apply_visibility_if_valid(
         )
 
 
+_VALID_AUTO_DECLINE_MODES = {
+    "declineAllConflictingInvitations",
+    "declineOnlyNewConflictingInvitations",
+    "declineNone",
+}
+
+_VALID_FOCUS_TIME_CHAT_STATUSES = {
+    "available",
+    "doNotDisturb",
+}
+
+
+def _validate_auto_decline_mode(mode: Optional[str], function_name: str) -> str:
+    """Validate and return auto decline mode, defaulting to declineAllConflictingInvitations.
+
+    Args:
+        mode: The auto decline mode to validate.
+        function_name: Name of the calling function for error context.
+
+    Returns:
+        A valid auto decline mode string.
+    """
+    if mode is None:
+        return "declineAllConflictingInvitations"
+    if mode not in _VALID_AUTO_DECLINE_MODES:
+        raise ValueError(
+            f"[{function_name}] Invalid auto_decline_mode '{mode}'. "
+            f"Must be one of: {', '.join(sorted(_VALID_AUTO_DECLINE_MODES))}"
+        )
+    return mode
+
+
 def _preserve_existing_fields(
     event_body: Dict[str, Any],
     existing_event: Dict[str, Any],
@@ -263,13 +296,14 @@ def _format_attachment_details(
 
 # Helper function to ensure time strings for API calls are correctly formatted
 def _correct_time_format_for_api(
-    time_str: Optional[str], param_name: str
+    time_str: Optional[str], param_name: str, timezone: Optional[str] = None
 ) -> Optional[str]:
+    """Normalize a time string into RFC3339 format suitable for the Google Calendar API."""
     if not time_str:
         return None
 
     logger.info(
-        f"_correct_time_format_for_api: Processing {param_name} with value '{time_str}'"
+        f"_correct_time_format_for_api: Processing {param_name} with value '{time_str}', timezone: '{timezone}'"
     )
 
     # Handle date-only format (YYYY-MM-DD)
@@ -277,8 +311,26 @@ def _correct_time_format_for_api(
         try:
             # Validate it's a proper date
             datetime.datetime.strptime(time_str, "%Y-%m-%d")
-            # For date-only, append T00:00:00Z to make it RFC3339 compliant
-            formatted = f"{time_str}T00:00:00Z"
+            # For date-only, convert using the provided timezone, or UTC if not provided
+            if timezone:
+                try:
+                    tz = pytz.timezone(timezone)
+                    # Parse the date and create a datetime at midnight in the specified timezone
+                    date_obj = datetime.datetime.strptime(time_str, "%Y-%m-%d")
+                    dt = tz.localize(date_obj)
+                    # Convert to UTC and format as RFC3339
+                    formatted = (
+                        dt.astimezone(datetime.timezone.utc)
+                        .isoformat()
+                        .replace("+00:00", "Z")
+                    )
+                except pytz.exceptions.UnknownTimeZoneError:
+                    logger.warning(
+                        f"Could not apply timezone '{timezone}', falling back to UTC for {param_name}"
+                    )
+                    formatted = f"{time_str}T00:00:00Z"
+            else:
+                formatted = f"{time_str}T00:00:00Z"
             logger.info(
                 f"Formatting date-only {param_name} '{time_str}' to RFC3339: '{formatted}'"
             )
@@ -314,6 +366,31 @@ def _correct_time_format_for_api(
     # If it already has timezone info or doesn't match our patterns, return as is
     logger.info(f"{param_name} '{time_str}' doesn't need formatting, using as is.")
     return time_str
+
+
+def _strip_utc_offset(datetime_str: str) -> str:
+    """Strip UTC offset from an RFC3339 dateTime string, returning a naive local time.
+
+    When an IANA timezone (e.g. America/Los_Angeles) is provided alongside a dateTime,
+    the Google Calendar API uses the explicit offset from dateTime for scheduling and
+    only uses the IANA timezone for recurrence expansion. This means an LLM-generated
+    offset that doesn't account for DST (e.g. -08:00 during PDT) will place the event
+    at the wrong wall-clock time.
+
+    By stripping the offset and keeping only the naive local time + IANA timeZone,
+    Google Calendar resolves the correct DST-aware offset automatically.
+
+    Examples:
+        "2026-03-19T12:00:00-08:00" → "2026-03-19T12:00:00"
+        "2026-03-19T12:00:00-07:00" → "2026-03-19T12:00:00"
+        "2026-03-19T12:00:00Z"      → "2026-03-19T12:00:00"
+        "2026-03-19T12:00:00"       → "2026-03-19T12:00:00" (no-op)
+    """
+    # Strip trailing Z
+    if datetime_str.endswith("Z"):
+        return datetime_str[:-1]
+    # Strip +HH:MM or -HH:MM offset at end (e.g. -07:00, +05:30)
+    return re.sub(r"[+-]\d{2}:\d{2}$", "", datetime_str)
 
 
 @server.tool()
@@ -399,7 +476,7 @@ async def get_events(
     else:
         # Handle multiple events retrieval with time filtering
         # Ensure time_min and time_max are correctly formatted for the API
-        formatted_time_min = _correct_time_format_for_api(time_min, "time_min")
+        formatted_time_min = _correct_time_format_for_api(time_min, "time_min", None)
         if formatted_time_min:
             effective_time_min = formatted_time_min
         else:
@@ -414,7 +491,7 @@ async def get_events(
                 f"time_min processing: original='{time_min}', formatted='{formatted_time_min}', effective='{effective_time_min}'"
             )
 
-        effective_time_max = _correct_time_format_for_api(time_max, "time_max")
+        effective_time_max = _correct_time_format_for_api(time_max, "time_max", None)
         if time_max:
             logger.info(
                 f"time_max processing: original='{time_max}', formatted='{effective_time_max}'"
@@ -588,6 +665,7 @@ async def _create_event_impl(
     use_default_reminders: bool = True,
     transparency: Optional[str] = None,
     visibility: Optional[str] = None,
+    recurrence: Optional[List[str]] = None,
     guests_can_modify: Optional[bool] = None,
     guests_can_invite_others: Optional[bool] = None,
     guests_can_see_other_guests: Optional[bool] = None,
@@ -603,13 +681,27 @@ async def _create_event_impl(
         logger.info(
             f"[create_event] Parsed attachments list from string: {attachments}"
         )
+    # When an IANA timezone is provided, strip any UTC offset from dateTime values
+    # so Google Calendar resolves the correct DST-aware offset from the IANA name.
+    effective_start = start_time
+    effective_end = end_time
+    if timezone and "T" in start_time:
+        effective_start = _strip_utc_offset(start_time)
+    if timezone and "T" in end_time:
+        effective_end = _strip_utc_offset(end_time)
     event_body: Dict[str, Any] = {
         "summary": summary,
         "start": (
-            {"date": start_time} if "T" not in start_time else {"dateTime": start_time}
+            {"date": start_time}
+            if "T" not in start_time
+            else {"dateTime": effective_start}
         ),
-        "end": ({"date": end_time} if "T" not in end_time else {"dateTime": end_time}),
+        "end": (
+            {"date": end_time} if "T" not in end_time else {"dateTime": effective_end}
+        ),
     }
+    if recurrence:
+        event_body["recurrence"] = recurrence
     if location:
         event_body["location"] = location
     if description:
@@ -836,6 +928,7 @@ async def _modify_event_impl(
     transparency: Optional[str] = None,
     visibility: Optional[str] = None,
     color_id: Optional[str] = None,
+    recurrence: Optional[List[str]] = None,
     guests_can_modify: Optional[bool] = None,
     guests_can_invite_others: Optional[bool] = None,
     guests_can_see_other_guests: Optional[bool] = None,
@@ -850,14 +943,22 @@ async def _modify_event_impl(
     if summary is not None:
         event_body["summary"] = summary
     if start_time is not None:
+        effective_start = start_time
+        if timezone is not None and "T" in start_time:
+            effective_start = _strip_utc_offset(start_time)
         event_body["start"] = (
-            {"date": start_time} if "T" not in start_time else {"dateTime": start_time}
+            {"date": start_time}
+            if "T" not in start_time
+            else {"dateTime": effective_start}
         )
         if timezone is not None and "dateTime" in event_body["start"]:
             event_body["start"]["timeZone"] = timezone
     if end_time is not None:
+        effective_end = end_time
+        if timezone is not None and "T" in end_time:
+            effective_end = _strip_utc_offset(end_time)
         event_body["end"] = (
-            {"date": end_time} if "T" not in end_time else {"dateTime": end_time}
+            {"date": end_time} if "T" not in end_time else {"dateTime": effective_end}
         )
         if timezone is not None and "dateTime" in event_body["end"]:
             event_body["end"]["timeZone"] = timezone
@@ -873,6 +974,8 @@ async def _modify_event_impl(
 
     if color_id is not None:
         event_body["colorId"] = color_id
+    if recurrence is not None:
+        event_body["recurrence"] = recurrence
 
     # Handle reminders
     if reminders is not None or use_default_reminders is not None:
@@ -981,6 +1084,7 @@ async def _modify_event_impl(
                 # Use the already-normalized attendee objects (if provided); otherwise preserve existing
                 "attendees": event_body.get("attendees"),
                 "colorId": event_body.get("colorId"),
+                "recurrence": recurrence,
             },
         )
 
@@ -1103,6 +1207,72 @@ async def _delete_event_impl(
     return confirmation_message
 
 
+async def _rsvp_event_impl(
+    service,
+    user_google_email: str,
+    event_id: str,
+    response: str,
+    calendar_id: str = "primary",
+    comment: Optional[str] = None,
+    send_updates: str = "all",
+) -> str:
+    """Internal implementation for responding to a calendar event invitation."""
+    valid_responses = {"accepted", "declined", "tentative", "needsAction"}
+    if response not in valid_responses:
+        raise ValueError(
+            f"Invalid response '{response}'. Must be one of: {sorted(valid_responses)}"
+        )
+
+    valid_send_updates = {"all", "externalOnly", "none"}
+    if send_updates not in valid_send_updates:
+        raise ValueError(
+            f"Invalid send_updates '{send_updates}'. Must be one of: {sorted(valid_send_updates)}"
+        )
+
+    existing_event = await asyncio.to_thread(
+        lambda: service.events().get(calendarId=calendar_id, eventId=event_id).execute()
+    )
+
+    attendees = existing_event.get("attendees")
+    if not attendees:
+        raise Exception("This event has no attendee list; cannot update RSVP.")
+
+    if existing_event.get("organizer", {}).get("self"):
+        raise Exception(
+            "You are the organizer of this event. Organizers cannot respond to their own invitations."
+        )
+
+    user_index = next((i for i, a in enumerate(attendees) if a.get("self")), None)
+    if user_index is None:
+        raise Exception(
+            f"{user_google_email} was not found in the event's attendee list."
+        )
+
+    updated_attendees = [dict(a) for a in attendees]
+    updated_attendees[user_index]["responseStatus"] = response
+    if comment is not None:
+        updated_attendees[user_index]["comment"] = comment
+
+    updated_event = await asyncio.to_thread(
+        lambda: (
+            service.events()
+            .patch(
+                calendarId=calendar_id,
+                eventId=event_id,
+                body={"attendees": updated_attendees},
+                sendUpdates=send_updates,
+            )
+            .execute()
+        )
+    )
+
+    summary = updated_event.get("summary", "Unknown event")
+    logger.info(
+        f"[rsvp_event] RSVP for '{summary}' (ID: {event_id}) set to '{response}' for {user_google_email}."
+    )
+    return f"Successfully updated RSVP for '{summary}' (ID: {event_id}) to '{response}' for {user_google_email}."
+
+
 # ---------------------------------------------------------------------------
 # Consolidated event management tool
 # ---------------------------------------------------------------------------
@@ -1131,16 +1301,20 @@ async def manage_event(
     transparency: Optional[str] = None,
     visibility: Optional[str] = None,
     color_id: Optional[str] = None,
+    recurrence: Optional[StringList] = None,
     guests_can_modify: Optional[bool] = None,
     guests_can_invite_others: Optional[bool] = None,
     guests_can_see_other_guests: Optional[bool] = None,
+    response: Optional[str] = None,
+    rsvp_comment: Optional[str] = None,
+    send_updates: Optional[str] = None,
 ) -> str:
     """
-    Manages calendar events. Supports creating, updating, and deleting events.
+    Manages calendar events. Supports creating, updating, deleting, and RSVP.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
-        action (str): Action to perform - "create", "update", or "delete".
+        action (str): Action to perform - "create", "update", "delete", or "rsvp".
         summary (Optional[str]): Event title (required for create).
         start_time (Optional[str]): Start time in RFC3339 format (required for create).
         end_time (Optional[str]): End time in RFC3339 format (required for create).
@@ -1157,9 +1331,13 @@ async def manage_event(
         transparency (Optional[str]): "opaque" (busy) or "transparent" (free).
         visibility (Optional[str]): "default", "public", "private", or "confidential".
         color_id (Optional[str]): Event color ID (1-11, update only).
+        recurrence (Optional[List[str]]): RFC5545 recurrence rules for a recurring event, e.g. ["RRULE:FREQ=WEEKLY;COUNT=10"].
         guests_can_modify (Optional[bool]): Whether attendees can modify.
         guests_can_invite_others (Optional[bool]): Whether attendees can invite others.
         guests_can_see_other_guests (Optional[bool]): Whether attendees can see other guests.
+        response (Optional[str]): RSVP response — "accepted", "declined", "tentative", or "needsAction" (rsvp action only).
+        rsvp_comment (Optional[str]): Optional message to include with the RSVP response (rsvp action only).
+        send_updates (Optional[str]): Notification behavior for RSVP — "all" (default), "externalOnly", or "none" (rsvp action only).
 
     Returns:
         str: Confirmation message with event details.
@@ -1192,6 +1370,7 @@ async def manage_event(
             guests_can_modify=guests_can_modify,
             guests_can_invite_others=guests_can_invite_others,
             guests_can_see_other_guests=guests_can_see_other_guests,
+            recurrence=recurrence,
         )
     elif action_lower == "update":
         if not event_id:
@@ -1214,6 +1393,7 @@ async def manage_event(
             transparency=transparency,
             visibility=visibility,
             color_id=color_id,
+            recurrence=recurrence,
             guests_can_modify=guests_can_modify,
             guests_can_invite_others=guests_can_invite_others,
             guests_can_see_other_guests=guests_can_see_other_guests,
@@ -1227,9 +1407,905 @@ async def manage_event(
             event_id=event_id,
             calendar_id=calendar_id,
         )
+    elif action_lower == "rsvp":
+        if not event_id:
+            raise ValueError("event_id is required for rsvp action")
+        if not response:
+            raise ValueError("response is required for rsvp action")
+        return await _rsvp_event_impl(
+            service=service,
+            user_google_email=user_google_email,
+            event_id=event_id,
+            response=response,
+            calendar_id=calendar_id,
+            comment=rsvp_comment,
+            send_updates=send_updates or "all",
+        )
     else:
         raise ValueError(
-            f"Invalid action '{action_lower}'. Must be 'create', 'update', or 'delete'."
+            f"Invalid action '{action_lower}'. Must be 'create', 'update', 'delete', or 'rsvp'."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Out of Office event management
+# ---------------------------------------------------------------------------
+
+
+def _ooo_time_entry(
+    time_str: str, is_end: bool = False, timezone: Optional[str] = None
+) -> Dict[str, str]:
+    """Build a start/end dict for an OOO event.
+
+    Google Calendar API requires dateTime (not date) for outOfOffice events.
+    If a date-only string (YYYY-MM-DD) is given, convert it:
+      - start → YYYY-MM-DDT00:00:00
+      - end   → (next day)T00:00:00  (so a single date covers the full day)
+    """
+    if "T" not in time_str:
+        # End date is already expected to be exclusive by the caller, so both
+        # date-only forms convert to midnight on the provided day.
+        time_str = f"{time_str}T00:00:00"
+        logger.info(f"[ooo_time_entry] Converted date-only to dateTime: {time_str}")
+
+    has_explicit_offset = time_str.endswith("Z") or bool(
+        re.search(r"[+-]\d{2}:\d{2}$", time_str)
+    )
+    if not has_explicit_offset and not timezone:
+        raise ValueError(
+            "Out of Office events require either a timezone parameter or a "
+            "start/end timestamp with an explicit UTC offset."
+        )
+
+    entry: Dict[str, str] = {"dateTime": time_str}
+    if timezone:
+        entry["timeZone"] = timezone
+    return entry
+
+
+async def _create_ooo_event_impl(
+    service,
+    user_google_email: str,
+    start_time: str,
+    end_time: str,
+    calendar_id: str = "primary",
+    summary: Optional[str] = None,
+    auto_decline_mode: Optional[str] = None,
+    decline_message: Optional[str] = None,
+    recurrence: Optional[List[str]] = None,
+    timezone: Optional[str] = None,
+) -> str:
+    """Internal implementation for creating an Out of Office calendar event."""
+    logger.info(
+        f"[create_ooo_event] Invoked. Email: '{user_google_email}', Start: {start_time}, End: {end_time}"
+    )
+
+    effective_summary = summary or "Out of Office"
+    effective_decline_mode = _validate_auto_decline_mode(
+        auto_decline_mode, "create_ooo_event"
+    )
+
+    event_body: Dict[str, Any] = {
+        "eventType": "outOfOffice",
+        "summary": effective_summary,
+        "start": _ooo_time_entry(start_time, is_end=False, timezone=timezone),
+        "end": _ooo_time_entry(end_time, is_end=True, timezone=timezone),
+        "outOfOfficeProperties": {
+            "autoDeclineMode": effective_decline_mode,
+            "declineMessage": decline_message or "",
+        },
+        "transparency": "opaque",
+    }
+    if recurrence:
+        event_body["recurrence"] = recurrence
+
+    created_event = await asyncio.to_thread(
+        lambda: (
+            service.events().insert(calendarId=calendar_id, body=event_body).execute()
+        )
+    )
+
+    event_id = created_event.get("id", "N/A")
+    link = created_event.get("htmlLink", "N/A")
+
+    start_display = created_event.get("start", {}).get(
+        "date", created_event.get("start", {}).get("dateTime", "N/A")
+    )
+    end_display = created_event.get("end", {}).get(
+        "date", created_event.get("end", {}).get("dateTime", "N/A")
+    )
+
+    confirmation = (
+        f"Successfully created Out of Office event for {user_google_email}.\n"
+        f"- Summary: {effective_summary}\n"
+        f"- Start: {start_display}\n"
+        f"- End: {end_display}\n"
+        f"- Auto-decline: {effective_decline_mode}\n"
+        f"- Decline message: {decline_message or '(none)'}\n"
+        f"- Event ID: {event_id}\n"
+        f"- Link: {link}"
+    )
+
+    logger.info(
+        f"OOO event created successfully for {user_google_email}. ID: {event_id}"
+    )
+    return confirmation
+
+
+async def _list_ooo_events_impl(
+    service,
+    user_google_email: str,
+    calendar_id: str = "primary",
+    time_min: Optional[str] = None,
+    time_max: Optional[str] = None,
+    max_results: int = 10,
+    timezone: Optional[str] = None,
+) -> str:
+    """Internal implementation for listing Out of Office calendar events."""
+    logger.info(
+        f"[list_ooo_events] Invoked. Email: '{user_google_email}', time_min: {time_min}, time_max: {time_max}, timezone: {timezone}"
+    )
+
+    formatted_time_min = _correct_time_format_for_api(time_min, "time_min", timezone)
+    if formatted_time_min:
+        effective_time_min = formatted_time_min
+    else:
+        if timezone:
+            try:
+                tz = pytz.timezone(timezone)
+                now = datetime.datetime.now(tz)
+                effective_time_min = (
+                    now.astimezone(datetime.timezone.utc)
+                    .isoformat()
+                    .replace("+00:00", "Z")
+                )
+            except pytz.exceptions.UnknownTimeZoneError:
+                logger.warning(
+                    f"Could not apply timezone '{timezone}', falling back to UTC"
+                )
+                utc_now = datetime.datetime.now(datetime.timezone.utc)
+                effective_time_min = utc_now.isoformat().replace("+00:00", "Z")
+        else:
+            utc_now = datetime.datetime.now(datetime.timezone.utc)
+            effective_time_min = utc_now.isoformat().replace("+00:00", "Z")
+
+    effective_time_max = _correct_time_format_for_api(time_max, "time_max", timezone)
+
+    request_params: Dict[str, Any] = {
+        "calendarId": calendar_id,
+        "timeMin": effective_time_min,
+        "maxResults": max_results,
+        "singleEvents": True,
+        "orderBy": "startTime",
+        "eventTypes": ["outOfOffice"],
+    }
+    if effective_time_max:
+        request_params["timeMax"] = effective_time_max
+
+    events_result = await asyncio.to_thread(
+        lambda: service.events().list(**request_params).execute()
+    )
+    items = events_result.get("items", [])
+
+    if not items:
+        return f"No out-of-office events found for {user_google_email}."
+
+    lines = [f"Found {len(items)} out-of-office event(s) for {user_google_email}:\n"]
+    for i, item in enumerate(items, 1):
+        summary = item.get("summary", "Out of Office")
+        start = item.get("start", {}).get(
+            "date", item.get("start", {}).get("dateTime", "N/A")
+        )
+        end = item.get("end", {}).get(
+            "date", item.get("end", {}).get("dateTime", "N/A")
+        )
+        event_id = item.get("id", "N/A")
+        ooo_props = item.get("outOfOfficeProperties", {})
+        decline_mode = ooo_props.get("autoDeclineMode", "N/A")
+        decline_msg = ooo_props.get("declineMessage", "")
+
+        lines.append(f'{i}. "{summary}" ({start} to {end})')
+        lines.append(f"   Auto-decline: {decline_mode}")
+        if decline_msg:
+            lines.append(f"   Decline message: {decline_msg}")
+        lines.append(f"   Event ID: {event_id}")
+        lines.append("")
+
+    return "\n".join(lines).rstrip()
+
+
+async def _update_ooo_event_impl(
+    service,
+    user_google_email: str,
+    event_id: str,
+    calendar_id: str = "primary",
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+    summary: Optional[str] = None,
+    auto_decline_mode: Optional[str] = None,
+    decline_message: Optional[str] = None,
+    recurrence: Optional[List[str]] = None,
+    timezone: Optional[str] = None,
+) -> str:
+    """Internal implementation for updating an Out of Office calendar event."""
+    logger.info(
+        f"[update_ooo_event] Invoked. Email: '{user_google_email}', Event ID: {event_id}"
+    )
+
+    existing_event = await asyncio.to_thread(
+        lambda: service.events().get(calendarId=calendar_id, eventId=event_id).execute()
+    )
+
+    if existing_event.get("eventType") != "outOfOffice":
+        raise ValueError(
+            f"Event '{event_id}' is not an Out of Office event (type: '{existing_event.get('eventType', 'default')}'). "
+            f"Use manage_event to update regular events."
+        )
+
+    patch_body: Dict[str, Any] = {}
+
+    if summary is not None:
+        patch_body["summary"] = summary
+    if start_time is not None:
+        patch_body["start"] = _ooo_time_entry(
+            start_time, is_end=False, timezone=timezone
+        )
+    if end_time is not None:
+        patch_body["end"] = _ooo_time_entry(end_time, is_end=True, timezone=timezone)
+    if recurrence is not None:
+        patch_body["recurrence"] = recurrence
+
+    if auto_decline_mode is not None or decline_message is not None:
+        existing_ooo_props = existing_event.get("outOfOfficeProperties", {})
+        patch_body["outOfOfficeProperties"] = {
+            "autoDeclineMode": _validate_auto_decline_mode(
+                auto_decline_mode, "update_ooo_event"
+            )
+            if auto_decline_mode is not None
+            else existing_ooo_props.get(
+                "autoDeclineMode", "declineAllConflictingInvitations"
+            ),
+            "declineMessage": decline_message
+            if decline_message is not None
+            else existing_ooo_props.get("declineMessage", ""),
+        }
+
+    if not patch_body:
+        return f"No changes specified for Out of Office event '{event_id}'."
+
+    updated_event = await asyncio.to_thread(
+        lambda: (
+            service.events()
+            .patch(calendarId=calendar_id, eventId=event_id, body=patch_body)
+            .execute()
+        )
+    )
+
+    link = updated_event.get("htmlLink", "N/A")
+    start_display = updated_event.get("start", {}).get(
+        "date", updated_event.get("start", {}).get("dateTime", "N/A")
+    )
+    end_display = updated_event.get("end", {}).get(
+        "date", updated_event.get("end", {}).get("dateTime", "N/A")
+    )
+
+    confirmation = (
+        f"Successfully updated Out of Office event (ID: {event_id}) for {user_google_email}.\n"
+        f"- Summary: {updated_event.get('summary', 'Out of Office')}\n"
+        f"- Start: {start_display}\n"
+        f"- End: {end_display}\n"
+        f"- Link: {link}"
+    )
+
+    logger.info(
+        f"OOO event updated successfully for {user_google_email}. ID: {event_id}"
+    )
+    return confirmation
+
+
+async def _delete_ooo_event_impl(
+    service,
+    user_google_email: str,
+    event_id: str,
+    calendar_id: str = "primary",
+) -> str:
+    """Internal implementation for deleting an Out of Office calendar event."""
+    logger.info(
+        f"[delete_ooo_event] Invoked. Email: '{user_google_email}', Event ID: {event_id}"
+    )
+
+    try:
+        existing_event = await asyncio.to_thread(
+            lambda: (
+                service.events().get(calendarId=calendar_id, eventId=event_id).execute()
+            )
+        )
+        if existing_event.get("eventType") != "outOfOffice":
+            raise ValueError(
+                f"Event '{event_id}' is not an Out of Office event (type: '{existing_event.get('eventType', 'default')}'). "
+                f"Use manage_event to delete regular events."
+            )
+    except HttpError as get_error:
+        if get_error.resp.status == 404:
+            raise Exception(
+                f"Event not found. The event with ID '{event_id}' could not be found in calendar '{calendar_id}'."
+            )
+        else:
+            raise
+
+    await asyncio.to_thread(
+        lambda: (
+            service.events().delete(calendarId=calendar_id, eventId=event_id).execute()
+        )
+    )
+
+    confirmation = f"Successfully deleted Out of Office event (ID: {event_id}) from calendar '{calendar_id}' for {user_google_email}."
+    logger.info(
+        f"OOO event deleted successfully for {user_google_email}. ID: {event_id}"
+    )
+    return confirmation
+
+
+@server.tool()
+@handle_http_errors("manage_out_of_office", service_type="calendar")
+@require_google_service("calendar", "calendar_events")
+async def manage_out_of_office(
+    service,
+    user_google_email: str,
+    action: str,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+    summary: Optional[str] = None,
+    auto_decline_mode: Optional[str] = None,
+    decline_message: Optional[str] = None,
+    recurrence: Optional[StringList] = None,
+    timezone: Optional[str] = None,
+    time_min: Optional[str] = None,
+    time_max: Optional[str] = None,
+    max_results: int = 10,
+    event_id: Optional[str] = None,
+    calendar_id: str = "primary",
+) -> str:
+    """
+    Manages Out of Office events on Google Calendar. These special events auto-decline
+    meeting invitations and set the user's status to "Out of office" across Google Workspace.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        action (str): Action to perform - "create", "list", "update", or "delete".
+        start_time (Optional[str]): Start date/time. Use 'YYYY-MM-DD' for full-day or RFC3339 for partial-day (e.g., '2024-04-05T09:00:00Z'). Date-only values are auto-converted to dateTime (midnight-to-midnight). Required for create.
+        end_time (Optional[str]): End date/time (exclusive). Same format as start_time. For a single full day on April 5, use start_time='2026-04-05' and end_time='2026-04-06'. Required for create.
+        summary (Optional[str]): Display text on the calendar. Defaults to "Out of Office".
+        auto_decline_mode (Optional[str]): How to handle conflicting invitations. One of: "declineAllConflictingInvitations" (default), "declineOnlyNewConflictingInvitations", "declineNone".
+        decline_message (Optional[str]): Message included when auto-declining invitations.
+        recurrence (Optional[List[str]]): RFC5545 recurrence rules for a recurring Out of Office series, e.g. ["RRULE:FREQ=WEEKLY;COUNT=10"].
+        timezone (Optional[str]): Timezone for the event (e.g., "America/New_York", "Europe/London"). Required when using date-only values or dateTime values without an explicit UTC offset.
+        time_min (Optional[str]): For "list" action: start of time range. Defaults to current time. Recurring series are expanded into individual instances in the requested range.
+        time_max (Optional[str]): For "list" action: end of time range.
+        max_results (int): For "list" action: maximum events to return. Defaults to 10.
+        event_id (Optional[str]): Event ID. Required for "update" and "delete" actions.
+        calendar_id (str): Calendar ID. Defaults to 'primary'. Out of Office status events live on primary calendars, so use 'primary' or a user's primary calendar ID/email rather than a secondary calendar ID.
+
+    Returns:
+        str: Confirmation message with event details, or a formatted list of OOO events.
+    """
+    action_lower = action.lower().strip()
+    if action_lower == "create":
+        if not start_time or not end_time:
+            raise ValueError("start_time and end_time are required for create action")
+        return await _create_ooo_event_impl(
+            service=service,
+            user_google_email=user_google_email,
+            start_time=start_time,
+            end_time=end_time,
+            calendar_id=calendar_id,
+            summary=summary,
+            auto_decline_mode=auto_decline_mode,
+            decline_message=decline_message,
+            recurrence=recurrence,
+            timezone=timezone,
+        )
+    elif action_lower == "list":
+        return await _list_ooo_events_impl(
+            service=service,
+            user_google_email=user_google_email,
+            calendar_id=calendar_id,
+            time_min=time_min,
+            time_max=time_max,
+            max_results=max_results,
+            timezone=timezone,
+        )
+    elif action_lower == "update":
+        if not event_id:
+            raise ValueError("event_id is required for update action")
+        return await _update_ooo_event_impl(
+            service=service,
+            user_google_email=user_google_email,
+            event_id=event_id,
+            calendar_id=calendar_id,
+            start_time=start_time,
+            end_time=end_time,
+            summary=summary,
+            auto_decline_mode=auto_decline_mode,
+            decline_message=decline_message,
+            recurrence=recurrence,
+            timezone=timezone,
+        )
+    elif action_lower == "delete":
+        if not event_id:
+            raise ValueError("event_id is required for delete action")
+        return await _delete_ooo_event_impl(
+            service=service,
+            user_google_email=user_google_email,
+            event_id=event_id,
+            calendar_id=calendar_id,
+        )
+    else:
+        raise ValueError(
+            f"Invalid action '{action_lower}'. Must be 'create', 'list', 'update', or 'delete'."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Focus Time event helpers
+# ---------------------------------------------------------------------------
+
+
+def _focus_time_time_entry(
+    time_str: str, is_end: bool = False, timezone: Optional[str] = None
+) -> Dict[str, str]:
+    """Build a start/end dict for a Focus Time event.
+
+    Google Calendar API requires dateTime (not date) for focusTime events.
+    If a date-only string (YYYY-MM-DD) is given, convert it:
+      - start → YYYY-MM-DDT00:00:00
+      - end   → (next day)T00:00:00  (so a single date covers the full day)
+    """
+    if "T" not in time_str:
+        time_str = f"{time_str}T00:00:00"
+        logger.info(
+            f"[focus_time_time_entry] Converted date-only to dateTime: {time_str}"
+        )
+
+    has_explicit_offset = time_str.endswith("Z") or bool(
+        re.search(r"[+-]\d{2}:\d{2}$", time_str)
+    )
+    if not has_explicit_offset and not timezone:
+        raise ValueError(
+            "Focus Time events require either a timezone parameter or a "
+            "start/end timestamp with an explicit UTC offset."
+        )
+
+    entry: Dict[str, str] = {"dateTime": time_str}
+    if timezone:
+        entry["timeZone"] = timezone
+    return entry
+
+
+def _validate_chat_status(
+    chat_status: Optional[str], function_name: str
+) -> Optional[str]:
+    """Validate chat status for Focus Time events."""
+    if chat_status is None:
+        return None
+    if chat_status not in _VALID_FOCUS_TIME_CHAT_STATUSES:
+        raise ValueError(
+            f"[{function_name}] Invalid chat_status '{chat_status}'. "
+            f"Must be one of: {', '.join(sorted(_VALID_FOCUS_TIME_CHAT_STATUSES))}"
+        )
+    return chat_status
+
+
+async def _create_focus_time_event_impl(
+    service,
+    user_google_email: str,
+    start_time: str,
+    end_time: str,
+    calendar_id: str = "primary",
+    summary: Optional[str] = None,
+    auto_decline_mode: Optional[str] = None,
+    decline_message: Optional[str] = None,
+    chat_status: Optional[str] = None,
+    recurrence: Optional[List[str]] = None,
+    timezone: Optional[str] = None,
+) -> str:
+    """Internal implementation for creating a Focus Time calendar event."""
+    logger.info(
+        f"[create_focus_time_event] Invoked. Email: '{user_google_email}', Start: {start_time}, End: {end_time}"
+    )
+
+    effective_summary = summary or "Focus Time"
+    effective_decline_mode = _validate_auto_decline_mode(
+        auto_decline_mode, "create_focus_time_event"
+    )
+    validated_chat_status = _validate_chat_status(
+        chat_status or "doNotDisturb", "create_focus_time_event"
+    )
+
+    focus_time_props: Dict[str, str] = {
+        "autoDeclineMode": effective_decline_mode,
+        "declineMessage": decline_message or "",
+    }
+    if validated_chat_status:
+        focus_time_props["chatStatus"] = validated_chat_status
+
+    event_body: Dict[str, Any] = {
+        "eventType": "focusTime",
+        "summary": effective_summary,
+        "start": _focus_time_time_entry(start_time, is_end=False, timezone=timezone),
+        "end": _focus_time_time_entry(end_time, is_end=True, timezone=timezone),
+        "focusTimeProperties": focus_time_props,
+        "transparency": "opaque",
+    }
+    if recurrence:
+        event_body["recurrence"] = recurrence
+
+    created_event = await asyncio.to_thread(
+        lambda: (
+            service.events().insert(calendarId=calendar_id, body=event_body).execute()
+        )
+    )
+
+    event_id = created_event.get("id", "N/A")
+    link = created_event.get("htmlLink", "N/A")
+
+    start_display = created_event.get("start", {}).get(
+        "date", created_event.get("start", {}).get("dateTime", "N/A")
+    )
+    end_display = created_event.get("end", {}).get(
+        "date", created_event.get("end", {}).get("dateTime", "N/A")
+    )
+
+    confirmation = (
+        f"Successfully created Focus Time event for {user_google_email}.\n"
+        f"- Summary: {effective_summary}\n"
+        f"- Start: {start_display}\n"
+        f"- End: {end_display}\n"
+        f"- Auto-decline: {effective_decline_mode}\n"
+        f"- Decline message: {decline_message or '(none)'}\n"
+        f"- Chat status: {validated_chat_status or '(default)'}\n"
+        f"- Event ID: {event_id}\n"
+        f"- Link: {link}"
+    )
+
+    logger.info(
+        f"Focus Time event created successfully for {user_google_email}. ID: {event_id}"
+    )
+    return confirmation
+
+
+async def _list_focus_time_events_impl(
+    service,
+    user_google_email: str,
+    calendar_id: str = "primary",
+    time_min: Optional[str] = None,
+    time_max: Optional[str] = None,
+    max_results: int = 10,
+    timezone: Optional[str] = None,
+) -> str:
+    """Internal implementation for listing Focus Time calendar events."""
+    logger.info(
+        f"[list_focus_time_events] Invoked. Email: '{user_google_email}', time_min: {time_min}, time_max: {time_max}, timezone: {timezone}"
+    )
+
+    formatted_time_min = _correct_time_format_for_api(time_min, "time_min", timezone)
+    if formatted_time_min:
+        effective_time_min = formatted_time_min
+    else:
+        if timezone:
+            try:
+                tz = pytz.timezone(timezone)
+                now = datetime.datetime.now(tz)
+                effective_time_min = (
+                    now.astimezone(datetime.timezone.utc)
+                    .isoformat()
+                    .replace("+00:00", "Z")
+                )
+            except pytz.exceptions.UnknownTimeZoneError:
+                logger.warning(
+                    f"Could not apply timezone '{timezone}', falling back to UTC"
+                )
+                utc_now = datetime.datetime.now(datetime.timezone.utc)
+                effective_time_min = utc_now.isoformat().replace("+00:00", "Z")
+        else:
+            utc_now = datetime.datetime.now(datetime.timezone.utc)
+            effective_time_min = utc_now.isoformat().replace("+00:00", "Z")
+
+    effective_time_max = _correct_time_format_for_api(time_max, "time_max", timezone)
+
+    request_params: Dict[str, Any] = {
+        "calendarId": calendar_id,
+        "timeMin": effective_time_min,
+        "maxResults": max_results,
+        "singleEvents": True,
+        "orderBy": "startTime",
+        "eventTypes": ["focusTime"],
+    }
+    if effective_time_max:
+        request_params["timeMax"] = effective_time_max
+
+    events_result = await asyncio.to_thread(
+        lambda: service.events().list(**request_params).execute()
+    )
+    items = events_result.get("items", [])
+
+    if not items:
+        return f"No Focus Time events found for {user_google_email}."
+
+    lines = [f"Found {len(items)} Focus Time event(s) for {user_google_email}:\n"]
+    for i, item in enumerate(items, 1):
+        summary = item.get("summary", "Focus Time")
+        start = item.get("start", {}).get(
+            "date", item.get("start", {}).get("dateTime", "N/A")
+        )
+        end = item.get("end", {}).get(
+            "date", item.get("end", {}).get("dateTime", "N/A")
+        )
+        event_id = item.get("id", "N/A")
+        ft_props = item.get("focusTimeProperties", {})
+        decline_mode = ft_props.get("autoDeclineMode", "N/A")
+        decline_msg = ft_props.get("declineMessage", "")
+        chat_st = ft_props.get("chatStatus", "")
+
+        lines.append(f'{i}. "{summary}" ({start} to {end})')
+        lines.append(f"   Auto-decline: {decline_mode}")
+        if decline_msg:
+            lines.append(f"   Decline message: {decline_msg}")
+        if chat_st:
+            lines.append(f"   Chat status: {chat_st}")
+        lines.append(f"   Event ID: {event_id}")
+        lines.append("")
+
+    return "\n".join(lines).rstrip()
+
+
+async def _update_focus_time_event_impl(
+    service,
+    user_google_email: str,
+    event_id: str,
+    calendar_id: str = "primary",
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+    summary: Optional[str] = None,
+    auto_decline_mode: Optional[str] = None,
+    decline_message: Optional[str] = None,
+    chat_status: Optional[str] = None,
+    recurrence: Optional[List[str]] = None,
+    timezone: Optional[str] = None,
+) -> str:
+    """Internal implementation for updating a Focus Time calendar event."""
+    logger.info(
+        f"[update_focus_time_event] Invoked. Email: '{user_google_email}', Event ID: {event_id}"
+    )
+
+    existing_event = await asyncio.to_thread(
+        lambda: service.events().get(calendarId=calendar_id, eventId=event_id).execute()
+    )
+
+    if existing_event.get("eventType") != "focusTime":
+        raise ValueError(
+            f"Event '{event_id}' is not a Focus Time event (type: '{existing_event.get('eventType', 'default')}'). "
+            f"Use manage_event to update regular events."
+        )
+
+    patch_body: Dict[str, Any] = {}
+
+    if summary is not None:
+        patch_body["summary"] = summary
+    if start_time is not None:
+        patch_body["start"] = _focus_time_time_entry(
+            start_time, is_end=False, timezone=timezone
+        )
+    if end_time is not None:
+        patch_body["end"] = _focus_time_time_entry(
+            end_time, is_end=True, timezone=timezone
+        )
+    if recurrence is not None:
+        patch_body["recurrence"] = recurrence
+
+    if (
+        auto_decline_mode is not None
+        or decline_message is not None
+        or chat_status is not None
+    ):
+        existing_ft_props = existing_event.get("focusTimeProperties", {})
+        updated_ft_props: Dict[str, str] = {
+            "autoDeclineMode": _validate_auto_decline_mode(
+                auto_decline_mode, "update_focus_time_event"
+            )
+            if auto_decline_mode is not None
+            else existing_ft_props.get(
+                "autoDeclineMode", "declineAllConflictingInvitations"
+            ),
+            "declineMessage": decline_message
+            if decline_message is not None
+            else existing_ft_props.get("declineMessage", ""),
+        }
+        if chat_status is not None:
+            validated = _validate_chat_status(chat_status, "update_focus_time_event")
+            updated_ft_props["chatStatus"] = validated
+        elif existing_ft_props.get("chatStatus"):
+            updated_ft_props["chatStatus"] = existing_ft_props["chatStatus"]
+        patch_body["focusTimeProperties"] = updated_ft_props
+
+    if not patch_body:
+        return f"No changes specified for Focus Time event '{event_id}'."
+
+    updated_event = await asyncio.to_thread(
+        lambda: (
+            service.events()
+            .patch(calendarId=calendar_id, eventId=event_id, body=patch_body)
+            .execute()
+        )
+    )
+
+    link = updated_event.get("htmlLink", "N/A")
+    start_display = updated_event.get("start", {}).get(
+        "date", updated_event.get("start", {}).get("dateTime", "N/A")
+    )
+    end_display = updated_event.get("end", {}).get(
+        "date", updated_event.get("end", {}).get("dateTime", "N/A")
+    )
+
+    confirmation = (
+        f"Successfully updated Focus Time event (ID: {event_id}) for {user_google_email}.\n"
+        f"- Summary: {updated_event.get('summary', 'Focus Time')}\n"
+        f"- Start: {start_display}\n"
+        f"- End: {end_display}\n"
+        f"- Link: {link}"
+    )
+
+    logger.info(
+        f"Focus Time event updated successfully for {user_google_email}. ID: {event_id}"
+    )
+    return confirmation
+
+
+async def _delete_focus_time_event_impl(
+    service,
+    user_google_email: str,
+    event_id: str,
+    calendar_id: str = "primary",
+) -> str:
+    """Internal implementation for deleting a Focus Time calendar event."""
+    logger.info(
+        f"[delete_focus_time_event] Invoked. Email: '{user_google_email}', Event ID: {event_id}"
+    )
+
+    try:
+        existing_event = await asyncio.to_thread(
+            lambda: (
+                service.events().get(calendarId=calendar_id, eventId=event_id).execute()
+            )
+        )
+        if existing_event.get("eventType") != "focusTime":
+            raise ValueError(
+                f"Event '{event_id}' is not a Focus Time event (type: '{existing_event.get('eventType', 'default')}'). "
+                f"Use manage_event to delete regular events."
+            )
+    except HttpError as get_error:
+        if get_error.resp.status == 404:
+            raise Exception(
+                f"Event not found. The event with ID '{event_id}' could not be found in calendar '{calendar_id}'."
+            )
+        else:
+            raise
+
+    await asyncio.to_thread(
+        lambda: (
+            service.events().delete(calendarId=calendar_id, eventId=event_id).execute()
+        )
+    )
+
+    confirmation = f"Successfully deleted Focus Time event (ID: {event_id}) from calendar '{calendar_id}' for {user_google_email}."
+    logger.info(
+        f"Focus Time event deleted successfully for {user_google_email}. ID: {event_id}"
+    )
+    return confirmation
+
+
+@server.tool()
+@handle_http_errors("manage_focus_time", service_type="calendar")
+@require_google_service("calendar", "calendar_events")
+async def manage_focus_time(
+    service,
+    user_google_email: str,
+    action: str,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+    summary: Optional[str] = None,
+    auto_decline_mode: Optional[str] = None,
+    decline_message: Optional[str] = None,
+    chat_status: Optional[str] = None,
+    recurrence: Optional[StringList] = None,
+    timezone: Optional[str] = None,
+    time_min: Optional[str] = None,
+    time_max: Optional[str] = None,
+    max_results: int = 10,
+    event_id: Optional[str] = None,
+    calendar_id: str = "primary",
+) -> str:
+    """
+    Manages Focus Time events on Google Calendar. These special events auto-decline
+    meeting invitations and, by default, set the user's chat status to Do Not
+    Disturb, helping protect blocks of uninterrupted work time.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        action (str): Action to perform - "create", "list", "update", or "delete".
+        start_time (Optional[str]): Start date/time. Use 'YYYY-MM-DD' for full-day or RFC3339 for partial-day (e.g., '2024-04-05T09:00:00Z'). Date-only values are auto-converted to dateTime (midnight-to-midnight). Required for create.
+        end_time (Optional[str]): End date/time (exclusive). Same format as start_time. For a single full day on April 5, use start_time='2026-04-05' and end_time='2026-04-06'. Required for create.
+        summary (Optional[str]): Display text on the calendar. Defaults to "Focus Time".
+        auto_decline_mode (Optional[str]): How to handle conflicting invitations. One of: "declineAllConflictingInvitations" (default), "declineOnlyNewConflictingInvitations", "declineNone".
+        decline_message (Optional[str]): Message included when auto-declining invitations.
+        chat_status (Optional[str]): Google Chat status during the focus time. Supports "doNotDisturb" (default) and "available".
+        recurrence (Optional[List[str]]): RFC5545 recurrence rules for a recurring Focus Time series, e.g. ["RRULE:FREQ=WEEKLY;COUNT=10"].
+        timezone (Optional[str]): Timezone for the event (e.g., "America/New_York", "Europe/London"). Required when using date-only values or dateTime values without an explicit UTC offset.
+        time_min (Optional[str]): For "list" action: start of time range. Defaults to current time. Recurring series are expanded into individual instances in the requested range.
+        time_max (Optional[str]): For "list" action: end of time range.
+        max_results (int): For "list" action: maximum events to return. Defaults to 10.
+        event_id (Optional[str]): Event ID. Required for "update" and "delete" actions.
+        calendar_id (str): Calendar ID. Defaults to 'primary'. Focus Time status events live on primary calendars, so use 'primary' or a user's primary calendar ID/email rather than a secondary calendar ID.
+
+    Returns:
+        str: Confirmation message with event details, or a formatted list of Focus Time events.
+    """
+    action_lower = action.lower().strip()
+    if action_lower == "create":
+        if not start_time or not end_time:
+            raise ValueError("start_time and end_time are required for create action")
+        return await _create_focus_time_event_impl(
+            service=service,
+            user_google_email=user_google_email,
+            start_time=start_time,
+            end_time=end_time,
+            calendar_id=calendar_id,
+            summary=summary,
+            auto_decline_mode=auto_decline_mode,
+            decline_message=decline_message,
+            chat_status=chat_status,
+            recurrence=recurrence,
+            timezone=timezone,
+        )
+    elif action_lower == "list":
+        return await _list_focus_time_events_impl(
+            service=service,
+            user_google_email=user_google_email,
+            calendar_id=calendar_id,
+            time_min=time_min,
+            time_max=time_max,
+            max_results=max_results,
+            timezone=timezone,
+        )
+    elif action_lower == "update":
+        if not event_id:
+            raise ValueError("event_id is required for update action")
+        return await _update_focus_time_event_impl(
+            service=service,
+            user_google_email=user_google_email,
+            event_id=event_id,
+            calendar_id=calendar_id,
+            start_time=start_time,
+            end_time=end_time,
+            summary=summary,
+            auto_decline_mode=auto_decline_mode,
+            decline_message=decline_message,
+            chat_status=chat_status,
+            recurrence=recurrence,
+            timezone=timezone,
+        )
+    elif action_lower == "delete":
+        if not event_id:
+            raise ValueError("event_id is required for delete action")
+        return await _delete_focus_time_event_impl(
+            service=service,
+            user_google_email=user_google_email,
+            event_id=event_id,
+            calendar_id=calendar_id,
+        )
+    else:
+        raise ValueError(
+            f"Invalid action '{action_lower}'. Must be 'create', 'list', 'update', or 'delete'."
         )
 
 
@@ -1269,8 +2345,8 @@ async def query_freebusy(
     )
 
     # Format time parameters
-    formatted_time_min = _correct_time_format_for_api(time_min, "time_min")
-    formatted_time_max = _correct_time_format_for_api(time_max, "time_max")
+    formatted_time_min = _correct_time_format_for_api(time_min, "time_min", None)
+    formatted_time_max = _correct_time_format_for_api(time_max, "time_max", None)
 
     # Default to primary calendar if no calendar IDs provided
     if not calendar_ids:
@@ -1344,3 +2420,47 @@ async def query_freebusy(
         f"[query_freebusy] Successfully retrieved free/busy information for {len(calendars)} calendar(s)"
     )
     return result_text
+
+
+@server.tool()
+@handle_http_errors("create_calendar", is_read_only=False, service_type="calendar")
+@require_google_service("calendar", "calendar")
+async def create_calendar(
+    service,
+    user_google_email: str,
+    summary: str,
+    description: Optional[str] = None,
+    timezone: Optional[str] = None,
+) -> str:
+    """
+    Creates a new secondary Google Calendar.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        summary (str): The title/name of the new calendar.
+        description (Optional[str]): An optional description for the calendar.
+        timezone (Optional[str]): IANA timezone for the calendar (e.g. 'America/New_York').
+
+    Returns:
+        str: The ID and summary of the newly created calendar.
+    """
+    logger.info(
+        f"[create_calendar] Invoked. Email: '{user_google_email}', summary: '{summary}'"
+    )
+
+    body: Dict[str, Any] = {"summary": summary}
+    if description:
+        body["description"] = description
+    if timezone:
+        body["timeZone"] = timezone
+
+    result = await asyncio.to_thread(
+        lambda: service.calendars().insert(body=body).execute()
+    )
+
+    calendar_id = result["id"]
+    calendar_summary = result.get("summary", summary)
+    logger.info(
+        f"[create_calendar] Created calendar '{calendar_summary}' with ID: {calendar_id}"
+    )
+    return f"Created calendar '{calendar_summary}' (ID: {calendar_id})"

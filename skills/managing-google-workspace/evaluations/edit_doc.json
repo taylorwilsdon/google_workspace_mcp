@@ -1,0 +1,10 @@
+{
+  "skills": ["managing-google-workspace"],
+  "query": "Add a heading 'Summary' to the top of my doc https://docs.google.com/document/d/abc123/edit",
+  "expected_behavior": [
+    "Calls inspect_doc_structure to get current indices",
+    "Calls modify_doc_text or insert_doc_elements to insert the heading",
+    "Calls update_paragraph_style to apply heading formatting",
+    "Calls get_doc_as_markdown to verify the result"
+  ]
+}

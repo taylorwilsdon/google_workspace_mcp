@@ -2,8 +2,10 @@
 Unit tests for Google Chat MCP tools — attachment support
 """
 
+import asyncio
 import base64
 import inspect
+import ssl
 from urllib.parse import urlparse
 
 import pytest
@@ -218,7 +220,7 @@ async def test_search_messages_shows_attachment_indicator(mock_resolve):
 @pytest.mark.asyncio
 @patch("gchat.chat_tools._resolve_sender", new_callable=AsyncMock)
 async def test_search_messages_combines_filters_and_uses_page_size(mock_resolve):
-    """Cross-space search should honor page_size and combine query with time_filter."""
+    """Cross-space search should honor page_size and only send supported API filters."""
     mock_resolve.return_value = "Test User"
 
     msg = _make_message(text="Deploy finished")
@@ -245,10 +247,186 @@ async def test_search_messages_combines_filters_and_uses_page_size(mock_resolve)
     assert 'text "deploy" and createTime > "2026-03-18T00:00:00-03:00"' in result
     list_kwargs = chat_service.spaces().messages().list.call_args.kwargs
     assert list_kwargs["pageSize"] == 7
-    assert (
-        list_kwargs["filter"]
-        == 'text:"deploy" AND createTime > "2026-03-18T00:00:00-03:00"'
+    assert list_kwargs["filter"] == 'createTime > "2026-03-18T00:00:00-03:00"'
+
+
+@pytest.mark.asyncio
+@patch("gchat.chat_tools._resolve_sender", new_callable=AsyncMock)
+async def test_search_messages_query_only_filters_client_side_without_api_filter(
+    mock_resolve,
+):
+    """Query-only search should avoid unsupported Chat API text filters."""
+    mock_resolve.return_value = "Test User"
+
+    matching = _make_message(text="Deploy finished")
+    matching["_space_name"] = "General"
+    non_matching = _make_message(text="Lunch plans")
+    non_matching["_space_name"] = "General"
+
+    chat_service = Mock()
+    chat_service.spaces().list().execute.return_value = {
+        "spaces": [{"name": "spaces/S", "displayName": "General"}]
+    }
+    chat_service.spaces().messages().list().execute.return_value = {
+        "messages": [matching, non_matching]
+    }
+    people_service = Mock()
+
+    from gchat.chat_tools import search_messages
+
+    result = await _unwrap(search_messages)(
+        chat_service=chat_service,
+        people_service=people_service,
+        user_google_email="test@example.com",
+        query="deploy",
     )
+
+    assert "Deploy finished" in result
+    assert "Lunch plans" not in result
+    list_kwargs = chat_service.spaces().messages().list.call_args.kwargs
+    assert list_kwargs["pageSize"] == 25
+    assert "filter" not in list_kwargs
+
+
+@pytest.mark.asyncio
+@patch("gchat.chat_tools._resolve_sender", new_callable=AsyncMock)
+async def test_search_messages_limits_parallel_space_fetches(mock_resolve, monkeypatch):
+    """Cross-space search should cap concurrent threaded Chat API calls."""
+    mock_resolve.return_value = "Test User"
+
+    from gchat.chat_tools import _SEARCH_MESSAGES_MAX_CONCURRENT_SPACE_FETCHES
+    from gchat.chat_tools import search_messages
+
+    state = {"current": 0, "max": 0}
+
+    async def fake_to_thread(fn, *args, **kwargs):
+        state["current"] += 1
+        state["max"] = max(state["max"], state["current"])
+        await asyncio.sleep(0.01)
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            state["current"] -= 1
+
+    monkeypatch.setattr("gchat.chat_tools.asyncio.to_thread", fake_to_thread)
+
+    spaces = [{"name": f"spaces/S{i}", "displayName": f"Space {i}"} for i in range(5)]
+
+    def list_messages(**kwargs):
+        parent = kwargs["parent"]
+        request = Mock()
+        request.execute.return_value = {
+            "messages": [_make_message(text=f"message from {parent}")]
+        }
+        return request
+
+    chat_service = Mock()
+    chat_service.spaces().list().execute.return_value = {"spaces": spaces}
+    chat_service.spaces().messages().list.side_effect = list_messages
+    people_service = Mock()
+
+    result = await _unwrap(search_messages)(
+        chat_service=chat_service,
+        people_service=people_service,
+        user_google_email="test@example.com",
+        query="message",
+        max_spaces=len(spaces),
+    )
+
+    assert "Found 5 messages matching 'text \"message\"'" in result
+    assert state["max"] <= _SEARCH_MESSAGES_MAX_CONCURRENT_SPACE_FETCHES
+
+
+@pytest.mark.asyncio
+@patch("gchat.chat_tools._resolve_sender", new_callable=AsyncMock)
+async def test_search_messages_retries_ssl_per_space_without_restarting_search(
+    mock_resolve, monkeypatch
+):
+    """A transient SSL failure in one space should retry only that space."""
+    mock_resolve.return_value = "Test User"
+
+    async def fake_to_thread(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    monkeypatch.setattr("gchat.chat_tools.asyncio.to_thread", fake_to_thread)
+    monkeypatch.setattr("gchat.chat_tools.asyncio.sleep", AsyncMock())
+
+    from gchat.chat_tools import search_messages
+
+    attempt_counts = {"spaces/S1": 0, "spaces/S2": 0}
+
+    def list_messages(**kwargs):
+        parent = kwargs["parent"]
+        request = Mock()
+
+        def execute():
+            attempt_counts[parent] += 1
+            if parent == "spaces/S1" and attempt_counts[parent] < 3:
+                raise ssl.SSLError("read operation timed out")
+            return {"messages": [_make_message(text=f"message from {parent}")]}
+
+        request.execute.side_effect = execute
+        return request
+
+    chat_service = Mock()
+    chat_service.spaces().list().execute.return_value = {
+        "spaces": [
+            {"name": "spaces/S1", "displayName": "Space 1"},
+            {"name": "spaces/S2", "displayName": "Space 2"},
+        ]
+    }
+    chat_service.spaces().messages().list.side_effect = list_messages
+    people_service = Mock()
+
+    result = await _unwrap(search_messages)(
+        chat_service=chat_service,
+        people_service=people_service,
+        user_google_email="test@example.com",
+        query="message",
+        max_spaces=2,
+    )
+
+    assert "Found 2 messages matching 'text \"message\"'" in result
+    assert attempt_counts == {"spaces/S1": 3, "spaces/S2": 1}
+    assert chat_service.spaces().list().execute.call_count == 1
+
+
+@pytest.mark.asyncio
+@patch("gchat.chat_tools._resolve_sender", new_callable=AsyncMock)
+async def test_search_messages_raises_transient_error_when_all_spaces_ssl_fail(
+    mock_resolve, monkeypatch
+):
+    """If every searched space fails transiently, surface a transient network error."""
+    mock_resolve.return_value = "Test User"
+
+    async def fake_to_thread(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    monkeypatch.setattr("gchat.chat_tools.asyncio.to_thread", fake_to_thread)
+    monkeypatch.setattr("gchat.chat_tools.asyncio.sleep", AsyncMock())
+
+    from core.utils import TransientNetworkError
+    from gchat.chat_tools import search_messages
+
+    def list_messages(**kwargs):  # noqa: ARG001
+        request = Mock()
+        request.execute.side_effect = ssl.SSLError("connection reset")
+        return request
+
+    chat_service = Mock()
+    chat_service.spaces().list().execute.return_value = {
+        "spaces": [{"name": "spaces/S1", "displayName": "Space 1"}]
+    }
+    chat_service.spaces().messages().list.side_effect = list_messages
+    people_service = Mock()
+
+    with pytest.raises(TransientNetworkError, match="transient SSL error"):
+        await _unwrap(search_messages)(
+            chat_service=chat_service,
+            people_service=people_service,
+            user_google_email="test@example.com",
+            query="message",
+        )
 
 
 # ---------------------------------------------------------------------------

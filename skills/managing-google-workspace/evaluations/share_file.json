@@ -1,0 +1,11 @@
+{
+  "skills": ["managing-google-workspace"],
+  "query": "Find the Q1 budget spreadsheet and share it with bob@example.com",
+  "expected_behavior": [
+    "Calls search_drive_files to find the file",
+    "If multiple results, asks the user to clarify and confirms the exact file before sharing",
+    "Calls manage_drive_access to share with bob@example.com",
+    "Calls get_drive_shareable_link to provide the link",
+    "Reports the sharing result and link to the user"
+  ]
+}

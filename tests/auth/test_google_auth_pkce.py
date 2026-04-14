@@ -8,6 +8,7 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from auth.google_auth import create_oauth_flow  # noqa: E402
+from auth.google_auth import load_client_secrets_from_env  # noqa: E402
 
 
 DUMMY_CLIENT_CONFIG = {
@@ -116,3 +117,23 @@ def test_create_oauth_flow_allows_disabling_autogenerate_without_verifier():
     _args, kwargs = mock_from_client_config.call_args
     assert kwargs["autogenerate_code_verifier"] is False
     assert "code_verifier" not in kwargs
+
+
+def test_load_client_secrets_from_env_supports_public_client():
+    with patch.dict(
+        os.environ,
+        {
+            "GOOGLE_OAUTH_CLIENT_ID": "public-client-id.apps.googleusercontent.com",
+            "GOOGLE_OAUTH_REDIRECT_URI": "http://localhost:8000/oauth2callback",
+        },
+        clear=True,
+    ):
+        config = load_client_secrets_from_env()
+
+    assert config is not None
+    assert "installed" in config
+    assert (
+        config["installed"]["client_id"]
+        == "public-client-id.apps.googleusercontent.com"
+    )
+    assert config["installed"]["client_secret"] == ""

@@ -1,0 +1,2252 @@
+{
+  "batch_update_doc": {
+    "$defs": {
+      "CreateBulletListOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "bullet_preset": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "end_index": {
+            "type": "integer"
+          },
+          "list_type": {
+            "default": "UNORDERED",
+            "enum": [
+              "UNORDERED",
+              "ORDERED",
+              "CHECKBOX",
+              "NONE"
+            ],
+            "type": "string"
+          },
+          "nesting_level": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "paragraph_start_indices": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "segment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional header/footer/footnote segment ID. Use a real ID returned by inspect_doc_structure; do not guess values like 'kix.header'."
+          },
+          "start_index": {
+            "type": "integer"
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional document tab ID to target."
+          },
+          "type": {
+            "const": "create_bullet_list",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "start_index",
+          "end_index"
+        ],
+        "type": "object"
+      },
+      "CreateHeaderFooterOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "header_footer_type": {
+            "default": "DEFAULT",
+            "description": "Header/footer type to create.",
+            "enum": [
+              "DEFAULT",
+              "FIRST_PAGE_ONLY",
+              "EVEN_PAGE"
+            ],
+            "type": "string"
+          },
+          "section_break_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional section break index for section-scoped layouts."
+          },
+          "section_type": {
+            "description": "Which section to create.",
+            "enum": [
+              "header",
+              "footer"
+            ],
+            "type": "string"
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional document tab ID to target."
+          },
+          "type": {
+            "const": "create_header_footer",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "section_type"
+        ],
+        "type": "object"
+      },
+      "CreateNamedRangeOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "end_index": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "segment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional header/footer/footnote segment ID. Use a real ID returned by inspect_doc_structure; do not guess values like 'kix.header'."
+          },
+          "start_index": {
+            "type": "integer"
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional document tab ID to target."
+          },
+          "type": {
+            "const": "create_named_range",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "name",
+          "start_index",
+          "end_index"
+        ],
+        "type": "object"
+      },
+      "DeleteDocTabOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "tab_id": {
+            "type": "string"
+          },
+          "type": {
+            "const": "delete_doc_tab",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "tab_id"
+        ],
+        "type": "object"
+      },
+      "DeleteNamedRangeOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "named_range_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "named_range_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional document tab ID to target."
+          },
+          "type": {
+            "const": "delete_named_range",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "type": "object"
+      },
+      "DeleteTableColumnOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "column_index": {
+            "type": "integer"
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional document tab ID to target."
+          },
+          "table_start_index": {
+            "type": "integer"
+          },
+          "type": {
+            "const": "delete_table_column",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "table_start_index",
+          "column_index"
+        ],
+        "type": "object"
+      },
+      "DeleteTableRowOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "row_index": {
+            "type": "integer"
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional document tab ID to target."
+          },
+          "table_start_index": {
+            "type": "integer"
+          },
+          "type": {
+            "const": "delete_table_row",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "table_start_index",
+          "row_index"
+        ],
+        "type": "object"
+      },
+      "DeleteTextOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "end_index": {
+            "type": "integer"
+          },
+          "segment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional header/footer/footnote segment ID. Use a real ID returned by inspect_doc_structure; do not guess values like 'kix.header'."
+          },
+          "start_index": {
+            "type": "integer"
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional document tab ID to target."
+          },
+          "type": {
+            "const": "delete_text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "start_index",
+          "end_index"
+        ],
+        "type": "object"
+      },
+      "FindReplaceOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "find_text": {
+            "type": "string"
+          },
+          "match_case": {
+            "default": false,
+            "type": "boolean"
+          },
+          "replace_text": {
+            "type": "string"
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional document tab ID to target."
+          },
+          "type": {
+            "const": "find_replace",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "find_text",
+          "replace_text"
+        ],
+        "type": "object"
+      },
+      "FormatTextOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "background_color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "baseline_offset": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "bold": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "clear_link": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "end_index": {
+            "type": "integer"
+          },
+          "font_family": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "font_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "font_weight": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "italic": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "link_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "segment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional header/footer/footnote segment ID. Use a real ID returned by inspect_doc_structure; do not guess values like 'kix.header'."
+          },
+          "small_caps": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "start_index": {
+            "type": "integer"
+          },
+          "strikethrough": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional document tab ID to target."
+          },
+          "text_color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "type": {
+            "const": "format_text",
+            "type": "string"
+          },
+          "underline": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "type",
+          "start_index",
+          "end_index"
+        ],
+        "type": "object"
+      },
+      "InsertDocTabOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "index": {
+            "type": "integer"
+          },
+          "parent_tab_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "const": "insert_doc_tab",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "title",
+          "index"
+        ],
+        "type": "object"
+      },
+      "InsertImageOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "end_of_segment": {
+            "default": false,
+            "description": "Append to the end of the targeted body/segment instead of using index.",
+            "type": "boolean"
+          },
+          "height": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "image_uri": {
+            "description": "Image URL or resolvable image URI.",
+            "type": "string"
+          },
+          "index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Insertion index. Omit when end_of_segment=true."
+          },
+          "segment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional header/footer/footnote segment ID. Use a real ID returned by inspect_doc_structure; do not guess values like 'kix.header'."
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional document tab ID to target."
+          },
+          "type": {
+            "const": "insert_image",
+            "type": "string"
+          },
+          "width": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "type",
+          "image_uri"
+        ],
+        "type": "object"
+      },
+      "InsertPageBreakOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "end_of_segment": {
+            "default": false,
+            "description": "Append to the end of the body instead of using index.",
+            "type": "boolean"
+          },
+          "index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Insertion index. Omit when end_of_segment=true."
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional document tab ID to target."
+          },
+          "type": {
+            "const": "insert_page_break",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "type": "object"
+      },
+      "InsertSectionBreakOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "end_of_segment": {
+            "default": false,
+            "description": "Append to the end of the body instead of using index.",
+            "type": "boolean"
+          },
+          "index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Insertion index. Omit when end_of_segment=true."
+          },
+          "section_type": {
+            "default": "NEXT_PAGE",
+            "enum": [
+              "CONTINUOUS",
+              "NEXT_PAGE"
+            ],
+            "type": "string"
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional document tab ID to target."
+          },
+          "type": {
+            "const": "insert_section_break",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "type": "object"
+      },
+      "InsertTableColumnOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "column_index": {
+            "type": "integer"
+          },
+          "insert_right": {
+            "default": true,
+            "type": "boolean"
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional document tab ID to target."
+          },
+          "table_start_index": {
+            "type": "integer"
+          },
+          "type": {
+            "const": "insert_table_column",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "table_start_index",
+          "column_index"
+        ],
+        "type": "object"
+      },
+      "InsertTableOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "columns": {
+            "type": "integer"
+          },
+          "end_of_segment": {
+            "default": false,
+            "description": "Append to the end of the targeted body/segment instead of using index.",
+            "type": "boolean"
+          },
+          "index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Insertion index. Omit when end_of_segment=true."
+          },
+          "rows": {
+            "type": "integer"
+          },
+          "segment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional header/footer/footnote segment ID. Use a real ID returned by inspect_doc_structure; do not guess values like 'kix.header'."
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional document tab ID to target."
+          },
+          "type": {
+            "const": "insert_table",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "rows",
+          "columns"
+        ],
+        "type": "object"
+      },
+      "InsertTableRowOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "insert_below": {
+            "default": true,
+            "type": "boolean"
+          },
+          "row_index": {
+            "type": "integer"
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional document tab ID to target."
+          },
+          "table_start_index": {
+            "type": "integer"
+          },
+          "type": {
+            "const": "insert_table_row",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "table_start_index",
+          "row_index"
+        ],
+        "type": "object"
+      },
+      "InsertTextOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "end_of_segment": {
+            "default": false,
+            "description": "Append to the end of the targeted body/segment instead of using index.",
+            "type": "boolean"
+          },
+          "index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Insertion index. Omit when end_of_segment=true."
+          },
+          "segment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional header/footer/footnote segment ID. Use a real ID returned by inspect_doc_structure; do not guess values like 'kix.header'."
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional document tab ID to target."
+          },
+          "text": {
+            "description": "Text to insert.",
+            "type": "string"
+          },
+          "type": {
+            "const": "insert_text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "text"
+        ],
+        "type": "object"
+      },
+      "MergeTableCellsOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "column_index": {
+            "type": "integer"
+          },
+          "column_span": {
+            "type": "integer"
+          },
+          "row_index": {
+            "type": "integer"
+          },
+          "row_span": {
+            "type": "integer"
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional document tab ID to target."
+          },
+          "table_start_index": {
+            "type": "integer"
+          },
+          "type": {
+            "const": "merge_table_cells",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "table_start_index",
+          "row_index",
+          "column_index",
+          "row_span",
+          "column_span"
+        ],
+        "type": "object"
+      },
+      "ReplaceNamedRangeContentOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "named_range_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "named_range_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional document tab ID to target."
+          },
+          "text": {
+            "type": "string"
+          },
+          "type": {
+            "const": "replace_named_range_content",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "text"
+        ],
+        "type": "object"
+      },
+      "ReplaceTextOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "end_index": {
+            "type": "integer"
+          },
+          "segment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional header/footer/footnote segment ID. Use a real ID returned by inspect_doc_structure; do not guess values like 'kix.header'."
+          },
+          "start_index": {
+            "type": "integer"
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional document tab ID to target."
+          },
+          "text": {
+            "description": "Replacement text.",
+            "type": "string"
+          },
+          "type": {
+            "const": "replace_text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "start_index",
+          "end_index",
+          "text"
+        ],
+        "type": "object"
+      },
+      "UnmergeTableCellsOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "column_index": {
+            "type": "integer"
+          },
+          "column_span": {
+            "type": "integer"
+          },
+          "row_index": {
+            "type": "integer"
+          },
+          "row_span": {
+            "type": "integer"
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional document tab ID to target."
+          },
+          "table_start_index": {
+            "type": "integer"
+          },
+          "type": {
+            "const": "unmerge_table_cells",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "table_start_index",
+          "row_index",
+          "column_index",
+          "row_span",
+          "column_span"
+        ],
+        "type": "object"
+      },
+      "UpdateDocTabOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "tab_id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "const": "update_doc_tab",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "tab_id",
+          "title"
+        ],
+        "type": "object"
+      },
+      "UpdateDocumentStyleOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "background_color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "document_mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "PAGES",
+                  "PAGELESS"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "flip_page_orientation": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "margin_bottom": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "margin_footer": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "margin_header": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "margin_left": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "margin_right": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "margin_top": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "page_height": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "page_number_start": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "page_width": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional document tab ID to target."
+          },
+          "type": {
+            "const": "update_document_style",
+            "type": "string"
+          },
+          "use_even_page_header_footer": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "use_first_page_header_footer": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "type": "object"
+      },
+      "UpdateParagraphStyleOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "alignment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "avoid_widow_and_orphan": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "direction": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "end_index": {
+            "type": "integer"
+          },
+          "heading_level": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "indent_end": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "indent_first_line": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "indent_start": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "keep_lines_together": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "keep_with_next": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "line_spacing": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "named_style_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "page_break_before": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "segment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional header/footer/footnote segment ID. Use a real ID returned by inspect_doc_structure; do not guess values like 'kix.header'."
+          },
+          "shading_color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "space_above": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "space_below": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "spacing_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "start_index": {
+            "type": "integer"
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional document tab ID to target."
+          },
+          "type": {
+            "const": "update_paragraph_style",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "start_index",
+          "end_index"
+        ],
+        "type": "object"
+      },
+      "UpdateSectionStyleOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "column_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "column_separator_style": {
+            "anyOf": [
+              {
+                "enum": [
+                  "NONE",
+                  "BETWEEN_EACH_COLUMN"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "column_spacing": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "content_direction": {
+            "anyOf": [
+              {
+                "enum": [
+                  "LEFT_TO_RIGHT",
+                  "RIGHT_TO_LEFT"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "end_index": {
+            "type": "integer"
+          },
+          "flip_page_orientation": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "margin_bottom": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "margin_footer": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "margin_header": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "margin_left": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "margin_right": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "margin_top": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "page_number_start": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "start_index": {
+            "type": "integer"
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional document tab ID to target."
+          },
+          "type": {
+            "const": "update_section_style",
+            "type": "string"
+          },
+          "use_first_page_header_footer": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "type",
+          "start_index",
+          "end_index"
+        ],
+        "type": "object"
+      },
+      "UpdateTableCellStyleOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "background_color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "border_color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "border_width": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "column_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "column_span": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "content_alignment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "padding_bottom": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "padding_left": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "padding_right": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "padding_top": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "row_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "row_span": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional document tab ID to target."
+          },
+          "table_start_index": {
+            "type": "integer"
+          },
+          "type": {
+            "const": "update_table_cell_style",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "table_start_index"
+        ],
+        "type": "object"
+      },
+      "UpdateTableColumnPropertiesOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "column_indices": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional document tab ID to target."
+          },
+          "table_start_index": {
+            "type": "integer"
+          },
+          "type": {
+            "const": "update_table_column_properties",
+            "type": "string"
+          },
+          "width": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "width_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "type",
+          "table_start_index",
+          "column_indices"
+        ],
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "document_id": {
+        "type": "string"
+      },
+      "operations": {
+        "items": {
+          "discriminator": {
+            "mapping": {
+              "create_bullet_list": "#/$defs/CreateBulletListOperation",
+              "create_header_footer": "#/$defs/CreateHeaderFooterOperation",
+              "create_named_range": "#/$defs/CreateNamedRangeOperation",
+              "delete_doc_tab": "#/$defs/DeleteDocTabOperation",
+              "delete_named_range": "#/$defs/DeleteNamedRangeOperation",
+              "delete_table_column": "#/$defs/DeleteTableColumnOperation",
+              "delete_table_row": "#/$defs/DeleteTableRowOperation",
+              "delete_text": "#/$defs/DeleteTextOperation",
+              "find_replace": "#/$defs/FindReplaceOperation",
+              "format_text": "#/$defs/FormatTextOperation",
+              "insert_doc_tab": "#/$defs/InsertDocTabOperation",
+              "insert_image": "#/$defs/InsertImageOperation",
+              "insert_page_break": "#/$defs/InsertPageBreakOperation",
+              "insert_section_break": "#/$defs/InsertSectionBreakOperation",
+              "insert_table": "#/$defs/InsertTableOperation",
+              "insert_table_column": "#/$defs/InsertTableColumnOperation",
+              "insert_table_row": "#/$defs/InsertTableRowOperation",
+              "insert_text": "#/$defs/InsertTextOperation",
+              "merge_table_cells": "#/$defs/MergeTableCellsOperation",
+              "replace_named_range_content": "#/$defs/ReplaceNamedRangeContentOperation",
+              "replace_text": "#/$defs/ReplaceTextOperation",
+              "unmerge_table_cells": "#/$defs/UnmergeTableCellsOperation",
+              "update_doc_tab": "#/$defs/UpdateDocTabOperation",
+              "update_document_style": "#/$defs/UpdateDocumentStyleOperation",
+              "update_paragraph_style": "#/$defs/UpdateParagraphStyleOperation",
+              "update_section_style": "#/$defs/UpdateSectionStyleOperation",
+              "update_table_cell_style": "#/$defs/UpdateTableCellStyleOperation",
+              "update_table_column_properties": "#/$defs/UpdateTableColumnPropertiesOperation"
+            },
+            "propertyName": "type"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/InsertTextOperation"
+            },
+            {
+              "$ref": "#/$defs/DeleteTextOperation"
+            },
+            {
+              "$ref": "#/$defs/ReplaceTextOperation"
+            },
+            {
+              "$ref": "#/$defs/FormatTextOperation"
+            },
+            {
+              "$ref": "#/$defs/UpdateParagraphStyleOperation"
+            },
+            {
+              "$ref": "#/$defs/UpdateTableCellStyleOperation"
+            },
+            {
+              "$ref": "#/$defs/InsertTableOperation"
+            },
+            {
+              "$ref": "#/$defs/InsertTableRowOperation"
+            },
+            {
+              "$ref": "#/$defs/DeleteTableRowOperation"
+            },
+            {
+              "$ref": "#/$defs/InsertTableColumnOperation"
+            },
+            {
+              "$ref": "#/$defs/DeleteTableColumnOperation"
+            },
+            {
+              "$ref": "#/$defs/MergeTableCellsOperation"
+            },
+            {
+              "$ref": "#/$defs/UnmergeTableCellsOperation"
+            },
+            {
+              "$ref": "#/$defs/UpdateTableColumnPropertiesOperation"
+            },
+            {
+              "$ref": "#/$defs/InsertPageBreakOperation"
+            },
+            {
+              "$ref": "#/$defs/InsertSectionBreakOperation"
+            },
+            {
+              "$ref": "#/$defs/FindReplaceOperation"
+            },
+            {
+              "$ref": "#/$defs/CreateBulletListOperation"
+            },
+            {
+              "$ref": "#/$defs/CreateNamedRangeOperation"
+            },
+            {
+              "$ref": "#/$defs/ReplaceNamedRangeContentOperation"
+            },
+            {
+              "$ref": "#/$defs/DeleteNamedRangeOperation"
+            },
+            {
+              "$ref": "#/$defs/UpdateDocumentStyleOperation"
+            },
+            {
+              "$ref": "#/$defs/UpdateSectionStyleOperation"
+            },
+            {
+              "$ref": "#/$defs/CreateHeaderFooterOperation"
+            },
+            {
+              "$ref": "#/$defs/InsertImageOperation"
+            },
+            {
+              "$ref": "#/$defs/InsertDocTabOperation"
+            },
+            {
+              "$ref": "#/$defs/DeleteDocTabOperation"
+            },
+            {
+              "$ref": "#/$defs/UpdateDocTabOperation"
+            }
+          ]
+        },
+        "type": "array"
+      },
+      "user_google_email": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "user_google_email",
+      "document_id",
+      "operations"
+    ],
+    "type": "object"
+  },
+  "modify_doc_text": {
+    "additionalProperties": false,
+    "properties": {
+      "background_color": {
+        "default": null,
+        "type": "string"
+      },
+      "baseline_offset": {
+        "default": null,
+        "type": "string"
+      },
+      "bold": {
+        "default": null,
+        "type": "boolean"
+      },
+      "clear_link": {
+        "default": null,
+        "type": "boolean"
+      },
+      "document_id": {
+        "type": "string"
+      },
+      "end_index": {
+        "default": null,
+        "type": "integer"
+      },
+      "end_of_segment": {
+        "default": false,
+        "type": "boolean"
+      },
+      "font_family": {
+        "default": null,
+        "type": "string"
+      },
+      "font_size": {
+        "default": null,
+        "type": "integer"
+      },
+      "font_weight": {
+        "default": null,
+        "type": "integer"
+      },
+      "italic": {
+        "default": null,
+        "type": "boolean"
+      },
+      "link_url": {
+        "default": null,
+        "type": "string"
+      },
+      "segment_id": {
+        "default": null,
+        "type": "string"
+      },
+      "small_caps": {
+        "default": null,
+        "type": "boolean"
+      },
+      "start_index": {
+        "type": "integer"
+      },
+      "strikethrough": {
+        "default": null,
+        "type": "boolean"
+      },
+      "tab_id": {
+        "default": null,
+        "type": "string"
+      },
+      "text": {
+        "default": null,
+        "type": "string"
+      },
+      "text_color": {
+        "default": null,
+        "type": "string"
+      },
+      "underline": {
+        "default": null,
+        "type": "boolean"
+      },
+      "user_google_email": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "user_google_email",
+      "document_id",
+      "start_index"
+    ],
+    "type": "object"
+  }
+}

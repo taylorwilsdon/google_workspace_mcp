@@ -110,6 +110,77 @@ class TestValidateTableCellStyle:
         assert vm.validate_batch_operations(ops)[0]
 
 
+class TestBuildTableCellStylePadding:
+    def test_padding_all_sides(self):
+        style, fields = build_table_cell_style(
+            padding_top=4.0,
+            padding_bottom=4.0,
+            padding_left=8.0,
+            padding_right=8.0,
+        )
+        assert style["paddingTop"] == {"magnitude": 4.0, "unit": "PT"}
+        assert style["paddingBottom"] == {"magnitude": 4.0, "unit": "PT"}
+        assert style["paddingLeft"] == {"magnitude": 8.0, "unit": "PT"}
+        assert style["paddingRight"] == {"magnitude": 8.0, "unit": "PT"}
+        assert fields == ["paddingTop", "paddingBottom", "paddingLeft", "paddingRight"]
+
+    def test_content_alignment(self):
+        style, fields = build_table_cell_style(content_alignment="MIDDLE")
+        assert style["contentAlignment"] == "MIDDLE"
+        assert "contentAlignment" in fields
+
+    def test_combined_background_and_padding(self):
+        style, fields = build_table_cell_style(
+            background_color="#FF0000",
+            padding_top=2.0,
+            content_alignment="TOP",
+        )
+        assert "backgroundColor" in style
+        assert style["paddingTop"] == {"magnitude": 2.0, "unit": "PT"}
+        assert style["contentAlignment"] == "TOP"
+        assert "backgroundColor" in fields
+        assert "paddingTop" in fields
+        assert "contentAlignment" in fields
+
+
+class TestValidateTableCellStylePaddingAndAlignment:
+    @pytest.fixture()
+    def vm(self):
+        return ValidationManager()
+
+    def test_padding_only_is_valid(self, vm):
+        is_valid, msg = vm.validate_table_cell_style_params(padding_left=5.0)
+        assert is_valid, msg
+
+    def test_content_alignment_only_is_valid(self, vm):
+        is_valid, msg = vm.validate_table_cell_style_params(content_alignment="BOTTOM")
+        assert is_valid, msg
+
+    def test_invalid_content_alignment(self, vm):
+        is_valid, msg = vm.validate_table_cell_style_params(content_alignment="CENTER")
+        assert not is_valid
+        assert "TOP" in msg or "MIDDLE" in msg or "BOTTOM" in msg
+
+    def test_negative_padding_rejected(self, vm):
+        is_valid, msg = vm.validate_table_cell_style_params(padding_top=-1.0)
+        assert not is_valid
+        assert "non-negative" in msg
+
+    def test_zero_padding_is_valid(self, vm):
+        is_valid, msg = vm.validate_table_cell_style_params(padding_top=0.0)
+        assert is_valid, msg
+
+    def test_bool_padding_rejected(self, vm):
+        is_valid, msg = vm.validate_table_cell_style_params(padding_top=True)
+        assert not is_valid
+        assert "must be a number" in msg
+
+    def test_no_style_params_rejected(self, vm):
+        is_valid, msg = vm.validate_table_cell_style_params()
+        assert not is_valid
+        assert "At least one" in msg
+
+
 class TestBatchManagerIntegration:
     @pytest.fixture()
     def manager(self):

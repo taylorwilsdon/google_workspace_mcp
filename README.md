@@ -121,9 +121,63 @@ Workspace MCP is the single most complete MCP server that integrates all major G
 
 ---
 
+## <span style="color:#adbcbc">Security & Compliance</span>
+
+<table>
+<tr>
+<td valign="top" width="50%">
+
+**For Security Teams**
+
+This server sends no data anywhere except Google's APIs, on behalf of the authenticated user, using your own OAuth client credentials. There is no telemetry, no usage reporting, no analytics, no license server, and no SaaS dependency. The entire data path is: your infrastructure → Google APIs.
+
+- **Fully open source** — every line is auditable in this repo
+- **Your OAuth client, your GCP project** — credentials never leave your environment
+- **You control the scopes** — read-only, granular per-service permissions, or full access
+- **You control the network** — deploy behind your reverse proxy, in your VPC, on your own terms
+- **No third-party services** — no intermediary servers, no token relays, no hosted backends
+- **Stateless mode** — zero disk writes for locked-down container environments
+- **Sensitive path blocking** — `.env`, `.ssh/`, `.aws/`, and credential files are blocked regardless of configuration
+
+Full dependency tree in `pyproject.toml`, pinned in `uv.lock`.
+
+</td>
+<td valign="top" width="50%">
+
+**For Legal & Procurement**
+
+This project is [MIT licensed](LICENSE) — not "open core," not "source available," not "free with a CLA." There is no dual licensing, no commercial tier gating features, and no contributor license agreement.
+
+- **Use commercially without restriction** — build products, sell services, deploy internally
+- **Fork, embed, redistribute** — MIT requires only attribution
+- **No CLA** — contributions remain under MIT
+- **No telemetry to disclose** — nothing to flag in a privacy review
+- **No network effects** — the server never contacts any endpoint you didn't configure
+- **Standard dependency licenses** — MIT, Apache 2.0, and BSD throughout the dependency chain; no copyleft, no AGPL
+
+The license is 21 lines and says what it means.
+
+</td>
+</tr>
+</table>
+
+---
+
 ## Quick Start
 
 > Set credentials → pick a launch command → connect your client
+
+<div align="center">
+
+> 💡 **New to Workspace MCP?** Check out the **[Interactive Quick Start Guide →](https://workspacemcp.com/quick-start)** with step-by-step setup, screenshots, and troubleshooting tips!
+
+</div>
+
+<table>
+<tr>
+<td valign="top" width="50%">
+
+**Confidential Client Quick Start**
 
 ```bash
 # 1. Credentials
@@ -139,6 +193,34 @@ uvx workspace-mcp --tool-tier complete   # everything
 uv run main.py --tools gmail drive calendar
 ```
 
+</td>
+<td valign="top" width="50%">
+
+**Secretless / Public OAuth 2.1 (PKCE) Quick Start**
+
+```bash
+# 1. Credentials
+export MCP_ENABLE_OAUTH21=true
+export GOOGLE_OAUTH_CLIENT_ID="..."
+export WORKSPACE_MCP_PORT=8000
+export GOOGLE_OAUTH_REDIRECT_URI="http://localhost:${WORKSPACE_MCP_PORT}/oauth2callback"
+export OAUTHLIB_INSECURE_TRANSPORT=1
+# Leave GOOGLE_OAUTH_CLIENT_SECRET unset for public PKCE clients
+export FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY="$(openssl rand -hex 32)"
+
+# 2. Launch — OAuth 2.1 requires HTTP transport
+uvx workspace-mcp --transport streamable-http --tool-tier core
+uvx workspace-mcp --transport streamable-http --tool-tier extended
+uvx workspace-mcp --transport streamable-http --tool-tier complete
+
+# Or cherry-pick services
+uv run main.py --transport streamable-http --tools gmail drive calendar
+```
+
+</td>
+</tr>
+</table>
+
 <sub>[Credential setup →](#-credential-configuration) · [All launch options →](#start-the-server) · [Tier details →](#tool-tiers)</sub>
 
 <details open>
@@ -149,11 +231,11 @@ uv run main.py --tools gmail drive calendar
 |----------|:---:|---------|
 | **🔐 Authentication** | | |
 | `GOOGLE_OAUTH_CLIENT_ID` | **required** | OAuth client ID from Google Cloud |
-| `GOOGLE_OAUTH_CLIENT_SECRET` | **required** | OAuth client secret |
+| `GOOGLE_OAUTH_CLIENT_SECRET` | | OAuth client secret for confidential clients; optional for public OAuth 2.1 PKCE clients |
 | `OAUTHLIB_INSECURE_TRANSPORT` | **required**&ast; | Set to `1` for development — allows `http://` redirect |
 | `USER_GOOGLE_EMAIL` | | Default email for single-user auth |
 | `GOOGLE_CLIENT_SECRET_PATH` | | Custom path to `client_secret.json` |
-| `GOOGLE_MCP_CREDENTIALS_DIR` | | Credential storage directory — default `~/.google_workspace_mcp/credentials` |
+| `GOOGLE_MCP_CREDENTIALS_DIR` | | Credential directory — default `~/.google_workspace_mcp/credentials` |
 | **🖥️ Server** | | |
 | `WORKSPACE_MCP_BASE_URI` | | Base server URI (no port) — default `http://localhost` |
 | `WORKSPACE_MCP_PORT` | | Listening port — default `8000` |
@@ -170,7 +252,10 @@ uv run main.py --tools gmail drive calendar
 | `OAUTH_CUSTOM_REDIRECT_URIS` | | Comma-separated additional redirect URIs |
 | `OAUTH_ALLOWED_ORIGINS` | | Comma-separated additional CORS origins |
 | `WORKSPACE_MCP_OAUTH_PROXY_STORAGE_BACKEND` | | `memory`, `disk`, or `valkey` — see [storage backends](#oauth-proxy-storage-backends) |
-| `FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY` | | Custom encryption key for OAuth proxy storage |
+| `FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY` | | Custom encryption key for OAuth proxy storage; required for public OAuth 2.1 clients when `GOOGLE_OAUTH_CLIENT_SECRET` is omitted |
+| **🔧 Service Account** | | |
+| `GOOGLE_SERVICE_ACCOUNT_KEY_FILE` | | Path to service account JSON key file (domain-wide delegation) |
+| `GOOGLE_SERVICE_ACCOUNT_KEY_JSON` | | Inline service account JSON key (alternative to file) |
 | **🔍 Custom Search** | | |
 | `GOOGLE_PSE_API_KEY` | | API key for Programmable Search Engine |
 | `GOOGLE_PSE_ENGINE_ID` | | Search Engine ID for PSE |
@@ -208,8 +293,8 @@ uv run main.py --tools gmail drive calendar
 
 1. **Create Project** — [Open Console →](https://console.cloud.google.com/) → Create new project
 2. **Create OAuth Credentials** — APIs & Services → Credentials → Create Credentials → OAuth Client ID
-   - Choose **Desktop Application** (no redirect URIs needed!)
-   - Download and note your Client ID & Client Secret
+   - Choose **Desktop Application** for a public PKCE client (no redirect URIs needed) or **Web Application** for a confidential client
+   - Download and note your Client ID and, if issued, Client Secret
 3. **Enable APIs** — APIs & Services → Library, then enable each service:
 
    | | | | |
@@ -223,6 +308,7 @@ uv run main.py --tools gmail drive calendar
    export GOOGLE_OAUTH_CLIENT_ID="your-client-id"
    export GOOGLE_OAUTH_CLIENT_SECRET="your-secret"
    ```
+   For public OAuth 2.1 PKCE clients, omit `GOOGLE_OAUTH_CLIENT_SECRET` and set `FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY` instead.
 
 <sub>[Full OAuth documentation →](https://developers.google.com/workspace/guides/auth-overview) · [Credential setup details →](#-credential-configuration)</sub>
 
@@ -610,6 +696,12 @@ cp .env.oauth21 .env
 
 > **Note**: All tools support automatic authentication via `@require_google_service()` decorators with 30-minute service caching.
 
+<div align="center">
+
+> 📖 **Looking for detailed parameters?** Visit the **[Complete Documentation →](https://workspacemcp.com/docs)** for comprehensive tool reference, examples, and API guides!
+
+</div>
+
 #### 📅 Google Calendar <sub>[`calendar_tools.py`](gcalendar/calendar_tools.py)</sub>
 
 | <sub>Tool</sub> | <sub>Tier</sub> | <sub>Description</sub> |
@@ -617,6 +709,10 @@ cp .env.oauth21 .env
 | <sub>`list_calendars`</sub> | <sub>Core</sub> | <sub>List accessible calendars</sub> |
 | <sub>`get_events`</sub> | <sub>Core</sub> | <sub>Retrieve events with time range filtering</sub> |
 | <sub>`manage_event`</sub> | <sub>Core</sub> | <sub>Create, update, or delete calendar events</sub> |
+| <sub>`create_calendar`</sub> | <sub>Extended</sub> | <sub>Create a new secondary Google Calendar</sub> |
+| <sub>`query_freebusy`</sub> | <sub>Extended</sub> | <sub>Query free/busy information for calendars</sub> |
+| <sub>`manage_out_of_office`</sub> | <sub>Extended</sub> | <sub>Create, list, update, or delete Out of Office events</sub> |
+| <sub>`manage_focus_time`</sub> | <sub>Extended</sub> | <sub>Create, list, update, or delete Focus Time events</sub> |
 
 #### 📁 Google Drive <sub>[`drive_tools.py`](gdrive/drive_tools.py)</sub>
 
@@ -731,7 +827,9 @@ Saved files expire after 1 hour and are cleaned up automatically.
 | <sub>`list_spreadsheets`</sub> | <sub>Extended</sub> | <sub>List accessible spreadsheets</sub> |
 | <sub>`get_spreadsheet_info`</sub> | <sub>Extended</sub> | <sub>Get spreadsheet metadata</sub> |
 | <sub>`format_sheet_range`</sub> | <sub>Extended</sub> | <sub>Apply colors, number formats, text wrapping, alignment, bold/italic, font size</sub> |
+| <sub>`list_sheet_tables`</sub> | <sub>Extended</sub> | <sub>List structured tables with IDs, names, ranges, and columns</sub> |
 | <sub>`create_sheet`</sub> | <sub>Complete</sub> | <sub>Add sheets to existing files</sub> |
+| <sub>`append_table_rows`</sub> | <sub>Complete</sub> | <sub>Append rows to a structured table, auto-extending the table range</sub> |
 | <sub>`list_spreadsheet_comments`</sub> | <sub>Complete</sub> | <sub>List all spreadsheet comments</sub> |
 | <sub>`manage_spreadsheet_comment`</sub> | <sub>Complete</sub> | <sub>Create, reply to, or resolve comments</sub> |
 | <sub>`manage_conditional_formatting`</sub> | <sub>Complete</sub> | <sub>Add, update, or delete conditional formatting rules</sub> |
@@ -928,7 +1026,7 @@ uv run pytest
 
 ### OAuth 2.1 Support (Multi-User Bearer Token Authentication)
 
-The server includes OAuth 2.1 support for bearer token authentication, enabling multi-user session management. **OAuth 2.1 automatically reuses your existing `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` credentials** - no additional configuration needed!
+The server includes OAuth 2.1 support for bearer token authentication, enabling multi-user session management. **OAuth 2.1 automatically reuses your existing `GOOGLE_OAUTH_CLIENT_ID` and, for confidential clients, `GOOGLE_OAUTH_CLIENT_SECRET` credentials** - no additional Google-side configuration needed. Public PKCE clients are also supported: if you omit `GOOGLE_OAUTH_CLIENT_SECRET`, set `FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY` explicitly.
 
 **When to use OAuth 2.1:**
 - Multiple users accessing the same MCP server instance
@@ -937,13 +1035,14 @@ The server includes OAuth 2.1 support for bearer token authentication, enabling 
 - Production environments requiring secure session management
 - Browser-based clients requiring CORS support
 
-**⚠️ Important: OAuth 2.1 and Single-User Mode are mutually exclusive**
+**⚠️ Important: Mutually exclusive authentication modes**
 
-OAuth 2.1 mode (`MCP_ENABLE_OAUTH21=true`) cannot be used together with the `--single-user` flag:
+OAuth 2.1 mode (`MCP_ENABLE_OAUTH21=true`) cannot be used together with `--single-user` or service account mode:
 - **Single-user mode**: For legacy clients that pass user emails in tool calls
 - **OAuth 2.1 mode**: For modern multi-user scenarios with bearer token authentication
+- **Service account mode**: For headless/server-to-server use via domain-wide delegation
 
-Choose one authentication method - using both will result in a startup error.
+Choose one authentication method - combining incompatible modes will result in a startup error.
 
 **Enabling OAuth 2.1:**
 To enable OAuth 2.1, set the `MCP_ENABLE_OAUTH21` environment variable to `true`.
@@ -961,7 +1060,7 @@ If `MCP_ENABLE_OAUTH21` is not set to `true`, the server will use legacy authent
 
 FastMCP ships a native `GoogleProvider` that we now rely on directly. It solves the two tricky parts of using Google OAuth with MCP clients:
 
-1.  **Dynamic Client Registration**: Google still doesn't support OAuth 2.1 DCR, but the FastMCP provider exposes the full DCR surface and forwards registrations to Google using your fixed credentials. MCP clients register as usual and the provider hands them your Google client ID/secret under the hood.
+1.  **Dynamic Client Registration**: Google still doesn't support OAuth 2.1 DCR, but the FastMCP provider exposes the full DCR surface and forwards registrations to Google using your fixed credentials. MCP clients register as usual and the provider hands them your Google client ID and, when configured, client secret under the hood.
 
 2.  **CORS & Browser Compatibility**: The provider includes an OAuth proxy that serves all discovery, authorization, and token endpoints with proper CORS headers. We no longer maintain custom `/oauth2/*` routes—the provider handles the upstream exchanges securely and advertises the correct metadata to clients.
 
@@ -1050,7 +1149,7 @@ export WORKSPACE_MCP_OAUTH_PROXY_VALKEY_PORT=6379
 | `WORKSPACE_MCP_OAUTH_PROXY_VALKEY_REQUEST_TIMEOUT_MS` | 5000 | Request timeout for remote hosts |
 | `WORKSPACE_MCP_OAUTH_PROXY_VALKEY_CONNECTION_TIMEOUT_MS` | 10000 | Connection timeout for remote hosts |
 
-**Encryption:** Disk and Valkey storage are encrypted with Fernet. The encryption key is derived from `FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY` if set, otherwise from `GOOGLE_OAUTH_CLIENT_SECRET`.
+**Encryption:** Disk and Valkey storage are encrypted with Fernet. The encryption key is derived from `FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY` if set, otherwise from `GOOGLE_OAUTH_CLIENT_SECRET`. Public OAuth 2.1 client setups without a client secret must set `FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY`.
 
 </details>
 
@@ -1081,7 +1180,7 @@ uv run main.py --transport streamable-http
 
 **Requirements:**
 - Must be used with `MCP_ENABLE_OAUTH21=true`
-- OAuth credentials still required for token validation (`GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`)
+- OAuth client ID still required for token validation; client secret is optional for public clients (`GOOGLE_OAUTH_CLIENT_ID`, optional `GOOGLE_OAUTH_CLIENT_SECRET`)
 - External system must obtain valid Google OAuth access tokens (ya29.*)
 - Each tool call request must include valid bearer token
 
@@ -1092,6 +1191,49 @@ uv run main.py --transport streamable-http
 - Multi-tenant SaaS applications with centralized auth
 - Mobile or web apps with their own OAuth implementation
 
+
+### Service Account Mode (Domain-Wide Delegation)
+
+> **WARNING: This mode uses Google Workspace domain-wide delegation, which grants the service account the ability to impersonate any user in your domain for the configured scopes. This is powerful and dangerous — do not use this unless you fully understand the security implications. A misconfigured service account with broad scopes can read, modify, and delete data across every user in your organization. Only use this in tightly controlled environments where you know exactly what you're doing.**
+
+Service account mode allows the server to authenticate using a Google Cloud service account with domain-wide delegation instead of interactive OAuth flows. The service account impersonates a single configured domain user for all API calls.
+
+**When to use service account mode:**
+- Headless or unattended environments where no browser is available for OAuth consent
+- Server-to-server integrations that need to act on behalf of a specific domain user
+- CI/CD pipelines or automation scripts
+- Environments where you cannot or do not want to manage per-user OAuth tokens
+
+**Enabling Service Account Mode:**
+
+```bash
+# Option 1: Key file on disk
+export GOOGLE_SERVICE_ACCOUNT_KEY_FILE="/path/to/service-account-key.json"
+export USER_GOOGLE_EMAIL="user@yourdomain.com"
+uv run main.py
+
+# Option 2: Inline JSON key (e.g., from a secret manager)
+export GOOGLE_SERVICE_ACCOUNT_KEY_JSON='{"type":"service_account","project_id":"...","private_key":"...","client_email":"..."}'
+export USER_GOOGLE_EMAIL="user@yourdomain.com"
+uv run main.py
+```
+
+**Prerequisites:**
+1. A Google Cloud service account with a JSON key
+2. Domain-wide delegation enabled for the service account in your Google Workspace Admin Console (Security → API controls → Domain-wide delegation)
+3. The required OAuth scopes authorized for the service account's client ID in the Admin Console
+4. `USER_GOOGLE_EMAIL` set to the domain user the service account will impersonate
+
+**Incompatibilities:**
+- Cannot be combined with `--single-user` mode
+- Cannot be combined with `MCP_ENABLE_OAUTH21=true`
+- Only one key source may be provided — set either `GOOGLE_SERVICE_ACCOUNT_KEY_FILE` or `GOOGLE_SERVICE_ACCOUNT_KEY_JSON`, not both
+
+**Key Behaviors:**
+- The OAuth callback server is not started (no interactive auth needed)
+- Credentials directory permission checks are skipped
+- **All operations impersonate the configured `USER_GOOGLE_EMAIL`** — any email addresses supplied in tool calls (e.g., `user_email` parameters) are ignored. This differs from OAuth modes where each user authenticates separately.
+- The service account key is validated at startup (checks for required fields and correct type)
 
 ### VS Code MCP Client Support
 
@@ -1127,7 +1269,13 @@ uv run main.py --transport streamable-http
 
 # Then add to Claude Code
 claude mcp add --transport http workspace-mcp http://localhost:8000/mcp
+
+# Optional: install the bundled Claude skill for better Workspace tool routing
+mkdir -p ~/.claude/skills
+ln -s "$(pwd)/skills/managing-google-workspace" ~/.claude/skills/managing-google-workspace
 ```
+
+Or copy `skills/managing-google-workspace` into `~/.claude/skills/managing-google-workspace` if you prefer not to symlink it.
 </details>
 
 #### Reverse Proxy Setup

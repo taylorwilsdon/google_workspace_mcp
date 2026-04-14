@@ -57,6 +57,11 @@ class TestCreateUpdateParagraphStyleRequest:
     def test_returns_none_when_no_styles(self):
         assert create_update_paragraph_style_request(1, 10) is None
 
+    def test_zero_start_maps_to_first_writable_body_position(self):
+        result = create_update_paragraph_style_request(0, 10, heading_level=1)
+        inner = result["updateParagraphStyle"]
+        assert inner["range"] == {"startIndex": 1, "endIndex": 10}
+
     def test_produces_correct_api_structure(self):
         result = create_update_paragraph_style_request(1, 10, heading_level=1)
         inner = result["updateParagraphStyle"]
@@ -158,6 +163,20 @@ class TestBatchManagerIntegration:
             == "TITLE"
         )
         assert "named style: TITLE" in desc
+
+    def test_build_request_normalizes_zero_start_index(self, manager):
+        op = {
+            "type": "update_paragraph_style",
+            "start_index": 0,
+            "end_index": 20,
+            "heading_level": 1,
+        }
+        request, desc = manager._build_operation_request(op, "update_paragraph_style")
+        assert request["updateParagraphStyle"]["range"] == {
+            "startIndex": 1,
+            "endIndex": 20,
+        }
+        assert "paragraph style 0-20" in desc
 
     @pytest.mark.asyncio
     async def test_end_to_end_execute(self, manager):

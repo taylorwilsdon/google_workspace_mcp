@@ -70,6 +70,9 @@ class EnhancedLogFormatter(logging.Formatter):
             "gslides.slides_tools": "[SLIDES]",
             "gtasks.tasks_tools": "[TASKS]",
             "gsearch.search_tools": "[SEARCH]",
+            "auth.service_decorator": "[TOOL]",
+            "gcontacts.contacts_tools": "[CONTACTS]",
+            "gappsscript.apps_script_tools": "[APPSCRIPT]",
         }
 
         return ascii_prefixes.get(logger_name, f"[{level_name}]")
@@ -181,10 +184,15 @@ def configure_file_logging(logger_name: str = None) -> bool:
     # Configure file logging for normal mode
     try:
         target_logger = logging.getLogger(logger_name)
-        log_file_dir = os.path.dirname(os.path.abspath(__file__))
-        # Go up one level since we're in core/ subdirectory
-        log_file_dir = os.path.dirname(log_file_dir)
-        log_file_path = os.path.join(log_file_dir, "mcp_server_debug.log")
+
+        # Write logs to user-specific directory, not the package directory
+        log_dir = os.path.join(os.path.expanduser("~"), ".google_workspace_mcp", "logs")
+        os.makedirs(log_dir, mode=0o700, exist_ok=True)
+        log_file_path = os.path.join(log_dir, "mcp_server_debug.log")
+
+        # Pre-create log file with restrictive permissions to avoid TOCTOU race
+        fd = os.open(log_file_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        os.close(fd)
 
         file_handler = logging.FileHandler(log_file_path, mode="a")
         file_handler.setLevel(logging.DEBUG)
@@ -201,7 +209,8 @@ def configure_file_logging(logger_name: str = None) -> bool:
         return True
 
     except Exception as e:
+        log_file_path_str = locals().get("log_file_path", "<unknown>")
         sys.stderr.write(
-            f"CRITICAL: Failed to set up file logging to '{log_file_path}': {e}\n"
+            f"CRITICAL: Failed to set up file logging to '{log_file_path_str}': {e}\n"
         )
         return False

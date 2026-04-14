@@ -116,7 +116,11 @@ class TestAdvancedStructureParsing:
             {
                 "body": {
                     "content": [
-                        {"startIndex": 0, "endIndex": 1, "sectionBreak": {"sectionStyle": {}}},
+                        {
+                            "startIndex": 0,
+                            "endIndex": 1,
+                            "sectionBreak": {"sectionStyle": {}},
+                        },
                         {
                             "startIndex": 1,
                             "endIndex": 6,
@@ -253,7 +257,47 @@ class TestAdvancedPublicToolWiring:
         assert request["text"] == "Header text"
 
     @pytest.mark.asyncio
-    async def test_batch_update_doc_supports_named_range_and_document_style(self, service):
+    async def test_update_paragraph_style_allows_zero_start_at_body_beginning(
+        self, service
+    ):
+        await _unwrap(docs_tools.update_paragraph_style)(
+            service=service,
+            user_google_email="user@example.com",
+            document_id="b" * 25,
+            start_index=0,
+            end_index=20,
+            heading_level=1,
+        )
+
+        call_kwargs = service.documents.return_value.batchUpdate.call_args.kwargs
+        request = call_kwargs["body"]["requests"][0]["updateParagraphStyle"]
+
+        assert request["range"] == {"startIndex": 1, "endIndex": 20}
+        assert request["paragraphStyle"]["namedStyleType"] == "HEADING_1"
+
+    @pytest.mark.asyncio
+    async def test_update_paragraph_style_list_allows_zero_start_at_body_beginning(
+        self, service
+    ):
+        await _unwrap(docs_tools.update_paragraph_style)(
+            service=service,
+            user_google_email="user@example.com",
+            document_id="c" * 25,
+            start_index=0,
+            end_index=20,
+            list_type="UNORDERED",
+        )
+
+        call_kwargs = service.documents.return_value.batchUpdate.call_args.kwargs
+        request = call_kwargs["body"]["requests"][0]["createParagraphBullets"]
+
+        assert request["range"] == {"startIndex": 1, "endIndex": 20}
+        assert request["bulletPreset"] == "BULLET_DISC_CIRCLE_SQUARE"
+
+    @pytest.mark.asyncio
+    async def test_batch_update_doc_supports_named_range_and_document_style(
+        self, service
+    ):
         await _unwrap(docs_tools.batch_update_doc)(
             service=service,
             user_google_email="user@example.com",

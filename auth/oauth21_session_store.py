@@ -768,7 +768,7 @@ def _resolve_client_credentials() -> Tuple[Optional[str], Optional[str]]:
             elif isinstance(secret_obj, str):
                 client_secret = secret_obj
 
-    if not client_id or not client_secret:
+    if not client_id:
         try:
             from auth.oauth_config import get_oauth_config
 

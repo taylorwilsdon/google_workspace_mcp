@@ -1,5 +1,6 @@
 import io
 import argparse
+import json
 import logging
 import os
 import socket
@@ -15,16 +16,60 @@ _original_stdout = sys.stdout
 if sys.platform == "darwin":
     sys.stdout = io.StringIO()
 
-from auth.oauth_config import reload_oauth_config, is_stateless_mode, is_stateless_http  # noqa: E402
-from core.log_formatter import EnhancedLogFormatter, configure_file_logging  # noqa: E402
-from core.utils import check_credentials_directory_permissions  # noqa: E402
-from core.server import server, set_transport_mode, configure_server_for_http  # noqa: E402
-from core.tool_tier_loader import resolve_tools_from_tier  # noqa: E402
-from core.tool_registry import (  # noqa: E402
-    set_enabled_tools as set_enabled_tool_names,
+def _load_startup_dependencies():
+    from auth.oauth_config import (
+        get_oauth_config,
+        reload_oauth_config,
+        is_stateless_mode,
+        is_stateless_http,
+        is_service_account_enabled,
+    )
+    from core.log_formatter import EnhancedLogFormatter, configure_file_logging
+    from core.utils import check_credentials_directory_permissions
+    from core.server import server, set_transport_mode, configure_server_for_http
+    from core.tool_tier_loader import resolve_tools_from_tier
+    from core.tool_registry import (
+        set_enabled_tools as set_enabled_tool_names,
+        wrap_server_tool_method,
+        filter_server_tools,
+    )
+
+    return (
+        get_oauth_config,
+        reload_oauth_config,
+        is_stateless_mode,
+        is_stateless_http,
+        is_service_account_enabled,
+        EnhancedLogFormatter,
+        configure_file_logging,
+        check_credentials_directory_permissions,
+        server,
+        set_transport_mode,
+        configure_server_for_http,
+        resolve_tools_from_tier,
+        set_enabled_tool_names,
+        wrap_server_tool_method,
+        filter_server_tools,
+    )
+
+
+(
+    get_oauth_config,
+    reload_oauth_config,
+    is_stateless_mode,
+    is_stateless_http,
+    is_service_account_enabled,
+    EnhancedLogFormatter,
+    configure_file_logging,
+    check_credentials_directory_permissions,
+    server,
+    set_transport_mode,
+    configure_server_for_http,
+    resolve_tools_from_tier,
+    set_enabled_tool_names,
     wrap_server_tool_method,
     filter_server_tools,
-)
+) = _load_startup_dependencies()
 
 dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
 load_dotenv(dotenv_path=dotenv_path)
@@ -287,6 +332,9 @@ def main():
             "OAUTHLIB_INSECURE_TRANSPORT", "false"
         ),
         "GOOGLE_CLIENT_SECRET_PATH": os.getenv("GOOGLE_CLIENT_SECRET_PATH", "Not Set"),
+        "GOOGLE_SERVICE_ACCOUNT_KEY_FILE": os.getenv(
+            "GOOGLE_SERVICE_ACCOUNT_KEY_FILE", "Not Set"
+        ),
     }
 
     for key, value in config_vars.items():
@@ -445,12 +493,65 @@ def main():
             safe_print("❌ Single-user mode is incompatible with stateless mode")
             safe_print("   Stateless mode requires OAuth 2.1 which is multi-user")
             sys.exit(1)
+
+        if is_service_account_enabled():
+            safe_print("❌ Single-user mode is incompatible with service account mode")
+            safe_print(
+                "   Service account mode handles auth via domain-wide delegation"
+            )
+            safe_print(
+                "   Please choose one mode: either --single-user OR GOOGLE_SERVICE_ACCOUNT_KEY_FILE"
+            )
+            sys.exit(1)
+
         os.environ["MCP_SINGLE_USER_MODE"] = "1"
         safe_print("🔐 Single-user mode enabled")
         safe_print("")
 
-    # Check credentials directory permissions before starting (skip in stateless mode)
-    if not is_stateless_mode():
+    # Service account mode startup validation
+    if is_service_account_enabled():
+        user_email = os.getenv("USER_GOOGLE_EMAIL")
+        if not user_email:
+            safe_print("❌ Service account mode requires USER_GOOGLE_EMAIL to be set")
+            safe_print("   Set USER_GOOGLE_EMAIL to the domain user to impersonate")
+            sys.exit(1)
+        # Validate service account key material before advertising readiness
+        sa_config = get_oauth_config()
+        try:
+            if sa_config.service_account_key_file:
+                with open(sa_config.service_account_key_file) as f:
+                    key_data = json.load(f)
+            else:
+                key_data = json.loads(sa_config.service_account_key_json)
+            required_fields = {"type", "project_id", "private_key", "client_email"}
+            missing = required_fields - set(key_data.keys())
+            if missing:
+                safe_print(
+                    f"❌ Service account key missing required fields: "
+                    f"{', '.join(sorted(missing))}"
+                )
+                sys.exit(1)
+            if key_data.get("type") != "service_account":
+                safe_print(
+                    f"❌ Service account key has unexpected type: "
+                    f"{key_data.get('type')!r}"
+                )
+                sys.exit(1)
+        except FileNotFoundError as e:
+            safe_print(f"❌ Service account key file not found: {e}")
+            sys.exit(1)
+        except json.JSONDecodeError as e:
+            safe_print(f"❌ Service account key contains invalid JSON: {e}")
+            sys.exit(1)
+        except (IOError, OSError) as e:
+            safe_print(f"❌ Failed to read service account key: {e}")
+            sys.exit(1)
+        safe_print("🔐 Service account mode enabled (domain-wide delegation)")
+        safe_print(f"   Impersonating: {user_email}")
+        safe_print("")
+
+    # Check credentials directory permissions before starting (skip in stateless/service-account mode)
+    if not is_stateless_mode() and not is_service_account_enabled():
         try:
             safe_print("🔍 Checking credentials directory permissions...")
             check_credentials_directory_permissions()
@@ -464,7 +565,10 @@ def main():
             logger.error(f"Failed credentials directory permission check: {e}")
             sys.exit(1)
     else:
-        safe_print("🔍 Skipping credentials directory check (stateless mode)")
+        skip_reason = (
+            "stateless mode" if is_stateless_mode() else "service account mode"
+        )
+        safe_print(f"🔍 Skipping credentials directory check ({skip_reason})")
         safe_print("")
 
     try:
@@ -481,21 +585,22 @@ def main():
         else:
             safe_print("")
             safe_print("🚀 Starting STDIO server")
-            # Start minimal OAuth callback server for stdio mode
-            from auth.oauth_callback_server import ensure_oauth_callback_available
+            # Start minimal OAuth callback server for stdio mode (not needed for service accounts)
+            if not is_service_account_enabled():
+                from auth.oauth_callback_server import ensure_oauth_callback_available
 
-            success, error_msg = ensure_oauth_callback_available(
-                "stdio", port, base_uri
-            )
-            if success:
-                safe_print(
-                    f"   OAuth callback server started on {display_url}/oauth2callback"
+                success, error_msg = ensure_oauth_callback_available(
+                    "stdio", port, base_uri
                 )
-            else:
-                warning_msg = "   ⚠️  Warning: Failed to start OAuth callback server"
-                if error_msg:
-                    warning_msg += f": {error_msg}"
-                safe_print(warning_msg)
+                if success:
+                    safe_print(
+                        f"   OAuth callback server started on {display_url}/oauth2callback"
+                    )
+                else:
+                    warning_msg = "   ⚠️  Warning: Failed to start OAuth callback server"
+                    if error_msg:
+                        warning_msg += f": {error_msg}"
+                    safe_print(warning_msg)
 
         safe_print("✅ Ready for MCP connections")
         safe_print("")

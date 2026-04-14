@@ -25,7 +25,7 @@ from auth.oauth_responses import (
     create_server_error_response,
 )
 from auth.auth_info_middleware import AuthInfoMiddleware
-from auth.scopes import SCOPES, get_current_scopes  # noqa
+from auth.scopes import BASE_SCOPES, SCOPES, get_current_scopes  # noqa
 from core.config import (
     USER_GOOGLE_EMAIL,
     get_transport_mode,
@@ -110,6 +110,50 @@ class SecureFastMCP(FastMCP):
         logger.info("Added middleware stack: WellKnownCacheControl, Session Management")
         return app
 
+    async def list_tools(self, *, run_middleware: bool = True):
+        """Override to mark user_google_email as optional when USER_GOOGLE_EMAIL is set.
+
+        In single-user / self-hosted mode the env var provides the default email, so
+        callers (agents, MCP adapters) should not be required to supply it.  We patch
+        the JSON schema returned by list_tools to remove 'user_google_email' from the
+        ``required`` array and inject the env-var value as the ``default``.  The
+        runtime still resolves the email correctly via the service decorator.
+        """
+        tools = list(await super().list_tools(run_middleware=run_middleware))
+        if not USER_GOOGLE_EMAIL or is_oauth21_enabled():
+            return tools
+        patched = []
+        for tool in tools:
+            schema = dict(tool.parameters)
+            required = list(schema.get("required", []))
+            if "user_google_email" in required:
+                required = [r for r in required if r != "user_google_email"]
+                props = {k: dict(v) for k, v in schema.get("properties", {}).items()}
+                if "user_google_email" in props:
+                    props["user_google_email"]["default"] = USER_GOOGLE_EMAIL
+                schema = dict(schema, required=required, properties=props)
+                patched.append(tool.model_copy(update={"parameters": schema}))
+            else:
+                patched.append(tool)
+        return patched
+
+    async def call_tool(self, name: str, arguments: Optional[dict], *args, **kwargs):
+        """Inject user_google_email before pydantic validates the call arguments.
+
+        When USER_GOOGLE_EMAIL is configured and OAuth 2.1 is not active, callers
+        (agents, adapters) are allowed to omit user_google_email.  FastMCP validates
+        arguments against the function signature BEFORE calling the tool, so we must
+        inject the default BEFORE that validation step.
+        """
+        arguments = arguments or {}
+        if (
+            not is_oauth21_enabled()
+            and USER_GOOGLE_EMAIL
+            and "user_google_email" not in arguments
+        ):
+            arguments = {**arguments, "user_google_email": USER_GOOGLE_EMAIL}
+        return await super().call_tool(name, arguments, *args, **kwargs)
+
 
 # Build server instructions with user email context for single-user mode
 _server_instructions = None
@@ -176,7 +220,7 @@ def configure_server_for_http():
             return
 
         def validate_and_derive_jwt_key(
-            jwt_signing_key_override: str | None, client_secret: str
+            jwt_signing_key_override: str | None, client_secret: str | None
         ) -> bytes:
             """Validate JWT signing key override and derive the final JWT key."""
             if jwt_signing_key_override:
@@ -189,11 +233,15 @@ def configure_server_for_http():
                     low_entropy_material=jwt_signing_key_override,
                     salt="fastmcp-jwt-signing-key",
                 )
-            else:
+            if client_secret:
                 return derive_jwt_key(
                     high_entropy_material=client_secret,
                     salt="fastmcp-jwt-signing-key",
                 )
+            raise ValueError(
+                "Public client OAuth 2.1 requires FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY "
+                "when GOOGLE_OAUTH_CLIENT_SECRET is not set."
+            )
 
         try:
             # Import common dependencies for storage backends
@@ -201,7 +249,8 @@ def configure_server_for_http():
             from cryptography.fernet import Fernet
             from fastmcp.server.auth.jwt_issuer import derive_jwt_key
 
-            required_scopes: List[str] = sorted(get_current_scopes())
+            provider_valid_scopes: List[str] = sorted(get_current_scopes())
+            provider_required_scopes: List[str] = sorted(BASE_SCOPES)
 
             client_storage = None
             jwt_signing_key_override = (
@@ -456,7 +505,7 @@ def configure_server_for_http():
                     client_secret=config.client_secret,
                     base_url=config.get_oauth_base_url(),
                     redirect_path=config.redirect_path,
-                    required_scopes=required_scopes,
+                    required_scopes=provider_valid_scopes,
                     resource_server_url=config.get_oauth_base_url(),
                 )
                 server.auth = provider
@@ -475,10 +524,18 @@ def configure_server_for_http():
                     client_secret=config.client_secret,
                     base_url=config.get_oauth_base_url(),
                     redirect_path=config.redirect_path,
-                    required_scopes=required_scopes,
+                    required_scopes=provider_required_scopes,
+                    valid_scopes=provider_valid_scopes,
                     client_storage=client_storage,
                     jwt_signing_key=jwt_signing_key,
                 )
+                if provider.client_registration_options is not None:
+                    # Keep protocol-level auth limited to base identity scopes, but
+                    # allow dynamically registered MCP clients to request any scope
+                    # needed by enabled tools during subsequent authorization flows.
+                    provider.client_registration_options.default_scopes = (
+                        provider_valid_scopes
+                    )
                 # Enable protocol-level auth
                 server.auth = provider
                 logger.info(

@@ -74,7 +74,7 @@ class ExternalOAuthProvider(GoogleProvider):
     def __init__(
         self,
         client_id: str,
-        client_secret: str,
+        client_secret: Optional[str] = None,
         resource_server_url: Optional[str] = None,
         **kwargs,
     ):

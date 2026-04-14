@@ -123,7 +123,10 @@ class HeaderFooterManager:
                 refreshed_target_doc, refreshed_tab_id = (
                     self._get_target_doc_for_header_footer(refreshed_doc)
                 )
-                refreshed_section, refreshed_section_id = await self._find_target_section(
+                (
+                    refreshed_section,
+                    refreshed_section_id,
+                ) = await self._find_target_section(
                     refreshed_target_doc, section_type, header_footer_type
                 )
                 if refreshed_section_id:
@@ -369,9 +372,7 @@ class HeaderFooterManager:
         self, document_id: str, section_type: str, header_footer_type: str = "DEFAULT"
     ) -> Optional[str]:
         """Create a missing header/footer and return its new segment ID."""
-        request = create_create_header_footer_request(
-            section_type, header_footer_type
-        )
+        request = create_create_header_footer_request(section_type, header_footer_type)
         try:
             result = await asyncio.to_thread(
                 self.service.documents()

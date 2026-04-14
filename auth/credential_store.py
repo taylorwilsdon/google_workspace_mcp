@@ -6,6 +6,7 @@ supporting multiple backends configurable via environment variables.
 """
 
 import os
+import re
 import json
 import logging
 from abc import ABC, abstractmethod
@@ -116,11 +117,26 @@ class LocalDirectoryCredentialStore(CredentialStore):
         )
 
     def _get_credential_path(self, user_email: str) -> str:
-        """Get the file path for a user's credentials."""
+        """Get the file path for a user's credentials.
+
+        Sanitizes user_email to prevent path traversal and validates the
+        resolved path stays within base_dir.
+        """
         if not os.path.exists(self.base_dir):
-            os.makedirs(self.base_dir)
+            os.makedirs(self.base_dir, mode=0o700, exist_ok=True)
             logger.info(f"Created credentials directory: {self.base_dir}")
-        return os.path.join(self.base_dir, f"{user_email}.json")
+
+        # Sanitize email to prevent path traversal
+        safe_email = re.sub(r"[^a-zA-Z0-9@._-]", "_", user_email)
+        creds_path = os.path.join(self.base_dir, f"{safe_email}.json")
+
+        # Verify resolved path is still under base_dir
+        base_resolved = os.path.realpath(str(self.base_dir))
+        resolved = os.path.realpath(creds_path)
+        if not resolved.startswith(base_resolved + os.sep):
+            raise ValueError(f"Invalid credential path: {creds_path}")
+
+        return creds_path
 
     def get_credential(self, user_email: str) -> Optional[Credentials]:
         """Get credentials from local JSON file."""
@@ -179,7 +195,8 @@ class LocalDirectoryCredentialStore(CredentialStore):
         }
 
         try:
-            with open(creds_path, "w") as f:
+            fd = os.open(str(creds_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as f:
                 json.dump(creds_data, f, indent=2)
             logger.info(f"Stored credentials for {user_email} to {creds_path}")
             return True
