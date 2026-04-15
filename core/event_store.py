@@ -1,11 +1,9 @@
 """In-memory EventStore for MCP session resumability."""
 
-import logging
 import uuid
 
-from mcp.server.streamable_http import EventStore, EventCallback
-
-logger = logging.getLogger(__name__)
+from mcp.server.streamable_http import EventCallback, EventMessage, EventStore
+from mcp.types import JSONRPCMessage
 
 
 class InMemoryEventStore(EventStore):
@@ -19,11 +17,14 @@ class InMemoryEventStore(EventStore):
     """
 
     def __init__(self, max_events_per_stream: int = 100):
-        self._streams: dict[str, list[tuple[str, object]]] = {}
+        if max_events_per_stream < 1:
+            raise ValueError("max_events_per_stream must be at least 1")
+
+        self._streams: dict[str, list[tuple[str, JSONRPCMessage | None]]] = {}
         self._max_events = max_events_per_stream
 
     async def store_event(
-        self, stream_id: str, message: object | None
+        self, stream_id: str, message: JSONRPCMessage | None
     ) -> str:
         event_id = str(uuid.uuid4())
         if stream_id not in self._streams:
@@ -39,13 +40,26 @@ class InMemoryEventStore(EventStore):
         last_event_id: str,
         send_callback: EventCallback,
     ) -> str | None:
-        for stream_id, events in self._streams.items():
-            found = False
-            for event_id, message in events:
-                if found and message is not None:
-                    await send_callback(message)
+        for stream_id, events in tuple(self._streams.items()):
+            events_snapshot = list(events)
+            replay_start_index = None
+
+            for index, (event_id, _) in enumerate(events_snapshot):
                 if event_id == last_event_id:
-                    found = True
-            if found and events:
-                return events[-1][0]
+                    replay_start_index = index + 1
+                    break
+
+            if replay_start_index is None:
+                continue
+
+            replay_messages = [
+                EventMessage(message=message, event_id=event_id)
+                for event_id, message in events_snapshot[replay_start_index:]
+                if message is not None
+            ]
+            for replay_message in replay_messages:
+                await send_callback(replay_message)
+
+            return stream_id
+
         return None

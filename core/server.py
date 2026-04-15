@@ -2,8 +2,10 @@ import asyncio
 import hashlib
 import logging
 import os
-from typing import List, Optional
+from collections.abc import Awaitable
+from concurrent.futures import ThreadPoolExecutor
 from importlib import metadata
+from typing import Any, List, Optional
 
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from starlette.applications import Starlette
@@ -14,6 +16,7 @@ from starlette.middleware import Middleware
 
 from fastmcp import FastMCP
 from fastmcp.server.auth.providers.google import GoogleProvider
+from mcp.server.streamable_http import EventStore
 
 from auth.oauth21_session_store import get_oauth21_session_store, set_auth_provider
 from auth.google_auth import handle_auth_callback, start_auth_flow, check_client_secrets
@@ -85,11 +88,11 @@ def _compute_scope_fingerprint() -> str:
 
 # Custom FastMCP that adds secure middleware stack for OAuth 2.1
 class SecureFastMCP(FastMCP):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self._event_store = None
+        self._event_store: Optional[EventStore] = None
 
-    def set_event_store(self, event_store):
+    def set_event_store(self, event_store: EventStore) -> None:
         self._event_store = event_store
 
     def http_app(self, **kwargs) -> "Starlette":
@@ -163,11 +166,24 @@ if USER_GOOGLE_EMAIL:
 When using Google Workspace tools, always use `{USER_GOOGLE_EMAIL}` as the `user_google_email` parameter. Do not ask the user for their email address."""
     logger.info(f"Server instructions configured for user: {USER_GOOGLE_EMAIL}")
 
+
+def _get_server_name() -> str:
+    return os.getenv("MCP_NAME", "").strip() or "google_workspace"
+
+
+def _get_server_website_url() -> str | None:
+    website_url = (
+        os.getenv("MCP_WEBSITE_URL", "").strip()
+        or os.getenv("WORKSPACE_EXTERNAL_URL", "").strip()
+        or "https://workspacemcp.com"
+    )
+    return website_url or None
+
 server = SecureFastMCP(
-    name="Samba TV - Google Workspace",
+    name=_get_server_name(),
     auth=None,
     instructions=_server_instructions,
-    website_url="https://workspace-mcp-201626763325.us-central1.run.app",
+    website_url=_get_server_website_url(),
 )
 
 # Add the AuthInfo middleware to inject authentication into FastMCP context
@@ -178,6 +194,31 @@ server.add_middleware(auth_info_middleware)
 def _parse_bool_env(value: str) -> bool:
     """Parse environment variable string to boolean."""
     return value.lower() in ("1", "true", "yes", "on")
+
+
+def _run_coroutine_sync(coroutine: Awaitable[Any]) -> Any:
+    """Run a coroutine from synchronous startup code."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coroutine)
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(asyncio.run, coroutine)
+        return future.result()
+
+
+def _verify_valkey_connectivity(store: Any, host: str, port: int) -> None:
+    """Force Valkey client initialization during startup so misconfiguration fails fast."""
+    try:
+        _run_coroutine_sync(store.setup())
+    except Exception as exc:
+        raise RuntimeError(
+            f"Valkey storage configured but not reachable at {host}:{port}: {exc}. "
+            "Check VPC connector, network routing, and Memorystore host/port."
+        ) from exc
+
+    logger.info("OAuth 2.1: Valkey connectivity verified")
 
 
 def set_transport_mode(mode: str):
@@ -324,7 +365,7 @@ def configure_server_for_http():
                     if not valkey_host:
                         valkey_host = "localhost"
 
-                    client_storage = ValkeyStore(
+                    valkey_store = ValkeyStore(
                         host=valkey_host,
                         port=valkey_port,
                         db=valkey_db,
@@ -334,7 +375,7 @@ def configure_server_for_http():
 
                     # Configure TLS and timeouts on the underlying Glide client config.
                     # ValkeyStore currently doesn't expose these settings directly.
-                    glide_config = getattr(client_storage, "_client_config", None)
+                    glide_config = getattr(valkey_store, "_client_config", None)
                     if glide_config is not None:
                         glide_config.use_tls = valkey_use_tls
 
@@ -362,6 +403,12 @@ def configure_server_for_http():
                                 )
                             )
 
+                    _verify_valkey_connectivity(
+                        valkey_store,
+                        host=valkey_host,
+                        port=valkey_port,
+                    )
+
                     jwt_signing_key = validate_and_derive_jwt_key(
                         jwt_signing_key_override, config.client_secret
                     )
@@ -372,7 +419,7 @@ def configure_server_for_http():
                     )
 
                     client_storage = FernetEncryptionWrapper(
-                        key_value=client_storage,
+                        key_value=valkey_store,
                         fernet=Fernet(key=storage_encryption_key),
                     )
                     logger.info(
@@ -395,28 +442,6 @@ def configure_server_for_http():
                     logger.info(
                         "OAuth 2.1: Applied Fernet encryption wrapper to Valkey client_storage (key derived from FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY or GOOGLE_OAUTH_CLIENT_SECRET)."
                     )
-                    # Verify Valkey is reachable before proceeding
-                    try:
-                        # Use the underlying ValkeyStore (before encryption wrapper)
-                        # to perform a startup connectivity check
-                        _raw_store = client_storage._key_value if hasattr(client_storage, '_key_value') else client_storage
-                        _glide_client = getattr(_raw_store, '_client', None)
-                        if _glide_client is not None:
-                            loop = asyncio.get_event_loop()
-                            if loop.is_running():
-                                import concurrent.futures
-                                with concurrent.futures.ThreadPoolExecutor() as pool:
-                                    pool.submit(asyncio.run, _glide_client.set(b"__startup_ping__", b"1")).result(timeout=10)
-                            else:
-                                loop.run_until_complete(_glide_client.set(b"__startup_ping__", b"1"))
-                            logger.info("OAuth 2.1: Valkey connectivity verified")
-                        else:
-                            logger.warning("OAuth 2.1: Could not verify Valkey connectivity (no Glide client reference)")
-                    except Exception as ping_exc:
-                        raise RuntimeError(
-                            f"Valkey storage configured but not reachable at {valkey_host}:{valkey_port}: {ping_exc}. "
-                            "Check VPC connector and Memorystore IP."
-                        ) from ping_exc
                 except ImportError as exc:
                     if storage_backend == "valkey":
                         raise RuntimeError(

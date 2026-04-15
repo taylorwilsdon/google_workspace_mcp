@@ -126,10 +126,10 @@ valkey:
   port: 6379
   db: 0
   useTls: false
+  requestTimeoutMs: 5000
+  connectionTimeoutMs: 10000
   # username: ""
   # password: ""
-  # requestTimeoutMs: 5000
-  # connectionTimeoutMs: 10000
 
 # Storage backend: memory (default), disk, valkey
 oauthProxyStorageBackend: ""

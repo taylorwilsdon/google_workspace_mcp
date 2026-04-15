@@ -106,6 +106,10 @@ spec:
               value: {{ .Values.valkey.db | quote }}
             - name: WORKSPACE_MCP_OAUTH_PROXY_VALKEY_USE_TLS
               value: {{ .Values.valkey.useTls | quote }}
+            - name: WORKSPACE_MCP_OAUTH_PROXY_VALKEY_REQUEST_TIMEOUT_MS
+              value: {{ .Values.valkey.requestTimeoutMs | default 5000 | quote }}
+            - name: WORKSPACE_MCP_OAUTH_PROXY_VALKEY_CONNECTION_TIMEOUT_MS
+              value: {{ .Values.valkey.connectionTimeoutMs | default 10000 | quote }}
             {{- if .Values.valkey.username }}
             - name: WORKSPACE_MCP_OAUTH_PROXY_VALKEY_USERNAME
               value: {{ .Values.valkey.username | quote }}
@@ -118,9 +122,9 @@ spec:
                   key: password
             {{- end }}
             {{- end }}
-            {{- if .Values.statelessHttp }}
+            {{- if ne (toString .Values.statelessHttp) "" }}
             - name: WORKSPACE_MCP_STATELESS_HTTP
-              value: {{ .Values.statelessHttp | quote }}
+              value: {{ toString .Values.statelessHttp | quote }}
             {{- end }}
           {{- if .Values.command.override }}
           command: {{ .Values.command.override }}

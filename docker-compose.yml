@@ -23,6 +23,7 @@ services:
       - WORKSPACE_MCP_OAUTH_PROXY_STORAGE_BACKEND=valkey
       - WORKSPACE_MCP_OAUTH_PROXY_VALKEY_HOST=valkey
       - WORKSPACE_MCP_OAUTH_PROXY_VALKEY_PORT=6379
+      - WORKSPACE_MCP_STATELESS_HTTP=false
     volumes:
       - ./client_secret.json:/app/client_secret.json:ro
       - store_creds:/app/store_creds:rw
