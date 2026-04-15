@@ -542,6 +542,143 @@ async def list_drive_items(
     return text_output
 
 
+@server.tool()
+@handle_http_errors("list_recent_files", is_read_only=True, service_type="drive")
+@require_google_service("drive", "drive_read")
+async def list_recent_files(
+    service,
+    user_google_email: str,
+    page_size: int = 20,
+    sort_by: str = "modifiedTime",
+    ownership: str = "all",
+    file_type: Optional[str] = None,
+    page_token: Optional[str] = None,
+    include_items_from_all_drives: bool = True,
+) -> str:
+    """
+    Lists recently modified or viewed files across ALL of Google Drive (not limited to a single folder).
+    Use this to see what files have been recently worked on, shared, or accessed.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        page_size (int): Number of files to return. Defaults to 20. Max 100.
+        sort_by (str): How to sort results. Options: 'modifiedTime' (default, most recently modified first),
+                       'viewedByMeTime' (most recently opened by you first),
+                       'sharedWithMeTime' (most recently shared with you first),
+                       'createdTime' (most recently created first).
+        ownership (str): Filter by ownership. Options: 'all' (default, everything you can see),
+                         'owned' (only files you own), 'shared' (only files shared with you by others).
+        file_type (Optional[str]): Restrict results to a specific file type. Accepts a friendly
+                                   name ('folder', 'document'/'doc', 'spreadsheet'/'sheet',
+                                   'presentation'/'slides', 'form', 'pdf', etc.) or any raw MIME type.
+        page_token (Optional[str]): Page token from a previous response to get the next page of results.
+        include_items_from_all_drives (bool): Whether to include shared drive items. Defaults to True.
+
+    Returns:
+        str: A formatted list of recent files with name, ID, type, modification time, who last modified it, and link.
+    """
+    logger.info(
+        f"[list_recent_files] Invoked. Email: '{user_google_email}', sort_by: '{sort_by}', "
+        f"ownership: '{ownership}', file_type: '{file_type}', page_size: {page_size}"
+    )
+
+    # Validate sort_by
+    valid_sort_options = {
+        "modifiedTime": "modifiedTime desc",
+        "viewedByMeTime": "viewedByMeTime desc",
+        "sharedWithMeTime": "sharedWithMeTime desc",
+        "createdTime": "createdTime desc",
+    }
+    if sort_by not in valid_sort_options:
+        return (
+            f"Invalid sort_by '{sort_by}'. Must be one of: "
+            f"{', '.join(valid_sort_options.keys())}"
+        )
+    order_by = valid_sort_options[sort_by]
+
+    # Build query based on ownership filter
+    query_parts = ["trashed=false"]
+
+    if ownership == "owned":
+        query_parts.append("'me' in owners")
+    elif ownership == "shared":
+        query_parts.append("not 'me' in owners")
+    elif ownership != "all":
+        return (
+            f"Invalid ownership '{ownership}'. Must be one of: all, owned, shared"
+        )
+
+    # For viewedByMeTime and sharedWithMeTime sorts, add a filter to exclude
+    # files that don't have the relevant timestamp (API requires this)
+    if sort_by == "viewedByMeTime":
+        query_parts.append("viewedByMeTime > '1970-01-01T00:00:00Z'")
+    elif sort_by == "sharedWithMeTime":
+        query_parts.append("sharedWithMeTime > '1970-01-01T00:00:00Z'")
+
+    final_query = " and ".join(query_parts)
+
+    if file_type is not None:
+        mime = resolve_file_type_mime(file_type)
+        final_query = f"({final_query}) and mimeType = '{mime}'"
+        logger.info(f"[list_recent_files] Added mimeType filter: '{mime}'")
+
+    # Clamp page_size
+    page_size = min(max(page_size, 1), 100)
+
+    # Build list params with lastModifyingUser and owners in fields
+    fields = (
+        "nextPageToken, files(id, name, mimeType, webViewLink, modifiedTime, size, "
+        "lastModifyingUser(displayName, emailAddress), owners(displayName, emailAddress))"
+    )
+    list_params = {
+        "q": final_query,
+        "pageSize": page_size,
+        "fields": fields,
+        "supportsAllDrives": True,
+        "includeItemsFromAllDrives": include_items_from_all_drives,
+        "orderBy": order_by,
+    }
+    if page_token:
+        list_params["pageToken"] = page_token
+
+    results = await asyncio.to_thread(service.files().list(**list_params).execute)
+    files = results.get("files", [])
+    if not files:
+        return f"No recent files found for {user_google_email} with the given filters."
+
+    next_token = results.get("nextPageToken")
+    sort_label = sort_by.replace("Time", " time").replace("ByMe", " by me")
+    ownership_label = f" ({ownership})" if ownership != "all" else ""
+    header = (
+        f"Found {len(files)} recent files for {user_google_email}{ownership_label}, "
+        f"sorted by {sort_label}:"
+    )
+    formatted_parts = [header]
+    for item in files:
+        size_str = f", Size: {item.get('size', 'N/A')}" if "size" in item else ""
+        # Extract last modifier info
+        last_mod_user = item.get("lastModifyingUser", {})
+        modifier_name = last_mod_user.get("displayName", "")
+        modifier_email = last_mod_user.get("emailAddress", "")
+        modifier_str = ""
+        if modifier_name or modifier_email:
+            modifier_str = f", Last modified by: {modifier_name or modifier_email}"
+        # Extract owner info
+        owners = item.get("owners", [])
+        owner_str = ""
+        if owners:
+            owner_name = owners[0].get("displayName", owners[0].get("emailAddress", ""))
+            owner_str = f", Owner: {owner_name}"
+        formatted_parts.append(
+            f'- Name: "{item["name"]}" (ID: {item["id"]}, Type: {item["mimeType"]}{size_str}, '
+            f'Modified: {item.get("modifiedTime", "N/A")}{modifier_str}{owner_str}) '
+            f'Link: {item.get("webViewLink", "#")}'
+        )
+    if next_token:
+        formatted_parts.append(f"nextPageToken: {next_token}")
+    return "\n".join(formatted_parts)
+
+
 async def _create_drive_folder_impl(
     service,
     user_google_email: str,
