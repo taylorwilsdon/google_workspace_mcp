@@ -8,6 +8,7 @@ gmail:
   extended:
     - get_gmail_attachment_content
     - get_gmail_thread_content
+    - analyze_thread_ownership
     - modify_gmail_message_labels
     - list_gmail_labels
     - manage_gmail_label
