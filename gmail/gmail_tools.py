@@ -2574,6 +2574,63 @@ async def list_gmail_labels(service, user_google_email: str) -> str:
 
 
 @server.tool()
+@handle_http_errors("get_gmail_label_stats", is_read_only=True, service_type="gmail")
+@require_google_service("gmail", "gmail_read")
+async def get_gmail_label_stats(
+    service,
+    user_google_email: str,
+    label_id: Annotated[
+        str,
+        Field(
+            description="The Gmail label ID to get stats for (e.g. 'INBOX', 'UNREAD', "
+            "'STARRED', 'SENT', 'DRAFT', 'SPAM', 'TRASH', or a custom label ID). "
+            "Defaults to 'INBOX'."
+        ),
+    ] = "INBOX",
+) -> str:
+    """
+    Returns message and thread counts for a Gmail label.
+
+    Provides messagesTotal, messagesUnread, threadsTotal, and threadsUnread
+    in a single API call — much faster than paginating through search results
+    to count unread messages.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        label_id (str): The Gmail label ID. Defaults to 'INBOX'.
+
+    Returns:
+        str: Formatted label statistics including message and thread counts.
+    """
+    logger.info(
+        f"[get_gmail_label_stats] Invoked. Email: '{user_google_email}', "
+        f"label_id: '{label_id}'"
+    )
+
+    response = await asyncio.to_thread(
+        service.users().labels().get(userId="me", id=label_id).execute
+    )
+
+    name = response.get("name", label_id)
+    label_type = response.get("type", "unknown")
+    messages_total = response.get("messagesTotal", 0)
+    messages_unread = response.get("messagesUnread", 0)
+    threads_total = response.get("threadsTotal", 0)
+    threads_unread = response.get("threadsUnread", 0)
+
+    lines = [
+        f"📊 Label stats for '{name}' (ID: {label_id}, type: {label_type}):",
+        "",
+        f"  Messages total:  {messages_total}",
+        f"  Messages unread: {messages_unread}",
+        f"  Threads total:   {threads_total}",
+        f"  Threads unread:  {threads_unread}",
+    ]
+
+    return "\n".join(lines)
+
+
+@server.tool()
 @handle_http_errors("manage_gmail_label", service_type="gmail")
 @require_google_service("gmail", GMAIL_LABELS_SCOPE)
 async def manage_gmail_label(
