@@ -95,6 +95,37 @@ spec:
             - name: {{ $key }}
               value: {{ $value | quote }}
             {{- end }}
+            {{- if .Values.valkey.enabled }}
+            - name: WORKSPACE_MCP_OAUTH_PROXY_STORAGE_BACKEND
+              value: {{ .Values.oauthProxyStorageBackend | default "valkey" | quote }}
+            - name: WORKSPACE_MCP_OAUTH_PROXY_VALKEY_HOST
+              value: {{ .Values.valkey.host | quote }}
+            - name: WORKSPACE_MCP_OAUTH_PROXY_VALKEY_PORT
+              value: {{ .Values.valkey.port | quote }}
+            - name: WORKSPACE_MCP_OAUTH_PROXY_VALKEY_DB
+              value: {{ .Values.valkey.db | quote }}
+            - name: WORKSPACE_MCP_OAUTH_PROXY_VALKEY_USE_TLS
+              value: {{ .Values.valkey.useTls | quote }}
+            - name: WORKSPACE_MCP_OAUTH_PROXY_VALKEY_REQUEST_TIMEOUT_MS
+              value: {{ .Values.valkey.requestTimeoutMs | default 5000 | quote }}
+            - name: WORKSPACE_MCP_OAUTH_PROXY_VALKEY_CONNECTION_TIMEOUT_MS
+              value: {{ .Values.valkey.connectionTimeoutMs | default 10000 | quote }}
+            {{- if .Values.valkey.username }}
+            - name: WORKSPACE_MCP_OAUTH_PROXY_VALKEY_USERNAME
+              value: {{ .Values.valkey.username | quote }}
+            {{- end }}
+            {{- if .Values.valkey.password }}
+            - name: WORKSPACE_MCP_OAUTH_PROXY_VALKEY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "workspace-mcp.fullname" . }}-valkey
+                  key: password
+            {{- end }}
+            {{- end }}
+            {{- if ne (toString .Values.statelessHttp) "" }}
+            - name: WORKSPACE_MCP_STATELESS_HTTP
+              value: {{ toString .Values.statelessHttp | quote }}
+            {{- end }}
           {{- if .Values.command.override }}
           command: {{ .Values.command.override }}
           {{- end }}

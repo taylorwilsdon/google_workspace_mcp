@@ -16,12 +16,12 @@ _original_stdout = sys.stdout
 if sys.platform == "darwin":
     sys.stdout = io.StringIO()
 
-
 def _load_startup_dependencies():
     from auth.oauth_config import (
         get_oauth_config,
         reload_oauth_config,
         is_stateless_mode,
+        is_stateless_http,
         is_service_account_enabled,
     )
     from core.log_formatter import EnhancedLogFormatter, configure_file_logging
@@ -38,6 +38,7 @@ def _load_startup_dependencies():
         get_oauth_config,
         reload_oauth_config,
         is_stateless_mode,
+        is_stateless_http,
         is_service_account_enabled,
         EnhancedLogFormatter,
         configure_file_logging,
@@ -56,6 +57,7 @@ def _load_startup_dependencies():
     get_oauth_config,
     reload_oauth_config,
     is_stateless_mode,
+    is_stateless_http,
     is_service_account_enabled,
     EnhancedLogFormatter,
     configure_file_logging,
@@ -619,7 +621,7 @@ def main():
                 transport="streamable-http",
                 host=host,
                 port=port,
-                stateless_http=is_stateless_mode(),
+                stateless_http=is_stateless_http(),
             )
         else:
             server.run()

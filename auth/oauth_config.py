@@ -477,6 +477,18 @@ def is_stateless_mode() -> bool:
     return get_oauth_config().stateless_mode
 
 
+def is_stateless_http() -> bool:
+    """Check if HTTP transport should be stateless.
+
+    Defaults to is_stateless_mode() for backward compatibility,
+    but can be overridden independently via WORKSPACE_MCP_STATELESS_HTTP.
+    """
+    explicit = os.getenv("WORKSPACE_MCP_STATELESS_HTTP", "").strip().lower()
+    if explicit:
+        return explicit in ("1", "true", "yes", "on")
+    return is_stateless_mode()
+
+
 def is_external_oauth21_provider() -> bool:
     """Check if external OAuth 2.1 provider mode is enabled."""
     return get_oauth_config().is_external_oauth21_provider()
