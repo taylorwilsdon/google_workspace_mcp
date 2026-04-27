@@ -1,0 +1,2 @@
+[deploy]
+startCommand = "python main.py --transport streamable-http --single-user --tools drive docs sheets"
