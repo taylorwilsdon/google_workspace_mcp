@@ -107,7 +107,7 @@ secrets:
 # Tool selection - specify which Google Workspace tools to enable
 tools:
   enabled: []
-  # Available tools: gmail, drive, calendar, docs, sheets, chat, forms, slides, tasks, search
+  # Available tools: gmail, drive, calendar, docs, sheets, chat, forms, slides, tasks, search, keep
   # Example: ["gmail", "drive", "calendar"]
   # Leave empty to enable all tools
 

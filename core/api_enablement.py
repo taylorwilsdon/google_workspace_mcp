@@ -1,48 +1,32 @@
 import re
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 
-API_ENABLEMENT_LINKS: Dict[str, str] = {
-    "calendar-json.googleapis.com": "https://console.cloud.google.com/flows/enableapi?apiid=calendar-json.googleapis.com",
-    "drive.googleapis.com": "https://console.cloud.google.com/flows/enableapi?apiid=drive.googleapis.com",
-    "gmail.googleapis.com": "https://console.cloud.google.com/flows/enableapi?apiid=gmail.googleapis.com",
-    "docs.googleapis.com": "https://console.cloud.google.com/flows/enableapi?apiid=docs.googleapis.com",
-    "sheets.googleapis.com": "https://console.cloud.google.com/flows/enableapi?apiid=sheets.googleapis.com",
-    "slides.googleapis.com": "https://console.cloud.google.com/flows/enableapi?apiid=slides.googleapis.com",
-    "forms.googleapis.com": "https://console.cloud.google.com/flows/enableapi?apiid=forms.googleapis.com",
-    "tasks.googleapis.com": "https://console.cloud.google.com/flows/enableapi?apiid=tasks.googleapis.com",
-    "chat.googleapis.com": "https://console.cloud.google.com/flows/enableapi?apiid=chat.googleapis.com",
-    "customsearch.googleapis.com": "https://console.cloud.google.com/flows/enableapi?apiid=customsearch.googleapis.com",
+SUPPORTED_APIS: Dict[str, Tuple[List[str], str]] = {
+    "calendar-json.googleapis.com": (["calendar"], "Google Calendar"),
+    "drive.googleapis.com": (["drive"], "Google Drive"),
+    "gmail.googleapis.com": (["gmail"], "Gmail"),
+    "keep.googleapis.com": (["keep"], "Google Keep"),
+    "docs.googleapis.com": (["docs"], "Google Docs"),
+    "sheets.googleapis.com": (["sheets"], "Google Sheets"),
+    "slides.googleapis.com": (["slides"], "Google Slides"),
+    "forms.googleapis.com": (["forms"], "Google Forms"),
+    "tasks.googleapis.com": (["tasks"], "Google Tasks"),
+    "chat.googleapis.com": (["chat"], "Google Chat"),
+    "customsearch.googleapis.com": (["customsearch", "search"], "Google Custom Search"),
 }
 
 
-SERVICE_NAME_TO_API: Dict[str, str] = {
-    "Google Calendar": "calendar-json.googleapis.com",
-    "Google Drive": "drive.googleapis.com",
-    "Gmail": "gmail.googleapis.com",
-    "Google Docs": "docs.googleapis.com",
-    "Google Sheets": "sheets.googleapis.com",
-    "Google Slides": "slides.googleapis.com",
-    "Google Forms": "forms.googleapis.com",
-    "Google Tasks": "tasks.googleapis.com",
-    "Google Chat": "chat.googleapis.com",
-    "Google Custom Search": "customsearch.googleapis.com",
-}
+API_ENABLEMENT_LINK_BASE = "https://console.cloud.google.com/flows/enableapi?apiid={api}"
 
 
-INTERNAL_SERVICE_TO_API: Dict[str, str] = {
-    "calendar": "calendar-json.googleapis.com",
-    "drive": "drive.googleapis.com",
-    "gmail": "gmail.googleapis.com",
-    "docs": "docs.googleapis.com",
-    "sheets": "sheets.googleapis.com",
-    "slides": "slides.googleapis.com",
-    "forms": "forms.googleapis.com",
-    "tasks": "tasks.googleapis.com",
-    "chat": "chat.googleapis.com",
-    "customsearch": "customsearch.googleapis.com",
-    "search": "customsearch.googleapis.com",
-}
+SERVICE_NAME_TO_API: Dict[str, str] = { name: api for api, (_, name) in SUPPORTED_APIS.items() }
+
+
+INTERNAL_SERVICE_TO_API: Dict[str, str] = {}
+for api, (internal_names, _) in SUPPORTED_APIS.items():
+    for internal in internal_names:
+        INTERNAL_SERVICE_TO_API[internal] = api
 
 
 def extract_api_info_from_error(
@@ -88,8 +72,8 @@ def get_api_enablement_message(
             # Check display names (e.g., "Google Calendar")
             api_service = SERVICE_NAME_TO_API.get(service_type)
 
-    if api_service and api_service in API_ENABLEMENT_LINKS:
-        enable_link = API_ENABLEMENT_LINKS[api_service]
+    if api_service and api_service in SUPPORTED_APIS:
+        enable_link = API_ENABLEMENT_LINK_BASE.format(api=api_service)
         service_display_name = next(
             (name for name, api in SERVICE_NAME_TO_API.items() if api == api_service),
             api_service,

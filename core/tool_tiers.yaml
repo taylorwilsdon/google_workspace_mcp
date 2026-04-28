@@ -75,6 +75,18 @@ docs:
     - debug_table_structure
     - manage_doc_tab
 
+keep:
+  core:
+    - list_notes
+    - get_note
+    - read_note
+  extended:
+    - delete_note
+    - create_note
+  complete:
+    - download_attachment
+    - set_permissions
+
 sheets:
   core:
     - create_spreadsheet

@@ -63,6 +63,7 @@ class EnhancedLogFormatter(logging.Formatter):
             "gcalendar.calendar_tools": "[CALENDAR]",
             "gdrive.drive_tools": "[DRIVE]",
             "gmail.gmail_tools": "[GMAIL]",
+            "gkeep.keep_tools": "[KEEP]",
             "gdocs.docs_tools": "[DOCS]",
             "gsheets.sheets_tools": "[SHEETS]",
             "gchat.chat_tools": "[CHAT]",
