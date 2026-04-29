@@ -285,6 +285,53 @@ async def read_sheet_values(
 
 
 @server.tool()
+@handle_http_errors("read_sheet_values_structured", is_read_only=True, service_type="sheets")
+@require_google_service("sheets", "sheets_read")
+async def read_sheet_values_structured(
+    service,
+    user_google_email: str,
+    spreadsheet_id: str,
+    range_name: str = "A1:Z1000",
+) -> dict:
+    """
+    Reads values from a Google Sheet range and returns structured (machine-readable) output.
+
+    Unlike `read_sheet_values` which returns formatted text intended for display,
+    this tool returns a dict so MCP clients can consume cell values programmatically
+    without parsing formatted text.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        spreadsheet_id (str): The ID of the spreadsheet. Required.
+        range_name (str): The range to read (e.g., "Sheet1!A1:D10", "A1:D10").
+            Defaults to "A1:Z1000".
+
+    Returns:
+        dict: ``{"values": [[...]], "range": "<resolved A1 range>", "row_count": N}``
+            where ``values`` is the raw 2D list of stringified cell values returned
+            by Sheets API ``values.get`` (i.e. ``result["values"]``). Empty range
+            yields ``{"values": [], "range": <range_name>, "row_count": 0}``.
+    """
+    logger.info(
+        f"[read_sheet_values_structured] Invoked. Email: '{user_google_email}', "
+        f"Spreadsheet: {spreadsheet_id}, Range: {range_name}"
+    )
+    result = await asyncio.to_thread(
+        service.spreadsheets()
+        .values()
+        .get(spreadsheetId=spreadsheet_id, range=range_name)
+        .execute
+    )
+    values = result.get("values", [])
+    resolved_range = result.get("range", range_name)
+    return {
+        "values": values,
+        "range": resolved_range,
+        "row_count": len(values),
+    }
+
+
+@server.tool()
 @handle_http_errors("modify_sheet_values", service_type="sheets")
 @require_google_service("sheets", "sheets_write")
 async def modify_sheet_values(
