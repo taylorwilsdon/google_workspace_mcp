@@ -12,7 +12,13 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 # Import internal implementation functions (not decorated tool wrappers)
-from gforms.forms_tools import _batch_update_form_impl, _serialize_form_item, get_form
+from gforms.forms_tools import (
+    _batch_update_form_impl,
+    _serialize_form_item,
+    _serialize_form_response,
+    get_form,
+    list_form_responses_structured,
+)
 
 
 @pytest.mark.asyncio
@@ -342,3 +348,109 @@ async def test_get_form_returns_structured_item_metadata():
     assert '"type": "GRID"' in result
     assert '"columns": [' in result
     assert '"rows": [' in result
+
+
+def test_serialize_form_response_flattens_text_answers():
+    """Verify the helper extracts answers map from the verbose Forms API shape."""
+    raw = {
+        "responseId": "resp_1",
+        "respondentEmail": "user@example.com",
+        "createTime": "2026-04-30T10:00:00Z",
+        "lastSubmittedTime": "2026-04-30T10:01:00Z",
+        "answers": {
+            "q1": {"textAnswers": {"answers": [{"value": "2"}]}},
+            "q2": {"textAnswers": {"answers": [{"value": "AI の業務利用について"}]}},
+            # Multiple choice / multi-value answers join with newlines
+            "q3": {
+                "textAnswers": {
+                    "answers": [{"value": "Topic A"}, {"value": "Topic B"}]
+                }
+            },
+        },
+    }
+    structured = _serialize_form_response(raw)
+    assert structured["response_id"] == "resp_1"
+    assert structured["respondent_email"] == "user@example.com"
+    assert structured["submitted_at"] == "2026-04-30T10:01:00Z"
+    assert structured["answers"] == {
+        "q1": "2",
+        "q2": "AI の業務利用について",
+        "q3": "Topic A\nTopic B",
+    }
+
+
+def test_serialize_form_response_handles_missing_email_and_empty_answers():
+    """Anonymous form (no email) and empty answers should not raise."""
+    raw = {
+        "responseId": "resp_anon",
+        "createTime": "2026-04-30T10:00:00Z",
+        # respondentEmail absent (email collection off)
+        # lastSubmittedTime absent (falls back to createTime)
+        "answers": {},
+    }
+    structured = _serialize_form_response(raw)
+    assert structured["respondent_email"] is None
+    assert structured["submitted_at"] == "2026-04-30T10:00:00Z"
+    assert structured["answers"] == {}
+
+
+@pytest.mark.asyncio
+async def test_list_form_responses_structured_returns_dict_with_answers():
+    """Tool returns structured dict with full answer bodies (not just ID + count)."""
+    mock_service = Mock()
+    mock_service.forms().responses().list().execute.return_value = {
+        "responses": [
+            {
+                "responseId": "resp_1",
+                "respondentEmail": "user@example.com",
+                "createTime": "2026-04-30T10:00:00Z",
+                "lastSubmittedTime": "2026-04-30T10:01:00Z",
+                "answers": {
+                    "q1": {"textAnswers": {"answers": [{"value": "5"}]}},
+                },
+            }
+        ],
+    }
+    impl = list_form_responses_structured.__wrapped__.__wrapped__
+    result = await impl(
+        service=mock_service,
+        user_google_email="caller@example.com",
+        form_id="form_xyz",
+    )
+    assert isinstance(result, dict)
+    assert result["next_page_token"] is None
+    assert len(result["responses"]) == 1
+    assert result["responses"][0]["response_id"] == "resp_1"
+    assert result["responses"][0]["answers"] == {"q1": "5"}
+
+
+@pytest.mark.asyncio
+async def test_list_form_responses_structured_empty_responses():
+    """No responses → empty list, not error."""
+    mock_service = Mock()
+    mock_service.forms().responses().list().execute.return_value = {}
+    impl = list_form_responses_structured.__wrapped__.__wrapped__
+    result = await impl(
+        service=mock_service,
+        user_google_email="caller@example.com",
+        form_id="form_xyz",
+    )
+    assert result == {"responses": [], "next_page_token": None}
+
+
+@pytest.mark.asyncio
+async def test_list_form_responses_structured_pagination_token_propagated():
+    """next_page_token round-trips for subsequent calls."""
+    mock_service = Mock()
+    mock_service.forms().responses().list().execute.return_value = {
+        "responses": [],
+        "nextPageToken": "PAGE_TOKEN_2",
+    }
+    impl = list_form_responses_structured.__wrapped__.__wrapped__
+    result = await impl(
+        service=mock_service,
+        user_google_email="caller@example.com",
+        form_id="form_xyz",
+        page_token="PAGE_TOKEN_1",
+    )
+    assert result["next_page_token"] == "PAGE_TOKEN_2"

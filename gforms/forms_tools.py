@@ -393,6 +393,78 @@ async def list_form_responses(
     return result
 
 
+def _serialize_form_response(response: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert a Forms API response object to a structured dict.
+
+    Maps the verbose Forms API response shape (where each answer is wrapped in
+    ``textAnswers.answers[].value``) to a flat ``{questionId: text}`` dict so MCP
+    clients don't need to parse the API's nested structure.
+    """
+    answers_block = response.get("answers", {})
+    answer_map: Dict[str, str] = {}
+    for question_id, answer_obj in answers_block.items():
+        text_answers = answer_obj.get("textAnswers", {}).get("answers", [])
+        values = [a.get("value", "") for a in text_answers if a.get("value")]
+        answer_map[question_id] = "\n".join(values)
+    return {
+        "response_id": response.get("responseId", ""),
+        "respondent_email": response.get("respondentEmail"),
+        "submitted_at": response.get("lastSubmittedTime") or response.get("createTime", ""),
+        "answers": answer_map,
+    }
+
+
+@server.tool()
+@handle_http_errors("list_form_responses_structured", is_read_only=True, service_type="forms")
+@require_google_service("forms", "forms")
+async def list_form_responses_structured(
+    service,
+    user_google_email: str,
+    form_id: str,
+    page_size: int = 100,
+    page_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    List a form's responses and return structured (machine-readable) output.
+
+    Unlike ``list_form_responses`` which returns formatted text intended for
+    display (and drops answer bodies), this tool returns a dict so MCP clients
+    can consume answer values programmatically.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        form_id (str): The ID of the form.
+        page_size (int): Maximum number of responses to return. Defaults to 100.
+        page_token (Optional[str]): Token for retrieving next page of results.
+
+    Returns:
+        dict: ``{"responses": [{...}], "next_page_token": "<token>" | None}``.
+            Each response dict contains ``response_id``, ``respondent_email``
+            (None if email collection is off), ``submitted_at`` (ISO 8601),
+            and ``answers`` (``{questionId: text}``). Empty result yields
+            ``{"responses": [], "next_page_token": None}``.
+    """
+    logger.info(
+        f"[list_form_responses_structured] Invoked. Email: '{user_google_email}', "
+        f"Form ID: {form_id}"
+    )
+
+    params: Dict[str, Any] = {"formId": form_id, "pageSize": page_size}
+    if page_token:
+        params["pageToken"] = page_token
+
+    responses_result = await asyncio.to_thread(
+        service.forms().responses().list(**params).execute
+    )
+
+    raw_responses = responses_result.get("responses", [])
+    serialized = [_serialize_form_response(r) for r in raw_responses]
+    return {
+        "responses": serialized,
+        "next_page_token": responses_result.get("nextPageToken"),
+    }
+
+
 # Internal implementation function for testing
 async def _batch_update_form_impl(
     service: Any,
