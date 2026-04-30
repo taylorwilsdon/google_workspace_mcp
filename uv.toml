@@ -1,0 +1,23 @@
+# Supply-chain hardening for studyops fork.
+#
+# 目的:
+#   - 公開から 7 日未満のパッケージバージョンを resolve しない (クールダウン)
+#   - レジストリを PyPI のみに固定する (typosquatting / mirror 取替防止)
+#
+# 背景:
+#   2026 年 3 月の axios / LiteLLM サプライチェーン攻撃はいずれも数時間で検知・削除されている。
+#   7 日のクールダウンを置くことで、悪意ある publish が PyPI から retract される時間を確保する。
+#   studyops 本体 (ktsuchida11/studyops) の uv.toml と同方針。
+#
+# 効果範囲:
+#   - `uv lock` / `uv add` / `uv sync` (非 --frozen) で resolution 時に適用
+#   - `uv sync --frozen` (CI 既定) では既存 lockfile を尊重するため影響なし
+#
+# 緊急バイパス:
+#   uv add <pkg> --exclude-newer "0 days"
+
+exclude-newer = "7 days"
+
+[[index]]
+url = "https://pypi.org/simple"
+default = true

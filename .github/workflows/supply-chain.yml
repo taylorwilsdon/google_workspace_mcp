@@ -1,0 +1,53 @@
+name: supply-chain
+
+# 役割: studyops fork のサプライチェーン監査。
+#   - pip-audit を strict 実行し、依存に CVE がある状態でマージされないようガードする
+#   - 7 日クールダウンは uv.toml の `exclude-newer = "7 days"` で resolve 時に enforced
+#     ここではその設定が消されていないことのガードを兼ねる
+#
+# 関連: studyops 本体の .github/workflows/test.yml § "Supply-chain audit (Python)"
+
+on:
+  pull_request:
+    branches: [studyops/sheets-structured-output, main]
+  push:
+    branches: [studyops/sheets-structured-output]
+  schedule:
+    # UTC 月曜 03:00 = JST 月曜 12:00 — 新規 CVE が出ていないか週次で検知
+    - cron: "0 3 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  pip-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      # クールダウン宣言が消えていないことを確認 (回帰防止)
+      - name: Verify cooldown declaration
+        run: |
+          if ! grep -qE '^exclude-newer\s*=\s*"7 days"' uv.toml; then
+            echo "::error file=uv.toml::exclude-newer = \"7 days\" の宣言が消えています" >&2
+            exit 1
+          fi
+
+      # lockfile から requirements.txt を抽出して pip-audit にかける。
+      # --no-emit-project は editable install された自パッケージを除外、
+      # --disable-pip は uv が解決済みのバージョンを直接 OSV で照会させる。
+      - name: Export locked dependencies
+        run: |
+          uv export --frozen --format requirements-txt \
+            --no-emit-project --extra dev > /tmp/requirements.txt
+          echo "Locked dependencies:" && wc -l /tmp/requirements.txt
+
+      - name: pip-audit (strict)
+        run: |
+          uv tool run pip-audit --strict --disable-pip -r /tmp/requirements.txt
