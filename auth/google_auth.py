@@ -720,6 +720,19 @@ async def handle_auth_callback(
         user_google_email = user_info["email"]
         logger.info(f"Identified user_google_email: {user_google_email}")
 
+        allowed_emails_raw = os.getenv("WORKSPACE_MCP_ALLOWED_EMAILS", "").strip()
+        if allowed_emails_raw:
+            allowed_emails = {
+                e.strip().lower() for e in allowed_emails_raw.split(",") if e.strip()
+            }
+            if user_google_email.lower() not in allowed_emails:
+                logger.warning(
+                    f"Rejecting OAuth callback: {user_google_email} not in WORKSPACE_MCP_ALLOWED_EMAILS"
+                )
+                raise PermissionError(
+                    f"Access denied: {user_google_email} is not authorized to use this server."
+                )
+
         stateless_mode = is_stateless_mode()
         credential_store = None
         if not stateless_mode:
