@@ -459,6 +459,57 @@ def configure_server_for_http():
                         "Falling back to default storage.",
                         exc,
                     )
+            elif storage_backend == "firestore":
+                try:
+                    from auth.firestore_kv_store import FirestoreStore
+
+                    firestore_project = (
+                        os.getenv("WORKSPACE_MCP_OAUTH_PROXY_FIRESTORE_PROJECT", "").strip()
+                        or None
+                    )
+                    firestore_database = (
+                        os.getenv("WORKSPACE_MCP_OAUTH_PROXY_FIRESTORE_DATABASE", "").strip()
+                        or None
+                    )
+                    firestore_collection = (
+                        os.getenv("WORKSPACE_MCP_OAUTH_PROXY_FIRESTORE_COLLECTION", "").strip()
+                        or "workspace_mcp_oauth_kv"
+                    )
+
+                    client_storage = FirestoreStore(
+                        project=firestore_project,
+                        database=firestore_database,
+                        collection=firestore_collection,
+                    )
+
+                    jwt_signing_key = validate_and_derive_jwt_key(
+                        jwt_signing_key_override, config.client_secret
+                    )
+
+                    storage_encryption_key = derive_jwt_key(
+                        high_entropy_material=jwt_signing_key.decode(),
+                        salt="fastmcp-storage-encryption-key",
+                    )
+
+                    client_storage = FernetEncryptionWrapper(
+                        key_value=client_storage,
+                        fernet=Fernet(key=storage_encryption_key),
+                    )
+                    logger.info(
+                        "OAuth 2.1: Using FirestoreStore for FastMCP OAuth proxy client_storage (project=%s, database=%s, collection=%s)",
+                        firestore_project or "<ADC default>",
+                        firestore_database or "(default)",
+                        firestore_collection,
+                    )
+                    logger.info(
+                        "OAuth 2.1: Applied Fernet encryption wrapper to Firestore client_storage."
+                    )
+                except ImportError as exc:
+                    logger.warning(
+                        "OAuth 2.1: Firestore client_storage requested but google-cloud-firestore is not installed (%s). "
+                        "Install 'workspace-mcp[firestore]' or unset WORKSPACE_MCP_OAUTH_PROXY_STORAGE_BACKEND.",
+                        exc,
+                    )
             elif storage_backend == "memory":
                 from key_value.aio.stores.memory import MemoryStore
 

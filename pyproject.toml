@@ -71,6 +71,9 @@ disk = [
 valkey = [
     "py-key-value-aio[valkey]>=0.3.0",
 ]
+firestore = [
+    "google-cloud-firestore>=2.16.0",
+]
 test = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.23.0",
@@ -95,6 +98,9 @@ disk = [
 ]
 valkey = [
     "py-key-value-aio[valkey]>=0.3.0",
+]
+firestore = [
+    "google-cloud-firestore>=2.16.0",
 ]
 test = [
     "pytest>=8.3.0",
