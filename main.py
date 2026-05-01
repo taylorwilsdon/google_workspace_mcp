@@ -747,9 +747,15 @@ def main():
             )
 
         if args.transport == "streamable-http":
-            # Check port availability before starting HTTP server
+            # Check port availability before starting HTTP server.
+            # SO_REUSEADDR matches what asyncio's loop.create_server()
+            # (called by uvicorn under server.run()) does automatically
+            # on Unix; without it this probe is strictly stricter than
+            # the real bind that follows and fails on lingering
+            # TIME_WAIT sockets that uvicorn would happily rebind over.
             try:
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                     s.bind((host, port))
             except OSError as e:
                 safe_print(f"Socket error: {e}")
@@ -778,7 +784,11 @@ def main():
                     """Run stdio and HTTP transports concurrently."""
                     http_available = True
                     try:
+                        # See note above on the streamable-http probe — match
+                        # asyncio/uvicorn's SO_REUSEADDR behavior so a quick
+                        # restart isn't blocked by lingering TIME_WAIT sockets.
                         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                             s.bind((http_host, http_port))
                     except OSError:
                         logger.warning(
