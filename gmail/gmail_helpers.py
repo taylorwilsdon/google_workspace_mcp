@@ -75,9 +75,7 @@ def _is_quota_or_rate_limit_error(error: HttpError) -> bool:
 
 def _is_benign_signature_http_error(error: HttpError) -> bool:
     status = _http_error_status(error)
-    return status == 401 or (
-        status == 403 and not _is_quota_or_rate_limit_error(error)
-    )
+    return status == 401 or (status == 403 and not _is_quota_or_rate_limit_error(error))
 
 
 def _signature_fetch_tool_error(error: Exception) -> ToolExecutionError:

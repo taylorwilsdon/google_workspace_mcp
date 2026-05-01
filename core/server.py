@@ -464,15 +464,21 @@ def configure_server_for_http():
                     from auth.firestore_kv_store import FirestoreStore
 
                     firestore_project = (
-                        os.getenv("WORKSPACE_MCP_OAUTH_PROXY_FIRESTORE_PROJECT", "").strip()
+                        os.getenv(
+                            "WORKSPACE_MCP_OAUTH_PROXY_FIRESTORE_PROJECT", ""
+                        ).strip()
                         or None
                     )
                     firestore_database = (
-                        os.getenv("WORKSPACE_MCP_OAUTH_PROXY_FIRESTORE_DATABASE", "").strip()
+                        os.getenv(
+                            "WORKSPACE_MCP_OAUTH_PROXY_FIRESTORE_DATABASE", ""
+                        ).strip()
                         or None
                     )
                     firestore_collection = (
-                        os.getenv("WORKSPACE_MCP_OAUTH_PROXY_FIRESTORE_COLLECTION", "").strip()
+                        os.getenv(
+                            "WORKSPACE_MCP_OAUTH_PROXY_FIRESTORE_COLLECTION", ""
+                        ).strip()
                         or "workspace_mcp_oauth_kv"
                     )
 
