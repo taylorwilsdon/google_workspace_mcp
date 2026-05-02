@@ -13,11 +13,7 @@ RUN pip install --no-cache-dir uv
 COPY . .
 
 # Install Python dependencies using uv sync
-# Note: firestore extra is installed separately because uv.lock does not yet
-# include google-cloud-firestore. Remove the second command once uv.lock is
-# regenerated to include it.
-RUN uv sync --frozen --no-dev --extra disk
-RUN uv pip install "google-cloud-firestore>=2.16.0"
+RUN uv sync --frozen --no-dev --extra disk --extra firestore
 
 # Create non-root user for security
 RUN useradd --create-home --shell /bin/bash app \

@@ -511,11 +511,12 @@ def configure_server_for_http():
                         "OAuth 2.1: Applied Fernet encryption wrapper to Firestore client_storage."
                     )
                 except ImportError as exc:
-                    logger.warning(
-                        "OAuth 2.1: Firestore client_storage requested but google-cloud-firestore is not installed (%s). "
-                        "Install 'workspace-mcp[firestore]' or unset WORKSPACE_MCP_OAUTH_PROXY_STORAGE_BACKEND.",
-                        exc,
-                    )
+                    raise RuntimeError(
+                        "OAuth 2.1: Firestore client_storage requested but "
+                        "google-cloud-firestore is not installed. Install "
+                        "'workspace-mcp[firestore]' or unset "
+                        "WORKSPACE_MCP_OAUTH_PROXY_STORAGE_BACKEND."
+                    ) from exc
             elif storage_backend == "memory":
                 from key_value.aio.stores.memory import MemoryStore
 
