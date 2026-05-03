@@ -524,6 +524,11 @@ def configure_server_for_http():
                     provider.client_registration_options.default_scopes = (
                         provider_valid_scopes
                     )
+                # Propagate valid scopes to the CIMD manager so that CIMD
+                # clients (e.g. Claude Code) are registered with all enabled
+                # tool scopes, not just BASE_SCOPES.
+                if hasattr(provider, '_cimd_manager') and provider._cimd_manager is not None:
+                    provider._cimd_manager.default_scope = " ".join(provider_valid_scopes)
                 # Enable protocol-level auth
                 server.auth = provider
                 logger.info(
