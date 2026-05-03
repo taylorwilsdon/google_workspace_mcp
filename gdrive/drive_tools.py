@@ -1389,6 +1389,7 @@ async def check_drive_file_public_access(
     service,
     user_google_email: str,
     file_name: str,
+    drive_id: Optional[str] = None,
 ) -> str:
     """
     Searches for a file by name and checks if it has public link sharing enabled.
@@ -1396,23 +1397,34 @@ async def check_drive_file_public_access(
     Args:
         user_google_email (str): The user's Google email address. Required.
         file_name (str): The name of the file to check.
+        drive_id (Optional[str]): ID of the shared drive to scope the search to. When set, the
+                                  underlying files.list call uses corpora='drive' and the given
+                                  driveId, which is required to reliably find files that live only
+                                  in that shared drive. When None, behaviour is unchanged
+                                  (default API corpora applies).
 
     Returns:
         str: Information about the file's sharing status and whether it can be used in Google Docs.
     """
-    logger.info(f"[check_drive_file_public_access] Searching for {file_name}")
+    logger.info(
+        f"[check_drive_file_public_access] Searching for {file_name}"
+        + (f" within drive_id={drive_id}" if drive_id else "")
+    )
 
     # Search for the file
     escaped_name = file_name.replace("'", "\\'")
     query = f"name = '{escaped_name}'"
 
-    list_params = {
+    list_params: Dict[str, Any] = {
         "q": query,
         "pageSize": 10,
         "fields": "files(id, name, mimeType, webViewLink)",
         "supportsAllDrives": True,
         "includeItemsFromAllDrives": True,
     }
+    if drive_id:
+        list_params["corpora"] = "drive"
+        list_params["driveId"] = drive_id
 
     results = await asyncio.to_thread(service.files().list(**list_params).execute)
 
