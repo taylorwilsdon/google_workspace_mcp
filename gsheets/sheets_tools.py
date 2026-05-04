@@ -311,6 +311,160 @@ async def read_sheet_values(
 
 
 @server.tool(
+    title="Read Sheet Formatting",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("read_sheet_formatting", is_read_only=True, service_type="sheets")
+@require_google_service("sheets", "sheets_read")
+async def read_sheet_formatting(
+    service,
+    user_google_email: str,
+    spreadsheet_id: str,
+    range_name: str = "A1:Z100",
+) -> str:
+    """
+    Reads cell formatting (background colors, text colors, bold, italic, font size,
+    alignment, wrap strategy, number format) from a specific range in a Google Sheet.
+    Useful for inspecting visual styles when re-applying or reasoning about layout.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        spreadsheet_id (str): The ID of the spreadsheet. Required.
+        range_name (str): The range to read (e.g., "Sheet1!A1:D10"). Defaults to "A1:Z100".
+
+    Returns:
+        str: Cell formatting details for non-default cells, one cell per line.
+    """
+    logger.info(
+        f"[read_sheet_formatting] Invoked. Email: '{user_google_email}', "
+        f"Spreadsheet: {spreadsheet_id}, Range: {range_name}"
+    )
+
+    fields = (
+        "sheets(properties(title),"
+        "data(startRow,startColumn,rowData(values("
+        "effectiveFormat(backgroundColor,textFormat(foregroundColor,bold,italic,fontSize),"
+        "horizontalAlignment,verticalAlignment,wrapStrategy,numberFormat)"
+        "))))"
+    )
+
+    response = await asyncio.to_thread(
+        service.spreadsheets()
+        .get(
+            spreadsheetId=spreadsheet_id,
+            ranges=[range_name],
+            includeGridData=True,
+            fields=fields,
+        )
+        .execute
+    )
+
+    sheets = response.get("sheets", [])
+    if not sheets:
+        return f"No data found in range '{range_name}' for {user_google_email}."
+
+    sheet = sheets[0]
+    grid_data = sheet.get("data", [])
+    if not grid_data:
+        return f"No formatting data found in range '{range_name}' for {user_google_email}."
+
+    data_block = grid_data[0]
+    start_row = data_block.get("startRow", 0)
+    start_col = data_block.get("startColumn", 0)
+    row_data = data_block.get("rowData", [])
+
+    def _color_to_hex(color_obj: dict) -> str:
+        """Convert Sheets API color (0-1 floats) to hex string."""
+        if not color_obj:
+            return ""
+        r = int(color_obj.get("red", 0) * 255)
+        g = int(color_obj.get("green", 0) * 255)
+        b = int(color_obj.get("blue", 0) * 255)
+        return f"#{r:02X}{g:02X}{b:02X}"
+
+    formatted_cells = []
+    for row_idx, row in enumerate(row_data):
+        cells = row.get("values", [])
+        for col_idx, cell in enumerate(cells):
+            eff_format = cell.get("effectiveFormat")
+            if not eff_format:
+                continue
+
+            bg_color = eff_format.get("backgroundColor")
+            text_format = eff_format.get("textFormat", {})
+            fg_color = text_format.get("foregroundColor")
+            bold_val = text_format.get("bold", False)
+            italic_val = text_format.get("italic", False)
+            font_size_val = text_format.get("fontSize")
+            h_align = eff_format.get("horizontalAlignment")
+            v_align = eff_format.get("verticalAlignment")
+            wrap = eff_format.get("wrapStrategy")
+            num_format = eff_format.get("numberFormat")
+
+            bg_hex = _color_to_hex(bg_color) if bg_color else ""
+            fg_hex = _color_to_hex(fg_color) if fg_color else ""
+
+            parts = []
+            if bg_hex and bg_hex != "#FFFFFF":
+                parts.append(f"bg={bg_hex}")
+            if fg_hex and fg_hex != "#000000":
+                parts.append(f"text_color={fg_hex}")
+            if bold_val:
+                parts.append("bold")
+            if italic_val:
+                parts.append("italic")
+            if font_size_val and font_size_val != 10:
+                parts.append(f"font_size={font_size_val}")
+            if h_align and h_align != "LEFT":
+                parts.append(f"h_align={h_align}")
+            if v_align and v_align != "BOTTOM":
+                parts.append(f"v_align={v_align}")
+            if wrap and wrap != "OVERFLOW_CELL":
+                parts.append(f"wrap={wrap}")
+            if num_format:
+                parts.append(f"number_format={num_format.get('type', '')}")
+
+            if not parts:
+                continue
+
+            # Build cell reference (e.g. A1, AA1)
+            col_letter = ""
+            c = col_idx + start_col
+            while True:
+                col_letter = chr(65 + c % 26) + col_letter
+                c = c // 26 - 1
+                if c < 0:
+                    break
+            cell_ref = f"{col_letter}{row_idx + start_row + 1}"
+
+            formatted_cells.append(f"  {cell_ref}: {', '.join(parts)}")
+
+    if not formatted_cells:
+        return (
+            f"All cells in range '{range_name}' have default formatting "
+            f"(white background, black text, no bold/italic) for {user_google_email}."
+        )
+
+    output = (
+        f"Formatting for range '{range_name}' in spreadsheet {spreadsheet_id} "
+        f"for {user_google_email} (only non-default cells shown):\n"
+        + "\n".join(formatted_cells[:200])
+    )
+    if len(formatted_cells) > 200:
+        output += f"\n... and {len(formatted_cells) - 200} more cells"
+
+    logger.info(
+        f"[read_sheet_formatting] Found {len(formatted_cells)} cells with non-default formatting."
+    )
+    return output
+
+
+@server.tool(
     title="Modify Sheet Values",
     annotations=ToolAnnotations(
         readOnlyHint=False,
