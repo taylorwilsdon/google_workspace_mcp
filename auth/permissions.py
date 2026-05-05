@@ -9,8 +9,14 @@ Usage:
     --permissions gmail:organize drive:readonly
 
 Gmail levels: readonly, organize, drafts, send, full
+Drive levels: readonly, file, full
 Tasks levels: readonly, manage, full
 Other services: readonly, full (extensible by adding entries to SERVICE_PERMISSION_LEVELS)
+
+The Drive "file" level grants the drive.file scope (per-file access limited to
+files this app creates) without the broader drive scope (full account write).
+This lets callers write files into specific folders without exposing the
+authenticated user's entire Drive to the application.
 """
 
 import logging
@@ -70,7 +76,8 @@ SERVICE_PERMISSION_LEVELS: Dict[str, List[Tuple[str, List[str]]]] = {
     ],
     "drive": [
         ("readonly", [DRIVE_READONLY_SCOPE]),
-        ("full", [DRIVE_SCOPE, DRIVE_FILE_SCOPE]),
+        ("file", [DRIVE_FILE_SCOPE]),
+        ("full", [DRIVE_SCOPE]),
     ],
     "calendar": [
         ("readonly", [CALENDAR_READONLY_SCOPE]),
