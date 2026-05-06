@@ -1111,10 +1111,12 @@ async def _modify_event_impl(
         )
 
         # Apply color reset AFTER field preservation so it cannot be overwritten.
-        # _preserve_existing_fields treats None as "not provided" and would restore
-        # the existing colorId, silently undoing the reset sentinel.
+        # _preserve_existing_fields treats None as "not provided" and restores the
+        # existing colorId. We then remove the key entirely — the Google API client
+        # strips None values before sending, so null doesn't reach the API. In a
+        # full PUT (events.update), an absent colorId resets to the calendar default.
         if color_id == "0":
-            event_body["colorId"] = None
+            event_body.pop("colorId", None)
 
         # Handle Google Meet conference data
         if add_google_meet is not None:
