@@ -2,7 +2,7 @@ from auth.google_auth import get_credentials
 
 
 class _RefreshableCredentials:
-    def __init__(self):
+    def __init__(self, valid=False):
         self.token = "stale-token"
         self.refresh_token = "refresh-token"
         self.token_uri = "https://oauth2.googleapis.com/token"
@@ -10,8 +10,8 @@ class _RefreshableCredentials:
         self.client_secret = "client-secret"
         self.scopes = ["scope.a"]
         self.expiry = None
-        self.valid = False
-        self.expired = True
+        self.valid = valid
+        self.expired = not valid
 
     def refresh(self, request):  # noqa: ARG002
         self.token = "fresh-token"
@@ -36,15 +36,30 @@ class _OAuthSessionStore:
 
 
 class _CredentialStore:
-    def __init__(self, existing_credentials=None, store_result=True):
+    def __init__(
+        self,
+        existing_credentials=None,
+        store_result=True,
+        credentials_by_user=None,
+        users=None,
+    ):
         self._existing_credentials = existing_credentials
         self.store_result = store_result
+        self.credentials_by_user = credentials_by_user or {}
+        self.users = list(users if users is not None else self.credentials_by_user)
         self.get_calls = []
+        self.list_calls = 0
         self.store_calls = []
 
     def get_credential(self, user_email):
         self.get_calls.append(user_email)
+        if self.credentials_by_user:
+            return self.credentials_by_user.get(user_email)
         return self._existing_credentials
+
+    def list_users(self):
+        self.list_calls += 1
+        return self.users
 
     def store_credential(self, user_email, credentials):  # noqa: ARG002
         self.store_calls.append((user_email, credentials.token))
@@ -119,22 +134,47 @@ def test_get_credentials_skips_session_update_when_refresh_persist_fails(monkeyp
     assert session_cache_writes[0][0] == "session-1"
 
 
-def test_get_credentials_single_user_returns_none_for_missing_requested_user(
+def test_get_credentials_single_user_uses_sole_stored_user_when_requested_user_missing(
     monkeypatch,
 ):
-    credential_store = _CredentialStore(existing_credentials=None)
-    fallback_creds = _RefreshableCredentials()
-    fallback_calls = []
-
-    def _unexpected_fallback(credentials_base_dir):  # noqa: ARG001
-        fallback_calls.append(True)
-        return fallback_creds, "other@example.com"
+    stored_credentials = _RefreshableCredentials(valid=True)
+    credential_store = _CredentialStore(
+        credentials_by_user={"actual@example.com": stored_credentials}
+    )
 
     monkeypatch.setenv("MCP_SINGLE_USER_MODE", "1")
     monkeypatch.setattr(
         "auth.google_auth.get_credential_store", lambda: credential_store
     )
-    monkeypatch.setattr("auth.google_auth._find_any_credentials", _unexpected_fallback)
+    monkeypatch.setattr(
+        "auth.google_auth.has_required_scopes", lambda scopes, required: True
+    )
+
+    result = get_credentials(
+        user_google_email="missing@example.com",
+        required_scopes=["scope.a"],
+    )
+
+    assert result is stored_credentials
+    assert credential_store.get_calls == ["missing@example.com", "actual@example.com"]
+    assert credential_store.list_calls == 1
+    assert credential_store.store_calls == []
+
+
+def test_get_credentials_single_user_does_not_fallback_when_multiple_users_exist(
+    monkeypatch,
+):
+    credential_store = _CredentialStore(
+        credentials_by_user={
+            "first@example.com": _RefreshableCredentials(valid=True),
+            "second@example.com": _RefreshableCredentials(valid=True),
+        }
+    )
+
+    monkeypatch.setenv("MCP_SINGLE_USER_MODE", "1")
+    monkeypatch.setattr(
+        "auth.google_auth.get_credential_store", lambda: credential_store
+    )
 
     result = get_credentials(
         user_google_email="missing@example.com",
@@ -143,5 +183,5 @@ def test_get_credentials_single_user_returns_none_for_missing_requested_user(
 
     assert result is None
     assert credential_store.get_calls == ["missing@example.com"]
+    assert credential_store.list_calls == 1
     assert credential_store.store_calls == []
-    assert fallback_calls == []
