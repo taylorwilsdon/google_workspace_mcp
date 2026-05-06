@@ -995,7 +995,9 @@ async def _modify_event_impl(
         event_body["attendees"] = normalized_attendees
 
     if color_id is not None:
-        event_body["colorId"] = color_id
+        # Pass "0" to explicitly clear the color and reset to calendar default.
+        # Without this, there is no way to remove a previously set colorId via PATCH.
+        event_body["colorId"] = None if color_id == "0" else color_id
     if recurrence is not None:
         event_body["recurrence"] = recurrence
 
@@ -1362,7 +1364,7 @@ async def manage_event(
         use_default_reminders (Optional[bool]): Whether to use default reminders.
         transparency (Optional[str]): "opaque" (busy) or "transparent" (free).
         visibility (Optional[str]): "default", "public", "private", or "confidential".
-        color_id (Optional[str]): Event color ID (1-11, update only).
+        color_id (Optional[str]): Event color ID (1-11, update only). Pass "0" to reset to the calendar's default color.
         recurrence (Optional[List[str]]): RFC5545 recurrence rules for a recurring event, e.g. ["RRULE:FREQ=WEEKLY;COUNT=10"].
         guests_can_modify (Optional[bool]): Whether attendees can modify.
         guests_can_invite_others (Optional[bool]): Whether attendees can invite others.
