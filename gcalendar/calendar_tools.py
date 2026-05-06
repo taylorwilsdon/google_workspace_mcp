@@ -994,10 +994,8 @@ async def _modify_event_impl(
     if normalized_attendees is not None:
         event_body["attendees"] = normalized_attendees
 
-    if color_id is not None:
-        # Pass "0" to explicitly clear the color and reset to calendar default.
-        # Without this, there is no way to remove a previously set colorId via PATCH.
-        event_body["colorId"] = None if color_id == "0" else color_id
+    if color_id is not None and color_id != "0":
+        event_body["colorId"] = color_id
     if recurrence is not None:
         event_body["recurrence"] = recurrence
 
@@ -1111,6 +1109,12 @@ async def _modify_event_impl(
                 "recurrence": recurrence,
             },
         )
+
+        # Apply color reset AFTER field preservation so it cannot be overwritten.
+        # _preserve_existing_fields treats None as "not provided" and would restore
+        # the existing colorId, silently undoing the reset sentinel.
+        if color_id == "0":
+            event_body["colorId"] = None
 
         # Handle Google Meet conference data
         if add_google_meet is not None:
