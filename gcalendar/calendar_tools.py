@@ -679,6 +679,7 @@ async def _create_event_impl(
     timezone: Optional[str] = None,
     attachments: Optional[List[str]] = None,
     add_google_meet: bool = False,
+    conference_data: Optional[Dict[str, Any]] = None,
     reminders: Optional[Union[str, List[Dict[str, Any]]]] = None,
     use_default_reminders: bool = True,
     transparency: Optional[str] = None,
@@ -774,7 +775,12 @@ async def _create_event_impl(
             f"[create_event] Set guestsCanSeeOtherGuests to {guests_can_see_other_guests}"
         )
 
-    if add_google_meet:
+    if conference_data is not None:
+        event_body["conferenceData"] = conference_data
+        logger.info(
+            "[create_event] Using caller-supplied conferenceData (skipping Meet auto-create)"
+        )
+    elif add_google_meet:
         request_id = str(uuid.uuid4())
         event_body["conferenceData"] = {
             "createRequest": {
@@ -785,6 +791,8 @@ async def _create_event_impl(
         logger.info(
             f"[create_event] Adding Google Meet conference with request ID: {request_id}"
         )
+
+    _uses_conference = conference_data is not None or add_google_meet
 
     if attachments:
         # Accept both file URLs and file IDs. If a URL, extract the fileId.
@@ -863,7 +871,7 @@ async def _create_event_impl(
                     calendarId=calendar_id,
                     body=event_body,
                     supportsAttachments=True,
-                    conferenceDataVersion=1 if add_google_meet else 0,
+                    conferenceDataVersion=1 if _uses_conference else 0,
                     sendUpdates=send_updates,
                 )
                 .execute()
@@ -876,7 +884,7 @@ async def _create_event_impl(
                 .insert(
                     calendarId=calendar_id,
                     body=event_body,
-                    conferenceDataVersion=1 if add_google_meet else 0,
+                    conferenceDataVersion=1 if _uses_conference else 0,
                     sendUpdates=send_updates,
                 )
                 .execute()
@@ -1328,6 +1336,7 @@ async def manage_event(
     timezone: Optional[str] = None,
     attachments: Optional[StringList] = None,
     add_google_meet: Optional[bool] = None,
+    conference_data: Optional[Dict[str, Any]] = None,
     reminders: Optional[Union[str, List[Dict[str, Any]]]] = None,
     use_default_reminders: Optional[bool] = None,
     transparency: Optional[str] = None,
@@ -1358,6 +1367,7 @@ async def manage_event(
         timezone (Optional[str]): Timezone (e.g., "America/New_York").
         attachments (Optional[List[str]]): List of Google Drive file URLs or IDs to attach.
         add_google_meet (Optional[bool]): Whether to add/remove Google Meet.
+        conference_data (Optional[Dict[str, Any]]): Raw `conferenceData` payload (e.g. third-party `entryPoints` such as a Microsoft Teams `joinWebUrl`). When provided, it is set verbatim on the event and `add_google_meet` is ignored. `conferenceDataVersion=1` is sent automatically. Create action only.
         reminders (Optional[Union[str, List[Dict[str, Any]]]]): Custom reminder objects.
         use_default_reminders (Optional[bool]): Whether to use default reminders.
         transparency (Optional[str]): "opaque" (busy) or "transparent" (free).
@@ -1401,6 +1411,7 @@ async def manage_event(
             timezone=timezone,
             attachments=attachments,
             add_google_meet=add_google_meet or False,
+            conference_data=conference_data,
             reminders=reminders,
             use_default_reminders=use_default_reminders
             if use_default_reminders is not None

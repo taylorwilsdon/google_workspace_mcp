@@ -36,6 +36,86 @@ def _create_mock_service():
 
 
 @pytest.mark.asyncio
+async def test_create_event_passes_conference_data_verbatim():
+    mock_service = _create_mock_service()
+    mock_service.events().insert().execute = Mock(
+        return_value={"id": "evt123", "htmlLink": "link", "summary": "Sync"}
+    )
+
+    teams_payload = {
+        "entryPoints": [
+            {
+                "entryPointType": "video",
+                "uri": "https://teams.microsoft.com/l/meetup-join/abc",
+                "label": "Microsoft Teams",
+            }
+        ]
+    }
+
+    await _create_event_impl(
+        service=mock_service,
+        user_google_email="user@example.com",
+        summary="Sync",
+        start_time="2026-04-06T09:00:00Z",
+        end_time="2026-04-06T09:30:00Z",
+        conference_data=teams_payload,
+    )
+
+    call = mock_service.events().insert.call_args
+    assert call[1]["body"]["conferenceData"] == teams_payload
+    assert call[1]["conferenceDataVersion"] == 1
+
+
+@pytest.mark.asyncio
+async def test_create_event_default_omits_conference_data():
+    mock_service = _create_mock_service()
+    mock_service.events().insert().execute = Mock(
+        return_value={"id": "evt123", "htmlLink": "link", "summary": "Sync"}
+    )
+
+    await _create_event_impl(
+        service=mock_service,
+        user_google_email="user@example.com",
+        summary="Sync",
+        start_time="2026-04-06T09:00:00Z",
+        end_time="2026-04-06T09:30:00Z",
+    )
+
+    call = mock_service.events().insert.call_args
+    assert "conferenceData" not in call[1]["body"]
+    assert call[1]["conferenceDataVersion"] == 0
+
+
+@pytest.mark.asyncio
+async def test_create_event_conference_data_takes_precedence_over_meet():
+    mock_service = _create_mock_service()
+    mock_service.events().insert().execute = Mock(
+        return_value={"id": "evt123", "htmlLink": "link", "summary": "Sync"}
+    )
+
+    teams_payload = {
+        "entryPoints": [
+            {"entryPointType": "video", "uri": "https://teams.microsoft.com/l/x"}
+        ]
+    }
+
+    await _create_event_impl(
+        service=mock_service,
+        user_google_email="user@example.com",
+        summary="Sync",
+        start_time="2026-04-06T09:00:00Z",
+        end_time="2026-04-06T09:30:00Z",
+        add_google_meet=True,
+        conference_data=teams_payload,
+    )
+
+    call = mock_service.events().insert.call_args
+    assert call[1]["body"]["conferenceData"] == teams_payload
+    assert "createRequest" not in call[1]["body"]["conferenceData"]
+    assert call[1]["conferenceDataVersion"] == 1
+
+
+@pytest.mark.asyncio
 async def test_create_event_supports_recurrence():
     mock_service = _create_mock_service()
     mock_service.events().insert().execute = Mock(
