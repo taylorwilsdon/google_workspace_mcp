@@ -66,9 +66,11 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 # Reload OAuth configuration after env vars loaded
 reload_oauth_config()
 
-# Configure basic logging
+# Configure basic logging — write to stdout so Railway classifies severity correctly
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    stream=sys.stdout,
 )
 logger = logging.getLogger(__name__)
 

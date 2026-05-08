@@ -5,8 +5,12 @@ import logging
 import os
 import socket
 import sys
+import warnings
 from importlib import metadata, import_module
 from dotenv import load_dotenv
+
+# Suppress authlib.jose deprecation noise (harmless, pending joserfc migration)
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="authlib")
 
 # Prevent any stray startup output on macOS (e.g. platform identifiers) from
 # corrupting the MCP JSON-RPC handshake on stdout. We capture anything written
@@ -88,7 +92,9 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 reload_oauth_config()
 
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    stream=sys.stdout,
 )
 logger = logging.getLogger(__name__)
 
@@ -656,11 +662,17 @@ def main():
                 )
                 sys.exit(1)
 
+            # Single-user HTTP mode is always stateless: each request independently
+            # resolves credentials from the credential store. Clients such as Relevance AI
+            # open a fresh connection per tool call and never reuse Mcp-Session-Id, so
+            # stateful mode causes FastMCP to accumulate abandoned session objects and
+            # grow memory unboundedly over time.
+            use_stateless = True if args.single_user else is_stateless_mode()
             server.run(
                 transport="streamable-http",
                 host=host,
                 port=port,
-                stateless_http=is_stateless_mode(),
+                stateless_http=use_stateless,
             )
         else:
             server.run()
