@@ -365,7 +365,7 @@ async def get_authenticated_google_service_oauth21(
                 f"Authenticated account {token_email} does not match requested user {user_google_email}."
             )
 
-        credentials = ensure_session_from_access_token(
+        credentials = await ensure_session_from_access_token(
             access_token, resolved_email, session_id
         )
         if not credentials:

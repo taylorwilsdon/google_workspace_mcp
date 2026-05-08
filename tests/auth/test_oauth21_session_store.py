@@ -1,6 +1,16 @@
+import base64
+import json as _json
+from types import SimpleNamespace
+
 import pytest
 
-from auth.oauth21_session_store import OAuth21SessionStore
+import auth.oauth21_session_store as oauth21_session_store
+from auth.oauth21_session_store import (
+    OAuth21SessionStore,
+    _build_credentials_from_provider,
+    _extract_jti_from_jwt,
+    ensure_session_from_access_token,
+)
 
 
 def test_oauth_state_persists_across_store_instances(tmp_path):
@@ -172,3 +182,153 @@ def test_store_session_skips_mcp_binding_in_single_user_mode(tmp_path, monkeypat
 
     assert store.get_user_by_mcp_session("session-123") is None
     assert store.get_credentials("account-b@example.com").token == "token-b"
+
+
+# ---------------------------------------------------------------------------
+# _build_credentials_from_provider — fastmcp 3.x JTI -> upstream-token lookup
+# ---------------------------------------------------------------------------
+
+
+def _make_jwt(jti: str) -> str:
+    """Build a minimal three-segment JWT-shaped string with the given jti claim."""
+    header = base64.urlsafe_b64encode(b'{"alg":"HS256","typ":"JWT"}').rstrip(b"=")
+    payload = base64.urlsafe_b64encode(
+        _json.dumps({"jti": jti, "client_id": "test"}).encode()
+    ).rstrip(b"=")
+    sig = b"signature"
+    return b".".join([header, payload, sig]).decode()
+
+
+class _AsyncStore:
+    """Minimal stand-in for fastmcp's PydanticAdapter[T]."""
+
+    def __init__(self, data):
+        self._data = data
+
+    async def get(self, *, key):
+        return self._data.get(key)
+
+
+class _FakeProxyProvider:
+    """Stand-in for FastMCP GoogleProvider exposing the two stores we use."""
+
+    def __init__(self, jti_mappings, upstream_tokens):
+        self._jti_mapping_store = _AsyncStore(jti_mappings)
+        self._upstream_token_store = _AsyncStore(upstream_tokens)
+        # Used by _resolve_client_credentials to find client_id/secret.
+        self._upstream_client_id = "test-client-id"
+        self._upstream_client_secret = "test-client-secret"
+
+
+def test_extract_jti_from_jwt_returns_claim():
+    token = _make_jwt("abc123")
+    assert _extract_jti_from_jwt(token) == "abc123"
+
+
+def test_extract_jti_from_jwt_returns_none_for_malformed_token():
+    assert _extract_jti_from_jwt("not.a.jwt.has-extra-part") is None
+    assert _extract_jti_from_jwt("only-one-segment") is None
+    assert _extract_jti_from_jwt("") is None
+
+
+def test_extract_jti_from_jwt_returns_none_when_jti_claim_missing():
+    payload = base64.urlsafe_b64encode(_json.dumps({"sub": "x"}).encode()).rstrip(b"=")
+    header = base64.urlsafe_b64encode(b"{}").rstrip(b"=")
+    token = b".".join([header, payload, b"sig"]).decode()
+    assert _extract_jti_from_jwt(token) is None
+
+
+@pytest.mark.asyncio
+async def test_build_credentials_returns_none_when_no_provider(monkeypatch):
+    monkeypatch.setattr(oauth21_session_store, "_auth_provider", None)
+    access_token = SimpleNamespace(token=_make_jwt("x"), claims={}, scopes=[])
+    assert await _build_credentials_from_provider(access_token) is None
+
+
+@pytest.mark.asyncio
+async def test_build_credentials_returns_none_when_provider_lacks_proxy_stores(
+    monkeypatch,
+):
+    """Provider without _jti_mapping_store (e.g. external OAuth or single-user)
+    must return None so callers can fall back to the manual-construction path."""
+    monkeypatch.setattr(
+        oauth21_session_store,
+        "_auth_provider",
+        SimpleNamespace(),  # no proxy stores
+    )
+    access_token = SimpleNamespace(token=_make_jwt("x"), claims={}, scopes=[])
+    assert await _build_credentials_from_provider(access_token) is None
+
+
+@pytest.mark.asyncio
+async def test_build_credentials_resolves_via_jti_to_upstream_chain(monkeypatch):
+    """Regression test for the OAuth 2.1 refresh bug: refresh_token must be
+    populated from the upstream token set, not be silently None."""
+    jti = "jti-abc"
+    upstream_id = "upstream-xyz"
+    upstream_set = SimpleNamespace(
+        upstream_token_id=upstream_id,
+        access_token="ya29.upstream-access",
+        refresh_token="1//upstream-refresh",
+        expires_at=2_000_000_000,  # far future
+        scope="https://www.googleapis.com/auth/spreadsheets openid email",
+    )
+    provider = _FakeProxyProvider(
+        jti_mappings={jti: SimpleNamespace(upstream_token_id=upstream_id, jti=jti)},
+        upstream_tokens={upstream_id: upstream_set},
+    )
+    monkeypatch.setattr(oauth21_session_store, "_auth_provider", provider)
+
+    access_token = SimpleNamespace(
+        token=_make_jwt(jti), claims={"email": "u@example.com"}, scopes=[]
+    )
+    creds = await _build_credentials_from_provider(access_token)
+
+    assert creds is not None
+    assert creds.token == "ya29.upstream-access"
+    assert creds.refresh_token == "1//upstream-refresh"
+    assert creds.client_id == "test-client-id"
+    assert creds.client_secret == "test-client-secret"
+    assert creds.token_uri == "https://oauth2.googleapis.com/token"
+    assert creds.scopes == upstream_set.scope.split()
+    assert creds.expiry is not None
+
+
+@pytest.mark.asyncio
+async def test_build_credentials_returns_none_when_jti_mapping_missing(monkeypatch):
+    provider = _FakeProxyProvider(jti_mappings={}, upstream_tokens={})
+    monkeypatch.setattr(oauth21_session_store, "_auth_provider", provider)
+    access_token = SimpleNamespace(token=_make_jwt("missing"), claims={}, scopes=[])
+    assert await _build_credentials_from_provider(access_token) is None
+
+
+@pytest.mark.asyncio
+async def test_build_credentials_returns_none_when_upstream_token_missing(
+    monkeypatch,
+):
+    provider = _FakeProxyProvider(
+        jti_mappings={"j": SimpleNamespace(upstream_token_id="missing", jti="j")},
+        upstream_tokens={},
+    )
+    monkeypatch.setattr(oauth21_session_store, "_auth_provider", provider)
+    access_token = SimpleNamespace(token=_make_jwt("j"), claims={}, scopes=[])
+    assert await _build_credentials_from_provider(access_token) is None
+
+
+@pytest.mark.asyncio
+async def test_ensure_session_falls_back_to_manual_construction_when_provider_missing(
+    monkeypatch,
+):
+    """When no proxy is configured, ensure_session_from_access_token still
+    returns a Credentials object (with refresh_token=None) by manual construction."""
+    monkeypatch.setattr(oauth21_session_store, "_auth_provider", None)
+    access_token = SimpleNamespace(
+        token="raw-token",
+        claims={"email": "u@example.com"},
+        scopes=["https://www.googleapis.com/auth/userinfo.email"],
+        expires_at=2_000_000_000,
+    )
+    creds = await ensure_session_from_access_token(access_token, "u@example.com")
+    assert creds is not None
+    assert creds.token == "raw-token"
+    assert creds.refresh_token is None

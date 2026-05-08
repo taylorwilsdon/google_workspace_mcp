@@ -156,7 +156,7 @@ class AuthInfoMiddleware(Middleware):
                                         mcp_session_id = getattr(
                                             context.fastmcp_context, "session_id", None
                                         )
-                                        ensure_session_from_access_token(
+                                        await ensure_session_from_access_token(
                                             access_token,
                                             user_email,
                                             mcp_session_id,

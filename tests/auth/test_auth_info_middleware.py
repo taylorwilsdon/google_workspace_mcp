@@ -51,9 +51,13 @@ async def test_on_call_tool_includes_authorization_header_for_bearer_auth(
             )
 
     monkeypatch.setattr("core.server.get_auth_provider", lambda: _FakeProvider())
+
+    async def _noop_ensure_session(*args, **kwargs):
+        return None
+
     monkeypatch.setattr(
         "auth.auth_info_middleware.ensure_session_from_access_token",
-        lambda *args, **kwargs: None,
+        _noop_ensure_session,
     )
 
     async def call_next(ctx):
@@ -105,9 +109,13 @@ async def test_on_call_tool_requests_authorization_header_when_default_headers_a
             )
 
     monkeypatch.setattr("core.server.get_auth_provider", lambda: _FakeProvider())
+
+    async def _noop_ensure_session(*args, **kwargs):
+        return None
+
     monkeypatch.setattr(
         "auth.auth_info_middleware.ensure_session_from_access_token",
-        lambda *args, **kwargs: None,
+        _noop_ensure_session,
     )
 
     async def call_next(ctx):

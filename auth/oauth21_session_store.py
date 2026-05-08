@@ -1032,42 +1032,95 @@ def _resolve_client_credentials() -> Tuple[Optional[str], Optional[str]]:
     return client_id, client_secret
 
 
-def _build_credentials_from_provider(
+def _extract_jti_from_jwt(token: str) -> Optional[str]:
+    """Extract the ``jti`` claim from a FastMCP-issued JWT without verifying.
+
+    The JWT signature has already been verified by the FastMCP middleware
+    before this code path runs; here we only need the ``jti`` to look up the
+    upstream token mapping. Decoding manually avoids depending on a specific
+    JWT library and avoids a redundant verification step.
+    """
+    try:
+        parts = token.split(".")
+        if len(parts) != 3:
+            return None
+        payload_b64 = parts[1] + "=" * (-len(parts[1]) % 4)
+        import base64
+        import json as _json
+
+        payload = _json.loads(base64.urlsafe_b64decode(payload_b64))
+        jti = payload.get("jti")
+        return jti if isinstance(jti, str) else None
+    except Exception:  # pragma: no cover - defensive
+        return None
+
+
+async def _build_credentials_from_provider(
     access_token: AccessToken,
 ) -> Optional[Credentials]:
-    """Construct Google credentials from the provider cache."""
+    """Construct Google credentials by resolving the upstream token via the
+    FastMCP OAuth proxy stores (``_jti_mapping_store`` -> ``_upstream_token_store``).
+
+    Returns ``None`` when the active provider is not a FastMCP ``OAuthProxy``
+    (e.g. external OAuth 2.1 providers, or single-user mode), so callers can
+    fall back to the manual-construction path.
+    """
     if not _auth_provider:
         return None
 
-    access_entry = getattr(_auth_provider, "_access_tokens", {}).get(access_token.token)
-    if not access_entry:
-        access_entry = access_token
+    jti_store = getattr(_auth_provider, "_jti_mapping_store", None)
+    upstream_store = getattr(_auth_provider, "_upstream_token_store", None)
+    if jti_store is None or upstream_store is None:
+        # Provider isn't a FastMCP OAuthProxy (e.g. raw token verifier in
+        # external-OAuth or single-user modes). Caller will fall back.
+        return None
+
+    jti = _extract_jti_from_jwt(access_token.token)
+    if not jti:
+        return None
+
+    try:
+        jti_mapping = await jti_store.get(key=jti)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("JTI mapping lookup failed for jti=%s: %s", jti[:8], exc)
+        return None
+    if jti_mapping is None:
+        # Token JTI not in mapping store (revoked, expired, or never issued
+        # by this proxy). Treat as a cache miss and let the caller fall back.
+        return None
+
+    upstream_token_id = getattr(jti_mapping, "upstream_token_id", None)
+    if not upstream_token_id:
+        return None
+
+    try:
+        upstream_set = await upstream_store.get(key=upstream_token_id)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug(
+            "Upstream token lookup failed for id=%s: %s", upstream_token_id[:8], exc
+        )
+        return None
+    if upstream_set is None:
+        return None
 
     client_id, client_secret = _resolve_client_credentials()
 
-    refresh_token_value = getattr(_auth_provider, "_access_to_refresh", {}).get(
-        access_token.token
-    )
-    refresh_token_obj = None
-    if refresh_token_value:
-        refresh_token_obj = getattr(_auth_provider, "_refresh_tokens", {}).get(
-            refresh_token_value
-        )
-
     expiry = None
-    expires_at = getattr(access_entry, "expires_at", None)
-    if expires_at:
+    upstream_expires_at = getattr(upstream_set, "expires_at", None)
+    if upstream_expires_at:
         try:
-            expiry_candidate = datetime.fromtimestamp(expires_at, tz=timezone.utc)
-            expiry = _normalize_expiry_to_naive_utc(expiry_candidate)
+            expiry = _normalize_expiry_to_naive_utc(
+                datetime.fromtimestamp(upstream_expires_at, tz=timezone.utc)
+            )
         except Exception:  # pragma: no cover - defensive
             expiry = None
 
-    scopes = getattr(access_entry, "scopes", None)
+    scope_str = getattr(upstream_set, "scope", "") or ""
+    scopes = scope_str.split() if scope_str else None
 
     return Credentials(
-        token=access_token.token,
-        refresh_token=refresh_token_obj.token if refresh_token_obj else None,
+        token=upstream_set.access_token,
+        refresh_token=upstream_set.refresh_token,
         token_uri="https://oauth2.googleapis.com/token",
         client_id=client_id,
         client_secret=client_secret,
@@ -1076,7 +1129,7 @@ def _build_credentials_from_provider(
     )
 
 
-def ensure_session_from_access_token(
+async def ensure_session_from_access_token(
     access_token: AccessToken,
     user_email: Optional[str],
     mcp_session_id: Optional[str] = None,
@@ -1090,7 +1143,7 @@ def ensure_session_from_access_token(
     if not email and getattr(access_token, "claims", None):
         email = access_token.claims.get("email")
 
-    credentials = _build_credentials_from_provider(access_token)
+    credentials = await _build_credentials_from_provider(access_token)
     store_expiry: Optional[datetime] = None
 
     if credentials is None:
@@ -1140,7 +1193,7 @@ def ensure_session_from_access_token(
     return credentials
 
 
-def get_credentials_from_token(
+async def get_credentials_from_token(
     access_token: str, user_email: Optional[str] = None
 ) -> Optional[Credentials]:
     """
@@ -1163,14 +1216,26 @@ def get_credentials_from_token(
                 logger.debug(f"Found matching credentials from store for {user_email}")
                 return credentials
 
-        # If the FastMCP provider is managing tokens, sync from provider storage
-        if _auth_provider:
-            access_record = getattr(_auth_provider, "_access_tokens", {}).get(
-                access_token
+        # If the FastMCP provider is managing tokens, sync from provider storage.
+        # The legacy `_access_tokens` dict no longer exists in fastmcp 3.x; the
+        # token-to-upstream lookup is now performed by `_build_credentials_from_provider`
+        # via the JTI mapping and upstream token stores. Construct a minimal
+        # AccessToken-like wrapper so that path can be reused.
+        if _auth_provider and getattr(_auth_provider, "_jti_mapping_store", None):
+            from types import SimpleNamespace
+
+            access_record = SimpleNamespace(
+                token=access_token,
+                claims=({"email": user_email} if user_email else None),
+                scopes=None,
+                expires_at=None,
             )
-            if access_record:
-                logger.debug("Building credentials from FastMCP provider cache")
-                return ensure_session_from_access_token(access_record, user_email)
+            credentials = await ensure_session_from_access_token(
+                access_record, user_email
+            )
+            if credentials is not None:
+                logger.debug("Built credentials from FastMCP provider cache")
+                return credentials
 
         # Otherwise, create minimal credentials with just the access token
         # Assume token is valid for 1 hour (typical for Google tokens)
