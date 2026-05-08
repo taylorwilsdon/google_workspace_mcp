@@ -200,12 +200,14 @@ def _make_jwt(jti: str) -> str:
 
 
 class _AsyncStore:
-    """Minimal stand-in for fastmcp's PydanticAdapter[T]."""
+    """Minimal stand-in for fastmcp's PydanticAdapter[T] used in tests."""
 
     def __init__(self, data):
+        """Initialize the fake store with a dict of key -> value entries."""
         self._data = data
 
     async def get(self, *, key):
+        """Return the stored value for ``key`` or ``None`` if absent."""
         return self._data.get(key)
 
 
@@ -213,6 +215,7 @@ class _FakeProxyProvider:
     """Stand-in for FastMCP GoogleProvider exposing the two stores we use."""
 
     def __init__(self, jti_mappings, upstream_tokens):
+        """Wrap two dict-based fakes as the provider's JTI and upstream stores."""
         self._jti_mapping_store = _AsyncStore(jti_mappings)
         self._upstream_token_store = _AsyncStore(upstream_tokens)
         # Used by _resolve_client_credentials to find client_id/secret.
@@ -221,17 +224,20 @@ class _FakeProxyProvider:
 
 
 def test_extract_jti_from_jwt_returns_claim():
+    """A well-formed JWT with a string ``jti`` returns that claim verbatim."""
     token = _make_jwt("abc123")
     assert _extract_jti_from_jwt(token) == "abc123"
 
 
 def test_extract_jti_from_jwt_returns_none_for_malformed_token():
+    """Tokens that don't have exactly three dot-separated segments return None."""
     assert _extract_jti_from_jwt("not.a.jwt.has-extra-part") is None
     assert _extract_jti_from_jwt("only-one-segment") is None
     assert _extract_jti_from_jwt("") is None
 
 
 def test_extract_jti_from_jwt_returns_none_when_jti_claim_missing():
+    """A valid JWT shape without a ``jti`` claim returns None rather than raising."""
     payload = base64.urlsafe_b64encode(_json.dumps({"sub": "x"}).encode()).rstrip(b"=")
     header = base64.urlsafe_b64encode(b"{}").rstrip(b"=")
     token = b".".join([header, payload, b"sig"]).decode()
@@ -240,6 +246,7 @@ def test_extract_jti_from_jwt_returns_none_when_jti_claim_missing():
 
 @pytest.mark.asyncio
 async def test_build_credentials_returns_none_when_no_provider(monkeypatch):
+    """With no auth provider registered, the function short-circuits to None."""
     monkeypatch.setattr(oauth21_session_store, "_auth_provider", None)
     access_token = SimpleNamespace(token=_make_jwt("x"), claims={}, scopes=[])
     assert await _build_credentials_from_provider(access_token) is None
@@ -296,6 +303,7 @@ async def test_build_credentials_resolves_via_jti_to_upstream_chain(monkeypatch)
 
 @pytest.mark.asyncio
 async def test_build_credentials_returns_none_when_jti_mapping_missing(monkeypatch):
+    """A revoked or never-issued JTI returns None so the caller can fall back."""
     provider = _FakeProxyProvider(jti_mappings={}, upstream_tokens={})
     monkeypatch.setattr(oauth21_session_store, "_auth_provider", provider)
     access_token = SimpleNamespace(token=_make_jwt("missing"), claims={}, scopes=[])
@@ -306,6 +314,7 @@ async def test_build_credentials_returns_none_when_jti_mapping_missing(monkeypat
 async def test_build_credentials_returns_none_when_upstream_token_missing(
     monkeypatch,
 ):
+    """Dangling JTI mapping pointing at a missing upstream token returns None."""
     provider = _FakeProxyProvider(
         jti_mappings={"j": SimpleNamespace(upstream_token_id="missing", jti="j")},
         upstream_tokens={},
