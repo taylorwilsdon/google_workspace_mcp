@@ -1,4 +1,6 @@
-from auth.google_auth import get_credentials
+import asyncio
+
+from auth.google_auth import get_authenticated_google_service, get_credentials
 
 
 class _RefreshableCredentials:
@@ -10,6 +12,7 @@ class _RefreshableCredentials:
         self.client_secret = "client-secret"
         self.scopes = ["scope.a"]
         self.expiry = None
+        self.id_token = None
         self.valid = valid
         self.expired = not valid
 
@@ -159,6 +162,69 @@ def test_get_credentials_single_user_uses_sole_stored_user_when_requested_user_m
     assert credential_store.get_calls == ["missing@example.com", "actual@example.com"]
     assert credential_store.list_calls == 1
     assert credential_store.store_calls == []
+
+
+def test_get_credentials_reports_resolved_single_user_email(monkeypatch):
+    stored_credentials = _RefreshableCredentials(valid=True)
+    credential_store = _CredentialStore(
+        credentials_by_user={"actual@example.com": stored_credentials}
+    )
+    resolved_emails = []
+
+    monkeypatch.setenv("MCP_SINGLE_USER_MODE", "1")
+    monkeypatch.setattr(
+        "auth.google_auth.get_credential_store", lambda: credential_store
+    )
+    monkeypatch.setattr(
+        "auth.google_auth.has_required_scopes", lambda scopes, required: True
+    )
+
+    result = get_credentials(
+        user_google_email="missing@example.com",
+        required_scopes=["scope.a"],
+        resolved_user_email=resolved_emails.append,
+    )
+
+    assert result is stored_credentials
+    assert resolved_emails == ["actual@example.com"]
+
+
+def test_get_authenticated_google_service_returns_resolved_single_user_email(
+    monkeypatch,
+):
+    stored_credentials = _RefreshableCredentials(valid=True)
+    credential_store = _CredentialStore(
+        credentials_by_user={"actual@example.com": stored_credentials}
+    )
+    built_service = object()
+
+    monkeypatch.setenv("MCP_SINGLE_USER_MODE", "1")
+    monkeypatch.setattr(
+        "auth.google_auth.get_credential_store", lambda: credential_store
+    )
+    monkeypatch.setattr(
+        "auth.google_auth.has_required_scopes", lambda scopes, required: True
+    )
+    monkeypatch.setattr("auth.google_auth.get_fastmcp_session_id", lambda: None)
+    monkeypatch.setattr("auth.google_auth.get_fastmcp_context", None)
+    monkeypatch.setattr(
+        "auth.google_auth.build",
+        lambda service_name, version, credentials: built_service,
+    )
+
+    async def run():
+        return await get_authenticated_google_service(
+            service_name="gmail",
+            version="v1",
+            tool_name="test_tool",
+            user_google_email="missing@example.com",
+            required_scopes=["scope.a"],
+        )
+
+    service, user_email = asyncio.run(run())
+
+    assert service is built_service
+    assert user_email == "actual@example.com"
 
 
 def test_get_credentials_single_user_does_not_fallback_when_multiple_users_exist(
