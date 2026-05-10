@@ -211,3 +211,133 @@ async def test_manage_event_rejects_invalid_send_updates(action):
             response="accepted",
             send_updates="invalid",
         )
+
+
+@pytest.mark.asyncio
+async def test_update_event_passes_conference_data_verbatim():
+    mock_service = _create_mock_service()
+    mock_service.events().get().execute = Mock(
+        return_value={
+            "id": "evt123",
+            "summary": "Sync",
+            "start": {"dateTime": "2026-04-06T09:00:00Z"},
+            "end": {"dateTime": "2026-04-06T09:30:00Z"},
+        }
+    )
+    mock_service.events().update().execute = Mock(
+        return_value={"id": "evt123", "htmlLink": "link", "summary": "Sync"}
+    )
+
+    teams_payload = {
+        "entryPoints": [
+            {
+                "entryPointType": "video",
+                "uri": "https://teams.microsoft.com/l/meetup-join/abc",
+                "label": "Microsoft Teams",
+            }
+        ]
+    }
+
+    await _modify_event_impl(
+        service=mock_service,
+        user_google_email="user@example.com",
+        event_id="evt123",
+        conference_data=teams_payload,
+    )
+
+    call = mock_service.events().update.call_args
+    assert call[1]["body"]["conferenceData"] == teams_payload
+    assert call[1]["conferenceDataVersion"] == 1
+
+
+@pytest.mark.asyncio
+async def test_update_event_default_omits_conference_data():
+    mock_service = _create_mock_service()
+    mock_service.events().get().execute = Mock(
+        return_value={
+            "id": "evt123",
+            "summary": "Sync",
+            "start": {"dateTime": "2026-04-06T09:00:00Z"},
+            "end": {"dateTime": "2026-04-06T09:30:00Z"},
+        }
+    )
+    mock_service.events().update().execute = Mock(
+        return_value={"id": "evt123", "htmlLink": "link", "summary": "Renamed"}
+    )
+
+    await _modify_event_impl(
+        service=mock_service,
+        user_google_email="user@example.com",
+        event_id="evt123",
+        summary="Renamed",
+    )
+
+    call = mock_service.events().update.call_args
+    assert "conferenceData" not in call[1]["body"]
+    assert call[1]["conferenceDataVersion"] == 0
+
+
+@pytest.mark.asyncio
+async def test_update_event_conference_data_takes_precedence_over_meet():
+    mock_service = _create_mock_service()
+    mock_service.events().get().execute = Mock(
+        return_value={
+            "id": "evt123",
+            "summary": "Sync",
+            "start": {"dateTime": "2026-04-06T09:00:00Z"},
+            "end": {"dateTime": "2026-04-06T09:30:00Z"},
+        }
+    )
+    mock_service.events().update().execute = Mock(
+        return_value={"id": "evt123", "htmlLink": "link", "summary": "Sync"}
+    )
+
+    teams_payload = {
+        "entryPoints": [
+            {"entryPointType": "video", "uri": "https://teams.microsoft.com/l/x"}
+        ]
+    }
+
+    await _modify_event_impl(
+        service=mock_service,
+        user_google_email="user@example.com",
+        event_id="evt123",
+        add_google_meet=True,
+        conference_data=teams_payload,
+    )
+
+    call = mock_service.events().update.call_args
+    assert call[1]["body"]["conferenceData"] == teams_payload
+    assert "createRequest" not in call[1]["body"]["conferenceData"]
+    assert call[1]["conferenceDataVersion"] == 1
+
+
+@pytest.mark.asyncio
+async def test_update_event_preserves_start_end_when_omitted():
+    """description-only update should not lose existing start/end."""
+    mock_service = _create_mock_service()
+    existing_start = {"dateTime": "2026-04-06T09:00:00+09:00", "timeZone": "Asia/Seoul"}
+    existing_end = {"dateTime": "2026-04-06T10:00:00+09:00", "timeZone": "Asia/Seoul"}
+    mock_service.events().get().execute = Mock(
+        return_value={
+            "id": "evt123",
+            "summary": "Sync",
+            "start": existing_start,
+            "end": existing_end,
+        }
+    )
+    mock_service.events().update().execute = Mock(
+        return_value={"id": "evt123", "htmlLink": "link", "summary": "Sync"}
+    )
+
+    await _modify_event_impl(
+        service=mock_service,
+        user_google_email="user@example.com",
+        event_id="evt123",
+        description="updated description only",
+    )
+
+    update_body = mock_service.events().update.call_args[1]["body"]
+    assert update_body["start"] == existing_start
+    assert update_body["end"] == existing_end
+    assert update_body["description"] == "updated description only"

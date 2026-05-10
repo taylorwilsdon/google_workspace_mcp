@@ -952,6 +952,7 @@ async def _modify_event_impl(
     attendees: Optional[Union[List[str], List[Dict[str, Any]]]] = None,
     timezone: Optional[str] = None,
     add_google_meet: Optional[bool] = None,
+    conference_data: Optional[Dict[str, Any]] = None,
     reminders: Optional[Union[str, List[Dict[str, Any]]]] = None,
     use_default_reminders: Optional[bool] = None,
     transparency: Optional[str] = None,
@@ -1082,7 +1083,9 @@ async def _modify_event_impl(
             "[modify_event] Timezone provided but start_time and end_time are missing. Timezone will not be applied unless start/end times are also provided."
         )
 
-    if not event_body:
+    _uses_conference = conference_data is not None or add_google_meet is not None
+
+    if not event_body and not _uses_conference:
         message = "No fields provided to modify the event."
         logger.warning(f"[modify_event] {message}")
         raise Exception(message)
@@ -1111,6 +1114,10 @@ async def _modify_event_impl(
                 "summary": summary,
                 "description": description,
                 "location": location,
+                # Preserve existing start/end (incl. timeZone) when the caller did not
+                # supply start_time/end_time — protects description-only updates.
+                "start": event_body.get("start"),
+                "end": event_body.get("end"),
                 # Use the already-normalized attendee objects (if provided); otherwise preserve existing
                 "attendees": event_body.get("attendees"),
                 "colorId": event_body.get("colorId"),
@@ -1118,26 +1125,29 @@ async def _modify_event_impl(
             },
         )
 
-        # Handle Google Meet conference data
-        if add_google_meet is not None:
-            if add_google_meet:
-                # Add Google Meet
-                request_id = str(uuid.uuid4())
-                event_body["conferenceData"] = {
-                    "createRequest": {
-                        "requestId": request_id,
-                        "conferenceSolutionKey": {"type": "hangoutsMeet"},
-                    }
+        # Handle conference data — caller-supplied payload takes precedence over Meet auto-create.
+        if conference_data is not None:
+            event_body["conferenceData"] = conference_data
+            logger.info(
+                "[modify_event] Using caller-supplied conferenceData (skipping Meet auto-create)"
+            )
+        elif add_google_meet is True:
+            request_id = str(uuid.uuid4())
+            event_body["conferenceData"] = {
+                "createRequest": {
+                    "requestId": request_id,
+                    "conferenceSolutionKey": {"type": "hangoutsMeet"},
                 }
-                logger.info(
-                    f"[modify_event] Adding Google Meet conference with request ID: {request_id}"
-                )
-            else:
-                # Remove Google Meet by setting conferenceData to empty
-                event_body["conferenceData"] = {}
-                logger.info("[modify_event] Removing Google Meet conference")
+            }
+            logger.info(
+                f"[modify_event] Adding Google Meet conference with request ID: {request_id}"
+            )
+        elif add_google_meet is False:
+            # Remove Google Meet by setting conferenceData to empty
+            event_body["conferenceData"] = {}
+            logger.info("[modify_event] Removing Google Meet conference")
         elif "conferenceData" in existing_event:
-            # Preserve existing conference data if not specified
+            # Preserve existing conference data if neither override was specified
             event_body["conferenceData"] = existing_event["conferenceData"]
             logger.info("[modify_event] Preserving existing conference data")
 
@@ -1161,7 +1171,7 @@ async def _modify_event_impl(
                 calendarId=calendar_id,
                 eventId=event_id,
                 body=event_body,
-                conferenceDataVersion=1,
+                conferenceDataVersion=1 if _uses_conference else 0,
                 sendUpdates=send_updates,
             )
             .execute()
@@ -1440,6 +1450,7 @@ async def manage_event(
             attendees=attendees,
             timezone=timezone,
             add_google_meet=add_google_meet,
+            conference_data=conference_data,
             reminders=reminders,
             use_default_reminders=use_default_reminders,
             transparency=transparency,
