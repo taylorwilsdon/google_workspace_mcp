@@ -15,8 +15,10 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 from gforms.forms_tools import (
     _batch_update_form_impl,
     _serialize_form_item,
+    _serialize_form_question,
     _serialize_form_response,
     get_form,
+    get_form_structured,
     list_form_responses_structured,
 )
 
@@ -392,6 +394,167 @@ def test_serialize_form_response_handles_missing_email_and_empty_answers():
     assert structured["respondent_email"] is None
     assert structured["submitted_at"] == "2026-04-30T10:00:00Z"
     assert structured["answers"] == {}
+
+
+def test_serialize_form_question_extracts_single_question():
+    """Single questionItem with questionId should be serialized."""
+    item = {
+        "itemId": "item_1",
+        "title": "Favorite color?",
+        "questionItem": {
+            "question": {
+                "questionId": "q_color",
+                "required": True,
+                "choiceQuestion": {"type": "RADIO", "options": [{"value": "Red"}]},
+            }
+        },
+    }
+    result = _serialize_form_question(item)
+    assert result == {
+        "question_id": "q_color",
+        "title": "Favorite color?",
+        "required": True,
+    }
+
+
+def test_serialize_form_question_skips_non_question_items():
+    """Page break / grid / text items return None (filtered upstream)."""
+    assert _serialize_form_question({"pageBreakItem": {}, "title": "Section 2"}) is None
+    assert _serialize_form_question({"textItem": {}, "title": "Description"}) is None
+    assert (
+        _serialize_form_question(
+            {
+                "questionGroupItem": {
+                    "questions": [{"questionId": "row_1"}],
+                    "grid": {"columns": {"options": []}},
+                },
+                "title": "Grid",
+            }
+        )
+        is None
+    )
+
+
+def test_serialize_form_question_skips_question_without_id():
+    """questionItem missing questionId (incomplete form) returns None."""
+    item = {
+        "title": "Untitled",
+        "questionItem": {"question": {"required": False}},
+    }
+    assert _serialize_form_question(item) is None
+
+
+@pytest.mark.asyncio
+async def test_get_form_structured_returns_form_definition_shape():
+    """Tool returns dict matching studyops FormDefinition shape."""
+    mock_service = Mock()
+    mock_service.forms().get().execute.return_value = {
+        "formId": "form_xyz",
+        "info": {"title": "勉強会 pre", "description": "事前アンケート"},
+        "publishSettings": {"publishState": {"isPublished": True}},
+        "responderUri": "https://docs.google.com/forms/d/e/xyz/viewform",
+        "items": [
+            {
+                "itemId": "item_1",
+                "title": "期待度",
+                "questionItem": {
+                    "question": {
+                        "questionId": "q1",
+                        "required": True,
+                        "scaleQuestion": {"low": 1, "high": 5},
+                    }
+                },
+            },
+            {
+                "itemId": "item_2",
+                "title": "聞きたいこと",
+                "questionItem": {
+                    "question": {
+                        "questionId": "q2",
+                        "textQuestion": {"paragraph": True},
+                    }
+                },
+            },
+        ],
+    }
+    impl = get_form_structured.__wrapped__.__wrapped__
+    result = await impl(
+        service=mock_service,
+        user_google_email="caller@example.com",
+        form_id="form_xyz",
+    )
+    assert result == {
+        "form_id": "form_xyz",
+        "title": "勉強会 pre",
+        "description": "事前アンケート",
+        "publish_state": "PUBLISHED",
+        "responder_uri": "https://docs.google.com/forms/d/e/xyz/viewform",
+        "questions": [
+            {"question_id": "q1", "title": "期待度", "required": True},
+            {"question_id": "q2", "title": "聞きたいこと", "required": False},
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_get_form_structured_unpublished_form_with_no_items():
+    """Form without publishSettings / items defaults to UNPUBLISHED with empty questions."""
+    mock_service = Mock()
+    mock_service.forms().get().execute.return_value = {
+        "formId": "form_new",
+        "info": {"title": "New form"},
+    }
+    impl = get_form_structured.__wrapped__.__wrapped__
+    result = await impl(
+        service=mock_service,
+        user_google_email="caller@example.com",
+        form_id="form_new",
+    )
+    assert result == {
+        "form_id": "form_new",
+        "title": "New form",
+        "description": "",
+        "publish_state": "UNPUBLISHED",
+        "responder_uri": None,
+        "questions": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_get_form_structured_filters_out_non_question_items():
+    """Page break / grid items should not appear in questions list."""
+    mock_service = Mock()
+    mock_service.forms().get().execute.return_value = {
+        "formId": "form_mixed",
+        "info": {"title": "Mixed"},
+        "items": [
+            {"itemId": "i1", "title": "Section A", "pageBreakItem": {}},
+            {
+                "itemId": "i2",
+                "title": "Real question",
+                "questionItem": {
+                    "question": {"questionId": "q_real", "required": True}
+                },
+            },
+            {
+                "itemId": "i3",
+                "title": "Grid q",
+                "questionGroupItem": {
+                    "questions": [{"questionId": "row_1"}],
+                    "grid": {"columns": {"options": []}},
+                },
+            },
+        ],
+    }
+    impl = get_form_structured.__wrapped__.__wrapped__
+    result = await impl(
+        service=mock_service,
+        user_google_email="caller@example.com",
+        form_id="form_mixed",
+    )
+    assert result["questions"] == [
+        {"question_id": "q_real", "title": "Real question", "required": True}
+    ]
 
 
 @pytest.mark.asyncio

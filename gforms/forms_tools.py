@@ -227,6 +227,80 @@ async def get_form(service, user_google_email: str, form_id: str) -> str:
     return result
 
 
+def _serialize_form_question(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Convert a Forms item with a single question to a flat structured dict.
+
+    Returns ``None`` for non-question items (page break, text, image, video,
+    grid/group questions) so callers can filter them out. Grid items are skipped
+    because the studyops ``FormQuestion`` model represents a single questionId.
+    """
+    question_item = item.get("questionItem")
+    if not question_item:
+        return None
+    question = question_item.get("question", {})
+    question_id = question.get("questionId")
+    if not question_id:
+        return None
+    return {
+        "question_id": question_id,
+        "title": item.get("title", ""),
+        "required": bool(question.get("required", False)),
+    }
+
+
+@server.tool()
+@handle_http_errors("get_form_structured", is_read_only=True, service_type="forms")
+@require_google_service("forms", "forms")
+async def get_form_structured(
+    service,
+    user_google_email: str,
+    form_id: str,
+) -> Dict[str, Any]:
+    """Get a form and return structured (machine-readable) output.
+
+    Unlike ``get_form`` which returns formatted text intended for display
+    (and is wrapped by FastMCP as ``{result: "..."}``), this tool returns a
+    dict matching the studyops ``FormDefinition`` shape so MCP clients can
+    consume form metadata programmatically without text parsing.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        form_id (str): The ID of the form to retrieve.
+
+    Returns:
+        dict: ``{"form_id", "title", "description", "publish_state",
+        "responder_uri", "questions"}``. ``publish_state`` is ``"PUBLISHED"``
+        if the form's ``publishSettings.publishState.isPublished`` is true,
+        otherwise ``"UNPUBLISHED"``. ``questions`` contains only items with a
+        single questionId (grid/page-break/text items are filtered out).
+    """
+    logger.info(
+        f"[get_form_structured] Invoked. Email: '{user_google_email}', Form ID: {form_id}"
+    )
+
+    form = await asyncio.to_thread(service.forms().get(formId=form_id).execute)
+
+    info = form.get("info", {})
+    publish_settings = form.get("publishSettings", {}) or {}
+    publish_state_obj = publish_settings.get("publishState", {}) or {}
+    is_published = bool(publish_state_obj.get("isPublished"))
+
+    questions: List[Dict[str, Any]] = []
+    for item in form.get("items", []):
+        serialized = _serialize_form_question(item)
+        if serialized is not None:
+            questions.append(serialized)
+
+    return {
+        "form_id": form.get("formId", form_id),
+        "title": info.get("title", ""),
+        "description": info.get("description", ""),
+        "publish_state": "PUBLISHED" if is_published else "UNPUBLISHED",
+        "responder_uri": form.get("responderUri"),
+        "questions": questions,
+    }
+
+
 @server.tool()
 @handle_http_errors("set_publish_settings", service_type="forms")
 @require_google_service("forms", "forms")
