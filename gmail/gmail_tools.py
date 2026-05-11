@@ -2479,6 +2479,180 @@ def _format_thread_content(
 
 
 @server.tool(
+    title="List Gmail Drafts",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("list_gmail_drafts", is_read_only=True, service_type="gmail")
+@require_google_service("gmail", GMAIL_COMPOSE_SCOPE)
+async def list_gmail_drafts(
+    service,
+    user_google_email: str,
+    query: Annotated[
+        Optional[str],
+        Field(
+            description="Optional Gmail search query to filter drafts (same syntax as Gmail search, e.g. 'subject:invoice', 'to:user@example.com').",
+        ),
+    ] = None,
+    page_size: Annotated[
+        int,
+        Field(
+            description="Maximum number of drafts to return. Defaults to 25.",
+        ),
+    ] = 25,
+    page_token: Annotated[
+        Optional[str],
+        Field(
+            description="Token for retrieving the next page of results. Use the next_page_token from a previous response.",
+        ),
+    ] = None,
+) -> str:
+    """
+    Lists drafts in the user's Gmail account, optionally filtered by a Gmail search query.
+
+    For each draft, returns the Draft ID along with the underlying message's Subject,
+    From, To, and a short snippet so you can identify which draft is which without
+    needing to fetch each one separately.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        query (Optional[str]): Optional Gmail search query to filter the drafts list.
+        page_size (int): Maximum number of drafts to return. Defaults to 25.
+        page_token (Optional[str]): Pagination token from a previous response.
+
+    Returns:
+        str: A formatted list of drafts with their Draft IDs and key headers, or a
+            message indicating no drafts were found.
+    """
+    logger.info(
+        f"[list_gmail_drafts] Invoked. Email: '{user_google_email}', Query: '{query}', PageSize: {page_size}"
+    )
+
+    list_kwargs = {"userId": "me", "maxResults": page_size}
+    if query:
+        list_kwargs["q"] = query
+    if page_token:
+        list_kwargs["pageToken"] = page_token
+
+    response = await asyncio.to_thread(
+        service.users().drafts().list(**list_kwargs).execute
+    )
+
+    drafts = response.get("drafts", [])
+    next_page_token = response.get("nextPageToken")
+
+    if not drafts:
+        suffix = f" matching '{query}'" if query else ""
+        return f"No drafts found{suffix}."
+
+    lines = [f"Found {len(drafts)} draft(s)" + (f" matching '{query}'" if query else "") + ":\n"]
+
+    metadata_headers = ["Subject", "From", "To", "Cc", "Date"]
+    for idx, draft_stub in enumerate(drafts, 1):
+        draft_id = draft_stub.get("id")
+        try:
+            draft_full = await asyncio.to_thread(
+                service.users()
+                .drafts()
+                .get(
+                    userId="me",
+                    id=draft_id,
+                    format="metadata",
+                    metadataHeaders=metadata_headers,
+                )
+                .execute
+            )
+            message = draft_full.get("message", {})
+            payload = message.get("payload", {})
+            headers = {
+                h["name"]: h["value"] for h in payload.get("headers", [])
+            }
+            subject = headers.get("Subject", "(no subject)")
+            from_addr = headers.get("From", "(no sender)")
+            to_addr = headers.get("To", "(no recipient)")
+            cc_addr = headers.get("Cc")
+            date = headers.get("Date", "")
+            snippet = message.get("snippet", "")[:120]
+            message_id = message.get("id", "")
+            thread_id = message.get("threadId", "")
+
+            lines.append(f"{idx}. Draft ID: {draft_id}")
+            lines.append(f"   Subject: {subject}")
+            lines.append(f"   From: {from_addr}")
+            lines.append(f"   To: {to_addr}")
+            if cc_addr:
+                lines.append(f"   Cc: {cc_addr}")
+            if date:
+                lines.append(f"   Date: {date}")
+            lines.append(f"   Message ID: {message_id}")
+            if thread_id and thread_id != message_id:
+                lines.append(f"   Thread ID: {thread_id}")
+            if snippet:
+                lines.append(f"   Snippet: {snippet}")
+            lines.append("")
+        except HttpError as e:
+            lines.append(f"{idx}. Draft ID: {draft_id} (failed to fetch metadata: {e})")
+            lines.append("")
+
+    if next_page_token:
+        lines.append(
+            f"\nNext page available. Call list_gmail_drafts again with page_token='{next_page_token}' to retrieve the next page."
+        )
+
+    return "\n".join(lines).rstrip()
+
+
+@server.tool(
+    title="Delete Gmail Draft",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("delete_gmail_draft", service_type="gmail")
+@require_google_service("gmail", GMAIL_COMPOSE_SCOPE)
+async def delete_gmail_draft(
+    service,
+    user_google_email: str,
+    draft_id: Annotated[
+        str,
+        Field(
+            description="The ID of the draft to permanently delete. Get this from list_gmail_drafts or from the return value of draft_gmail_message.",
+        ),
+    ],
+) -> str:
+    """
+    Permanently deletes a draft email from the user's Gmail account.
+
+    This wraps the Gmail API's drafts.delete endpoint, which removes both the draft
+    container and its underlying message. The operation cannot be undone — the draft
+    is not moved to Trash, it is deleted outright.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        draft_id (str): The ID of the draft to delete.
+
+    Returns:
+        str: Confirmation that the draft was deleted.
+    """
+    logger.info(
+        f"[delete_gmail_draft] Invoked. Email: '{user_google_email}', Draft ID: '{draft_id}'"
+    )
+
+    await asyncio.to_thread(
+        service.users().drafts().delete(userId="me", id=draft_id).execute
+    )
+
+    return f"Draft {draft_id} deleted successfully."
+
+
+@server.tool(
     title="Get Gmail Thread Content",
     annotations=ToolAnnotations(
         readOnlyHint=True,

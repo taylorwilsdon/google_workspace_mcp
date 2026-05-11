@@ -789,6 +789,8 @@ cp .env.oauth21 .env
 | <sub>`manage_gmail_label`</sub> | <sub>Extended</sub> | <sub>Create/update/delete labels</sub> |
 | <sub>`manage_gmail_filter`</sub> | <sub>Extended</sub> | <sub>Create or delete Gmail filters</sub> |
 | <sub>`draft_gmail_message`</sub> | <sub>Extended</sub> | <sub>Create drafts</sub> |
+| <sub>`list_gmail_drafts`</sub> | <sub>Extended</sub> | <sub>List drafts with subject/recipients</sub> |
+| <sub>`delete_gmail_draft`</sub> | <sub>Extended</sub> | <sub>Permanently delete a draft</sub> |
 | <sub>`get_gmail_threads_content_batch`</sub> | <sub>Complete</sub> | <sub>Batch retrieve thread content</sub> |
 | <sub>`batch_modify_gmail_message_labels`</sub> | <sub>Complete</sub> | <sub>Batch modify labels</sub> |
 | <sub>`start_google_auth`</sub> | <sub>Complete</sub> | <sub>Legacy OAuth 2.0 auth (disabled when OAuth 2.1 is enabled)</sub> |
