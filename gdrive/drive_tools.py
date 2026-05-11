@@ -5,6 +5,7 @@ This module provides MCP tools for interacting with Google Drive API.
 """
 
 import asyncio
+import json
 import logging
 import io
 import base64
@@ -1409,7 +1410,7 @@ async def update_drive_file(
     writers_can_share: Optional[bool] = None,
     copy_requires_writer_permission: Optional[bool] = None,
     # Custom properties
-    properties: Optional[dict] = None,  # User-visible custom properties
+    properties: Optional[str] = None,  # User-visible custom properties as JSON string e.g. '{"key": "value"}'
 ) -> str:
     """
     Updates metadata and properties of a Google Drive file.
@@ -1426,7 +1427,7 @@ async def update_drive_file(
         trashed (Optional[bool]): Whether to move file to/from trash.
         writers_can_share (Optional[bool]): Whether editors can share the file.
         copy_requires_writer_permission (Optional[bool]): Whether copying requires writer permission.
-        properties (Optional[dict]): Custom key-value properties for the file.
+        properties (Optional[str]): Custom key-value properties as a JSON string, e.g. '{"key": "value"}'.
 
     Returns:
         str: Confirmation message with details of the updates applied.
@@ -1461,7 +1462,10 @@ async def update_drive_file(
     if copy_requires_writer_permission is not None:
         update_body["copyRequiresWriterPermission"] = copy_requires_writer_permission
     if properties is not None:
-        update_body["properties"] = properties
+        try:
+            update_body["properties"] = json.loads(properties)
+        except (json.JSONDecodeError, ValueError):
+            return f"Error: properties must be a valid JSON string, e.g. '{{\"key\": \"value\"}}'. Received: {properties}"
 
     async def _resolve_parent_arguments(parent_arg: Optional[str]) -> Optional[str]:
         if not parent_arg:
