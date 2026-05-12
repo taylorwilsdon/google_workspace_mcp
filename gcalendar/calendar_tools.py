@@ -1377,7 +1377,7 @@ async def manage_event(
         timezone (Optional[str]): Timezone (e.g., "America/New_York").
         attachments (Optional[List[str]]): List of Google Drive file URLs or IDs to attach.
         add_google_meet (Optional[bool]): Whether to add/remove Google Meet.
-        conference_data (Optional[Dict[str, Any]]): Raw `conferenceData` payload (e.g. third-party `entryPoints` such as a Microsoft Teams `joinWebUrl`). When provided, it is set verbatim on the event and `add_google_meet` is ignored. `conferenceDataVersion=1` is sent automatically. Create action only.
+        conference_data (Optional[Dict[str, Any]]): Raw `conferenceData` payload (e.g. third-party `entryPoints` whose `uri` points to a Microsoft Teams meeting). When provided, it is set verbatim on the event and `add_google_meet` is ignored. `conferenceDataVersion=1` is sent automatically. Applies to both create and update actions.
         reminders (Optional[Union[str, List[Dict[str, Any]]]]): Custom reminder objects.
         use_default_reminders (Optional[bool]): Whether to use default reminders.
         transparency (Optional[str]): "opaque" (busy) or "transparent" (free).
