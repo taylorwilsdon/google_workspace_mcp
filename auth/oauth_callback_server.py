@@ -229,7 +229,16 @@ class MinimalOAuthServer:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.bind((hostname, self.port))
         except OSError:
-            error_msg = f"Port {self.port} is already in use on {hostname}. Cannot start minimal OAuth server."
+            error_msg = (
+                f"Port {self.port} is already in use on {hostname}. "
+                f"This typically means the previous Workspace MCP server is still "
+                f"holding the port, or you are running the MCP server and the OAuth "
+                f"callback server on the same port. Set "
+                f"WORKSPACE_MCP_OAUTH_CALLBACK_PORT to a different port and register "
+                f"the matching redirect URI (http://{hostname}:<callback_port>/oauth2callback) "
+                f"in your Google Cloud Console OAuth client. Cannot start minimal "
+                f"OAuth server."
+            )
             logger.error(error_msg)
             return False, error_msg
 

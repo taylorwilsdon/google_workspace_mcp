@@ -57,7 +57,7 @@ async def test_start_google_auth_preflights_in_stdio(monkeypatch):
     monkeypatch.setattr("core.server.start_auth_flow", fake_start_auth_flow)
     monkeypatch.setattr(
         "auth.oauth_config.get_oauth_config",
-        lambda: SimpleNamespace(port=8000, base_uri="http://localhost"),
+        lambda: SimpleNamespace(port=8000, oauth_callback_port=8000, base_uri="http://localhost"),
     )
     monkeypatch.setattr(
         "auth.oauth_callback_server.ensure_oauth_callback_available",

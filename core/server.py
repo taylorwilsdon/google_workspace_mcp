@@ -723,7 +723,7 @@ async def start_google_auth(
             success, error_msg = await asyncio.to_thread(
                 ensure_oauth_callback_available,
                 transport_mode,
-                config.port,
+                config.oauth_callback_port,
                 config.base_uri,
             )
             if not success:
