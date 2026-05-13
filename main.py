@@ -723,7 +723,6 @@ def main():
             # Start minimal OAuth callback server for stdio mode (not needed for service accounts)
             if not is_service_account_enabled():
                 from auth.oauth_callback_server import ensure_oauth_callback_available
-                from auth.oauth_config import get_oauth_config
 
                 callback_port = get_oauth_config().oauth_callback_port
                 success, error_msg = ensure_oauth_callback_available(
