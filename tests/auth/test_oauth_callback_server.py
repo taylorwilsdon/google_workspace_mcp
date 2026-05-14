@@ -142,6 +142,80 @@ def test_ensure_oauth_callback_skips_start_when_other_instance_owns_port(monkeyp
     assert _PortInUseServer.instances[0].start_calls == 0
 
 
+def test_ensure_oauth_callback_falls_back_to_alternative_port(monkeypatch):
+    """When the preferred port is in use, the server should try alternative ports."""
+
+    class _PortConflictServer(_DummyMinimalOAuthServer):
+        def start(self):
+            self.start_calls += 1
+            if self.port == 8000:
+                return False, "Port 8000 is already in use"
+            self.running = True
+            return True, ""
+
+    _PortConflictServer.instances = []
+    monkeypatch.setattr(oauth_callback_server, "_minimal_oauth_server", None)
+    monkeypatch.setattr(
+        oauth_callback_server,
+        "MinimalOAuthServer",
+        _PortConflictServer,
+    )
+
+    # Mock the oauth config so the redirect URI update doesn't fail
+    class _FakeOAuthConfig:
+        def __init__(self):
+            self.port = 8000
+            self.base_uri = "http://localhost"
+            self.base_url = "http://localhost:8000"
+            self.redirect_uri = "http://localhost:8000/oauth2callback"
+
+    fake_config = _FakeOAuthConfig()
+    monkeypatch.setattr(
+        "auth.oauth_config.get_oauth_config",
+        lambda: fake_config,
+    )
+
+    success, error = oauth_callback_server.ensure_oauth_callback_available(
+        "stdio", 8000, "http://localhost"
+    )
+
+    assert success is True
+    assert error == ""
+    # First instance tried port 8000 and failed, second got 8001
+    assert len(_PortConflictServer.instances) == 2
+    assert _PortConflictServer.instances[0].port == 8000
+    assert _PortConflictServer.instances[1].port == 8001
+    assert fake_config.port == 8001
+    assert fake_config.redirect_uri == "http://localhost:8001/oauth2callback"
+
+
+def test_ensure_oauth_callback_fails_when_all_ports_exhausted(monkeypatch):
+    """When all ports in the range are in use, the server should fail gracefully."""
+
+    class _AllPortsBusyServer(_DummyMinimalOAuthServer):
+        def start(self):
+            self.start_calls += 1
+            return False, f"Port {self.port} is already in use"
+
+    _AllPortsBusyServer.instances = []
+    monkeypatch.setattr(oauth_callback_server, "_minimal_oauth_server", None)
+    monkeypatch.setattr(
+        oauth_callback_server,
+        "MinimalOAuthServer",
+        _AllPortsBusyServer,
+    )
+    monkeypatch.setenv("WORKSPACE_MCP_PORT_RANGE", "3")
+
+    success, error = oauth_callback_server.ensure_oauth_callback_available(
+        "stdio", 8000, "http://localhost"
+    )
+
+    assert success is False
+    assert "8000-8002" in error
+    # Tried 8000 (original) + 8001, 8002 (alternatives) = created 3 instances
+    assert len(_AllPortsBusyServer.instances) == 3
+
+
 def test_oauth_callback_missing_state_fallback_follows_single_user_mode(monkeypatch):
     calls = []
 

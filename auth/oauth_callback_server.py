@@ -307,7 +307,9 @@ def ensure_oauth_callback_available(
     Ensure OAuth callback endpoint is available for the given transport mode.
 
     For streamable-http: Assumes the main server is already running
-    For stdio: Starts a minimal server if needed
+    For stdio: Starts a minimal server if needed, trying alternative ports
+               if the preferred port is already in use (common when multiple
+               Claude Code sessions each spawn their own MCP server instance).
 
     Args:
         transport_mode: "stdio" or "streamable-http"
@@ -357,9 +359,49 @@ def ensure_oauth_callback_available(
                     )
                     return True, ""
                 else:
-                    logger.error(
-                        f"Failed to start minimal OAuth server on {base_uri}:{port}: {error_msg}"
+                    # Port conflict — try alternative ports.  Google allows any
+                    # localhost port for loopback redirect URIs on installed /
+                    # desktop OAuth clients, so we can safely pick another port
+                    # without pre-registering it.  This is the common case when
+                    # multiple Claude Code sessions each spawn their own
+                    # workspace-mcp instance on the same machine.
+                    max_port_attempts = int(
+                        os.getenv("WORKSPACE_MCP_PORT_RANGE", "10")
                     )
+                    for alt_port in range(port + 1, port + max_port_attempts):
+                        logger.info(
+                            f"Port {_minimal_oauth_server.port} unavailable, "
+                            f"trying alternative port {alt_port}"
+                        )
+                        _minimal_oauth_server = MinimalOAuthServer(
+                            alt_port, base_uri
+                        )
+                        success, error_msg = _minimal_oauth_server.start()
+                        if success:
+                            # Update the OAuth config so the redirect URI
+                            # matches the port we actually bound.
+                            from auth.oauth_config import get_oauth_config
+
+                            config = get_oauth_config()
+                            config.port = alt_port
+                            config.base_url = f"{config.base_uri}:{alt_port}"
+                            config.redirect_uri = (
+                                f"{config.base_url}/oauth2callback"
+                            )
+                            logger.info(
+                                f"Minimal OAuth server started on alternative "
+                                f"port {alt_port}; redirect URI updated to "
+                                f"{config.redirect_uri}"
+                            )
+                            return True, ""
+
+                    # All ports failed
+                    error_msg = (
+                        f"Failed to start minimal OAuth server: ports "
+                        f"{port}-{port + max_port_attempts - 1} are all in use "
+                        f"on {base_uri}"
+                    )
+                    logger.error(error_msg)
                     return False, error_msg
             else:
                 logger.info("Minimal OAuth server is already running")
