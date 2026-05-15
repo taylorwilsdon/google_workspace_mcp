@@ -14,6 +14,7 @@ dist/
 
 # ---- Environments & tooling -------------------------------------------
 .env
+.env*
 .venv/
 venv/
 .idea/
