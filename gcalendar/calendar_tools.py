@@ -261,6 +261,25 @@ def _format_attendee_details(
     return f"\n{indent}".join(attendee_details_list)
 
 
+def _format_person(person: Optional[Dict[str, Any]]) -> Optional[str]:
+    """
+    Format a Google Calendar person reference (creator/organizer) as
+    "{displayName} <{email}>". Falls back to whichever field is present,
+    and returns None when neither displayName nor email is set.
+    """
+    if not person:
+        return None
+    display_name = (person.get("displayName") or "").strip()
+    email = (person.get("email") or "").strip()
+    if display_name and email:
+        return f"{display_name} <{email}>"
+    if display_name:
+        return display_name
+    if email:
+        return f"<{email}>"
+    return None
+
+
 def _format_attachment_details(
     attachments: List[Dict[str, Any]], indent: str = "  "
 ) -> str:
@@ -563,6 +582,8 @@ async def get_events(
             ", ".join([a.get("email", "") for a in attendees]) if attendees else "None"
         )
         attendee_details_str = _format_attendee_details(attendees, indent="  ")
+        creator_str = _format_person(item.get("creator"))
+        organizer_str = _format_person(item.get("organizer"))
 
         meeting_link = _get_meeting_link(item)
 
@@ -575,6 +596,10 @@ async def get_events(
             f"- Location: {location}\n"
             f"- Color ID: {color_id}\n"
         )
+        if creator_str:
+            event_details += f"- Creator: {creator_str}\n"
+        if organizer_str:
+            event_details += f"- Organizer: {organizer_str}\n"
         if meeting_link:
             event_details += f"- Meeting Link: {meeting_link}\n"
         event_details += (
@@ -615,6 +640,8 @@ async def get_events(
                 else "None"
             )
             attendee_details_str = _format_attendee_details(attendees, indent="    ")
+            creator_str = _format_person(item.get("creator"))
+            organizer_str = _format_person(item.get("organizer"))
 
             meeting_link = _get_meeting_link(item)
 
@@ -623,6 +650,10 @@ async def get_events(
                 f"  Description: {description}\n"
                 f"  Location: {location}\n"
             )
+            if creator_str:
+                event_detail_parts += f"  Creator: {creator_str}\n"
+            if organizer_str:
+                event_detail_parts += f"  Organizer: {organizer_str}\n"
             if meeting_link:
                 event_detail_parts += f"  Meeting Link: {meeting_link}\n"
             event_detail_parts += (
