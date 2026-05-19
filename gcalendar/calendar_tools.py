@@ -18,6 +18,12 @@ from googleapiclient.discovery import build
 
 from auth.service_decorator import require_google_service
 from core.utils import handle_http_errors, StringList
+from gcalendar.calendar_helpers import (
+    _format_attachment_details,
+    _format_attendee_details,
+    _format_person,
+    _get_meeting_link,
+)
 
 from mcp.types import ToolAnnotations
 
@@ -205,95 +211,6 @@ def _preserve_existing_fields(
             logger.info(f"[modify_event] Preserving existing {field_name}")
         elif new_value is not None:
             event_body[field_name] = new_value
-
-
-def _get_meeting_link(item: Dict[str, Any]) -> str:
-    """Extract video meeting link from event conference data or hangoutLink."""
-    conference_data = item.get("conferenceData")
-    if conference_data and "entryPoints" in conference_data:
-        for entry_point in conference_data["entryPoints"]:
-            if entry_point.get("entryPointType") == "video":
-                uri = entry_point.get("uri", "")
-                if uri:
-                    return uri
-    hangout_link = item.get("hangoutLink", "")
-    if hangout_link:
-        return hangout_link
-    return ""
-
-
-def _format_attendee_details(
-    attendees: List[Dict[str, Any]], indent: str = "  "
-) -> str:
-    """
-      Format attendee details including response status, organizer, and optional flags.
-
-      Example output format:
-      "  user@example.com: accepted
-    manager@example.com: declined (organizer)
-    optional-person@example.com: tentative (optional)"
-
-      Args:
-          attendees: List of attendee dictionaries from Google Calendar API
-          indent: Indentation to use for newline-separated attendees (default: "  ")
-
-      Returns:
-          Formatted string with attendee details, or "None" if no attendees
-    """
-    if not attendees:
-        return "None"
-
-    attendee_details_list = []
-    for a in attendees:
-        email = a.get("email", "unknown")
-        response_status = a.get("responseStatus", "unknown")
-        optional = a.get("optional", False)
-        organizer = a.get("organizer", False)
-
-        detail_parts = [f"{email}: {response_status}"]
-        if organizer:
-            detail_parts.append("(organizer)")
-        if optional:
-            detail_parts.append("(optional)")
-
-        attendee_details_list.append(" ".join(detail_parts))
-
-    return f"\n{indent}".join(attendee_details_list)
-
-
-def _format_attachment_details(
-    attachments: List[Dict[str, Any]], indent: str = "  "
-) -> str:
-    """
-    Format attachment details including file information.
-
-
-    Args:
-        attachments: List of attachment dictionaries from Google Calendar API
-        indent: Indentation to use for newline-separated attachments (default: "  ")
-
-    Returns:
-        Formatted string with attachment details, or "None" if no attachments
-    """
-    if not attachments:
-        return "None"
-
-    attachment_details_list = []
-    for att in attachments:
-        title = att.get("title", "Untitled")
-        file_url = att.get("fileUrl", "No URL")
-        file_id = att.get("fileId", "No ID")
-        mime_type = att.get("mimeType", "Unknown")
-
-        attachment_info = (
-            f"{title}\n"
-            f"{indent}File URL: {file_url}\n"
-            f"{indent}File ID: {file_id}\n"
-            f"{indent}MIME Type: {mime_type}"
-        )
-        attachment_details_list.append(attachment_info)
-
-    return f"\n{indent}".join(attachment_details_list)
 
 
 # Helper function to ensure time strings for API calls are correctly formatted
@@ -566,6 +483,9 @@ async def get_events(
 
         meeting_link = _get_meeting_link(item)
 
+        creator_str = _format_person(item.get("creator"))
+        organizer_str = _format_person(item.get("organizer"))
+
         event_details = (
             f"Event Details:\n"
             f"- Title: {summary}\n"
@@ -575,6 +495,10 @@ async def get_events(
             f"- Location: {location}\n"
             f"- Color ID: {color_id}\n"
         )
+        if creator_str:
+            event_details += f"- Creator: {creator_str}\n"
+        if organizer_str:
+            event_details += f"- Organizer: {organizer_str}\n"
         if meeting_link:
             event_details += f"- Meeting Link: {meeting_link}\n"
         event_details += (
@@ -618,11 +542,18 @@ async def get_events(
 
             meeting_link = _get_meeting_link(item)
 
+            creator_str = _format_person(item.get("creator"))
+            organizer_str = _format_person(item.get("organizer"))
+
             event_detail_parts = (
                 f'- "{summary}" (Starts: {start_time}, Ends: {end_time})\n'
                 f"  Description: {description}\n"
                 f"  Location: {location}\n"
             )
+            if creator_str:
+                event_detail_parts += f"  Creator: {creator_str}\n"
+            if organizer_str:
+                event_detail_parts += f"  Organizer: {organizer_str}\n"
             if meeting_link:
                 event_detail_parts += f"  Meeting Link: {meeting_link}\n"
             event_detail_parts += (
