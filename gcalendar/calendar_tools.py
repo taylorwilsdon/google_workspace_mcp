@@ -1131,8 +1131,8 @@ async def _modify_event_impl(
                     f"[modify_event] Adding Google Meet conference with request ID: {request_id}"
                 )
             else:
-                # Remove Google Meet by setting conferenceData to empty
-                event_body["conferenceData"] = {}
+                # Remove Google Meet by setting conferenceData to null
+                event_body["conferenceData"] = None
                 logger.info("[modify_event] Removing Google Meet conference")
         elif "conferenceData" in existing_event:
             # Preserve existing conference data if not specified
