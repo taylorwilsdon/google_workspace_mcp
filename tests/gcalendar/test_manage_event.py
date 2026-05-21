@@ -32,6 +32,7 @@ def _create_mock_service():
     mock_service.events().insert().execute = Mock(return_value={})
     mock_service.events().get().execute = Mock(return_value={})
     mock_service.events().update().execute = Mock(return_value={})
+    mock_service.events().patch().execute = Mock(return_value={})
     return mock_service
 
 
@@ -73,7 +74,7 @@ async def test_modify_event_preserves_existing_recurrence_when_not_overridden():
             "recurrence": ["RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"],
         }
     )
-    mock_service.events().update().execute = Mock(
+    mock_service.events().patch().execute = Mock(
         return_value={"id": "evt123", "htmlLink": "link", "summary": "Team Standup"}
     )
 
@@ -84,7 +85,7 @@ async def test_modify_event_preserves_existing_recurrence_when_not_overridden():
         summary="Team Standup",
     )
 
-    update_body = mock_service.events().update.call_args[1]["body"]
+    update_body = mock_service.events().patch.call_args[1]["body"]
     assert update_body["recurrence"] == ["RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"]
 
 
@@ -100,7 +101,7 @@ async def test_modify_event_can_update_recurrence():
             "recurrence": ["RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"],
         }
     )
-    mock_service.events().update().execute = Mock(
+    mock_service.events().patch().execute = Mock(
         return_value={"id": "evt123", "htmlLink": "link", "summary": "Standup"}
     )
 
@@ -111,8 +112,35 @@ async def test_modify_event_can_update_recurrence():
         recurrence=["RRULE:FREQ=WEEKLY;COUNT=6"],
     )
 
-    update_body = mock_service.events().update.call_args[1]["body"]
+    update_body = mock_service.events().patch.call_args[1]["body"]
     assert update_body["recurrence"] == ["RRULE:FREQ=WEEKLY;COUNT=6"]
+
+
+@pytest.mark.asyncio
+async def test_modify_event_removes_google_meet_with_null_conference_data():
+    mock_service = _create_mock_service()
+    mock_service.events().get().execute = Mock(
+        return_value={
+            "id": "evt123",
+            "summary": "Standup",
+            "conferenceData": {"conferenceId": "abc-defg-hij"},
+        }
+    )
+    mock_service.events().patch().execute = Mock(
+        return_value={"id": "evt123", "htmlLink": "link", "summary": "Standup"}
+    )
+
+    await _modify_event_impl(
+        service=mock_service,
+        user_google_email="user@example.com",
+        event_id="evt123",
+        add_google_meet=False,
+    )
+
+    patch_call = mock_service.events().patch.call_args
+    update_body = patch_call[1]["body"]
+    assert update_body["conferenceData"] is None
+    assert patch_call[1]["conferenceDataVersion"] == 1
 
 
 @pytest.mark.asyncio
