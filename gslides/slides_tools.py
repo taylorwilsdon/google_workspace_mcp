@@ -6,7 +6,7 @@ This module provides MCP tools for interacting with Google Slides API.
 
 import logging
 import asyncio
-from typing import List, Dict, Any
+from typing import Any, Dict, Iterator, List, Optional
 
 from mcp.types import ToolAnnotations
 
@@ -20,6 +20,93 @@ from gslides.slides_helpers import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_shape_text(shape: Optional[Dict[str, Any]]) -> str:
+    """Extract the full text content from a Slides shape, sorted by text-run start index.
+
+    Returns an empty string if the shape has no text. The Slides API stores text
+    as a tree of textElements containing textRuns; this walks that tree, sorts
+    runs by startIndex, and joins their content. See:
+    https://googleapis.github.io/google-api-python-client/docs/dyn/slides_v1.presentations.html#get
+    """
+    if not shape:
+        return ""
+    text = shape.get("text")
+    if not text:
+        return ""
+    runs = []
+    for text_element in text.get("textElements", []):
+        text_run = text_element.get("textRun")
+        if text_run and text_run.get("content"):
+            runs.append((text_element.get("startIndex", 0), text_run["content"]))
+    if not runs:
+        return ""
+    runs.sort(key=lambda r: r[0])
+    return "".join(r[1] for r in runs)
+
+
+def _iter_text_bearing_elements(
+    elements: Optional[List[Dict[str, Any]]],
+) -> Iterator[str]:
+    """Yield full text strings from any shape with non-empty text, descending
+    recursively into elementGroup.children so grouped shapes are not skipped.
+    """
+    for element in elements or []:
+        if "shape" in element:
+            full_text = _extract_shape_text(element["shape"])
+            if full_text:
+                yield full_text
+        elif "elementGroup" in element:
+            children = element["elementGroup"].get("children", [])
+            yield from _iter_text_bearing_elements(children)
+
+
+def _describe_elements(
+    elements: Optional[List[Dict[str, Any]]], indent: str = "  "
+) -> List[str]:
+    """Build descriptive lines for page elements, including text content for shapes.
+
+    Recurses into elementGroup.children with deeper indentation so grouped shapes
+    and their text are visible. Multi-line shape text is rendered as indented
+    blockquote-style lines preserving paragraph structure.
+    """
+    info: List[str] = []
+    for element in elements or []:
+        element_id = element.get("objectId", "Unknown")
+        if "shape" in element:
+            shape_type = element["shape"].get("shapeType", "Unknown")
+            full_text = _extract_shape_text(element["shape"])
+            if full_text:
+                lines = [
+                    line.rstrip() for line in full_text.split("\n") if line.strip()
+                ]
+                if len(lines) == 1:
+                    info.append(
+                        f'{indent}Shape: ID {element_id}, Type: {shape_type}, Text: "{lines[0]}"'
+                    )
+                else:
+                    info.append(
+                        f"{indent}Shape: ID {element_id}, Type: {shape_type}, Text:"
+                    )
+                    info.extend(f"{indent}  > {line}" for line in lines)
+            else:
+                info.append(f"{indent}Shape: ID {element_id}, Type: {shape_type}")
+        elif "table" in element:
+            table = element["table"]
+            rows = table.get("rows", 0)
+            cols = table.get("columns", 0)
+            info.append(f"{indent}Table: ID {element_id}, Size: {rows}x{cols}")
+        elif "line" in element:
+            line_type = element["line"].get("lineType", "Unknown")
+            info.append(f"{indent}Line: ID {element_id}, Type: {line_type}")
+        elif "elementGroup" in element:
+            children = element["elementGroup"].get("children", [])
+            info.append(f"{indent}Group: ID {element_id}, Children: {len(children)}")
+            info.extend(_describe_elements(children, indent + "  "))
+        else:
+            info.append(f"{indent}Element: ID {element_id}, Type: Unknown")
+    return info
 
 
 @server.tool(
@@ -108,34 +195,13 @@ async def get_presentation(
         slide_id = slide.get("objectId", "Unknown")
         page_elements = slide.get("pageElements", [])
 
-        # Collect text from the slide whose JSON structure is very complicated
+        # Collect text from the slide, recursing into elementGroup.children so
+        # grouped shapes (common for layout templates) are not skipped. The
+        # Slides API JSON structure is documented at:
         # https://googleapis.github.io/google-api-python-client/docs/dyn/slides_v1.presentations.html#get
         slide_text = ""
         try:
-            texts_from_elements = []
-            for page_element in slide.get("pageElements", []):
-                shape = page_element.get("shape", None)
-                if shape and shape.get("text", None):
-                    text = shape.get("text", None)
-                    if text:
-                        text_elements_in_shape = []
-                        for text_element in text.get("textElements", []):
-                            text_run = text_element.get("textRun", None)
-                            if text_run:
-                                content = text_run.get("content", None)
-                                if content:
-                                    start_index = text_element.get("startIndex", 0)
-                                    text_elements_in_shape.append(
-                                        (start_index, content)
-                                    )
-
-                        if text_elements_in_shape:
-                            # Sort text elements within a single shape
-                            text_elements_in_shape.sort(key=lambda item: item[0])
-                            full_text_from_shape = "".join(
-                                [item[1] for item in text_elements_in_shape]
-                            )
-                            texts_from_elements.append(full_text_from_shape)
+            texts_from_elements = list(_iter_text_bearing_elements(page_elements))
 
             # cleanup text we collected
             slide_text = "\n".join(texts_from_elements)
@@ -289,22 +355,12 @@ async def get_page(
     page_type = result.get("pageType", "Unknown")
     page_elements = result.get("pageElements", [])
 
-    elements_info = []
-    for element in page_elements:
-        element_id = element.get("objectId", "Unknown")
-        if "shape" in element:
-            shape_type = element["shape"].get("shapeType", "Unknown")
-            elements_info.append(f"  Shape: ID {element_id}, Type: {shape_type}")
-        elif "table" in element:
-            table = element["table"]
-            rows = table.get("rows", 0)
-            cols = table.get("columns", 0)
-            elements_info.append(f"  Table: ID {element_id}, Size: {rows}x{cols}")
-        elif "line" in element:
-            line_type = element["line"].get("lineType", "Unknown")
-            elements_info.append(f"  Line: ID {element_id}, Type: {line_type}")
-        else:
-            elements_info.append(f"  Element: ID {element_id}, Type: Unknown")
+    # Walk pageElements recursively, surfacing text content from shapes and
+    # descending into elementGroup.children so grouped shapes are not hidden.
+    # This is what makes the documented "call get_page and use a Shape or Table
+    # element ID" workflow in batch_update_presentation actually viable for
+    # text that lives inside a Group.
+    elements_info = _describe_elements(page_elements)
 
     confirmation_message = f"""Page Details for {user_google_email}:
 - Presentation ID: {presentation_id}
