@@ -854,7 +854,15 @@ def strip_null_values(value: Any, *, _depth: int = 0) -> Any:
         return cleaned
 
     if isinstance(value, list):
-        return [strip_null_values(item, _depth=_depth + 1) for item in value]
+        cleaned_items = []
+        for item in value:
+            if item is None:
+                continue
+            cleaned_item = strip_null_values(item, _depth=_depth + 1)
+            if _depth >= 2 and cleaned_item == {}:
+                continue
+            cleaned_items.append(cleaned_item)
+        return cleaned_items
 
     return value
 
