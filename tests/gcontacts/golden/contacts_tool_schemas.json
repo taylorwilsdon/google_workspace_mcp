@@ -44,6 +44,32 @@
         },
         "type": "object"
       },
+      "NicknameInput": {
+        "additionalProperties": false,
+        "description": "Typed input for a nickname entry.",
+        "properties": {
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Nickname type such as default, alternate_name, maiden_name, initials, or other."
+          },
+          "value": {
+            "description": "Nickname value. Used for bilingual contacts (e.g. Hebrew alternative form).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "type": "object"
+      },
       "OrganizationInput": {
         "additionalProperties": false,
         "description": "Typed input for an organization entry.",
@@ -152,6 +178,77 @@
             "description": "Backward-compatible alias for the phone number value."
           }
         },
+        "type": "object"
+      },
+      "RelationInput": {
+        "additionalProperties": false,
+        "description": "Typed input for a relation entry (spouse, parent, child, etc.).",
+        "properties": {
+          "person": {
+            "description": "The related person's name (matched against contact names by Google Assistant).",
+            "type": "string"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Relation type: spouse, child, parent, father, mother, sister, brother, friend, manager, assistant, partner, sibling, domesticPartner, or custom."
+          }
+        },
+        "required": [
+          "person"
+        ],
+        "type": "object"
+      },
+      "UrlInput": {
+        "additionalProperties": false,
+        "description": "Typed input for a URL entry.",
+        "properties": {
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "URL type such as homepage, blog, profile, work, ftp, reservations, or other. Custom values allowed."
+          },
+          "value": {
+            "description": "The URL value (e.g. https://example.com).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "type": "object"
+      },
+      "UserDefinedInput": {
+        "additionalProperties": false,
+        "description": "Typed input for a userDefined custom field entry.",
+        "properties": {
+          "key": {
+            "description": "Custom field key (e.g. 'ID', 'Hebrew Birthday', 'Account Number').",
+            "type": "string"
+          },
+          "value": {
+            "default": "",
+            "description": "Custom field value. May be omitted when using remove mode (only the key is needed).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key"
+        ],
         "type": "object"
       }
     },
@@ -263,6 +360,31 @@
         "default": null,
         "description": "[DEPRECATED] Job title. Use organizations=[{\"title\":...}]."
       },
+      "nicknames": {
+        "anyOf": [
+          {
+            "items": {
+              "$ref": "#/$defs/NicknameInput"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "List of nickname dicts {value, type?}.\nUseful for bilingual contacts (e.g. Hebrew/English alternative forms). Android dialer\nand WhatsApp search both index nicknames, enabling cross-script lookup.\nSupported types: default, alternate_name, maiden_name, initials, other, etc."
+      },
+      "nicknames_mode": {
+        "default": "merge",
+        "description": "How to update nicknames on \"update\": \"merge\" (default), \"replace\", or \"remove\".",
+        "enum": [
+          "merge",
+          "replace",
+          "remove"
+        ],
+        "type": "string"
+      },
       "notes": {
         "anyOf": [
           {
@@ -342,6 +464,81 @@
       "phones_mode": {
         "default": "merge",
         "description": "How to update phones on \"update\": \"merge\" (default), \"replace\", or \"remove\".\nmerge = read-modify-write with dedup by canonicalForm/normalized value.\nreplace = overwrite all phones with provided list.\nremove = delete phones matching provided numbers.",
+        "enum": [
+          "merge",
+          "replace",
+          "remove"
+        ],
+        "type": "string"
+      },
+      "relations": {
+        "anyOf": [
+          {
+            "items": {
+              "$ref": "#/$defs/RelationInput"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "List of relation dicts {person, type?}.\nSupported types: spouse, child, parent, friend, manager, assistant, etc."
+      },
+      "relations_mode": {
+        "default": "merge",
+        "description": "How to update relations on \"update\": \"merge\" (default), \"replace\", or \"remove\".",
+        "enum": [
+          "merge",
+          "replace",
+          "remove"
+        ],
+        "type": "string"
+      },
+      "urls": {
+        "anyOf": [
+          {
+            "items": {
+              "$ref": "#/$defs/UrlInput"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "List of URL dicts {value, type?}.\nSupported types: homepage, blog, profile, work, ftp, reservations, other, etc."
+      },
+      "urls_mode": {
+        "default": "merge",
+        "description": "How to update urls on \"update\": \"merge\" (default), \"replace\", or \"remove\".\nmerge dedups by normalized URL (lowercased, trailing slash stripped).",
+        "enum": [
+          "merge",
+          "replace",
+          "remove"
+        ],
+        "type": "string"
+      },
+      "user_defined": {
+        "anyOf": [
+          {
+            "items": {
+              "$ref": "#/$defs/UserDefinedInput"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "List of custom field dicts {key, value}.\nUseful for structured data like account numbers, IDs, or custom dates."
+      },
+      "user_defined_mode": {
+        "default": "merge",
+        "description": "How to update custom fields on \"update\": \"merge\" (default), \"replace\", or \"remove\".\nmerge overrides value on matching key; new keys appended.",
         "enum": [
           "merge",
           "replace",
@@ -435,6 +632,20 @@
             ],
             "default": null
           },
+          "nicknames": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/NicknameInput"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "notes": {
             "anyOf": [
               {
@@ -487,6 +698,48 @@
               {
                 "items": {
                   "$ref": "#/$defs/PhoneInput"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "relations": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/RelationInput"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "urls": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/UrlInput"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "user_defined": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/UserDefinedInput"
                 },
                 "type": "array"
               },
@@ -576,6 +829,20 @@
             ],
             "default": null
           },
+          "nicknames": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/NicknameInput"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "notes": {
             "anyOf": [
               {
@@ -636,6 +903,48 @@
               }
             ],
             "default": null
+          },
+          "relations": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/RelationInput"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "urls": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/UrlInput"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "user_defined": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/UserDefinedInput"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "required": [
@@ -684,6 +993,32 @@
             "description": "Backward-compatible alias for the email address value."
           }
         },
+        "type": "object"
+      },
+      "NicknameInput": {
+        "additionalProperties": false,
+        "description": "Typed input for a nickname entry.",
+        "properties": {
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Nickname type such as default, alternate_name, maiden_name, initials, or other."
+          },
+          "value": {
+            "description": "Nickname value. Used for bilingual contacts (e.g. Hebrew alternative form).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value"
+        ],
         "type": "object"
       },
       "OrganizationInput": {
@@ -795,6 +1130,77 @@
           }
         },
         "type": "object"
+      },
+      "RelationInput": {
+        "additionalProperties": false,
+        "description": "Typed input for a relation entry (spouse, parent, child, etc.).",
+        "properties": {
+          "person": {
+            "description": "The related person's name (matched against contact names by Google Assistant).",
+            "type": "string"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Relation type: spouse, child, parent, father, mother, sister, brother, friend, manager, assistant, partner, sibling, domesticPartner, or custom."
+          }
+        },
+        "required": [
+          "person"
+        ],
+        "type": "object"
+      },
+      "UrlInput": {
+        "additionalProperties": false,
+        "description": "Typed input for a URL entry.",
+        "properties": {
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "URL type such as homepage, blog, profile, work, ftp, reservations, or other. Custom values allowed."
+          },
+          "value": {
+            "description": "The URL value (e.g. https://example.com).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "type": "object"
+      },
+      "UserDefinedInput": {
+        "additionalProperties": false,
+        "description": "Typed input for a userDefined custom field entry.",
+        "properties": {
+          "key": {
+            "description": "Custom field key (e.g. 'ID', 'Hebrew Birthday', 'Account Number').",
+            "type": "string"
+          },
+          "value": {
+            "default": "",
+            "description": "Custom field value. May be omitted when using remove mode (only the key is needed).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "type": "object"
       }
     },
     "additionalProperties": false,
@@ -846,6 +1252,10 @@
               "phoneNumbers",
               "emailAddresses",
               "organizations",
+              "nicknames",
+              "urls",
+              "userDefined",
+              "relations",
               "biographies",
               "addresses"
             ],
@@ -856,7 +1266,7 @@
           }
         ],
         "default": null,
-        "description": "For \"update\" action \u2014 the single People API field to update across\nall contacts in this batch. Required. Must be one of: names, phoneNumbers,\nemailAddresses, organizations, biographies, addresses.\nUsing a single field per batch call prevents unintentional data loss from\na union updateMask overwriting unrelated fields."
+        "description": "For \"update\" action \u2014 the single People API field to update across\nall contacts in this batch. Required. Must be one of: names, phoneNumbers,\nemailAddresses, organizations, nicknames, urls, userDefined, relations,\nbiographies, addresses. Using a single field per batch call prevents\nunintentional data loss from a union updateMask overwriting unrelated fields."
       },
       "updates": {
         "anyOf": [

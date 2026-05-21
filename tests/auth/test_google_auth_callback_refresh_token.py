@@ -13,16 +13,26 @@ class _DummyFlow:
 
 
 class _DummyOAuthStore:
-    def __init__(self, session_credentials=None):
+    def __init__(self, session_credentials=None, latest_state_info=None):
         self._session_credentials = session_credentials
+        self._latest_state_info = latest_state_info or {
+            "session_id": None,
+            "code_verifier": "verifier",
+        }
+        self.latest_calls = []
         self.stored_refresh_token = None
         self.store_calls = 0
 
     def validate_and_consume_oauth_state(self, state, session_id=None):  # noqa: ARG002
         return {"session_id": session_id, "code_verifier": "verifier"}
 
-    def consume_latest_oauth_state(self, initiating_session_id=None):  # noqa: ARG002
-        return {"session_id": None, "code_verifier": "verifier"}
+    def consume_latest_oauth_state(
+        self,
+        initiating_session_id=None,
+        allow_any_session=False,
+    ):
+        self.latest_calls.append((initiating_session_id, allow_any_session))
+        return self._latest_state_info
 
     def get_credentials_by_mcp_session(self, mcp_session_id):  # noqa: ARG002
         return self._session_credentials
@@ -55,6 +65,97 @@ def _make_credentials(refresh_token):
         client_secret="client-secret",
         scopes=["scope.a"],
     )
+
+
+@pytest.mark.asyncio
+async def test_callback_missing_state_does_not_use_latest_state_by_default(
+    monkeypatch,
+):
+    monkeypatch.delenv("MCP_SINGLE_USER_MODE", raising=False)
+    oauth_store = _DummyOAuthStore(session_credentials=None)
+
+    monkeypatch.setattr(
+        "auth.google_auth.get_oauth21_session_store", lambda: oauth_store
+    )
+
+    with pytest.raises(ValueError, match="Missing OAuth state parameter"):
+        await handle_auth_callback(
+            scopes=["scope.a"],
+            authorization_response="http://localhost/callback?code=code123",
+            redirect_uri="http://localhost/callback",
+            session_id=None,
+        )
+
+    assert oauth_store.latest_calls == []
+
+
+@pytest.mark.asyncio
+async def test_callback_missing_state_rejects_explicit_fallback_outside_single_user(
+    monkeypatch,
+):
+    monkeypatch.delenv("MCP_SINGLE_USER_MODE", raising=False)
+    oauth_store = _DummyOAuthStore(session_credentials=None)
+
+    monkeypatch.setattr(
+        "auth.google_auth.get_oauth21_session_store", lambda: oauth_store
+    )
+
+    with pytest.raises(ValueError, match="Missing OAuth state parameter"):
+        await handle_auth_callback(
+            scopes=["scope.a"],
+            authorization_response="http://localhost/callback?code=code123",
+            redirect_uri="http://localhost/callback",
+            session_id=None,
+            allow_missing_state_fallback=True,
+        )
+
+    assert oauth_store.latest_calls == []
+
+
+@pytest.mark.asyncio
+async def test_callback_missing_state_uses_explicit_single_user_stdio_fallback(
+    monkeypatch,
+):
+    monkeypatch.setenv("MCP_SINGLE_USER_MODE", "1")
+    callback_credentials = _make_credentials(refresh_token="callback-refresh-token")
+    oauth_store = _DummyOAuthStore(
+        session_credentials=None,
+        latest_state_info={
+            "session_id": "stdio-origin-session",
+            "code_verifier": "stdio-verifier",
+        },
+    )
+    credential_store = _DummyCredentialStore(existing_credentials=None)
+
+    monkeypatch.setattr(
+        "auth.google_auth.create_oauth_flow",
+        lambda **kwargs: _DummyFlow(callback_credentials),  # noqa: ARG005
+    )
+    monkeypatch.setattr(
+        "auth.google_auth.get_oauth21_session_store", lambda: oauth_store
+    )
+    monkeypatch.setattr(
+        "auth.google_auth.get_credential_store", lambda: credential_store
+    )
+    monkeypatch.setattr(
+        "auth.google_auth.get_user_info",
+        lambda credentials: {"email": "user@gmail.com"},  # noqa: ARG005
+    )
+    monkeypatch.setattr(
+        "auth.google_auth.save_credentials_to_session", lambda *args: None
+    )
+    monkeypatch.setattr("auth.google_auth.is_stateless_mode", lambda: False)
+
+    _email, credentials = await handle_auth_callback(
+        scopes=["scope.a"],
+        authorization_response="http://localhost/callback?code=code123",
+        redirect_uri="http://localhost/callback",
+        session_id=None,
+        allow_missing_state_fallback=True,
+    )
+
+    assert credentials.refresh_token == "callback-refresh-token"
+    assert oauth_store.latest_calls == [(None, True)]
 
 
 @pytest.mark.asyncio

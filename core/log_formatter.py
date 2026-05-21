@@ -106,9 +106,8 @@ class EnhancedLogFormatter(logging.Formatter):
                 return f"Tool filtering complete: {enabled} tools enabled ({removed} filtered out)"
 
         # Enabled tools messages
-        if "Enabled tools set for scope management" in message:
-            tools = message.split(": ")[-1]
-            return f"Scope management configured for tools: {tools}"
+        if "Scope management active for" in message:
+            return message
 
         # Credentials directory messages
         if "Credentials directory permissions check passed" in message:

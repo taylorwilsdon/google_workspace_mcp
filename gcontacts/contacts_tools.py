@@ -23,12 +23,12 @@ from core.utils import UserInputError, handle_http_errors, StringList
 logger = logging.getLogger(__name__)
 
 # Default person fields for list/search operations
-DEFAULT_PERSON_FIELDS = "names,emailAddresses,phoneNumbers,organizations"
+DEFAULT_PERSON_FIELDS = "names,nicknames,emailAddresses,phoneNumbers,organizations"
 
 # Detailed person fields for get operations
 DETAILED_PERSON_FIELDS = (
-    "names,emailAddresses,phoneNumbers,organizations,biographies,"
-    "addresses,birthdays,urls,photos,metadata,memberships"
+    "names,nicknames,emailAddresses,phoneNumbers,organizations,biographies,"
+    "addresses,birthdays,urls,userDefined,relations,photos,metadata,memberships"
 )
 
 # Contact group fields
@@ -112,6 +112,62 @@ class OrganizationInput(BaseModel):
     )
 
 
+class NicknameInput(BaseModel):
+    """Typed input for a nickname entry."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    value: str = Field(
+        description="Nickname value. Used for bilingual contacts (e.g. Hebrew alternative form).",
+    )
+    type: Optional[str] = Field(
+        default=None,
+        description="Nickname type such as default, alternate_name, maiden_name, initials, or other.",
+    )
+
+
+class UrlInput(BaseModel):
+    """Typed input for a URL entry."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    value: str = Field(
+        description="The URL value (e.g. https://example.com).",
+    )
+    type: Optional[str] = Field(
+        default=None,
+        description="URL type such as homepage, blog, profile, work, ftp, reservations, or other. Custom values allowed.",
+    )
+
+
+class UserDefinedInput(BaseModel):
+    """Typed input for a userDefined custom field entry."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    key: str = Field(
+        description="Custom field key (e.g. 'ID', 'Hebrew Birthday', 'Account Number').",
+    )
+    value: str = Field(
+        default="",
+        description="Custom field value. May be omitted when using remove mode (only the key is needed).",
+    )
+
+
+class RelationInput(BaseModel):
+    """Typed input for a relation entry (spouse, parent, child, etc.)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    person: str = Field(
+        description="The related person's name (matched against contact names by Google Assistant).",
+    )
+    type: Optional[str] = Field(
+        default=None,
+        description="Relation type: spouse, child, parent, father, mother, sister, brother, friend, manager, assistant, partner, sibling, domesticPartner, or custom.",
+    )
+
+
 class ContactInput(BaseModel):
     """Typed batch-create input for a contact."""
 
@@ -122,6 +178,10 @@ class ContactInput(BaseModel):
     phones: Optional[List[PhoneInput]] = None
     emails: Optional[List[EmailInput]] = None
     organizations: Optional[List[OrganizationInput]] = None
+    nicknames: Optional[List[NicknameInput]] = None
+    urls: Optional[List[UrlInput]] = None
+    user_defined: Optional[List[UserDefinedInput]] = None
+    relations: Optional[List[RelationInput]] = None
     notes: Optional[str] = None
     address: Optional[str] = None
     phone: Optional[str] = None
@@ -166,6 +226,36 @@ def _coerce_organization_input(org: Any) -> OrganizationInput:
     return OrganizationInput.model_validate(org)
 
 
+def _coerce_nickname_input(nickname: Any) -> NicknameInput:
+    if isinstance(nickname, NicknameInput):
+        return nickname
+    if isinstance(nickname, str):
+        return NicknameInput(value=nickname)
+    return NicknameInput.model_validate(nickname)
+
+
+def _coerce_url_input(url: Any) -> UrlInput:
+    if isinstance(url, UrlInput):
+        return url
+    if isinstance(url, str):
+        return UrlInput(value=url)
+    return UrlInput.model_validate(url)
+
+
+def _coerce_user_defined_input(entry: Any) -> UserDefinedInput:
+    if isinstance(entry, UserDefinedInput):
+        return entry
+    return UserDefinedInput.model_validate(entry)
+
+
+def _coerce_relation_input(relation: Any) -> RelationInput:
+    if isinstance(relation, RelationInput):
+        return relation
+    if isinstance(relation, str):
+        return RelationInput(person=relation)
+    return RelationInput.model_validate(relation)
+
+
 def _coerce_contact_input(contact: Any) -> ContactInput:
     if isinstance(contact, ContactInput):
         return contact
@@ -186,6 +276,29 @@ def _normalize_phone(value: str) -> str:
 
 def _normalize_email(value: str) -> str:
     """Return a normalized email string for deduplication."""
+    return value.strip().lower()
+
+
+def _normalize_nickname(value: str) -> str:
+    """Return a normalized nickname string for deduplication."""
+    return value.strip().lower()
+
+
+def _normalize_url(value: str) -> str:
+    """Return a normalized URL string for deduplication. Lowercases scheme/host, strips trailing slash."""
+    stripped = value.strip().lower()
+    if stripped.endswith("/"):
+        stripped = stripped[:-1]
+    return stripped
+
+
+def _normalize_user_defined_key(value: str) -> str:
+    """Return a normalized userDefined key for deduplication."""
+    return value.strip().lower()
+
+
+def _normalize_relation_person(value: str) -> str:
+    """Return a normalized relation person name for deduplication."""
     return value.strip().lower()
 
 
@@ -253,6 +366,13 @@ def _format_contact(person: Dict[str, Any], detailed: bool = False) -> str:
         if display_name:
             lines.append(f"Name: {display_name}")
 
+    # Nicknames — bilingual alternative names
+    nicknames = person.get("nicknames", [])
+    if nicknames:
+        nickname_values = [n.get("value", "") for n in nicknames if n.get("value")]
+        if nickname_values:
+            lines.append(f"Nicknames: {', '.join(nickname_values)}")
+
     # Email addresses — each on its own line with type label
     emails = person.get("emailAddresses", [])
     if emails:
@@ -315,6 +435,28 @@ def _format_contact(person: Dict[str, Any], detailed: bool = False) -> str:
             if url_list:
                 lines.append(f"URLs: {', '.join(url_list)}")
 
+        # User-defined custom fields
+        user_defined = person.get("userDefined", [])
+        if user_defined:
+            valid_ud = [ud for ud in user_defined if ud.get("key") and ud.get("value")]
+            if valid_ud:
+                lines.append("Custom Fields:")
+                for ud in valid_ud:
+                    lines.append(f"  - {ud['key']}: {ud['value']}")
+
+        # Relations (spouse, family, etc.)
+        relations = person.get("relations", [])
+        if relations:
+            valid_rels = [r for r in relations if r.get("person")]
+            if valid_rels:
+                lines.append("Relations:")
+                for r in valid_rels:
+                    rel_type = r.get("formattedType") or r.get("type") or ""
+                    if rel_type:
+                        lines.append(f"  - {r['person']} ({rel_type})")
+                    else:
+                        lines.append(f"  - {r['person']}")
+
         # Biography/Notes
         bios = person.get("biographies", [])
         if bios:
@@ -344,6 +486,10 @@ def _build_person_body(
     phones: Optional[List[PhoneInput]] = None,
     emails: Optional[List[EmailInput]] = None,
     organizations: Optional[List[OrganizationInput]] = None,
+    nicknames: Optional[List[NicknameInput]] = None,
+    urls: Optional[List[UrlInput]] = None,
+    user_defined: Optional[List[UserDefinedInput]] = None,
+    relations: Optional[List[RelationInput]] = None,
     notes: Optional[str] = None,
     address: Optional[str] = None,
     # Deprecated single-value aliases
@@ -384,6 +530,14 @@ def _build_person_body(
         emails = [_coerce_email_input(email_entry) for email_entry in emails]
     if organizations is not None:
         organizations = [_coerce_organization_input(org) for org in organizations]
+    if nicknames is not None:
+        nicknames = [_coerce_nickname_input(n) for n in nicknames]
+    if urls is not None:
+        urls = [_coerce_url_input(u) for u in urls]
+    if user_defined is not None:
+        user_defined = [_coerce_user_defined_input(ud) for ud in user_defined]
+    if relations is not None:
+        relations = [_coerce_relation_input(r) for r in relations]
 
     if given_name or family_name:
         body["names"] = [
@@ -494,8 +648,66 @@ def _build_person_body(
                 org_entries.append(entry)
         body["organizations"] = org_entries
 
-    if notes:
-        body["biographies"] = [{"value": notes, "contentType": "TEXT_PLAIN"}]
+    # --- Nicknames ---
+    if nicknames is not None:
+        nickname_entries = []
+        for n in nicknames:
+            value = (n.value or "").strip()
+            if not value:
+                continue
+            entry: Dict[str, Any] = {"value": value}
+            if n.type:
+                entry["type"] = n.type
+            nickname_entries.append(entry)
+        body["nicknames"] = nickname_entries
+
+    # --- URLs ---
+    if urls is not None:
+        url_entries = []
+        for u in urls:
+            value = (u.value or "").strip()
+            if not value:
+                continue
+            entry = {"value": value}
+            if u.type:
+                entry["type"] = u.type
+            url_entries.append(entry)
+        body["urls"] = url_entries
+
+    # --- User Defined custom fields ---
+    if user_defined is not None:
+        ud_entries = []
+        for ud in user_defined:
+            key = (ud.key or "").strip()
+            value = (ud.value or "").strip()
+            if not key:
+                continue
+            entry: Dict[str, str] = {"key": key}
+            if value:
+                entry["value"] = value
+            ud_entries.append(entry)
+        body["userDefined"] = ud_entries
+
+    # --- Relations ---
+    if relations is not None:
+        relation_entries = []
+        for r in relations:
+            person = (r.person or "").strip()
+            if not person:
+                continue
+            entry = {"person": person}
+            if r.type:
+                entry["type"] = r.type
+            relation_entries.append(entry)
+        body["relations"] = relation_entries
+
+    # notes=None → no change. notes="" → explicit clear (empty biographies).
+    # notes="text" → write that text.
+    if notes is not None:
+        if notes:
+            body["biographies"] = [{"value": notes, "contentType": "TEXT_PLAIN"}]
+        else:
+            body["biographies"] = []
 
     if address:
         body["addresses"] = [{"formattedValue": address}]
@@ -625,6 +837,135 @@ def _merge_organizations(
         if org_key not in existing_keys:
             result.append(org)
             existing_keys.add(org_key)
+    return result
+
+
+def _merge_nicknames(
+    existing: List[Dict[str, Any]],
+    new_nicknames: List[Dict[str, Any]],
+    mode: str,
+) -> List[Dict[str, Any]]:
+    """
+    Merge nickname lists according to mode. Dedup by lowercased value.
+    """
+    if mode == "replace":
+        return new_nicknames
+    if mode == "remove":
+        remove_normalized = {
+            _normalize_nickname(n["value"]) for n in new_nicknames if n.get("value")
+        }
+        return [
+            n
+            for n in existing
+            if _normalize_nickname(n.get("value", "")) not in remove_normalized
+        ]
+    # merge: add new entries not already present
+    result = list(existing)
+    existing_keys = {_normalize_nickname(n.get("value", "")) for n in existing}
+    for n in new_nicknames:
+        normalized = _normalize_nickname(n.get("value", ""))
+        if normalized not in existing_keys:
+            result.append(n)
+            existing_keys.add(normalized)
+    return result
+
+
+def _merge_urls(
+    existing: List[Dict[str, Any]],
+    new_urls: List[Dict[str, Any]],
+    mode: str,
+) -> List[Dict[str, Any]]:
+    """
+    Merge URL lists according to mode. Dedup by normalized URL (lowercased, trailing slash stripped).
+    """
+    if mode == "replace":
+        return new_urls
+    if mode == "remove":
+        remove_normalized = {
+            _normalize_url(u["value"]) for u in new_urls if u.get("value")
+        }
+        return [
+            u
+            for u in existing
+            if _normalize_url(u.get("value", "")) not in remove_normalized
+        ]
+    # merge: add new entries not already present
+    result = list(existing)
+    existing_keys = {_normalize_url(u.get("value", "")) for u in existing}
+    for u in new_urls:
+        normalized = _normalize_url(u.get("value", ""))
+        if normalized not in existing_keys:
+            result.append(u)
+            existing_keys.add(normalized)
+    return result
+
+
+def _merge_user_defined(
+    existing: List[Dict[str, Any]],
+    new_ud: List[Dict[str, Any]],
+    mode: str,
+) -> List[Dict[str, Any]]:
+    """
+    Merge userDefined custom-field lists according to mode. Dedup by normalized key.
+    On merge, new value overrides existing for the same key.
+    """
+    if mode == "replace":
+        return new_ud
+    if mode == "remove":
+        remove_keys = {
+            _normalize_user_defined_key(ud["key"]) for ud in new_ud if ud.get("key")
+        }
+        return [
+            ud
+            for ud in existing
+            if _normalize_user_defined_key(ud.get("key", "")) not in remove_keys
+        ]
+    # merge: new value overrides existing for matching key; new keys appended
+    new_by_key = {_normalize_user_defined_key(ud.get("key", "")): ud for ud in new_ud}
+    result = []
+    seen_keys = set()
+    for ud in existing:
+        norm_key = _normalize_user_defined_key(ud.get("key", ""))
+        if norm_key in new_by_key:
+            result.append(new_by_key[norm_key])
+            seen_keys.add(norm_key)
+        else:
+            result.append(ud)
+    for norm_key, ud in new_by_key.items():
+        if norm_key not in seen_keys:
+            result.append(ud)
+    return result
+
+
+def _merge_relations(
+    existing: List[Dict[str, Any]],
+    new_relations: List[Dict[str, Any]],
+    mode: str,
+) -> List[Dict[str, Any]]:
+    """
+    Merge relations lists according to mode. Dedup by (normalized person, normalized type) tuple.
+    """
+
+    def relation_key(rel: Dict[str, Any]) -> tuple[str, str]:
+        label = rel.get("formattedType") or rel.get("type") or ""
+        return (
+            _normalize_relation_person(rel.get("person", "")),
+            label.strip().lower(),
+        )
+
+    if mode == "replace":
+        return new_relations
+    if mode == "remove":
+        remove_keys = {relation_key(r) for r in new_relations}
+        return [r for r in existing if relation_key(r) not in remove_keys]
+    # merge: add new entries not already present
+    result = list(existing)
+    existing_keys = {relation_key(r) for r in existing}
+    for r in new_relations:
+        rk = relation_key(r)
+        if rk not in existing_keys:
+            result.append(r)
+            existing_keys.add(rk)
     return result
 
 
@@ -872,12 +1213,20 @@ async def manage_contact(
     phones: Optional[List[PhoneInput]] = None,
     emails: Optional[List[EmailInput]] = None,
     organizations: Optional[List[OrganizationInput]] = None,
+    nicknames: Optional[List[NicknameInput]] = None,
+    urls: Optional[List[UrlInput]] = None,
+    user_defined: Optional[List[UserDefinedInput]] = None,
+    relations: Optional[List[RelationInput]] = None,
     notes: Optional[str] = None,
     address: Optional[str] = None,
     # Merge modes for update action
     phones_mode: Literal["merge", "replace", "remove"] = "merge",
     emails_mode: Literal["merge", "replace", "remove"] = "merge",
     organizations_mode: Literal["merge", "replace", "remove"] = "merge",
+    nicknames_mode: Literal["merge", "replace", "remove"] = "merge",
+    urls_mode: Literal["merge", "replace", "remove"] = "merge",
+    user_defined_mode: Literal["merge", "replace", "remove"] = "merge",
+    relations_mode: Literal["merge", "replace", "remove"] = "merge",
     # Deprecated single-value aliases
     phone: Optional[str] = None,
     email: Optional[str] = None,
@@ -900,6 +1249,16 @@ async def manage_contact(
             as a standalone number without + prefix, displayed as "Internal: 250".
         emails (Optional[List[Dict]]): List of email dicts {address, type?}.
         organizations (Optional[List[Dict]]): List of org dicts {name?, title?, department?, jobDescription?, type?}.
+        nicknames (Optional[List[Dict]]): List of nickname dicts {value, type?}.
+            Useful for bilingual contacts (e.g. Hebrew/English alternative forms). Android dialer
+            and WhatsApp search both index nicknames, enabling cross-script lookup.
+            Supported types: default, alternate_name, maiden_name, initials, other, etc.
+        urls (Optional[List[Dict]]): List of URL dicts {value, type?}.
+            Supported types: homepage, blog, profile, work, ftp, reservations, other, etc.
+        user_defined (Optional[List[Dict]]): List of custom field dicts {key, value}.
+            Useful for structured data like account numbers, IDs, or custom dates.
+        relations (Optional[List[Dict]]): List of relation dicts {person, type?}.
+            Supported types: spouse, child, parent, friend, manager, assistant, etc.
         notes (Optional[str]): Additional notes (for create/update).
         address (Optional[str]): Street address (for create/update).
         phones_mode (str): How to update phones on "update": "merge" (default), "replace", or "remove".
@@ -908,6 +1267,12 @@ async def manage_contact(
             remove = delete phones matching provided numbers.
         emails_mode (str): How to update emails on "update": "merge" (default), "replace", or "remove".
         organizations_mode (str): How to update orgs on "update": "merge" (default), "replace", or "remove".
+        nicknames_mode (str): How to update nicknames on "update": "merge" (default), "replace", or "remove".
+        urls_mode (str): How to update urls on "update": "merge" (default), "replace", or "remove".
+            merge dedups by normalized URL (lowercased, trailing slash stripped).
+        user_defined_mode (str): How to update custom fields on "update": "merge" (default), "replace", or "remove".
+            merge overrides value on matching key; new keys appended.
+        relations_mode (str): How to update relations on "update": "merge" (default), "replace", or "remove".
         phone (Optional[str]): [DEPRECATED] Single phone number. Use phones=[{"number":..., "type":"mobile"}].
         email (Optional[str]): [DEPRECATED] Email address. Use emails=[{"address":..., "type":"other"}].
         organization (Optional[str]): [DEPRECATED] Company name. Use organizations=[{"name":...}].
@@ -926,6 +1291,10 @@ async def manage_contact(
         ("phones_mode", phones_mode),
         ("emails_mode", emails_mode),
         ("organizations_mode", organizations_mode),
+        ("nicknames_mode", nicknames_mode),
+        ("urls_mode", urls_mode),
+        ("user_defined_mode", user_defined_mode),
+        ("relations_mode", relations_mode),
     ]:
         if mode_val not in ("merge", "replace", "remove"):
             raise UserInputError(
@@ -943,6 +1312,10 @@ async def manage_contact(
             phones=phones,
             emails=emails,
             organizations=organizations,
+            nicknames=nicknames,
+            urls=urls,
+            user_defined=user_defined,
+            relations=relations,
             notes=notes,
             address=address,
             phone=phone,
@@ -1001,6 +1374,10 @@ async def manage_contact(
                 phones=phones,
                 emails=emails,
                 organizations=organizations,
+                nicknames=nicknames,
+                urls=urls,
+                user_defined=user_defined,
+                relations=relations,
                 notes=notes,
                 address=address,
                 phone=phone,
@@ -1038,6 +1415,34 @@ async def manage_contact(
                     organizations_mode,
                 )
 
+            if "nicknames" in new_body:
+                merged_body["nicknames"] = _merge_nicknames(
+                    current.get("nicknames", []),
+                    new_body["nicknames"],
+                    nicknames_mode,
+                )
+
+            if "urls" in new_body:
+                merged_body["urls"] = _merge_urls(
+                    current.get("urls", []),
+                    new_body["urls"],
+                    urls_mode,
+                )
+
+            if "userDefined" in new_body:
+                merged_body["userDefined"] = _merge_user_defined(
+                    current.get("userDefined", []),
+                    new_body["userDefined"],
+                    user_defined_mode,
+                )
+
+            if "relations" in new_body:
+                merged_body["relations"] = _merge_relations(
+                    current.get("relations", []),
+                    new_body["relations"],
+                    relations_mode,
+                )
+
             merged_body["etag"] = etag
 
             update_person_fields = []
@@ -1049,6 +1454,14 @@ async def manage_contact(
                 update_person_fields.append("phoneNumbers")
             if "organizations" in merged_body:
                 update_person_fields.append("organizations")
+            if "nicknames" in merged_body:
+                update_person_fields.append("nicknames")
+            if "urls" in merged_body:
+                update_person_fields.append("urls")
+            if "userDefined" in merged_body:
+                update_person_fields.append("userDefined")
+            if "relations" in merged_body:
+                update_person_fields.append("relations")
             if "biographies" in merged_body:
                 update_person_fields.append("biographies")
             if "addresses" in merged_body:
@@ -1268,6 +1681,10 @@ async def manage_contacts_batch(
             "phoneNumbers",
             "emailAddresses",
             "organizations",
+            "nicknames",
+            "urls",
+            "userDefined",
+            "relations",
             "biographies",
             "addresses",
         ]
@@ -1288,9 +1705,9 @@ async def manage_contacts_batch(
         contact_ids (Optional[List[str]]): List of contact IDs for "delete" action.
         field (str): For "update" action — the single People API field to update across
             all contacts in this batch. Required. Must be one of: names, phoneNumbers,
-            emailAddresses, organizations, biographies, addresses.
-            Using a single field per batch call prevents unintentional data loss from
-            a union updateMask overwriting unrelated fields.
+            emailAddresses, organizations, nicknames, urls, userDefined, relations,
+            biographies, addresses. Using a single field per batch call prevents
+            unintentional data loss from a union updateMask overwriting unrelated fields.
 
     Returns:
         str: Result of the batch action performed.
@@ -1325,6 +1742,10 @@ async def manage_contacts_batch(
                 phones=contact.phones,
                 emails=contact.emails,
                 organizations=contact.organizations,
+                nicknames=contact.nicknames,
+                urls=contact.urls,
+                user_defined=contact.user_defined,
+                relations=contact.relations,
                 notes=contact.notes,
                 address=contact.address,
                 # deprecated aliases
@@ -1375,6 +1796,10 @@ async def manage_contacts_batch(
             "phoneNumbers",
             "emailAddresses",
             "organizations",
+            "nicknames",
+            "urls",
+            "userDefined",
+            "relations",
             "biographies",
             "addresses",
         }
@@ -1382,8 +1807,9 @@ async def manage_contacts_batch(
             raise UserInputError(
                 "field parameter is required for batch 'update' action. "
                 "Must be one of: names, phoneNumbers, emailAddresses, organizations, "
-                "biographies, addresses. Use a single field per batch call to avoid "
-                "unintentional data loss from a union updateMask."
+                "nicknames, urls, userDefined, relations, biographies, addresses. "
+                "Use a single field per batch call to avoid unintentional data loss "
+                "from a union updateMask."
             )
         if field not in valid_fields:
             raise UserInputError(
@@ -1423,6 +1849,10 @@ async def manage_contacts_batch(
             "phoneNumbers": "phoneNumbers",
             "emailAddresses": "emailAddresses",
             "organizations": "organizations",
+            "nicknames": "nicknames",
+            "urls": "urls",
+            "userDefined": "userDefined",
+            "relations": "relations",
             "biographies": "biographies",
             "addresses": "addresses",
         }
@@ -1447,6 +1877,10 @@ async def manage_contacts_batch(
                 phones=update.phones,
                 emails=update.emails,
                 organizations=update.organizations,
+                nicknames=update.nicknames,
+                urls=update.urls,
+                user_defined=update.user_defined,
+                relations=update.relations,
                 notes=update.notes,
                 address=update.address,
                 # deprecated aliases

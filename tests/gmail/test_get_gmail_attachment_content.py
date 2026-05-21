@@ -135,6 +135,34 @@ async def test_default_call_omits_base64_content(isolated_attachment_env):
 
 
 @pytest.mark.asyncio
+async def test_download_response_reports_sanitized_saved_filename(
+    isolated_attachment_env,
+):
+    """Windows-reserved filename characters should be sanitized before saving."""
+    payload = b"attached email bytes"
+    mock_service = _build_mock_service(
+        payload, filename="RE: Foo?.eml", mime_type="message/rfc822"
+    )
+
+    result = await _unwrap(get_gmail_attachment_content)(
+        service=mock_service,
+        message_id="msg-1",
+        attachment_id="att-123",
+        user_google_email="user@example.com",
+    )
+
+    assert "Filename: RE: Foo?.eml" in result
+    assert "Saved filename: RE_ Foo_" in result
+
+    saved_files = list(isolated_attachment_env.iterdir())
+    assert len(saved_files) == 1
+    assert saved_files[0].name.startswith("RE_ Foo_")
+    assert ":" not in saved_files[0].name
+    assert "?" not in saved_files[0].name
+    assert saved_files[0].read_bytes() == payload
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("payload", "filename", "mime_type"),
     [

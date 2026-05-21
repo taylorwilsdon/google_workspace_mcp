@@ -242,7 +242,7 @@ def set_enabled_tools(enabled_tools):
     """
     global _ENABLED_TOOLS
     _ENABLED_TOOLS = enabled_tools
-    logger.info(f"Enabled tools set for scope management: {enabled_tools}")
+    logger.info(f"Scope management active for {len(enabled_tools)} services")
 
 
 # Global variable to store read-only mode (set by main.py)

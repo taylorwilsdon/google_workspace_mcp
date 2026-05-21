@@ -41,6 +41,51 @@ def test_consume_latest_oauth_state_reads_from_shared_file(tmp_path):
     assert store_a.consume_latest_oauth_state() is None
 
 
+def test_consume_latest_oauth_state_without_session_does_not_read_bound_state_by_default(
+    tmp_path,
+):
+    state_file = tmp_path / "oauth_states.json"
+    store_a = OAuth21SessionStore(oauth_state_file=str(state_file))
+    store_b = OAuth21SessionStore(oauth_state_file=str(state_file))
+
+    store_a.store_oauth_state(
+        "bound-state",
+        session_id="session-123",
+        code_verifier="bound-verifier",
+    )
+
+    state_info = store_b.consume_latest_oauth_state()
+
+    assert state_info is None
+
+    remaining_state_info = store_a.consume_latest_oauth_state(
+        initiating_session_id="session-123"
+    )
+    assert remaining_state_info is not None
+    assert remaining_state_info["session_id"] == "session-123"
+    assert remaining_state_info["code_verifier"] == "bound-verifier"
+
+
+def test_consume_latest_oauth_state_without_session_reads_bound_state_when_allowed(
+    tmp_path,
+):
+    state_file = tmp_path / "oauth_states.json"
+    store_a = OAuth21SessionStore(oauth_state_file=str(state_file))
+    store_b = OAuth21SessionStore(oauth_state_file=str(state_file))
+
+    store_a.store_oauth_state(
+        "bound-state",
+        session_id="session-123",
+        code_verifier="bound-verifier",
+    )
+
+    state_info = store_b.consume_latest_oauth_state(allow_any_session=True)
+
+    assert state_info is not None
+    assert state_info["session_id"] == "session-123"
+    assert state_info["code_verifier"] == "bound-verifier"
+
+
 def test_consume_latest_oauth_state_filters_by_initiating_session_id(tmp_path):
     state_file = tmp_path / "oauth_states.json"
     store_a = OAuth21SessionStore(oauth_state_file=str(state_file))

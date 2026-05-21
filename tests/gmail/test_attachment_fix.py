@@ -83,6 +83,55 @@ def test_save_attachment_uses_binary_mode(isolated_storage):
 
 
 @pytest.mark.parametrize(
+    ("filename", "expected_prefix"),
+    [
+        ("RE: Foo/Bar?.eml", "RE_ Foo_Bar_"),
+        ("FW: Client\\Matter*.eml", "FW_ Client_Matter_"),
+        ("CON.txt", "_CON_"),
+        ("report. ", "report_"),
+        ("...   ", "attachment_"),
+    ],
+)
+def test_save_attachment_sanitizes_windows_reserved_filenames(
+    isolated_storage, filename, expected_prefix
+):
+    """Attachment filenames should be safe on Windows and POSIX filesystems."""
+    payload = b"safe filename check"
+    b64_data = base64.urlsafe_b64encode(payload).decode()
+
+    result = isolated_storage.save_attachment(b64_data, filename=filename)
+    saved_name = os.path.basename(result.path)
+
+    assert saved_name.startswith(expected_prefix)
+    assert not any(char in saved_name for char in '<>:"/\\|?*')
+    assert saved_name == saved_name.rstrip(". ")
+
+    with open(result.path, "rb") as f:
+        saved_bytes = f.read()
+
+    assert saved_bytes == payload
+
+
+def test_save_attachment_metadata_filename_matches_saved_file(isolated_storage):
+    """Attachment metadata should report the on-disk filename."""
+    payload = b"metadata filename check"
+    b64_data = base64.urlsafe_b64encode(payload).decode()
+
+    result = isolated_storage.save_attachment(
+        b64_data, filename="RE: Foo?.eml", mime_type="message/rfc822"
+    )
+    saved_name = os.path.basename(result.path)
+    metadata = isolated_storage.get_attachment_metadata(result.file_id)
+
+    assert metadata["filename"] == saved_name
+    assert metadata["original_filename"] == "RE: Foo?.eml"
+    assert metadata["filename"].startswith("RE_ Foo_")
+    assert metadata["filename"].endswith(".eml")
+    assert ":" not in metadata["filename"]
+    assert "?" not in metadata["filename"]
+
+
+@pytest.mark.parametrize(
     "payload",
     [
         b"\x89PNG\r\n\x1a\n" + b"\xff" * 200,  # PNG header

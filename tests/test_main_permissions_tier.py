@@ -50,6 +50,39 @@ def test_narrow_permissions_to_services_drops_non_selected_services():
     assert narrowed == {"gmail": "send"}
 
 
+def test_resolve_stdio_callback_port_marks_resolved_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    def fake_resolve_port() -> None:
+        calls.append("resolve")
+        monkeypatch.setenv("WORKSPACE_MCP_PORT", "8123")
+        monkeypatch.setenv("WORKSPACE_MCP_RESOLVED_PORT", "1")
+
+    monkeypatch.setattr("auth.port_resolver.resolve_port", fake_resolve_port)
+    monkeypatch.setattr(main, "reload_oauth_config", lambda: calls.append("reload"))
+
+    main.resolve_stdio_callback_port()
+
+    assert calls == ["resolve", "reload"]
+    assert os.environ["WORKSPACE_MCP_RESOLVED_PORT"] == "1"
+
+
+def test_resolve_callback_port_for_transport_skips_streamable_http(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_if_called() -> None:
+        raise AssertionError("stdio port resolver must not run for streamable HTTP")
+
+    monkeypatch.setattr(main, "resolve_stdio_callback_port", fail_if_called)
+    monkeypatch.setenv("WORKSPACE_MCP_RESOLVED_PORT", "1")
+
+    main.resolve_callback_port_for_transport("streamable-http")
+
+    assert "WORKSPACE_MCP_RESOLVED_PORT" not in os.environ
+
+
 def test_permissions_and_tools_flags_are_rejected(monkeypatch, capsys):
     monkeypatch.setattr(main, "configure_safe_logging", lambda: None)
     monkeypatch.setattr(

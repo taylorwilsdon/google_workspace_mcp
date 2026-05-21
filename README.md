@@ -7,7 +7,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![PyPI](https://img.shields.io/pypi/v/workspace-mcp.svg)](https://pypi.org/project/workspace-mcp/)
-[![PyPI Downloads](https://static.pepy.tech/personalized-badge/workspace-mcp?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=BLUE&left_text=downloads)](https://pepy.tech/projects/workspace-mcp)
+[![PyPI Downloads](https://static.pepy.tech/personalized-badge/workspace-mcp?period=total&units=INTERNATIONAL_SYSTEM&left_color=GREY&right_color=BLUE&left_text=pypi+downloads)](https://pepy.tech/projects/workspace-mcp)
 [![Website](https://img.shields.io/badge/Website-workspacemcp.com-green.svg)](https://workspacemcp.com)
 
 *Full natural language control over Google Calendar, Drive, Gmail, Docs, Sheets, Slides, Forms, Tasks, Contacts, and Chat through all MCP clients, AI assistants and developer tools.*
@@ -88,10 +88,7 @@
 
 ## <span style="color:#adbcbc">Overview</span>
 
-Workspace MCP is the single most complete MCP server that integrates all major Google Workspace services with AI assistants. It supports both single-user operation and multi-user authentication via OAuth 2.1, making it a powerful backend for custom applications. Built with FastMCP for optimal performance, featuring advanced authentication handling, service caching, and streamlined development patterns. The entire toolset is available for CLI usage supporting both local and remote instances.
-
-**Simplified Setup**: can use Google Desktop OAuth clients for local runs - no redirect URIs or port configuration needed!
-
+Workspace MCP is the single most complete MCP server, the only that integrates all major Google Workspace services with AI assistants and all agent platforms. The entire toolset is available for CLI usage supporting both local and remote instances.
 
 ## <span style="color:#adbcbc">Features</span>
 
@@ -427,6 +424,8 @@ export GOOGLE_PSE_ENGINE_ID=\
 
 > **📌 Transport Mode Guidance**: Use **streamable HTTP mode** (`--transport streamable-http`) for all modern MCP clients including Claude Code, VS Code MCP, and MCP Inspector. For Claude Desktop, run an instance and connect via a [Connector](https://workspacemcp.com/quick-start). Stdio mode is a legacy fallback. For deployments, prefer OAuth 2.1 with stateless mode (`MCP_ENABLE_OAUTH21=true`, `WORKSPACE_MCP_STATELESS_MODE=true`) unless you need local attachment or credential storage.
 
+> **OAuth state safety**: Legacy stdio starts a local-only OAuth callback server. In single-user mode only, it may recover a missing Google `state` parameter by consuming the most recent pending local OAuth state. This fallback is intentionally disabled outside single-user mode because it can cross session boundaries. Do not enable or emulate this behavior in streamable HTTP, hosted, or multi-user deployments; those modes must require an explicit state match.
+
 <details open>
 <summary>▶ <b>Launch Commands</b> <sub><sup>← Choose your startup mode</sup></sub></summary>
 
@@ -554,6 +553,12 @@ docker run -e TOOLS="gmail drive calendar" workspace-mcp
 The `workspace-cli` command lists tools and calls them against a running server — with encrypted, disk-backed OAuth token caching so you only authenticate once. On first run it opens a browser for Google consent; subsequent runs reuse the cached tokens automatically.
 
 Tokens are stored encrypted at `~/.workspace-mcp/cli-tokens/` using a Fernet key auto-generated at `~/.workspace-mcp/.cli-encryption-key`.
+
+To use workspace-cli globally, you'll want to start in this repo and run `uv tool install .`
+
+Once complete, you'll have workspace-cli available globally via `workspace-cli`
+
+Note: there is a public (but abandoned) pypi package with the same name - do not use uvx, as it will pull the wrong thing. 
 
 <details open>
 <summary>▶ <b>workspace-cli Commands</b> <sub><sup>← Persistent OAuth, no re-auth on every call</sup></sub></summary>
@@ -769,7 +774,7 @@ cp .env.oauth21 .env
 | <sub>`update_drive_file`</sub> | <sub>Extended</sub> | <sub>Update file metadata, move between folders</sub> |
 | <sub>`manage_drive_access`</sub> | <sub>Extended</sub> | <sub>Grant, update, revoke permissions, and transfer ownership</sub> |
 | <sub>`set_drive_file_permissions`</sub> | <sub>Extended</sub> | <sub>Set link sharing and file-level sharing settings</sub> |
-| <sub>`get_drive_file_permissions`</sub> | <sub>Complete</sub> | <sub>Get detailed file permissions</sub> |
+| <sub>`get_drive_file_permissions`</sub> | <sub>Complete</sub> | <sub>Get file metadata, parents, and permissions</sub> |
 | <sub>`check_drive_file_public_access`</sub> | <sub>Complete</sub> | <sub>Check public sharing status</sub> |
 
 #### 📧 Gmail <sub>[`gmail_tools.py`](gmail/gmail_tools.py)</sub>
@@ -975,6 +980,8 @@ See the **[Quick Start Guide](https://workspacemcp.com/quick-start)** for setup 
 <summary>📝 <b>Legacy: Manual stdio configuration</b> <sub><sup>← For clients without Connector support</sup></sub></summary>
 
 > **⚠️ Note**: Stdio mode is a legacy fallback for clients that don't support Connectors. Prefer the Connector-based approach above.
+>
+> **OAuth callback caveat**: The legacy stdio callback path includes a local recovery fallback for rare Google redirects that omit the `state` parameter, but only when `--single-user` is active. That recovery can only be safe in a single-user local process; in HTTP or hosted multi-user scenarios it could consume another user's pending OAuth state. There is no environment variable to enable this globally.
 
 1. Open Claude Desktop Settings → Developer → Edit Config
    - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
@@ -1445,18 +1452,26 @@ If you need to use HTTP mode with Claude Desktop:
 
 ### First-Time Authentication
 
-The server uses **Google Desktop OAuth** for simplified authentication:
+Legacy local authentication uses the Google OAuth consent flow. In `stdio` mode, the server tries to open the browser automatically so long Google OAuth URLs do not wrap in terminals or get corrupted during copy/paste, which improves reliability of the redirect flow.
 
-- **No redirect URIs needed**: Desktop OAuth clients handle authentication without complex callback URLs
-- **Automatic flow**: The server manages the entire OAuth process transparently
-- **Transport-agnostic**: Works seamlessly in both stdio and HTTP modes
+- In `stdio` mode, the server starts a local callback listener and tries to open the Google authorization page in your browser automatically.
+- If the browser cannot be opened, the tool response includes the authorization URL to open manually.
+- In `streamable-http` / OAuth 2.1 mode, use your MCP client's OAuth flow instead; the server does not try to open a browser on the host running the HTTP service.
+- When a legacy local auth tool call provides `user_google_email`, the server adds that value as `login_hint` on the Google authorization URL so Google can pre-select the account on the consent screen. This applies to the `stdio` flow whether the server opens the browser or returns the URL; `streamable-http` / OAuth 2.1 flows still rely on the MCP client's OAuth flow.
+
+Example:
+
+```text
+user_google_email="alex@example.com"
+Authorization URL: https://accounts.google.com/o/oauth2/v2/auth?...&login_hint=alex%40example.com
+```
 
 When calling a tool:
-1. Server returns authorization URL
-2. Open URL in browser and authorize
-3. Google provides an authorization code
-4. Paste the code when prompted (or it's handled automatically)
-5. Server completes authentication and retries your request
+1. If an opened browser page appears, complete Google authorization there.
+2. If no browser opens, open the returned authorization URL manually and complete Google authorization there.
+3. After successful authorization, the callback page displays the authenticated email address.
+4. Retry the original tool call with that email as `user_google_email`; the server needs this value to associate the stored Google credentials with the tool request, so the original request is not authorized until it is retried.
+5. Server completes authentication using the stored Google credentials.
 
 ---
 

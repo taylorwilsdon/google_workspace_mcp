@@ -1,4 +1,9 @@
 import errno
+from types import TracebackType
+from typing import Any, Optional, Tuple, Type
+
+import pytest
+from starlette.testclient import TestClient
 
 from auth import oauth_callback_server
 
@@ -138,3 +143,111 @@ def test_ensure_oauth_callback_skips_start_when_other_instance_owns_port(monkeyp
     assert error == ""
     assert len(_PortInUseServer.instances) == 1
     assert _PortInUseServer.instances[0].start_calls == 0
+
+
+def test_start_reuses_existing_workspace_callback_on_eaddrinuse(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server = oauth_callback_server.MinimalOAuthServer(8000, "http://localhost")
+
+    class _FakeSocket:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
+            pass
+
+        def __enter__(self) -> "_FakeSocket":
+            return self
+
+        def __exit__(  # noqa: ARG002
+            self,
+            exc_type: Optional[Type[BaseException]],
+            exc: Optional[BaseException],
+            tb: Optional[TracebackType],
+        ) -> bool:
+            return False
+
+        def bind(self, address: Tuple[str, int]) -> None:  # noqa: ARG002
+            raise OSError(errno.EADDRINUSE, "Address already in use")
+
+    monkeypatch.setattr(oauth_callback_server.socket, "socket", _FakeSocket)
+    monkeypatch.setattr(
+        server,
+        "_callback_endpoint_looks_like_workspace",
+        lambda hostname: hostname == "localhost",
+    )
+
+    success, error = server.start()
+
+    assert success is True
+    assert error == ""
+    assert server.is_running is True
+
+
+def test_start_rejects_eaddrinuse_when_callback_probe_does_not_match(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server = oauth_callback_server.MinimalOAuthServer(8000, "http://localhost")
+
+    class _FakeSocket:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
+            pass
+
+        def __enter__(self) -> "_FakeSocket":
+            return self
+
+        def __exit__(  # noqa: ARG002
+            self,
+            exc_type: Optional[Type[BaseException]],
+            exc: Optional[BaseException],
+            tb: Optional[TracebackType],
+        ) -> bool:
+            return False
+
+        def bind(self, address: Tuple[str, int]) -> None:  # noqa: ARG002
+            raise OSError(errno.EADDRINUSE, "Address already in use")
+
+    monkeypatch.setattr(oauth_callback_server.socket, "socket", _FakeSocket)
+    monkeypatch.setattr(
+        server,
+        "_callback_endpoint_looks_like_workspace",
+        lambda hostname: False,  # noqa: ARG005
+    )
+
+    success, error = server.start()
+
+    assert success is False
+    assert "already in use" in error
+    assert server.is_running is False
+
+
+def test_oauth_callback_missing_state_fallback_follows_single_user_mode(monkeypatch):
+    calls = []
+
+    async def fake_handle_auth_callback(**kwargs):
+        calls.append(kwargs)
+        return "user@example.com", object()
+
+    monkeypatch.setattr(oauth_callback_server, "check_client_secrets", lambda: None)
+    monkeypatch.setattr(oauth_callback_server, "get_current_scopes", lambda: ["scope"])
+    monkeypatch.setattr(
+        oauth_callback_server,
+        "get_oauth_redirect_uri",
+        lambda: "http://localhost:8000/oauth2callback",
+    )
+    monkeypatch.setattr(
+        oauth_callback_server,
+        "handle_auth_callback",
+        fake_handle_auth_callback,
+    )
+
+    monkeypatch.delenv("MCP_SINGLE_USER_MODE", raising=False)
+    server = oauth_callback_server.MinimalOAuthServer(8000, "http://localhost")
+    response = TestClient(server.app).get("/oauth2callback?code=code123")
+
+    assert response.status_code == 200
+    assert calls[-1]["allow_missing_state_fallback"] is False
+
+    monkeypatch.setenv("MCP_SINGLE_USER_MODE", "1")
+    response = TestClient(server.app).get("/oauth2callback?code=code123")
+
+    assert response.status_code == 200
+    assert calls[-1]["allow_missing_state_fallback"] is True

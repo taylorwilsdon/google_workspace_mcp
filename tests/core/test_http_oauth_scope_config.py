@@ -145,3 +145,56 @@ def test_configure_server_for_http_rejects_public_client_without_jwt_key(
         match="Public client OAuth 2.1 requires FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY",
     ):
         server_module.configure_server_for_http()
+
+
+def test_configure_server_for_http_passes_jwt_key_to_external_provider(monkeypatch):
+    """ExternalOAuthProvider must receive the derived jwt_signing_key.
+
+    Regression test: previously the key was derived but not forwarded,
+    causing a startup failure when client_secret was absent.
+    """
+    captured = {}
+
+    class FakeExternalOAuthProvider:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setenv(
+        "FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY",
+        "this-is-a-long-enough-jwt-signing-key",
+    )
+    monkeypatch.setattr(server_module, "get_transport_mode", lambda: "streamable-http")
+    monkeypatch.setattr(server_module, "set_auth_provider", lambda provider: None)
+    monkeypatch.setattr(server_module, "_auth_provider", server_module._auth_provider)
+    monkeypatch.setattr(server_module.server, "auth", server_module.server.auth)
+    monkeypatch.setattr(
+        server_module,
+        "get_current_scopes",
+        lambda: ["https://www.googleapis.com/auth/userinfo.email", "openid"],
+    )
+    monkeypatch.setattr(
+        "auth.external_oauth_provider.ExternalOAuthProvider",
+        FakeExternalOAuthProvider,
+    )
+    monkeypatch.setattr(
+        "auth.oauth_config.get_oauth_config",
+        lambda: SimpleNamespace(
+            is_oauth21_enabled=lambda: True,
+            is_configured=lambda: True,
+            is_external_oauth21_provider=lambda: True,
+            client_id="client-id",
+            client_secret=None,
+            get_oauth_base_url=lambda: "https://workspace-mcp.example.test",
+            redirect_path="/oauth2callback",
+        ),
+    )
+
+    server_module.configure_server_for_http()
+
+    assert "jwt_signing_key" in captured, (
+        "jwt_signing_key must be forwarded to ExternalOAuthProvider"
+    )
+    assert isinstance(captured["jwt_signing_key"], bytes), (
+        "jwt_signing_key must be a bytes object"
+    )
+    assert len(captured["jwt_signing_key"]) > 0, "jwt_signing_key must be non-empty"

@@ -405,6 +405,7 @@ class OAuth21SessionStore:
     def _consume_latest_oauth_state_from_shared_store(
         self,
         session_id: Optional[str] = None,
+        allow_any_session: bool = False,
     ) -> Optional[Tuple[str, Dict[str, Any]]]:
         def mutator(
             oauth_states: Dict[str, Dict[str, Any]],
@@ -412,7 +413,10 @@ class OAuth21SessionStore:
             matching_states = [
                 state
                 for state, state_info in oauth_states.items()
-                if state_info.get("session_id") == session_id
+                if (
+                    (allow_any_session and session_id is None)
+                    or state_info.get("session_id") == session_id
+                )
             ]
             if not matching_states:
                 return None, False
@@ -524,7 +528,9 @@ class OAuth21SessionStore:
             return state_info
 
     def consume_latest_oauth_state(
-        self, initiating_session_id: Optional[str] = None
+        self,
+        initiating_session_id: Optional[str] = None,
+        allow_any_session: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """
         Consume and return the most recently created OAuth state.
@@ -536,6 +542,9 @@ class OAuth21SessionStore:
             initiating_session_id: Optional session identifier that initiated the
                 OAuth flow. When provided, only matching shared-store states are
                 considered during fallback lookup.
+            allow_any_session: When True and no initiating session is available,
+                allow fallback lookup across session-bound states. This is only
+                safe for local stdio OAuth callbacks.
 
         Returns:
             State metadata dict, or None if no states are stored.
@@ -543,7 +552,8 @@ class OAuth21SessionStore:
         with self._lock:
             self._cleanup_expired_oauth_states_locked()
             shared_state = self._consume_latest_oauth_state_from_shared_store(
-                initiating_session_id
+                initiating_session_id,
+                allow_any_session=allow_any_session,
             )
             if not shared_state:
                 self._oauth_states.clear()

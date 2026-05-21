@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 
 from gdrive.drive_helpers import build_drive_list_params
 from gdrive.drive_tools import (
+    get_drive_file_permissions,
     import_to_google_doc,
     list_drive_items,
     search_drive_files,
@@ -31,6 +32,71 @@ def _unwrap(tool):
     while hasattr(fn, "__wrapped__"):
         fn = fn.__wrapped__
     return fn
+
+
+# ---------------------------------------------------------------------------
+# get_drive_file_permissions — owners
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_tools.resolve_drive_item", new_callable=AsyncMock)
+async def test_get_drive_file_permissions_includes_owner_details(mock_resolve_item):
+    """Owner metadata requested from Drive is included in the output."""
+    mock_resolve_item.return_value = ("file123", None)
+    mock_service = Mock()
+    mock_service.files().get().execute.return_value = {
+        "id": "file123",
+        "name": "Budget",
+        "mimeType": "application/vnd.google-apps.spreadsheet",
+        "parents": ["folder1"],
+        "owners": [
+            {
+                "displayName": "Ada Lovelace",
+                "emailAddress": "ada@example.com",
+            },
+            {
+                "name": "Legacy Owner",
+                "email": "legacy@example.com",
+            },
+        ],
+        "permissions": [],
+    }
+
+    result = await _unwrap(get_drive_file_permissions)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        file_id="file123",
+    )
+
+    fields = mock_service.files.return_value.get.call_args.kwargs["fields"]
+    assert "owners(displayName,emailAddress)" in fields
+    assert (
+        "Owners: Ada Lovelace (ada@example.com), Legacy Owner (legacy@example.com)"
+        in result
+    )
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_tools.resolve_drive_item", new_callable=AsyncMock)
+async def test_get_drive_file_permissions_handles_missing_owners(mock_resolve_item):
+    """Missing owner metadata is represented explicitly."""
+    mock_resolve_item.return_value = ("file123", None)
+    mock_service = Mock()
+    mock_service.files().get().execute.return_value = {
+        "id": "file123",
+        "name": "Budget",
+        "mimeType": "application/vnd.google-apps.spreadsheet",
+        "permissions": [],
+    }
+
+    result = await _unwrap(get_drive_file_permissions)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        file_id="file123",
+    )
+
+    assert "Owners: None available" in result
 
 
 # ---------------------------------------------------------------------------
@@ -338,6 +404,9 @@ def _make_file(
     modified: str = "2024-01-01T00:00:00Z",
     size: str | None = None,
     drive_id: str | None = None,
+    created: str | None = None,
+    last_modifying_user: dict | None = None,
+    permissions: list | None = None,
 ) -> dict:
     item = {
         "id": file_id,
@@ -350,6 +419,12 @@ def _make_file(
         item["size"] = size
     if drive_id is not None:
         item["driveId"] = drive_id
+    if created is not None:
+        item["createdTime"] = created
+    if last_modifying_user is not None:
+        item["lastModifyingUser"] = last_modifying_user
+    if permissions is not None:
+        item["permissions"] = permissions
     return item
 
 
@@ -398,12 +473,23 @@ async def test_create_drive_folder():
 
 
 def test_build_params_detailed_true_includes_extra_fields():
-    """detailed=True requests modifiedTime, webViewLink, size, and driveId from the API."""
+    """detailed=True requests metadata fields but omits ACLs by default."""
     params = build_drive_list_params(query="name='x'", page_size=10, detailed=True)
     assert "modifiedTime" in params["fields"]
     assert "webViewLink" in params["fields"]
     assert "size" in params["fields"]
     assert "driveId" in params["fields"]
+    assert "createdTime" in params["fields"]
+    assert "lastModifyingUser" in params["fields"]
+    assert "permissions" not in params["fields"]
+
+
+def test_build_params_include_permissions_requests_acl_fields():
+    """ACL fields are requested only when explicitly needed by the caller."""
+    params = build_drive_list_params(
+        query="name='x'", page_size=10, detailed=True, include_permissions=True
+    )
+    assert "permissions" in params["fields"]
 
 
 def test_build_params_detailed_false_omits_extra_fields():
@@ -413,6 +499,9 @@ def test_build_params_detailed_false_omits_extra_fields():
     assert "webViewLink" not in params["fields"]
     assert "size" not in params["fields"]
     assert "driveId" not in params["fields"]
+    assert "createdTime" not in params["fields"]
+    assert "lastModifyingUser" not in params["fields"]
+    assert "permissions" not in params["fields"]
 
 
 def test_build_params_detailed_false_keeps_core_fields():
@@ -561,6 +650,150 @@ async def test_search_detailed_true_with_size():
 
 
 @pytest.mark.asyncio
+async def test_search_detailed_shows_created_time():
+    """detailed=True shows createdTime when present."""
+    mock_service = Mock()
+    mock_service.files().list().execute.return_value = {
+        "files": [
+            _make_file(
+                "f1",
+                "Doc",
+                "application/vnd.google-apps.document",
+                created="2024-05-15T09:00:00Z",
+            )
+        ]
+    }
+
+    result = await _unwrap(search_drive_files)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        query="doc",
+        detailed=True,
+    )
+
+    assert "Created: 2024-05-15T09:00:00Z" in result
+
+
+@pytest.mark.asyncio
+async def test_search_detailed_shows_last_modifying_user():
+    """detailed=True shows lastModifyingUser displayName and email."""
+    mock_service = Mock()
+    mock_service.files().list().execute.return_value = {
+        "files": [
+            _make_file(
+                "f1",
+                "Doc",
+                "application/vnd.google-apps.document",
+                last_modifying_user={
+                    "displayName": "Alice Smith",
+                    "emailAddress": "alice@example.com",
+                },
+            )
+        ]
+    }
+
+    result = await _unwrap(search_drive_files)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        query="doc",
+        detailed=True,
+    )
+
+    assert "Last Edited By: Alice Smith <alice@example.com>" in result
+
+
+@pytest.mark.asyncio
+async def test_search_detailed_shows_anyone_permission_role():
+    """detailed=True shows the role on an anyone-with-link permission."""
+    mock_service = Mock()
+    mock_service.files().list().execute.return_value = {
+        "files": [
+            _make_file(
+                "f1",
+                "Public Doc",
+                "application/vnd.google-apps.document",
+                permissions=[
+                    {"id": "anyoneWithLink", "type": "anyone", "role": "writer"},
+                ],
+            )
+        ]
+    }
+
+    result = await _unwrap(search_drive_files)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        query="public",
+        detailed=True,
+    )
+
+    assert "Anyone with link: writer" in result
+
+
+@pytest.mark.asyncio
+async def test_search_detailed_no_anyone_permission():
+    """When no anyone permission exists, the anyone-with-link field is absent."""
+    mock_service = Mock()
+    mock_service.files().list().execute.return_value = {
+        "files": [
+            _make_file(
+                "f1",
+                "Private Doc",
+                "application/vnd.google-apps.document",
+                permissions=[
+                    {"id": "user123", "type": "user", "role": "writer"},
+                ],
+            )
+        ]
+    }
+
+    result = await _unwrap(search_drive_files)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        query="private",
+        detailed=True,
+    )
+
+    assert "Anyone with link" not in result
+
+
+@pytest.mark.asyncio
+async def test_search_detailed_all_new_fields_together():
+    """All new metadata fields appear together in output."""
+    mock_service = Mock()
+    mock_service.files().list().execute.return_value = {
+        "files": [
+            _make_file(
+                "f1",
+                "Full Doc",
+                "application/vnd.google-apps.document",
+                created="2024-03-01T10:00:00Z",
+                last_modifying_user={
+                    "displayName": "Bob",
+                    "emailAddress": "bob@example.com",
+                },
+                permissions=[
+                    {"id": "anyoneWithLink", "type": "anyone", "role": "reader"},
+                ],
+            )
+        ]
+    }
+
+    result = await _unwrap(search_drive_files)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        query="full",
+        detailed=True,
+    )
+
+    assert "Created: 2024-03-01T10:00:00Z" in result
+    assert "Last Edited By: Bob <bob@example.com>" in result
+    assert "Anyone with link: reader" in result
+    # Existing fields still present
+    assert "Modified:" in result
+    assert "Link:" in result
+
+
+@pytest.mark.asyncio
 async def test_search_detailed_true_requests_extra_api_fields():
     """detailed=True passes full fields string to the Drive API."""
     mock_service = Mock()
@@ -577,6 +810,9 @@ async def test_search_detailed_true_requests_extra_api_fields():
     assert "modifiedTime" in call_kwargs["fields"]
     assert "webViewLink" in call_kwargs["fields"]
     assert "size" in call_kwargs["fields"]
+    assert "createdTime" in call_kwargs["fields"]
+    assert "lastModifyingUser" in call_kwargs["fields"]
+    assert "permissions" in call_kwargs["fields"]
 
 
 @pytest.mark.asyncio
@@ -596,6 +832,9 @@ async def test_search_detailed_false_requests_compact_api_fields():
     assert "modifiedTime" not in call_kwargs["fields"]
     assert "webViewLink" not in call_kwargs["fields"]
     assert "size" not in call_kwargs["fields"]
+    assert "createdTime" not in call_kwargs["fields"]
+    assert "lastModifyingUser" not in call_kwargs["fields"]
+    assert "permissions" not in call_kwargs["fields"]
 
 
 @pytest.mark.asyncio
@@ -745,6 +984,38 @@ async def test_list_detailed_true_with_drive_id(mock_resolve_folder):
 
 @pytest.mark.asyncio
 @patch("gdrive.drive_tools.resolve_folder_id", new_callable=AsyncMock)
+async def test_list_detailed_true_shows_created_and_last_editor(mock_resolve_folder):
+    """detailed=True shows createdTime and lastModifyingUser in list output."""
+    mock_resolve_folder.return_value = "resolved_root"
+    mock_service = Mock()
+    mock_service.files().list().execute.return_value = {
+        "files": [
+            _make_file(
+                "id4",
+                "Report",
+                "application/vnd.google-apps.document",
+                created="2024-06-01T12:00:00Z",
+                last_modifying_user={
+                    "displayName": "Carol",
+                    "emailAddress": "carol@example.com",
+                },
+            ),
+        ]
+    }
+
+    result = await _unwrap(list_drive_items)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        folder_id="root",
+        detailed=True,
+    )
+
+    assert "Created: 2024-06-01T12:00:00Z" in result
+    assert "Last Edited By: Carol <carol@example.com>" in result
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_tools.resolve_folder_id", new_callable=AsyncMock)
 async def test_list_detailed_true_requests_extra_api_fields(mock_resolve_folder):
     """detailed=True passes full fields string to the Drive API."""
     mock_resolve_folder.return_value = "resolved_root"
@@ -763,6 +1034,7 @@ async def test_list_detailed_true_requests_extra_api_fields(mock_resolve_folder)
     assert "webViewLink" in call_kwargs["fields"]
     assert "size" in call_kwargs["fields"]
     assert "driveId" in call_kwargs["fields"]
+    assert "permissions" not in call_kwargs["fields"]
 
 
 @pytest.mark.asyncio

@@ -221,6 +221,7 @@ async def search_drive_files(
         corpora=corpora,
         page_token=page_token,
         detailed=detailed,
+        include_permissions=detailed,
         order_by=order_by,
     )
 
@@ -235,8 +236,42 @@ async def search_drive_files(
     for item in files:
         if detailed:
             size_str = f", Size: {item.get('size', 'N/A')}" if "size" in item else ""
+            created_str = (
+                f", Created: {item['createdTime']}" if item.get("createdTime") else ""
+            )
+            # Last modifying user (not available for all files)
+            lmu = item.get("lastModifyingUser")
+            if lmu:
+                lmu_name = lmu.get("displayName", "")
+                lmu_email = lmu.get("emailAddress", "")
+                if lmu_name and lmu_email:
+                    last_edited_by_str = f", Last Edited By: {lmu_name} <{lmu_email}>"
+                elif lmu_name:
+                    last_edited_by_str = f", Last Edited By: {lmu_name}"
+                elif lmu_email:
+                    last_edited_by_str = f", Last Edited By: {lmu_email}"
+                else:
+                    last_edited_by_str = ""
+            else:
+                last_edited_by_str = ""
+            # Anyone-with-link permission role (reader/commenter/writer)
+            anyone_role_str = ""
+            for perm in item.get("permissions", []):
+                if perm.get("type") == "anyone":
+                    anyone_role_str = (
+                        f", Anyone with link: {perm.get('role', 'unknown')}"
+                    )
+                    break
+            # TODO: "Created By" (original file creator) is not included here.
+            # For Shared Drive files the `owners` field is always empty — the drive
+            # owns the file.  True creator attribution requires fetching revision 1
+            # via files/{id}/revisions and reading its lastModifyingUser.  That adds
+            # one API call per file and should be a separate follow-up.
             formatted_files_text_parts.append(
-                f'- Name: "{item["name"]}" (ID: {item["id"]}, Type: {item["mimeType"]}{size_str}, Modified: {item.get("modifiedTime", "N/A")}) Link: {item.get("webViewLink", "#")}'
+                f'- Name: "{item["name"]}" (ID: {item["id"]}, Type: {item["mimeType"]}{size_str}'
+                f"{created_str}, Modified: {item.get('modifiedTime', 'N/A')}"
+                f"{last_edited_by_str}{anyone_role_str})"
+                f" Link: {item.get('webViewLink', '#')}"
             )
         else:
             formatted_files_text_parts.append(
@@ -680,8 +715,28 @@ async def list_drive_items(
             drive_id_str = (
                 f", Drive ID: {item['driveId']}" if item.get("driveId") else ""
             )
+            created_str = (
+                f", Created: {item['createdTime']}" if item.get("createdTime") else ""
+            )
+            lmu = item.get("lastModifyingUser")
+            if lmu:
+                lmu_name = lmu.get("displayName", "")
+                lmu_email = lmu.get("emailAddress", "")
+                if lmu_name and lmu_email:
+                    last_edited_by_str = f", Last Edited By: {lmu_name} <{lmu_email}>"
+                elif lmu_name:
+                    last_edited_by_str = f", Last Edited By: {lmu_name}"
+                elif lmu_email:
+                    last_edited_by_str = f", Last Edited By: {lmu_email}"
+                else:
+                    last_edited_by_str = ""
+            else:
+                last_edited_by_str = ""
             formatted_items_text_parts.append(
-                f'- Name: "{item["name"]}" (ID: {item["id"]}, Type: {item["mimeType"]}{size_str}{drive_id_str}, Modified: {item.get("modifiedTime", "N/A")}) Link: {item.get("webViewLink", "#")}'
+                f'- Name: "{item["name"]}" (ID: {item["id"]}, Type: {item["mimeType"]}{size_str}'
+                f"{created_str}, Modified: {item.get('modifiedTime', 'N/A')}"
+                f"{last_edited_by_str}{drive_id_str})"
+                f" Link: {item.get('webViewLink', '#')}"
             )
         else:
             formatted_items_text_parts.append(
@@ -1423,14 +1478,15 @@ async def get_drive_file_permissions(
     file_id: str,
 ) -> str:
     """
-    Gets detailed metadata about a Google Drive file including sharing permissions.
+    Gets detailed metadata about a Google Drive file including sharing permissions,
+    parent folder IDs, ownership, and lifecycle timestamps.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
         file_id (str): The ID of the file to check permissions for.
 
     Returns:
-        str: Detailed file metadata including sharing status and URLs.
+        str: Detailed file metadata including parents, owners, timestamps, sharing status, and URLs.
     """
     logger.info(
         f"[get_drive_file_permissions] Checking file {file_id} for {user_google_email}"
@@ -1445,7 +1501,8 @@ async def get_drive_file_permissions(
             service.files()
             .get(
                 fileId=file_id,
-                fields="id, name, mimeType, size, modifiedTime, owners, "
+                fields="id, name, mimeType, size, parents, createdTime, modifiedTime, "
+                "trashed, driveId, owners(displayName,emailAddress), "
                 "permissions(id, type, role, emailAddress, domain, expirationTime, permissionDetails), "
                 "webViewLink, webContentLink, shared, sharingUser, viewersCanCopyContent",
                 supportsAllDrives=True,
@@ -1454,16 +1511,44 @@ async def get_drive_file_permissions(
         )
 
         # Format the response
+        parents = file_metadata.get("parents")
+        parent_str = ", ".join(parents) if parents else "None (root or orphaned)"
+        owners = file_metadata.get("owners") or []
+        if owners:
+            owner_str = ", ".join(
+                (
+                    f"{owner.get('displayName') or owner.get('name') or 'Unknown'} "
+                    f"({owner.get('emailAddress') or owner.get('email')})"
+                )
+                if (owner.get("emailAddress") or owner.get("email"))
+                else owner.get("displayName") or owner.get("name") or "Unknown"
+                for owner in owners
+            )
+        else:
+            owner_str = "None available"
+
         output_parts = [
             f"File: {file_metadata.get('name', 'Unknown')}",
             f"ID: {file_id}",
             f"Type: {file_metadata.get('mimeType', 'Unknown')}",
+            f"Parents: {parent_str}",
+            f"Owners: {owner_str}",
             f"Size: {file_metadata.get('size', 'N/A')} bytes",
+            f"Created: {file_metadata.get('createdTime', 'N/A')}",
             f"Modified: {file_metadata.get('modifiedTime', 'N/A')}",
-            "",
-            "Sharing Status:",
-            f"  Shared: {file_metadata.get('shared', False)}",
+            f"Trashed: {file_metadata.get('trashed', False)}",
         ]
+
+        if file_metadata.get("driveId"):
+            output_parts.append(f"Shared Drive ID: {file_metadata['driveId']}")
+
+        output_parts.extend(
+            [
+                "",
+                "Sharing Status:",
+                f"  Shared: {file_metadata.get('shared', False)}",
+            ]
+        )
 
         # Add sharing user if available
         sharing_user = file_metadata.get("sharingUser")

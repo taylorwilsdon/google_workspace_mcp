@@ -20,6 +20,13 @@ dist/
 *.egg-info/
 
 # Development files
+.env
+.env.*
+!.env.example
+!.env.sample
+client_secret.json
+client_secrets.json
+.mcpregistry_*_token
 mcp_server_debug.log
 .credentials/
 
@@ -30,6 +37,12 @@ __pycache__/
 *.pyd
 .Python
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.uv-cache/
+.uv_cache/
+.venv/
+venv/
 
 # IDE files
 .vscode/
