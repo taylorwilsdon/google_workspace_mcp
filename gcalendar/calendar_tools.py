@@ -480,10 +480,11 @@ async def get_events(
             ", ".join([a.get("email", "") for a in attendees]) if attendees else "None"
         )
         attendee_details_str = _format_attendee_details(attendees, indent="  ")
-        creator_str = _format_person(item.get("creator"))
-        organizer_str = _format_person(item.get("organizer"))
 
         meeting_link = _get_meeting_link(item)
+
+        creator_str = _format_person(item.get("creator"))
+        organizer_str = _format_person(item.get("organizer"))
 
         event_details = (
             f"Event Details:\n"
@@ -538,10 +539,11 @@ async def get_events(
                 else "None"
             )
             attendee_details_str = _format_attendee_details(attendees, indent="    ")
-            creator_str = _format_person(item.get("creator"))
-            organizer_str = _format_person(item.get("organizer"))
 
             meeting_link = _get_meeting_link(item)
+
+            creator_str = _format_person(item.get("creator"))
+            organizer_str = _format_person(item.get("organizer"))
 
             event_detail_parts = (
                 f'- "{summary}" (Starts: {start_time}, Ends: {end_time})\n'

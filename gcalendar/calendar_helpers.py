@@ -101,15 +101,19 @@ def _format_attachment_details(
 
 
 def _format_person(person: Optional[Dict[str, Any]]) -> Optional[str]:
-    """Format a Google Calendar person dict (creator or organizer) for display."""
+    """
+    Format a Google Calendar person reference (creator/organizer) as
+    "{displayName} <{email}>". Falls back to whichever field is present,
+    and returns None when neither displayName nor email is set.
+    """
     if not person:
         return None
-    name = (person.get("displayName") or "").strip()
+    display_name = (person.get("displayName") or "").strip()
     email = (person.get("email") or "").strip()
-    if name and email:
-        return f"{name} <{email}>"
-    if name:
-        return name
+    if display_name and email:
+        return f"{display_name} <{email}>"
+    if display_name:
+        return display_name
     if email:
         return f"<{email}>"
     return None

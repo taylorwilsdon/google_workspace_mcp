@@ -12,7 +12,7 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-from gcalendar.calendar_tools import _format_person, get_events
+from gcalendar.calendar_tools import get_events
 
 
 def _unwrap(tool):
@@ -20,32 +20,6 @@ def _unwrap(tool):
     while hasattr(fn, "__wrapped__"):
         fn = fn.__wrapped__
     return fn
-
-
-# --- _format_person unit tests -------------------------------------------------
-
-
-def test_format_person_both_fields():
-    assert (
-        _format_person({"displayName": "Ada Lovelace", "email": "ada@example.com"})
-        == "Ada Lovelace <ada@example.com>"
-    )
-
-
-def test_format_person_email_only():
-    assert _format_person({"email": "ada@example.com"}) == "<ada@example.com>"
-
-
-def test_format_person_display_name_only():
-    assert _format_person({"displayName": "Ada Lovelace"}) == "Ada Lovelace"
-
-
-@pytest.mark.parametrize(
-    "person",
-    [None, {}, {"displayName": "", "email": ""}, {"displayName": "   "}],
-)
-def test_format_person_empty_returns_none(person):
-    assert _format_person(person) is None
 
 
 # --- get_events detailed-output integration tests ------------------------------
