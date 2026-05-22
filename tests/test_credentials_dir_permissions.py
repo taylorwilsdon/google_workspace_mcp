@@ -62,8 +62,8 @@ def test_concurrent_callers_do_not_race_on_probe_filename(tmp_path):
     Pre-fix, multiple processes sharing a credentials directory would
     collide on the fixed probe filename — one would ENOENT during the
     write/remove sequence and raise PermissionError. The fix uses
-    ``tempfile.NamedTemporaryFile`` with a random suffix so each call
-    gets a unique probe path.
+    ``tempfile.mkstemp`` with a random suffix so each call gets a unique
+    probe path.
     """
     creds_dir = tmp_path / "shared_creds"
     creds_dir.mkdir()
