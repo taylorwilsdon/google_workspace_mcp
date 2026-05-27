@@ -345,6 +345,21 @@ async def resolve_drive_item(
     Returns the resolved file ID and its metadata. Raises if shortcut targets loop
     or exceed max_depth to avoid infinite recursion.
     """
+    # Short-circuit the "root" alias.
+    #
+    # Drive API accepts "root" directly in `parents` arrays for files.create
+    # operations, so callers like create_drive_folder can pass it through
+    # unchanged. Resolving "root" via files.get(fileId='root') requires the
+    # broader `drive` scope, which several write tools deliberately do not
+    # request — e.g. create_drive_folder is decorated with
+    # @require_google_service("drive", "drive_file") (DRIVE_FILE_SCOPE only).
+    # Under that narrow scope, files.get('root') returns 404 because the
+    # user's My Drive folder is not an app-created file. Treating "root" as
+    # already-resolved avoids the unnecessary API call and keeps these tools
+    # working under the intended narrow scope.
+    if file_id == "root":
+        return "root", {"id": "root", "mimeType": FOLDER_MIME_TYPE}
+
     current_id = file_id
     depth = 0
     fields = BASE_SHORTCUT_FIELDS
