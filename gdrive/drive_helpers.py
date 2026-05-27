@@ -344,6 +344,17 @@ async def resolve_drive_item(
 
     Returns the resolved file ID and its metadata. Raises if shortcut targets loop
     or exceed max_depth to avoid infinite recursion.
+
+    Special case: when ``file_id == "root"``, returns synthetic metadata
+    ``("root", {"id": "root", "mimeType": FOLDER_MIME_TYPE})`` without an API
+    call. Drive API accepts the literal ``"root"`` alias in subsequent
+    create/list/update operations, so this is equivalent to (and avoids the
+    ``drive.file``-scope problem of) calling ``files.get(fileId='root')``. See
+    the inline comment in the function body for the full rationale. Note that
+    ``extra_fields`` is ignored on this path — callers that genuinely need
+    metadata fields beyond ``id``/``mimeType`` for the user's My Drive root
+    must call ``files.get(fileId='root', fields=...)`` themselves with a
+    sufficient scope (``drive`` or ``drive.readonly``).
     """
     # Short-circuit the "root" alias.
     #
