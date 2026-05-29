@@ -1180,6 +1180,76 @@ async def create_drive_file(
     return confirmation_message
 
 
+SHORTCUT_MIME_TYPE = "application/vnd.google-apps.shortcut"
+
+
+@server.tool(
+    title="Create Drive Shortcut",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("create_drive_shortcut", service_type="drive")
+@require_google_service("drive", "drive_file")
+async def create_drive_shortcut(
+    service,
+    user_google_email: str,
+    target_id: str,
+    shortcut_name: str,
+    parent_folder_id: Optional[str] = None,
+) -> str:
+    """
+    Creates a Google Drive shortcut pointing to an existing file or folder, supporting shared drives.
+
+    A shortcut is a lightweight link to a target item; it does not duplicate the target's
+    content. Useful for surfacing the same file in multiple folders without copying it.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        target_id (str): The ID of the file or folder the shortcut points to. Required.
+        shortcut_name (str): The name for the new shortcut.
+        parent_folder_id (Optional[str]): The ID of the parent folder for the shortcut. Defaults to My Drive root if omitted. For shared drives, use a folder ID within that shared drive.
+
+    Returns:
+        str: Confirmation message with the shortcut name, ID, and link.
+    """
+    logger.info(
+        f"[create_drive_shortcut] Invoked. Email: '{user_google_email}', "
+        f"Name: '{shortcut_name}', Target: '{target_id}', Parent: '{parent_folder_id}'"
+    )
+
+    file_metadata = {
+        "name": shortcut_name,
+        "mimeType": SHORTCUT_MIME_TYPE,
+        "shortcutDetails": {"targetId": target_id},
+    }
+    if parent_folder_id:
+        file_metadata["parents"] = [parent_folder_id]
+
+    created_shortcut = await asyncio.to_thread(
+        service.files()
+        .create(
+            body=file_metadata,
+            fields="id, name, webViewLink, shortcutDetails",
+            supportsAllDrives=True,
+        )
+        .execute,
+        num_retries=GOOGLE_API_WRITE_RETRIES,
+    )
+
+    link = created_shortcut.get("webViewLink", "No link available")
+    confirmation_message = (
+        f"Successfully created shortcut '{created_shortcut.get('name', shortcut_name)}' "
+        f"(ID: {created_shortcut.get('id', 'N/A')}) pointing to target '{target_id}' "
+        f"for {user_google_email}. Link: {link}"
+    )
+    logger.info(f"Successfully created shortcut. Link: {link}")
+    return confirmation_message
+
+
 # Mapping of file extensions to source MIME types for Google Docs conversion
 GOOGLE_DOCS_IMPORT_FORMATS = {
     ".md": "text/markdown",

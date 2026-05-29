@@ -27,6 +27,7 @@ drive:
     - get_drive_file_download_url
     - create_drive_file
     - create_drive_folder
+    - create_drive_shortcut
     - import_to_google_doc
     - get_drive_shareable_link
   extended:
