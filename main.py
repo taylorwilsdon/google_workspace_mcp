@@ -665,6 +665,10 @@ def main():
     # Filter tools based on tier configuration (if tier-based loading is enabled)
     filter_server_tools(server)
 
+    from core.health import mark_mcp_tools_ready
+
+    mark_mcp_tools_ready()
+
     summary_parts = [f"{len(loaded)}/{len(tool_imports)} services"]
     if args.tool_tier is not None:
         tier_desc = f"tier={args.tool_tier}"

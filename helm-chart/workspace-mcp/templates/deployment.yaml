@@ -38,9 +38,17 @@ spec:
               containerPort: {{ .Values.service.targetPort }}
               protocol: TCP
           {{- if .Values.healthCheck.enabled }}
+          startupProbe:
+            httpGet:
+              path: {{ .Values.healthCheck.startupPath | default .Values.healthCheck.livenessPath | default "/healthz" }}
+              port: http
+            initialDelaySeconds: {{ .Values.healthCheck.startupInitialDelaySeconds | default 2 }}
+            periodSeconds: {{ .Values.healthCheck.startupPeriodSeconds | default 3 }}
+            timeoutSeconds: {{ .Values.healthCheck.timeoutSeconds }}
+            failureThreshold: {{ .Values.healthCheck.startupFailureThreshold | default 20 }}
           livenessProbe:
             httpGet:
-              path: {{ .Values.healthCheck.path }}
+              path: {{ .Values.healthCheck.livenessPath | default "/healthz" }}
               port: http
             initialDelaySeconds: {{ .Values.healthCheck.initialDelaySeconds }}
             periodSeconds: {{ .Values.healthCheck.periodSeconds }}
@@ -49,7 +57,7 @@ spec:
             failureThreshold: {{ .Values.healthCheck.failureThreshold }}
           readinessProbe:
             httpGet:
-              path: {{ .Values.healthCheck.path }}
+              path: {{ .Values.healthCheck.readinessPath | default "/healthz/ready" }}
               port: http
             initialDelaySeconds: {{ .Values.healthCheck.initialDelaySeconds }}
             periodSeconds: {{ .Values.healthCheck.periodSeconds }}

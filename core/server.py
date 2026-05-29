@@ -30,6 +30,7 @@ from core.config import (
     get_oauth_redirect_uri as get_oauth_redirect_uri_for_current_mode,
 )
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+from starlette.responses import PlainTextResponse
 from fastmcp import FastMCP
 from fastmcp.server.auth.providers.google import GoogleProvider
 from mcp.types import ToolAnnotations
@@ -643,6 +644,22 @@ def configure_server_for_http():
 def get_auth_provider() -> Optional[GoogleProvider]:
     """Gets the global authentication provider instance."""
     return _auth_provider
+
+
+@server.custom_route("/healthz", methods=["GET"])
+async def healthz_liveness(request: Request):
+    """Liveness: HTTP server is accepting connections."""
+    return PlainTextResponse("OK\n")
+
+
+@server.custom_route("/healthz/ready", methods=["GET"])
+async def healthz_readiness(request: Request):
+    """Readiness: MCP tool surface is loaded and configured."""
+    from core.health import mcp_tools_ready
+
+    if not mcp_tools_ready():
+        return PlainTextResponse("MCP tools not ready\n", status_code=503)
+    return PlainTextResponse("OK\n")
 
 
 @server.custom_route("/", methods=["GET"])

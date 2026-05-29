@@ -44,6 +44,11 @@ The following table lists the configurable parameters and their default values:
 | `resources.limits.cpu` | CPU limit | `500m` |
 | `resources.limits.memory` | Memory limit | `512Mi` |
 | `autoscaling.enabled` | Enable HPA | `false` |
+| `healthCheck.livenessPath` | HTTP liveness probe path | `/healthz` |
+| `healthCheck.readinessPath` | HTTP readiness probe (MCP tools loaded) | `/healthz/ready` |
+| `healthCheck.startupPath` | HTTP startup probe path | `/healthz` |
+
+Streamable HTTP mode exposes `/healthz` (process up) and `/healthz/ready` (tool registry configured). The JSON `/health` endpoint remains available for compatibility.
 
 ## Google OAuth Setup
 

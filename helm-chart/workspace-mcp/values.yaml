@@ -130,12 +130,20 @@ command:
 # Health check configuration
 healthCheck:
   enabled: true
+  # Legacy JSON status endpoint (still supported)
   path: /health
-  initialDelaySeconds: 30
-  periodSeconds: 30
-  timeoutSeconds: 10
+  # Kubernetes-style probes (streamable-http)
+  livenessPath: /healthz
+  readinessPath: /healthz/ready
+  startupPath: /healthz
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 3
   successThreshold: 1
-  failureThreshold: 3
+  failureThreshold: 6
+  startupInitialDelaySeconds: 2
+  startupPeriodSeconds: 3
+  startupFailureThreshold: 20
 
 # Pod disruption budget
 podDisruptionBudget:
