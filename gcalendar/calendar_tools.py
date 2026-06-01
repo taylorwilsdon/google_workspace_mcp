@@ -360,6 +360,16 @@ async def list_calendars(service, user_google_email: str) -> str:
     return text_output
 
 
+_VALID_EVENT_TYPES = {
+    "default",
+    "outOfOffice",
+    "focusTime",
+    "workingLocation",
+    "fromGmail",
+    "birthday",
+}
+
+
 @server.tool(
     title="Get Events",
     annotations=ToolAnnotations(
@@ -403,8 +413,16 @@ async def get_events(
     Returns:
         str: A formatted list of events (summary, start and end times, link) within the specified range, or detailed information for a single event if event_id is provided.
     """
+    if event_types:
+        invalid_types = [t for t in event_types if t not in _VALID_EVENT_TYPES]
+        if invalid_types:
+            raise ValueError(
+                f"Invalid event_types: {invalid_types}. "
+                f"Must be one of: {', '.join(sorted(_VALID_EVENT_TYPES))}"
+            )
+
     logger.info(
-        f"[get_events] Raw parameters - event_id: '{event_id}', time_min: '{time_min}', time_max: '{time_max}', query: '{query}', detailed: {detailed}, include_attachments: {include_attachments}"
+        f"[get_events] Raw parameters - event_id: '{event_id}', time_min: '{time_min}', time_max: '{time_max}', query: '{query}', event_types: {event_types}, detailed: {detailed}, include_attachments: {include_attachments}"
     )
 
     # Handle single event retrieval
@@ -441,7 +459,7 @@ async def get_events(
             )
 
         logger.info(
-            f"[get_events] Final API parameters - calendarId: '{calendar_id}', timeMin: '{effective_time_min}', timeMax: '{effective_time_max}', maxResults: {max_results}, query: '{query}'"
+            f"[get_events] Final API parameters - calendarId: '{calendar_id}', timeMin: '{effective_time_min}', timeMax: '{effective_time_max}', maxResults: {max_results}, query: '{query}', eventTypes: {event_types}"
         )
 
         # Build the request parameters dynamically
