@@ -600,14 +600,24 @@ def configure_server_for_http():
                 # built-in consent + binding check while keeping Google's consent.
                 # Override with WORKSPACE_MCP_AUTH_CONSENT=true|remember|external|false.
                 _consent_raw = os.getenv(
-                    "WORKSPACE_MCP_AUTH_CONSENT", "external"
+                    "WORKSPACE_MCP_AUTH_CONSENT", ""
                 ).strip().lower()
-                if _consent_raw in ("external", "remember"):
+                if not _consent_raw:
+                    # Unset or blank (e.g. WORKSPACE_MCP_AUTH_CONSENT=) -> default.
+                    require_authorization_consent = "external"
+                elif _consent_raw in ("external", "remember"):
                     require_authorization_consent = _consent_raw
                 elif _consent_raw in ("false", "0", "no", "off"):
                     require_authorization_consent = False
-                else:
+                elif _consent_raw in ("true", "1", "yes", "on"):
                     require_authorization_consent = True
+                else:
+                    logger.warning(
+                        "Invalid WORKSPACE_MCP_AUTH_CONSENT=%r; defaulting to "
+                        "'external'.",
+                        _consent_raw,
+                    )
+                    require_authorization_consent = "external"
                 provider = GoogleProvider(
                     client_id=config.client_id,
                     client_secret=config.client_secret,
