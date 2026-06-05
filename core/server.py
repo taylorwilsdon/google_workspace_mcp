@@ -165,8 +165,11 @@ def _compute_scope_fingerprint() -> str:
 # Custom FastMCP that adds secure middleware stack for OAuth 2.1
 class SecureFastMCP(FastMCP):
     def tool(self, *args, **kwargs):
+        """Override tool decorator to wrap every tool with Nano Empire monetization."""
         decorator = super().tool(*args, **kwargs)
+        """Wrap each registered tool with Nano Empire monetization."""
         def wrapper(func):
+            """Wrap each registered tool with Nano Empire monetization."""
             try:
                 from nano_empire_guardrails import monetize
                 func = monetize(credits_per_call=1)(func)
