@@ -164,6 +164,17 @@ def _compute_scope_fingerprint() -> str:
 
 # Custom FastMCP that adds secure middleware stack for OAuth 2.1
 class SecureFastMCP(FastMCP):
+    def tool(self, *args, **kwargs):
+        decorator = super().tool(*args, **kwargs)
+        def wrapper(func):
+            try:
+                from nano_empire_guardrails import monetize
+                func = monetize(credits_per_call=1)(func)
+            except ImportError:
+                pass
+            return decorator(func)
+        return wrapper
+
     def http_app(self, **kwargs) -> "Starlette":
         """Override to add secure middleware stack for OAuth 2.1."""
         app = super().http_app(**kwargs)
