@@ -510,35 +510,63 @@ wheels = [
 
 [[package]]
 name = "fastmcp"
-version = "3.2.4"
+version = "3.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "fastmcp-slim", extra = ["client", "server"] },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/64/24/519739e98daf92ebc64580e9d3320649bf9a1612c029a913dd88c3474d73/fastmcp-3.4.0.tar.gz", hash = "sha256:29055fb6816f4862c615aabaf0112ae8feb8b469740db13403a0ce5b799ec1dc", size = 28754939, upload-time = "2026-06-03T02:32:40.206Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e9/72/9f9bbfc3a8d26870dbdbbd633cd1c6f42b8d3bec379426c760676d936e86/fastmcp-3.4.0-py3-none-any.whl", hash = "sha256:34523083d6149400a0655a8aa769eb34f85b1ce6dac6d66efb07503ebbe5f44b", size = 8017, upload-time = "2026-06-03T02:32:38.05Z" },
+]
+
+[[package]]
+name = "fastmcp-slim"
+version = "3.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "platformdirs" },
+    { name = "pydantic", extra = ["email"] },
+    { name = "pydantic-settings" },
+    { name = "python-dotenv" },
+    { name = "rich" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e7/b0/4da6078c2d6aa0a38a8b1ae0271e1ed400f9e2cd1b3b46e6453fb1fe2b75/fastmcp_slim-3.4.0.tar.gz", hash = "sha256:faa0ccf16e85ec4b9f79c006fed3546b866d7e6dba3f60cd32cd98e84753a496", size = 575895, upload-time = "2026-06-03T02:32:18.744Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/58/66/cc283d4efd3faf325c26f51cfb43a118270ea732e70dda509f49d80ea625/fastmcp_slim-3.4.0-py3-none-any.whl", hash = "sha256:17cd0a1535972d3748d8c2416f0826dfc86c18df7a6cbc38602373277d44baa6", size = 748849, upload-time = "2026-06-03T02:32:17.435Z" },
+]
+
+[package.optional-dependencies]
+client = [
+    { name = "authlib" },
+    { name = "exceptiongroup" },
+    { name = "httpx" },
+    { name = "mcp" },
+    { name = "opentelemetry-api" },
+    { name = "py-key-value-aio", extra = ["filetree", "keyring", "memory"] },
+]
+server = [
     { name = "authlib" },
     { name = "cyclopts" },
     { name = "exceptiongroup" },
     { name = "griffelib" },
     { name = "httpx" },
+    { name = "joserfc" },
     { name = "jsonref" },
     { name = "jsonschema-path" },
     { name = "mcp" },
     { name = "openapi-pydantic" },
     { name = "opentelemetry-api" },
     { name = "packaging" },
-    { name = "platformdirs" },
     { name = "py-key-value-aio", extra = ["filetree", "keyring", "memory"] },
-    { name = "pydantic", extra = ["email"] },
     { name = "pyperclip" },
-    { name = "python-dotenv" },
+    { name = "python-multipart" },
     { name = "pyyaml" },
-    { name = "rich" },
     { name = "uncalled-for" },
     { name = "uvicorn" },
     { name = "watchfiles" },
     { name = "websockets" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/9c/13/29544fbc6dfe45ea38046af0067311e0bad7acc7d1f2ad38bb08f2409fe2/fastmcp-3.2.4.tar.gz", hash = "sha256:083ecb75b44a4169e7fc0f632f94b781bdb0ff877c6b35b9877cbb566fd4d4d1", size = 28746127, upload-time = "2026-04-14T01:42:24.174Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/cf/76/b310d52fa0e30d39bd937eb58ec2c1f1ea1b5f519f0575e9dd9612f01deb/fastmcp-3.2.4-py3-none-any.whl", hash = "sha256:e6c9c429171041455e47ab94bb3f83c4657622a0ec28922f6940053959bd58a9", size = 728599, upload-time = "2026-04-14T01:42:26.85Z" },
 ]
 
 [[package]]
@@ -2197,7 +2225,7 @@ wheels = [
 
 [[package]]
 name = "workspace-mcp"
-version = "1.21.0"
+version = "1.21.1"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },
@@ -2280,7 +2308,7 @@ requires-dist = [
     { name = "cryptography", specifier = ">=45.0.0" },
     { name = "defusedxml", specifier = ">=0.7.1" },
     { name = "fastapi", specifier = ">=0.115.12" },
-    { name = "fastmcp", specifier = ">=3.2.4" },
+    { name = "fastmcp", specifier = ">=3.4.0" },
     { name = "google-api-python-client", specifier = ">=2.168.0" },
     { name = "google-auth-httplib2", specifier = ">=0.2.0" },
     { name = "google-auth-oauthlib", specifier = ">=1.2.2" },
