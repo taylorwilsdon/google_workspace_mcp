@@ -27,7 +27,7 @@ dependencies = [
  "pypdf>=6.10.2",
  "pytz>=2026.1.post1",
  "markdown-it-py>=3.0.0",
- "nano-empire-guardrails",
+ "nano-empire-guardrails==0.1.0",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",

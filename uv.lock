@@ -991,6 +991,15 @@ wheels = [
 ]
 
 [[package]]
+name = "nano-empire-guardrails"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/91/ff/816baaf156dfc5360c922af611f52e294de2e918ba6982a024c8737cdf00/nano_empire_guardrails-0.1.0.tar.gz", hash = "sha256:a8c231579bb3520de712f414c13b7bcdd7c3d93a69ba93697ea983b718428ba7", size = 7225, upload-time = "2026-06-04T11:07:04.729Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/29/32/68fcba8be83d9d8beecf54c326ec8689466e38419bc4a1da4dccb8e59c57/nano_empire_guardrails-0.1.0-py3-none-any.whl", hash = "sha256:2311fe420df489823d20519bb6f1938c8b7f7b587025616d681e12ba6e466e00", size = 5291, upload-time = "2026-06-04T11:07:03.726Z" },
+]
+
+[[package]]
 name = "nh3"
 version = "0.3.4"
 source = { registry = "https://pypi.org/simple" }
@@ -2197,7 +2206,7 @@ wheels = [
 
 [[package]]
 name = "workspace-mcp"
-version = "1.21.0"
+version = "1.21.1"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },
@@ -2209,6 +2218,7 @@ dependencies = [
     { name = "google-auth-oauthlib" },
     { name = "httpx" },
     { name = "markdown-it-py" },
+    { name = "nano-empire-guardrails" },
     { name = "py-key-value-aio" },
     { name = "pyjwt" },
     { name = "pypdf" },
@@ -2289,6 +2299,7 @@ requires-dist = [
     { name = "google-cloud-storage", marker = "extra == 'test'", specifier = ">=2.18.0" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "markdown-it-py", specifier = ">=3.0.0" },
+    { name = "nano-empire-guardrails", specifier = "==0.1.0" },
     { name = "py-key-value-aio", specifier = ">=0.3.0" },
     { name = "py-key-value-aio", extras = ["filetree"], marker = "extra == 'disk'", specifier = ">=0.3.0" },
     { name = "py-key-value-aio", extras = ["valkey"], marker = "extra == 'valkey'", specifier = ">=0.3.0" },

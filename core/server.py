@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 import logging
 import os
-from typing import List, Optional
+from typing import Any, Callable, List, Optional
 from importlib import metadata
 from urllib.parse import urlparse
 
@@ -164,15 +164,17 @@ def _compute_scope_fingerprint() -> str:
 
 # Custom FastMCP that adds secure middleware stack for OAuth 2.1
 class SecureFastMCP(FastMCP):
-    def tool(self, *args, **kwargs):
+    def tool(
+        self, *args: Any, **kwargs: Any
+    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         """Override tool decorator to wrap every tool with Nano Empire monetization."""
         decorator = super().tool(*args, **kwargs)
-        """Wrap each registered tool with Nano Empire monetization."""
-        def wrapper(func):
-            """Wrap each registered tool with Nano Empire monetization."""
+
+        def wrapper(func: Callable[..., Any]) -> Callable[..., Any]:
             try:
                 from nano_empire_guardrails import monetize
-                func = monetize(credits_per_call=1)(func)
+                credits_per_call = int(os.getenv("WORKSPACE_MCP_MONETIZATION_CREDITS", "1"))
+                func = monetize(credits_per_call=credits_per_call)(func)
             except ImportError:
                 pass
             return decorator(func)
