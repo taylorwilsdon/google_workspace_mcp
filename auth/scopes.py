@@ -24,6 +24,10 @@ CALENDAR_EVENTS_SCOPE = "https://www.googleapis.com/auth/calendar.events"
 DRIVE_SCOPE = "https://www.googleapis.com/auth/drive"
 DRIVE_READONLY_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
 DRIVE_FILE_SCOPE = "https://www.googleapis.com/auth/drive.file"
+# drive.metadata: view and manage file METADATA (move/rename/reorganise, trash) for
+# any file the user can reach, WITHOUT access to file content. Lets the app relocate
+# files it did not create, without the broad drive (full account write) scope.
+DRIVE_METADATA_SCOPE = "https://www.googleapis.com/auth/drive.metadata"
 
 # Google Docs scopes
 DOCS_READONLY_SCOPE = "https://www.googleapis.com/auth/documents.readonly"
@@ -91,7 +95,7 @@ SCOPE_HIERARCHY = {
         GMAIL_COMPOSE_SCOPE,
         GMAIL_LABELS_SCOPE,
     },
-    DRIVE_SCOPE: {DRIVE_READONLY_SCOPE, DRIVE_FILE_SCOPE},
+    DRIVE_SCOPE: {DRIVE_READONLY_SCOPE, DRIVE_FILE_SCOPE, DRIVE_METADATA_SCOPE},
     CALENDAR_SCOPE: {CALENDAR_READONLY_SCOPE, CALENDAR_EVENTS_SCOPE},
     DOCS_WRITE_SCOPE: {DOCS_READONLY_SCOPE},
     SHEETS_WRITE_SCOPE: {SHEETS_READONLY_SCOPE},

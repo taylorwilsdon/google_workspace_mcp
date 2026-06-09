@@ -9,7 +9,7 @@ Usage:
     --permissions gmail:organize drive:readonly
 
 Gmail levels: readonly, organize, drafts, send, full
-Drive levels: readonly, file, full
+Drive levels: readonly, file, metadata, full
 Tasks levels: readonly, manage, full
 Other services: readonly, full (extensible by adding entries to SERVICE_PERMISSION_LEVELS)
 
@@ -31,6 +31,7 @@ from auth.scopes import (
     GMAIL_SETTINGS_BASIC_SCOPE,
     DRIVE_READONLY_SCOPE,
     DRIVE_FILE_SCOPE,
+    DRIVE_METADATA_SCOPE,
     DRIVE_SCOPE,
     CALENDAR_READONLY_SCOPE,
     CALENDAR_EVENTS_SCOPE,
@@ -77,6 +78,11 @@ SERVICE_PERMISSION_LEVELS: Dict[str, List[Tuple[str, List[str]]]] = {
     "drive": [
         ("readonly", [DRIVE_READONLY_SCOPE]),
         ("file", [DRIVE_FILE_SCOPE]),
+        # "metadata" adds drive.metadata on top of "file": move / rename / reorganise
+        # ANY file the user can reach (including files this app did NOT create) without
+        # the broad drive scope — so still no content edit/delete of others' files.
+        # Cumulative, so this level grants drive.readonly + drive.file + drive.metadata.
+        ("metadata", [DRIVE_METADATA_SCOPE]),
         ("full", [DRIVE_SCOPE]),
     ],
     "calendar": [
