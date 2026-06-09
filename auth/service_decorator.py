@@ -529,15 +529,23 @@ SCOPE_GROUPS = {
     "drive_read": DRIVE_READONLY_SCOPE,
     "drive_file": DRIVE_FILE_SCOPE,
     # Docs scopes
+    # docs_write maps to drive.file (not the broad `documents` scope) so the Docs
+    # *edit* tools are exposed under a drive.file grant and can edit ONLY docs the
+    # app created (the Docs API accepts drive.file for app-created files). Editing
+    # docs created by OTHERS still works when the broad `documents` scope is granted
+    # via the docs:full level — it is then on the token at runtime; this constant
+    # only governs tool exposure/availability.
     "docs_read": DOCS_READONLY_SCOPE,
-    "docs_write": DOCS_WRITE_SCOPE,
+    "docs_write": DRIVE_FILE_SCOPE,
     # Calendar scopes
     "calendar": CALENDAR_SCOPE,
     "calendar_read": CALENDAR_READONLY_SCOPE,
     "calendar_events": CALENDAR_EVENTS_SCOPE,
     # Sheets scopes
+    # sheets_write maps to drive.file (same rationale as docs_write above): edit only
+    # sheets the app created; broad editing still works under the sheets:full level.
     "sheets_read": SHEETS_READONLY_SCOPE,
-    "sheets_write": SHEETS_WRITE_SCOPE,
+    "sheets_write": DRIVE_FILE_SCOPE,
     # Chat scopes
     "chat_read": CHAT_READONLY_SCOPE,
     "chat_write": CHAT_WRITE_SCOPE,
