@@ -85,10 +85,16 @@ SERVICE_PERMISSION_LEVELS: Dict[str, List[Tuple[str, List[str]]]] = {
     ],
     "docs": [
         ("readonly", [DOCS_READONLY_SCOPE, DRIVE_READONLY_SCOPE]),
+        # "file" loads the Docs tools and grants only drive.file, so the edit tools
+        # work on docs the app created (pairs with docs_write -> drive.file in
+        # service_decorator.py). Broad editing remains under "full".
+        ("file", [DRIVE_FILE_SCOPE]),
         ("full", [DOCS_WRITE_SCOPE, DRIVE_READONLY_SCOPE, DRIVE_FILE_SCOPE]),
     ],
     "sheets": [
         ("readonly", [SHEETS_READONLY_SCOPE, DRIVE_READONLY_SCOPE]),
+        # "file" loads the Sheets tools with only drive.file (edit app-created sheets).
+        ("file", [DRIVE_FILE_SCOPE]),
         ("full", [SHEETS_WRITE_SCOPE, DRIVE_READONLY_SCOPE]),
     ],
     "chat": [
