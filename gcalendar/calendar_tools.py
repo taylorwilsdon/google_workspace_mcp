@@ -1062,6 +1062,10 @@ async def _modify_event_impl(
                 "attendees": event_body.get("attendees"),
                 "colorId": event_body.get("colorId"),
                 "recurrence": recurrence,
+                # start/end are required by events.update(); carry them over when
+                # not explicitly changed (e.g. updating only attachments/attendees)
+                "start": event_body.get("start"),
+                "end": event_body.get("end"),
             },
         )
 
