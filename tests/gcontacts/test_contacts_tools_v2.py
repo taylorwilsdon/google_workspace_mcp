@@ -11,19 +11,17 @@ Covers:
 - Internal PBX type
 """
 
-import json
 import os
-from difflib import unified_diff
 from pathlib import Path
 import sys
 import warnings
-
-import pytest
 
 from core.server import server
 from core.tool_registry import get_tool_components
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+
+from tests.golden_utils import assert_matches_golden
 
 from gcontacts.contacts_tools import (
     EmailInput,
@@ -744,7 +742,6 @@ class TestBuildPersonBodyBatch:
 class TestContactsToolSchemaGolden:
     def test_contacts_tool_schema_matches_golden(self):
         generated = _schema_subset()
-        golden = json.loads(SCHEMA_GOLDEN_PATH.read_text())
 
         manage_contact_props = generated["manage_contact"]["properties"]
         manage_contact_defs = generated["manage_contact"]["$defs"]
@@ -776,16 +773,4 @@ class TestContactsToolSchemaGolden:
             "$ref": "#/$defs/PhoneInput"
         }
 
-        if generated != golden:
-            expected = json.dumps(golden, indent=2, sort_keys=True).splitlines()
-            actual = json.dumps(generated, indent=2, sort_keys=True).splitlines()
-            diff = "\n".join(
-                unified_diff(
-                    expected,
-                    actual,
-                    fromfile=str(SCHEMA_GOLDEN_PATH),
-                    tofile="generated",
-                    lineterm="",
-                )
-            )
-            pytest.fail(f"Contacts tool schema drifted from golden:\n{diff}")
+        assert_matches_golden(generated, SCHEMA_GOLDEN_PATH, "Contacts")
