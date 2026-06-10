@@ -40,10 +40,10 @@ def assert_matches_golden(generated: Any, golden_path: Path, label: str) -> None
     message (e.g. "Contacts").
     """
     if UPDATE_GOLDEN:
-        golden_path.write_text(_serialize(generated))
+        golden_path.write_text(_serialize(generated), encoding="utf-8")
         return
 
-    golden = json.loads(golden_path.read_text())
+    golden = json.loads(golden_path.read_text(encoding="utf-8"))
     if generated != golden:
         expected = json.dumps(golden, indent=2, sort_keys=True).splitlines()
         actual = json.dumps(generated, indent=2, sort_keys=True).splitlines()
