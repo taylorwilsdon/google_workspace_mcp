@@ -601,6 +601,34 @@ def configure_server_for_http():
                         "OAuth 2.1: restricting DCR client redirect URIs to allowlist: %s",
                         allowed_client_redirect_uris,
                     )
+                # Consent mode for the OAuth proxy. Defaults to "external" because
+                # Google's own consent screen already gates authorization. The
+                # built-in consent screen sets a __Host-* SameSite=Lax binding
+                # cookie that must round-trip through the Google redirect; behind a
+                # reverse proxy or inside an embedded OAuth webview (e.g. Perplexity)
+                # that cookie is not returned, producing a 403 "Authorization
+                # session mismatch" on the IdP callback. "external" skips the
+                # built-in consent + binding check while keeping Google's consent.
+                # Override with WORKSPACE_MCP_AUTH_CONSENT=true|remember|external|false.
+                _consent_raw = os.getenv(
+                    "WORKSPACE_MCP_AUTH_CONSENT", ""
+                ).strip().lower()
+                if not _consent_raw:
+                    # Unset or blank (e.g. WORKSPACE_MCP_AUTH_CONSENT=) -> default.
+                    require_authorization_consent = "external"
+                elif _consent_raw in ("external", "remember"):
+                    require_authorization_consent = _consent_raw
+                elif _consent_raw in ("false", "0", "no", "off"):
+                    require_authorization_consent = False
+                elif _consent_raw in ("true", "1", "yes", "on"):
+                    require_authorization_consent = True
+                else:
+                    logger.warning(
+                        "Invalid WORKSPACE_MCP_AUTH_CONSENT=%r; defaulting to "
+                        "'external'.",
+                        _consent_raw,
+                    )
+                    require_authorization_consent = "external"
                 provider = GoogleProvider(
                     client_id=config.client_id,
                     client_secret=config.client_secret,
@@ -611,6 +639,7 @@ def configure_server_for_http():
                     client_storage=client_storage,
                     jwt_signing_key=jwt_signing_key,
                     allowed_client_redirect_uris=allowed_client_redirect_uris,
+                    require_authorization_consent=require_authorization_consent,
                 )
                 if provider.client_registration_options is not None:
                     # Keep protocol-level auth limited to base identity scopes, but
