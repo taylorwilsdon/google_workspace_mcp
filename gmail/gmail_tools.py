@@ -8,6 +8,7 @@ import logging
 import asyncio
 import base64
 import binascii
+import json
 import re
 import ssl
 import mimetypes
@@ -652,6 +653,44 @@ def _extract_attachments(payload: dict) -> List[Dict[str, Any]]:
     # Start searching from the root payload
     search_parts(payload)
     return attachments
+
+
+def _extract_cid_map(payload: dict) -> Dict[str, Dict[str, Any]]:
+    """
+    Map each inline part's Content-ID to its attachment metadata.
+
+    Inline images (signature logos, pasted screenshots) are referenced from the
+    HTML body via ``src="cid:<content-id>"``. The Gmail ``format=full`` payload
+    exposes both the part's ``Content-ID`` header and its ``body.attachmentId``,
+    which lets a caller resolve exactly which attachment belongs to which cid
+    reference — without guessing by order or size.
+
+    Returns:
+        Dict mapping the bare Content-ID (angle brackets stripped) to a dict
+        with ``attachmentId``, ``filename`` and ``mimeType``.
+    """
+    cid_map: Dict[str, Dict[str, Any]] = {}
+
+    def search_parts(part):
+        cid = None
+        for header in part.get("headers", []):
+            if header.get("name", "").lower() == "content-id":
+                cid = (header.get("value") or "").strip().strip("<>").strip()
+                break
+        attachment_id = part.get("body", {}).get("attachmentId")
+        if cid and attachment_id and cid not in cid_map:
+            cid_map[cid] = {
+                "attachmentId": attachment_id,
+                "filename": part.get("filename", ""),
+                "mimeType": part.get("mimeType", "application/octet-stream"),
+            }
+
+        if "parts" in part:
+            for subpart in part["parts"]:
+                search_parts(subpart)
+
+    search_parts(payload)
+    return cid_map
 
 
 def _extract_headers(payload: dict, header_names: List[str]) -> Dict[str, str]:
@@ -1909,6 +1948,59 @@ async def get_gmail_attachment_content(
         if return_base64 and base64_data:
             result_lines.extend(_format_base64_content_block(base64_data))
         return "\n".join(result_lines)
+
+
+@server.tool(
+    title="Get Gmail Message Attachment Map",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors(
+    "get_gmail_message_attachment_map", is_read_only=True, service_type="gmail"
+)
+@require_google_service("gmail", "gmail_read")
+async def get_gmail_message_attachment_map(
+    service,
+    message_id: str,
+    user_google_email: str,
+) -> str:
+    """
+    Returns the exact Content-ID → attachment mapping for a Gmail message.
+
+    Inline images in an HTML email (signature logos, pasted screenshots) are
+    referenced from the HTML body via ``src="cid:<content-id>"``. This tool
+    reads the structured ``format=full`` payload and returns which attachment ID
+    each Content-ID maps to, so a client can resolve inline images precisely
+    (e.g. render them as data: URIs) instead of guessing by part order or size.
+
+    Args:
+        message_id (str): The unique ID of the Gmail message.
+        user_google_email (str): The user's Google email address. Required.
+
+    Returns:
+        str: JSON of the form
+        ``{"message_id": "...", "cid_map": {"<cid>": {"attachmentId": "...",
+        "filename": "...", "mimeType": "..."}}}``.
+    """
+    logger.info(
+        f"[get_gmail_message_attachment_map] Invoked. Message ID: '{message_id}', "
+        f"Email: '{user_google_email}'"
+    )
+
+    message_full = await asyncio.to_thread(
+        service.users()
+        .messages()
+        .get(userId="me", id=message_id, format="full")
+        .execute
+    )
+    payload = message_full.get("payload", {})
+    cid_map = _extract_cid_map(payload)
+
+    return json.dumps({"message_id": message_id, "cid_map": cid_map})
 
 
 @server.tool(
