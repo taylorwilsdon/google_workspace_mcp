@@ -34,6 +34,7 @@ drive:
   extended:
     - list_drive_items
     - copy_drive_file
+    - copy_doc_as_snapshot
     - update_drive_file
     - manage_drive_access
     - set_drive_file_permissions
@@ -68,6 +69,9 @@ docs:
     - get_doc_as_markdown
     - list_document_comments
     - manage_document_comment
+    - replace_doc_section_by_heading
+    - append_doc_after_heading
+    - replace_doc_fully_from_markdown
   complete:
     - insert_doc_image
     - update_doc_headers_footers
