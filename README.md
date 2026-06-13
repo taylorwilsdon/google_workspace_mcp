@@ -778,6 +778,7 @@ cp .env.oauth21 .env
 | <sub>`get_drive_shareable_link`</sub> | <sub>Core</sub> | <sub>Get shareable links for a file</sub> |
 | <sub>`list_drive_items`</sub> | <sub>Extended</sub> | <sub>List folder contents or shared drives</sub> |
 | <sub>`copy_drive_file`</sub> | <sub>Extended</sub> | <sub>Copy existing files (templates) with optional renaming</sub> |
+| <sub>`copy_doc_as_snapshot`</sub> | <sub>Extended</sub> | <sub>Create a sibling-file snapshot of a Google Doc before destructive edits; idempotent via files.list dedup. See [Section-Edit Preservation Matrix](#section-edit-preservation-matrix).</sub> |
 | <sub>`update_drive_file`</sub> | <sub>Extended</sub> | <sub>Update metadata, move files, or replace Google Apps content</sub> |
 | <sub>`manage_drive_access`</sub> | <sub>Extended</sub> | <sub>Grant, update, revoke permissions, and transfer ownership</sub> |
 | <sub>`set_drive_file_permissions`</sub> | <sub>Extended</sub> | <sub>Set link sharing and file-level sharing settings</sub> |
@@ -858,6 +859,9 @@ Saved files expire after 1 hour and are cleaned up automatically.
 | <sub>`insert_doc_elements`</sub> | <sub>Extended</sub> | <sub>Add tables, lists, page breaks</sub> |
 | <sub>`update_paragraph_style`</sub> | <sub>Extended</sub> | <sub>Apply advanced paragraph styling including headings, spacing, direction, pagination controls, shading, and bulleted/numbered/checkbox lists with nesting</sub> |
 | <sub>`get_doc_as_markdown`</sub> | <sub>Extended</sub> | <sub>Export document as formatted Markdown with optional comments</sub> |
+| <sub>`replace_doc_section_by_heading`</sub> | <sub>Extended</sub> | <sub>Replace a heading-delimited section's contents with new markdown, in a single batchUpdate guarded by `WriteControl.requiredRevisionId`. Pre-checks for footnote refs in the target range. See [Section-Edit Preservation Matrix](#section-edit-preservation-matrix).</sub> |
+| <sub>`append_doc_after_heading`</sub> | <sub>Extended</sub> | <sub>Insert markdown at the end of a heading-delimited section. Pure insertion — nothing is deleted or orphaned.</sub> |
+| <sub>`replace_doc_fully_from_markdown`</sub> | <sub>Extended</sub> | <sub>Replace the entire body of a Doc with new markdown while preserving the file ID (distinct from `import_to_google_doc` which creates a new file).</sub> |
 | <sub>`insert_doc_image`</sub> | <sub>Complete</sub> | <sub>Insert images from Drive/URLs</sub> |
 | <sub>`update_doc_headers_footers`</sub> | <sub>Complete</sub> | <sub>Create or update headers and footers with correct segment-aware writes</sub> |
 | <sub>`batch_update_doc`</sub> | <sub>Complete</sub> | <sub>Execute atomic multi-step Docs API operations including named ranges, section breaks, document/section layout, header/footer creation, segment-aware inserts, images, tables, and rich formatting</sub> |
@@ -1635,3 +1639,27 @@ Validations:
 <div align="center">
 <img width="842" alt="Batch Emails" src="https://github.com/user-attachments/assets/0876c789-7bcc-4414-a144-6c3f0aaffc06" />
 </div>
+
+---
+
+## Section-Edit Preservation Matrix
+
+The three Docs section-edit tools (`replace_doc_section_by_heading`, `append_doc_after_heading`, `replace_doc_fully_from_markdown`) operate via atomic `documents.batchUpdate` calls guarded by `WriteControl.requiredRevisionId`. `copy_doc_as_snapshot` is the recommended safety net before destructive edits — it creates a sibling-file snapshot via Drive `files.copy`, idempotent across retries.
+
+**Legend:** ✅ kept • ⚠ docstring warning applies • ❌ destroyed • n/a = not applicable
+**Confidence:** V = Verified against Google docs • I = Inferred (verify via local integration test)
+
+| Tool | Comments outside section | Comments anchored inside | Comments straddling boundary | Suggestions outside | Suggestions inside | Body named ranges outside | Header/footer/footnote named ranges | Footnote refs in deleted body | Document ID |
+|---|---|---|---|---|---|---|---|---|---|
+| `replace_doc_section_by_heading` | ✅ I | ⚠ V (UI orphan; `deleted=false` in `comments.list` — verified by absence of orphan filter) | ⚠ I | ✅ I | ⚠ I (silent drop; suggester-notification behavior unverified) | ⚠ I (shrink-or-split) | ✅ V (`Range.segmentId` is single-segment by schema) | ⚠ Pre-check raises `UserInputError` before any delete | ✅ V |
+| `append_doc_after_heading` | ✅ V | n/a | n/a | ✅ V | n/a | ✅ V | ✅ V | n/a | ✅ V |
+| `replace_doc_fully_from_markdown` | n/a (body wiped) | ⚠ V | n/a | n/a (body wiped) | ⚠ I | ❌ V (body wiped) | ✅ V | ⚠ Pre-check raises | ✅ V |
+| `copy_doc_as_snapshot` | ✅ V (source unchanged; snapshot has no copied threads — `files.copy` exposes no `copyComments` parameter) | ✅ V (source unchanged) | n/a | ✅ V | n/a | ✅ V | ✅ V | n/a | ✅ V (snapshot has a new ID; source ID unchanged) |
+
+### Notes
+
+- **Concurrent-edit safety:** all three section tools attach `WriteControl.requiredRevisionId` from the `documents.get` call that computed indices. A concurrent edit landing between read and write causes a 400; nothing is applied. The tools do NOT auto-retry — concurrent edits often mean indices shifted semantically, not just numerically.
+- **Multi-tab docs:** `tab_id` is required when the doc has more than one tab. Otherwise `UserInputError` lists the available tab IDs.
+- **Footnote references** inside any candidate delete range raise `UserInputError` before any API write. The Docs API does not document cross-`footnoteReference` delete semantics; failing fast is safer than discovering at runtime. Use `batch_update_doc` for surgical edits in footnoted sections, or `copy_doc_as_snapshot` + redesign.
+- **Body-only matching:** headings inside table cells, footnotes, headers, or footers are NOT addressable by these tools. Use `batch_update_doc` for those.
+- **`copy_doc_as_snapshot` vs Drive UI's "Make a copy":** the API path does not copy comments or suggestions; the UI's checkboxes are not exposed via `files.copy`. If thread fidelity matters, the human should make the snapshot via the Drive UI instead.
