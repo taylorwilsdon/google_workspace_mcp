@@ -616,6 +616,7 @@ async def _create_event_impl(
     timezone: Optional[str] = None,
     attachments: Optional[List[str]] = None,
     add_google_meet: bool = False,
+    conference_data: Optional[Dict[str, Any]] = None,
     reminders: Optional[Union[str, List[Dict[str, Any]]]] = None,
     use_default_reminders: bool = True,
     transparency: Optional[str] = None,
@@ -711,7 +712,14 @@ async def _create_event_impl(
             f"[create_event] Set guestsCanSeeOtherGuests to {guests_can_see_other_guests}"
         )
 
-    if add_google_meet:
+    effective_add_google_meet = add_google_meet and conference_data is None
+
+    if conference_data is not None:
+        event_body["conferenceData"] = conference_data
+        logger.info(
+            "[create_event] Using caller-supplied conferenceData (skipping Meet auto-create)"
+        )
+    elif effective_add_google_meet:
         request_id = str(uuid.uuid4())
         event_body["conferenceData"] = {
             "createRequest": {
@@ -722,6 +730,8 @@ async def _create_event_impl(
         logger.info(
             f"[create_event] Adding Google Meet conference with request ID: {request_id}"
         )
+
+    _uses_conference = conference_data is not None or effective_add_google_meet
 
     if attachments:
         # Accept both file URLs and file IDs. If a URL, extract the fileId.
@@ -800,7 +810,7 @@ async def _create_event_impl(
                     calendarId=calendar_id,
                     body=event_body,
                     supportsAttachments=True,
-                    conferenceDataVersion=1 if add_google_meet else 0,
+                    conferenceDataVersion=1 if _uses_conference else 0,
                     sendUpdates=send_updates,
                 )
                 .execute()
@@ -813,7 +823,7 @@ async def _create_event_impl(
                 .insert(
                     calendarId=calendar_id,
                     body=event_body,
-                    conferenceDataVersion=1 if add_google_meet else 0,
+                    conferenceDataVersion=1 if _uses_conference else 0,
                     sendUpdates=send_updates,
                 )
                 .execute()
@@ -823,7 +833,7 @@ async def _create_event_impl(
     confirmation_message = f"Successfully created event '{created_event.get('summary', summary)}' for {user_google_email}. Link: {link}"
 
     # Add Google Meet information if conference was created
-    if add_google_meet and "conferenceData" in created_event:
+    if effective_add_google_meet and "conferenceData" in created_event:
         conference_data = created_event["conferenceData"]
         if "entryPoints" in conference_data:
             for entry_point in conference_data["entryPoints"]:
@@ -881,6 +891,7 @@ async def _modify_event_impl(
     attendees: Optional[Union[List[str], List[Dict[str, Any]]]] = None,
     timezone: Optional[str] = None,
     add_google_meet: Optional[bool] = None,
+    conference_data: Optional[Dict[str, Any]] = None,
     reminders: Optional[Union[str, List[Dict[str, Any]]]] = None,
     use_default_reminders: Optional[bool] = None,
     transparency: Optional[str] = None,
@@ -1002,9 +1013,13 @@ async def _modify_event_impl(
             f"[modify_event] Set guestsCanSeeOtherGuests to {guests_can_see_other_guests}"
         )
 
+    effective_add_google_meet = (
+        None if conference_data is not None else add_google_meet
+    )
+
     # Handle Google Meet conference data
-    if add_google_meet is not None:
-        if add_google_meet:
+    if effective_add_google_meet is not None:
+        if effective_add_google_meet:
             request_id = str(uuid.uuid4())
             event_body["conferenceData"] = {
                 "createRequest": {
@@ -1029,7 +1044,11 @@ async def _modify_event_impl(
             "[modify_event] Timezone provided but start_time and end_time are missing. Timezone will not be applied unless start/end times are also provided."
         )
 
-    if not event_body:
+    _uses_conference = (
+        conference_data is not None or effective_add_google_meet is not None
+    )
+
+    if not event_body and not _uses_conference:
         message = "No fields provided to modify the event."
         logger.warning(f"[modify_event] {message}")
         raise Exception(message)
@@ -1058,6 +1077,10 @@ async def _modify_event_impl(
                 "summary": summary,
                 "description": description,
                 "location": location,
+                # Preserve existing start/end (incl. timeZone) when the caller did not
+                # supply start_time/end_time; protects description-only updates.
+                "start": event_body.get("start"),
+                "end": event_body.get("end"),
                 # Use the already-normalized attendee objects (if provided); otherwise preserve existing
                 "attendees": event_body.get("attendees"),
                 "colorId": event_body.get("colorId"),
@@ -1065,7 +1088,13 @@ async def _modify_event_impl(
             },
         )
 
-        if add_google_meet is None and "conferenceData" in existing_event:
+        # Caller-supplied conference data takes precedence over Meet auto-create.
+        if conference_data is not None:
+            event_body["conferenceData"] = conference_data
+            logger.info(
+                "[modify_event] Using caller-supplied conferenceData (skipping Meet auto-create)"
+            )
+        elif effective_add_google_meet is None and "conferenceData" in existing_event:
             logger.info(
                 "[modify_event] Existing conference data preserved via patch (not copied)"
             )
@@ -1089,7 +1118,7 @@ async def _modify_event_impl(
                 calendarId=calendar_id,
                 eventId=event_id,
                 body=event_body,
-                conferenceDataVersion=1,
+                conferenceDataVersion=1 if _uses_conference else 0,
                 sendUpdates=send_updates,
             )
             .execute()
@@ -1100,7 +1129,7 @@ async def _modify_event_impl(
     confirmation_message = f"Successfully modified event '{updated_event.get('summary', summary)}' (ID: {event_id}) for {user_google_email}. Link: {link}"
 
     # Add Google Meet information if conference was added
-    if add_google_meet is True and "conferenceData" in updated_event:
+    if effective_add_google_meet is True and "conferenceData" in updated_event:
         conference_data = updated_event["conferenceData"]
         if "entryPoints" in conference_data:
             for entry_point in conference_data["entryPoints"]:
@@ -1109,7 +1138,7 @@ async def _modify_event_impl(
                     if meet_link:
                         confirmation_message += f" Google Meet: {meet_link}"
                         break
-    elif add_google_meet is False:
+    elif effective_add_google_meet is False:
         confirmation_message += " (Google Meet removed)"
 
     logger.info(
@@ -1264,6 +1293,7 @@ async def manage_event(
     timezone: Optional[str] = None,
     attachments: Optional[StringList] = None,
     add_google_meet: Optional[bool] = None,
+    conference_data: Optional[Dict[str, Any]] = None,
     reminders: Optional[Union[str, List[Dict[str, Any]]]] = None,
     use_default_reminders: Optional[bool] = None,
     transparency: Optional[str] = None,
@@ -1294,6 +1324,7 @@ async def manage_event(
         timezone (Optional[str]): Timezone (e.g., "America/New_York").
         attachments (Optional[List[str]]): List of Google Drive file URLs or IDs to attach.
         add_google_meet (Optional[bool]): Whether to add/remove Google Meet.
+        conference_data (Optional[Dict[str, Any]]): Raw `conferenceData` payload (e.g. third-party `entryPoints` whose `uri` points to a Microsoft Teams meeting). When provided, it is set verbatim on the event and `add_google_meet` is ignored. `conferenceDataVersion=1` is sent automatically. Applies to both create and update actions.
         reminders (Optional[Union[str, List[Dict[str, Any]]]]): Custom reminder objects.
         use_default_reminders (Optional[bool]): Whether to use default reminders.
         transparency (Optional[str]): "opaque" (busy) or "transparent" (free).
@@ -1337,6 +1368,7 @@ async def manage_event(
             timezone=timezone,
             attachments=attachments,
             add_google_meet=add_google_meet or False,
+            conference_data=conference_data,
             reminders=reminders,
             use_default_reminders=use_default_reminders
             if use_default_reminders is not None
@@ -1365,6 +1397,7 @@ async def manage_event(
             attendees=attendees,
             timezone=timezone,
             add_google_meet=add_google_meet,
+            conference_data=conference_data,
             reminders=reminders,
             use_default_reminders=use_default_reminders,
             transparency=transparency,
