@@ -4,9 +4,12 @@ import asyncio
 import hashlib
 import logging
 import os
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 from importlib import metadata
 from urllib.parse import urlparse, ParseResult
+
+if TYPE_CHECKING:
+    from mcp.types import Icon
 
 from core.warning_filters import install_startup_warning_filters
 
@@ -29,7 +32,7 @@ from core.config import (
     set_transport_mode as _set_transport_mode,
     get_oauth_redirect_uri as get_oauth_redirect_uri_for_current_mode,
 )
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, Response
 from fastmcp import FastMCP
 from fastmcp.server.auth.providers.google import GoogleProvider
 from mcp.types import ToolAnnotations
@@ -277,10 +280,67 @@ if USER_GOOGLE_EMAIL:
 When using Google Workspace tools, always use `{USER_GOOGLE_EMAIL}` as the `user_google_email` parameter. Do not ask the user for their email address."""
     logger.info(f"Server instructions configured for user: {USER_GOOGLE_EMAIL}")
 
+
+def _build_server_icons() -> Optional[List["Icon"]]:
+    """Build the optional MCP server icon list from environment variables.
+
+    Returns None when no icon is configured, so we fall back to FastMCP's
+    default (no icon advertised). Reads:
+
+        WORKSPACE_MCP_SERVER_ICON_URL   - https:// or data: URI of the icon
+        WORKSPACE_MCP_SERVER_ICON_MIME  - optional, e.g. "image/png"
+        WORKSPACE_MCP_SERVER_ICON_SIZES - optional, e.g. "48x48,96x96,256x256"
+
+    Only ``https://`` and ``data:`` schemes are accepted; any other value is
+    rejected so we don't advertise arbitrary or unsafe URIs to MCP clients.
+    """
+    src = os.getenv("WORKSPACE_MCP_SERVER_ICON_URL", "").strip()
+    if not src:
+        return None
+    if not (src.startswith("https://") or src.startswith("data:")):
+        logger.warning(
+            "Ignoring WORKSPACE_MCP_SERVER_ICON_URL: only https:// and data: "
+            "URIs are accepted."
+        )
+        return None
+    try:
+        # Imported lazily so the dependency surface is unchanged when no
+        # icon is configured.
+        from mcp.types import Icon
+    except ImportError:  # pragma: no cover - mcp is a hard dep, but be safe
+        logger.warning(
+            "Could not import mcp.types.Icon; ignoring WORKSPACE_MCP_SERVER_ICON_URL"
+        )
+        return None
+
+    mime = os.getenv("WORKSPACE_MCP_SERVER_ICON_MIME", "").strip() or None
+    sizes_raw = os.getenv("WORKSPACE_MCP_SERVER_ICON_SIZES", "").strip()
+    sizes = [s.strip() for s in sizes_raw.split(",") if s.strip()] if sizes_raw else None
+
+    icon = Icon(src=src, mimeType=mime, sizes=sizes)
+    # Don't log the full src: data: URIs can embed the icon payload and bloat
+    # logs (and accidentally leak in shared dashboards).
+    scheme = "data" if src.startswith("data:") else "https"
+    logger.info("Server icon configured (scheme=%s)", scheme)
+    return [icon]
+
+
+_server_icons = _build_server_icons()
+_server_website_url = os.getenv("WORKSPACE_MCP_SERVER_WEBSITE_URL", "").strip() or None
+if _server_website_url and not _server_website_url.startswith("https://"):
+    logger.warning(
+        "Ignoring WORKSPACE_MCP_SERVER_WEBSITE_URL: only https:// URLs are accepted."
+    )
+    _server_website_url = None
+if _server_website_url:
+    logger.info("Server website_url configured (https)")
+
 server = SecureFastMCP(
     name="google_workspace",
     auth=None,
     instructions=_server_instructions,
+    icons=_server_icons,
+    website_url=_server_website_url,
 )
 
 # Add the AuthInfo middleware to inject authentication into FastMCP context
@@ -726,6 +786,54 @@ async def serve_attachment(request: Request):
         filename=metadata["filename"],
         media_type=metadata["mime_type"],
     )
+
+
+def _resolve_favicon_dir() -> str:
+    """Return the directory to search for favicon assets.
+
+    Resolution order:
+    1. WORKSPACE_MCP_FAVICON_DIR (explicit override).
+    2. The configured credentials directory — the existing persistent-storage
+       mount in the default Docker setup. This lets operators drop a favicon
+       into the already-mounted volume (e.g. ``docker cp favicon.ico
+       gws_mcp:/app/store_creds/``) without editing docker-compose / Dockerfile.
+    3. The default credentials path under the user's home dir.
+    """
+    explicit = os.getenv("WORKSPACE_MCP_FAVICON_DIR", "").strip()
+    if explicit:
+        return os.path.expanduser(explicit)
+    for env_name in ("WORKSPACE_MCP_CREDENTIALS_DIR", "GOOGLE_MCP_CREDENTIALS_DIR"):
+        creds_dir = os.getenv(env_name, "").strip()
+        if creds_dir:
+            return os.path.expanduser(creds_dir)
+    return os.path.join(os.path.expanduser("~"), ".google_workspace_mcp", "credentials")
+
+
+async def _serve_favicon_file(filename: str, media_type: str) -> Response:
+    """Serve a favicon asset from the resolved favicon directory, or 404."""
+    candidate = os.path.join(_resolve_favicon_dir(), filename)
+    if not os.path.isfile(candidate):
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    return FileResponse(
+        path=candidate,
+        media_type=media_type,
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
+@server.custom_route("/favicon.ico", methods=["GET"])
+async def favicon_ico(request: Request) -> Response:
+    return await _serve_favicon_file("favicon.ico", "image/vnd.microsoft.icon")
+
+
+@server.custom_route("/favicon.png", methods=["GET"])
+async def favicon_png(request: Request) -> Response:
+    return await _serve_favicon_file("favicon.png", "image/png")
+
+
+@server.custom_route("/apple-touch-icon.png", methods=["GET"])
+async def apple_touch_icon(request: Request) -> Response:
+    return await _serve_favicon_file("apple-touch-icon.png", "image/png")
 
 
 async def legacy_oauth2_callback(request: Request) -> HTMLResponse:
