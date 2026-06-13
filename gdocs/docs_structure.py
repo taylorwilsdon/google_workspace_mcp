@@ -6,7 +6,9 @@ of Google Docs documents, including finding tables, cells, and other elements.
 """
 
 import logging
-from typing import Any, Optional
+from typing import Any, Literal, Optional
+
+from core.utils import UserInputError
 
 logger = logging.getLogger(__name__)
 
@@ -378,3 +380,228 @@ def analyze_document_complexity(doc_data: dict[str, Any]) -> dict[str, Any]:
         )
 
     return stats
+
+
+# Section-addressable editing helpers (see gdocs/docs_tools.py section-edit tools).
+# Walks doc structure to map heading paragraphs to (start, end) index ranges that
+# can be fed to DeleteContentRangeRequest, with a pre-check for footnote
+# references that would make a delete request behave undefinedly.
+
+
+def _body_content_for_tab(
+    doc: dict[str, Any], tab_id: Optional[str]
+) -> list[dict[str, Any]]:
+    """Return the body.content list for the requested scope.
+
+    Single-tab access path:
+      - if tab_id is None and doc has no `tabs` (or only one tab), returns
+        body.content.
+    Multi-tab access path:
+      - if doc has >1 tab and tab_id is None, raises UserInputError listing
+        available tab IDs.
+      - if tab_id is given, walks doc.tabs[*] for a matching
+        tabProperties.tabId and returns its documentTab.body.content;
+        UserInputError if not found.
+
+    `includeTabsContent=True` on documents.get is required for the tab path
+    to be populated; without it, tabs[*].documentTab is omitted.
+    """
+    tabs = doc.get("tabs") or []
+    if len(tabs) > 1:
+        if tab_id is None:
+            available = [t.get("tabProperties", {}).get("tabId", "?") for t in tabs]
+            raise UserInputError(
+                f"Document has {len(tabs)} tabs; tab_id is required. "
+                f"Available tab IDs: {available}"
+            )
+        for tab in tabs:
+            if tab.get("tabProperties", {}).get("tabId") == tab_id:
+                return tab.get("documentTab", {}).get("body", {}).get("content", [])
+        raise UserInputError(f"tab_id {tab_id!r} not found in document.")
+    # Single-tab: prefer the top-level body for backward compat; some tab-aware
+    # docs put content under tabs[0] only.
+    body_content = doc.get("body", {}).get("content")
+    if body_content:
+        return body_content
+    if tabs:
+        return tabs[0].get("documentTab", {}).get("body", {}).get("content", [])
+    return []
+
+
+def body_protected_end_index(doc: dict[str, Any], tab_id: Optional[str] = None) -> int:
+    """Largest index passable to DeleteContentRangeRequest.endIndex without
+    triggering "Deleting the last newline character of a Body".
+
+    The Docs API does NOT guarantee body.content's last element is a paragraph
+    (it could be sectionBreak, table, or tableOfContents). Walks backward
+    through body.content to find the last paragraph and returns its
+    endIndex - 1. If no paragraph exists at all (theoretically possible per
+    spec), falls back to last element's endIndex - 1 with a debug log
+    (behavior is Inferred-not-Verified for the no-paragraph case).
+
+    Returns 1 for an empty body (signals the section-edit tools to skip the
+    delete request entirely).
+    """
+    content = _body_content_for_tab(doc, tab_id)
+    if not content:
+        return 1
+    for element in reversed(content):
+        if "paragraph" in element:
+            return int(element.get("endIndex", 1)) - 1
+    logger.debug(
+        "body_protected_end_index: no paragraph found in body.content; "
+        "falling back to last element's endIndex - 1"
+    )
+    return int(content[-1].get("endIndex", 1)) - 1
+
+
+def count_footnote_refs_in_range(
+    doc: dict[str, Any],
+    tab_id: Optional[str],
+    start: int,
+    end: int,
+) -> int:
+    """Count footnoteReference structural elements whose startIndex is in
+    [start, end). Used by the section-edit tools to pre-check before issuing
+    a DeleteContentRangeRequest, since the Docs API does not document
+    cross-footnoteRef delete behavior.
+    """
+    count = 0
+    for element in _body_content_for_tab(doc, tab_id):
+        paragraph = element.get("paragraph")
+        if not paragraph:
+            continue
+        for run in paragraph.get("elements", []):
+            if "footnoteReference" not in run:
+                continue
+            run_start = run.get("startIndex")
+            if run_start is None:
+                continue
+            if start <= int(run_start) < end:
+                count += 1
+    return count
+
+
+def _paragraph_heading_level(paragraph: dict[str, Any]) -> Optional[int]:
+    """Return the 1-6 heading level for a paragraph whose paragraphStyle
+    declares HEADING_N; None for anything else. namedStyleType defaults to
+    NORMAL_TEXT when absent.
+    """
+    style = paragraph.get("paragraphStyle", {}).get("namedStyleType", "NORMAL_TEXT")
+    if style.startswith("HEADING_"):
+        try:
+            return int(style.split("_", 1)[1])
+        except (IndexError, ValueError):
+            return None
+    return None
+
+
+def find_heading_range(
+    doc: dict[str, Any],
+    heading_text: str,
+    heading_level: Optional[int],
+    match: Literal["first", "exact"],
+    tab_id: Optional[str],
+) -> tuple[int, int, int]:
+    """Locate a heading paragraph and compute the end of its section.
+
+    Returns (section_start, section_end, footnote_ref_count_in_range).
+
+    section_start = matched heading paragraph's startIndex.
+    section_end = startIndex of the next paragraph whose namedStyleType is a
+    heading at equal-or-shallower level (HEADING_N where N <= matched_level)
+    or TITLE — or body_protected_end_index() if no such successor exists.
+    SUBTITLE is NOT a terminator (it functions as a continuation of TITLE in
+    Docs, not a structural divider mid-body).
+
+    Match criteria:
+      - extract textRun content from paragraph.elements[*]; rstrip("\n");
+        full-string case-sensitive equality with heading_text
+      - if heading_level given, paragraphStyle.namedStyleType must equal
+        f"HEADING_{heading_level}"
+
+    Body-only matching. Headings inside table cells, footnotes, headers, or
+    footers are NOT addressable by this helper.
+
+    Raises UserInputError on:
+      - no match
+      - match="exact" and multiple matches
+      - matched heading paragraph contains inline objects (footnoteReference,
+        pageBreak, equation, inlineObjectElement) — _extract_paragraph_text
+        silently skips these so the matched text is unreliable
+    """
+    content = _body_content_for_tab(doc, tab_id)
+
+    candidates: list[tuple[int, dict[str, Any]]] = []
+    for idx, element in enumerate(content):
+        paragraph = element.get("paragraph")
+        if not paragraph:
+            continue
+        level = _paragraph_heading_level(paragraph)
+        if level is None:
+            continue
+        if heading_level is not None and level != heading_level:
+            continue
+        text = _extract_paragraph_text(paragraph).rstrip("\n")
+        if text == heading_text:
+            candidates.append((idx, element))
+
+    if not candidates:
+        raise UserInputError(
+            f"No heading matching {heading_text!r} found in body "
+            f"(level={heading_level!r}, tab_id={tab_id!r}). "
+            "Note: headings inside table cells, footnotes, headers, and footers "
+            "are not addressable by this tool — use batch_update_doc for those."
+        )
+    if match == "exact" and len(candidates) > 1:
+        raise UserInputError(
+            f"Multiple headings match {heading_text!r} (found {len(candidates)}); "
+            'pass match="first" to accept the first one or narrow with heading_level.'
+        )
+
+    chosen_idx, chosen_element = candidates[0]
+    chosen_paragraph = chosen_element["paragraph"]
+
+    # Reject if the matched heading paragraph contains inline objects that
+    # _extract_paragraph_text silently skips — equality may be coincidental.
+    for run in chosen_paragraph.get("elements", []):
+        if any(
+            k in run
+            for k in (
+                "footnoteReference",
+                "pageBreak",
+                "equation",
+                "inlineObjectElement",
+            )
+        ):
+            raise UserInputError(
+                "Matched heading paragraph contains inline objects "
+                "(footnoteReference / pageBreak / equation / inlineObjectElement); "
+                "matched text is unreliable. Use batch_update_doc instead."
+            )
+
+    matched_level = _paragraph_heading_level(chosen_paragraph)
+    section_start = int(chosen_element.get("startIndex", 0))
+
+    # Walk forward for a terminator: HEADING_<= matched_level OR TITLE.
+    section_end: Optional[int] = None
+    for element in content[chosen_idx + 1 :]:
+        paragraph = element.get("paragraph")
+        if not paragraph:
+            continue
+        style = paragraph.get("paragraphStyle", {}).get("namedStyleType", "NORMAL_TEXT")
+        if style == "TITLE":
+            section_end = int(element.get("startIndex", 0))
+            break
+        level = _paragraph_heading_level(paragraph)
+        if level is not None and matched_level is not None and level <= matched_level:
+            section_end = int(element.get("startIndex", 0))
+            break
+
+    if section_end is None:
+        section_end = body_protected_end_index(doc, tab_id)
+
+    footnote_count = count_footnote_refs_in_range(
+        doc, tab_id, section_start, section_end
+    )
+    return section_start, section_end, footnote_count
