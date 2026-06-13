@@ -1643,7 +1643,7 @@ Validations:
 
 ## Section-Edit Preservation Matrix
 
-The three Docs section-edit tools (`replace_doc_section_by_heading`, `append_doc_after_heading`, `replace_doc_fully_from_markdown`) operate via atomic `documents.batchUpdate` calls guarded by `WriteControl.requiredRevisionId`. Combine with `copy_doc_as_snapshot` (from the parallel `copy_doc_as_snapshot` PR / tool) before destructive edits as the recommended safety net.
+The three Docs section-edit tools (`replace_doc_section_by_heading`, `append_doc_after_heading`, `replace_doc_fully_from_markdown`) operate via atomic `documents.batchUpdate` calls guarded by `WriteControl.requiredRevisionId`. Pair with `copy_doc_as_snapshot` before destructive edits as the recommended safety net.
 
 **Legend:** ✅ kept • ⚠ docstring warning applies • ❌ destroyed • n/a = not applicable
 **Confidence:** V = Verified against Google docs • I = Inferred (verify via local integration test)
