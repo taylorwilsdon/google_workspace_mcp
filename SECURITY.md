@@ -36,6 +36,7 @@ When using this MCP server, please ensure:
 3. Use environment variables for sensitive configuration
 4. Regularly rotate OAuth refresh tokens
 5. Limit OAuth scopes to only what's necessary
+6. Keep local file reads narrowly scoped. By default, path-based attachments are limited to `WORKSPACE_ATTACHMENT_DIR`; expanding `ALLOWED_FILE_DIRS` increases exposure to prompt-injection-driven exfiltration.
 
 For more information on securing your use of the project, see https://workspacemcp.com/privacy
 

@@ -1,4 +1,4 @@
-name: Ruff Check
+name: Ruff
 
 on:
   pull_request:
@@ -6,17 +6,56 @@ on:
   push:
     branches: [ main ]
 
+permissions:
+  contents: read
+
 jobs:
-  ruff:
+  autofix:
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-python@v5
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.ref }}
+        token: ${{ secrets.GITHUB_TOKEN }}
+    - uses: actions/setup-python@v6
       with:
         python-version: '3.11'
     - name: Install uv
-      uses: astral-sh/setup-uv@v4
-    - name: Install dependencies
-      run: uv sync
-    - name: Run ruff check
-      run: uv run ruff check
+      uses: astral-sh/setup-uv@v7
+    - name: Auto-fix ruff lint and format
+      # Same-repo only (guarded by job `if`), so we still avoid `uv sync`
+      # to keep behaviour consistent and minimise blast radius.
+      run: |
+        uvx ruff check --fix
+        uvx ruff format
+    - name: Commit and push fixes
+      run: |
+        git diff --quiet && exit 0
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git add -A
+        git commit -m "style: auto-fix ruff lint and format"
+        git push
+
+  ruff:
+    if: always() && (github.event_name == 'pull_request' || github.event_name == 'push')
+    needs: [autofix]
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+    - uses: actions/setup-python@v6
+      with:
+        python-version: '3.11'
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+    - name: Validate
+      # Use `uvx` so we run ruff in an isolated environment without invoking
+      # the project's build backend or executing pyproject.toml hooks. This
+      # keeps the validation step safe to run on untrusted fork PR code.
+      # For same-repo PRs, this runs after autofix commits any formatting fixes.
+      run: |
+        uvx ruff check
+        uvx ruff format --check

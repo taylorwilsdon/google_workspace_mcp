@@ -1,0 +1,9 @@
+{
+  "skills": ["managing-google-workspace"],
+  "query": "Check my email for anything from Alice this week",
+  "expected_behavior": [
+    "Calls search_gmail_messages with a query combining from:alice and newer_than:7d",
+    "Reads message content with get_gmail_message_content or get_gmail_messages_content_batch",
+    "Summarizes results to the user"
+  ]
+}

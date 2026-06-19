@@ -4,6 +4,10 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, edited]
 
+permissions:
+  pull-requests: read
+  issues: write
+
 jobs:
   check-maintainer-edits:
     runs-on: ubuntu-latest

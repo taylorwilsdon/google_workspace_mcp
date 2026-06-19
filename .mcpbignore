@@ -1,0 +1,68 @@
+# =============================================================================
+# .mcpbignore - defense-in-depth denylist for mcpb pack
+#
+# IMPORTANT: Always use mcpb-safe-pack.sh instead of bare `mcpb pack`.
+# The script guarantees only git-tracked files are packaged.
+# This file exists as a safety net in case someone runs `mcpb pack` directly.
+# =============================================================================
+
+# ---- Caches ----------------------------------------------------------------
+.mypy_cache
+__pycache__
+*.py[cod]
+*.so
+.pytest_cache
+.ruff_cache
+
+# ---- Build / packaging -----------------------------------------------------
+.mcpbignore
+*.egg-info
+build/
+dist/
+
+# ---- Environments & tooling ------------------------------------------------
+.env
+.venv
+venv/
+.idea/
+.vscode/
+.claude/
+.serena/
+node_modules/
+
+# ---- macOS -----------------------------------------------------------------
+.DS_Store
+
+# ---- Secrets & credentials - CRITICAL --------------------------------------
+client_secret.json
+.credentials
+credentials.json
+token.pickle
+*_token
+*_secret
+.mcpregistry_*
+*.key
+*.pem
+*.p12
+*.crt
+*.der
+
+# ---- Test & debug -----------------------------------------------------------
+.coverage
+pytest_out.txt
+mcp_server_debug.log
+diff_output.txt
+
+# ---- Temp & editor files ----------------------------------------------------
+*.tmp
+*.log
+*.pid
+*.swp
+*.swo
+*~
+
+# ---- Development artifacts not for distribution -----------------------------
+scripts/
+.beads
+.github/
+tests/

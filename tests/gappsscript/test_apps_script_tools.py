@@ -5,9 +5,12 @@ Tests all Apps Script tools with mocked API responses
 """
 
 import pytest
+from typing import get_type_hints
 from unittest.mock import Mock
 import sys
 import os
+
+from pydantic import TypeAdapter
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
@@ -29,7 +32,29 @@ from gappsscript.apps_script_tools import (
     _get_version_impl,
     _get_script_metrics_impl,
     _generate_trigger_code_impl,
+    run_script_function,
 )
+
+
+def _parameters_adapter():
+    hint = get_type_hints(run_script_function, include_extras=True)["parameters"]
+    return TypeAdapter(hint)
+
+
+def test_run_script_function_parameters_coerces_json_string():
+    """A JSON-encoded array string is parsed into a real list."""
+    assert _parameters_adapter().validate_python('["PrestaShop"]') == ["PrestaShop"]
+
+
+def test_run_script_function_parameters_accepts_native_list():
+    """Native lists (including heterogeneous items) pass through unchanged."""
+    payload = ["PrestaShop", 1, {"a": 2}]
+    assert _parameters_adapter().validate_python(payload) == payload
+
+
+def test_run_script_function_parameters_accepts_none():
+    """``parameters`` is optional."""
+    assert _parameters_adapter().validate_python(None) is None
 
 
 @pytest.mark.asyncio

@@ -25,8 +25,10 @@ def parse_document_structure(doc_data: dict[str, Any]) -> dict[str, Any]:
         "title": doc_data.get("title", ""),
         "body": [],
         "tables": [],
+        "section_breaks": [],
         "headers": {},
         "footers": {},
+        "named_ranges": {},
         "total_length": 0,
     }
 
@@ -39,6 +41,8 @@ def parse_document_structure(doc_data: dict[str, Any]) -> dict[str, Any]:
             structure["body"].append(element_info)
             if element_info["type"] == "table":
                 structure["tables"].append(element_info)
+            elif element_info["type"] == "section_break":
+                structure["section_breaks"].append(element_info)
 
     # Calculate total document length
     if structure["body"]:
@@ -51,6 +55,21 @@ def parse_document_structure(doc_data: dict[str, Any]) -> dict[str, Any]:
 
     for footer_id, footer_data in doc_data.get("footers", {}).items():
         structure["footers"][footer_id] = _parse_segment(footer_data)
+
+    for range_name, named_ranges in doc_data.get("namedRanges", {}).items():
+        ranges = []
+        for named_range in named_ranges.get("namedRanges", []):
+            for named_range_range in named_range.get("ranges", []):
+                ranges.append(
+                    {
+                        "named_range_id": named_range.get("namedRangeId"),
+                        "start_index": named_range_range.get("startIndex"),
+                        "end_index": named_range_range.get("endIndex"),
+                        "segment_id": named_range_range.get("segmentId"),
+                        "tab_id": named_range_range.get("tabId"),
+                    }
+                )
+        structure["named_ranges"][range_name] = ranges
 
     return structure
 
@@ -163,14 +182,18 @@ def _extract_cell_text(cell: dict[str, Any]) -> str:
 
 def _parse_segment(segment_data: dict[str, Any]) -> dict[str, Any]:
     """Parse a document segment (header/footer)."""
+    content = segment_data.get("content", [])
+    text_parts = []
+    for element in content:
+        if "paragraph" in element:
+            text_parts.append(_extract_paragraph_text(element["paragraph"]))
+
     return {
-        "content": segment_data.get("content", []),
-        "start_index": segment_data.get("content", [{}])[0].get("startIndex", 0)
-        if segment_data.get("content")
-        else 0,
-        "end_index": segment_data.get("content", [{}])[-1].get("endIndex", 0)
-        if segment_data.get("content")
-        else 0,
+        "content": content,
+        "start_index": content[0].get("startIndex", 0) if content else 0,
+        "end_index": content[-1].get("endIndex", 0) if content else 0,
+        "text_preview": "".join(text_parts)[:100],
+        "element_count": len(content),
     }
 
 

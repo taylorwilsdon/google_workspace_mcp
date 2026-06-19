@@ -1,0 +1,13 @@
+{
+  "name": "google-workspace-mcp",
+  "owner": {
+    "name": "taylorwilsdon"
+  },
+  "plugins": [
+    {
+      "name": "google-workspace-mcp",
+      "source": "./",
+      "description": "Complete Google Workspace integration -- Gmail, Drive, Calendar, Docs, Sheets, Slides, Forms, Tasks, Contacts, Chat, Apps Script, and Custom Search via MCP with workflow guidance."
+    }
+  ]
+}

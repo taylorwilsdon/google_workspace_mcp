@@ -7,30 +7,77 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![PyPI](https://img.shields.io/pypi/v/workspace-mcp.svg)](https://pypi.org/project/workspace-mcp/)
-[![PyPI Downloads](https://static.pepy.tech/personalized-badge/workspace-mcp?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=BLUE&left_text=downloads)](https://pepy.tech/projects/workspace-mcp)
+[![PyPI Downloads](https://static.pepy.tech/personalized-badge/workspace-mcp?period=total&units=INTERNATIONAL_SYSTEM&left_color=GREY&right_color=BLUE&left_text=pypi+downloads)](https://pepy.tech/projects/workspace-mcp)
 [![Website](https://img.shields.io/badge/Website-workspacemcp.com-green.svg)](https://workspacemcp.com)
 
-*Full natural language control over Google Calendar, Drive, Gmail, Docs, Sheets, Slides, Forms, Tasks, Contacts, and Chat through all MCP clients, AI assistants and developer tools. Now includes a full featured CLI for use with tools like Claude Code and Codex!*
+*Full natural language control over Google Calendar, Drive, Gmail, Docs, Sheets, Slides, Forms, Tasks, Contacts, and Chat through all MCP clients, AI assistants and developer tools.*
 
-**The most feature-complete Google Workspace MCP server**, with Remote OAuth2.1 multi-user support and 1-click Claude installation.
+*Includes a full featured CLI & Code Mode for use with tools like Claude Code and Codex!*
 
+**The most feature-complete Google Workspace MCP server**, it can do things that Google's own tooling and the built in integrations with Claude and ChatGPT can't even dream of. With Remote OAuth2.1 multi-user support, fine-grained editing tools and the most extensive coverage of any Google Workspace tool in existance, Workspace MCP is in a different class. Offering native OAuth 2.1, stateless mode and external auth server support, it's also the only Workspace MCP you can host for your whole organization centrally & securely!
 
-###### Support for all free Google accounts (Gmail, Docs, Drive etc) & Google Workspace plans (Starter, Standard, Plus, Enterprise, Non Profit) with expanded app options like Chat & Spaces. <br/><br /> Interested in a private, managed cloud instance? [That can be arranged.](https://workspacemcp.com/workspace-mcp-cloud)
+###### Support for all free Google accounts & Google Workspace plans (Starter, Standard, Plus, Enterprise, Non Profit) with expanded app options like Chat & Spaces. <br/><br /> Interested in a private, managed cloud instance? [That can be arranged.](https://workspacemcp.com/workspace-mcp-cloud)
 
 
 </div>
 
+<p align="center">
+  <a href="https://workspacemcp.com/docs">
+    <img src="https://img.shields.io/badge/Read%20the%20Docs-0969DA?style=for-the-badge&logo=readthedocs&logoColor=white" alt="Read the Docs">
+  </a><br /><a href="https://workspacemcp.com/quick-start">
+    <img src="https://img.shields.io/badge/Quick%20Start-2EA44F?style=for-the-badge" alt="Quick Start Guide">
+  </a>
+</p>
+
 <div align="center">
-<a href="https://glama.ai/mcp/servers/@taylorwilsdon/google_workspace_mcp">
-  <img width="195" src="https://glama.ai/mcp/servers/@taylorwilsdon/google_workspace_mcp/badge" alt="Google Workspace Server MCP server" align="center"/>
-</a>
 <a href="https://www.pulsemcp.com/servers/taylorwilsdon-google-workspace">
-<img width="456" src="https://github.com/user-attachments/assets/0794ef1a-dc1c-447d-9661-9c704d7acc9d" align="center"/>
+<img width="375" src="https://github.com/user-attachments/assets/0794ef1a-dc1c-447d-9661-9c704d7acc9d" align="center"/>
 </a>
 </div>
 
 ---
 
+<div align="center">
+<table>
+<tr>
+<td align="center">
+<b>⚡ Start</b><br>
+<sub>
+<a href="#quick-start">Quick Start</a> · <a href="#prerequisites">Prerequisites</a><br>
+<a href="#configuration">Google Cloud</a> · <a href="#-credential-configuration">Credentials</a>
+</sub>
+</td>
+<td align="center">
+<b>🧰 Tools</b><br>
+<sub>
+<a href="#-available-tools">All Tools</a> · <a href="#tool-tiers">Tool Tiers</a><br>
+<a href="#cli">CLI</a> · <a href="#start-the-server">Start Server</a>
+</sub>
+</td>
+<td align="center">
+<b>🔌 Connect</b><br>
+<sub>
+<a href="#quick-start--connect-claude-to-google-workspace">Quick Start</a> · <a href="#connect-to-claude-desktop">Claude Desktop</a><br>
+<a href="#claude-code-mcp-client-support">Claude Code</a> · <a href="#vs-code-mcp-client-support">VS Code</a> · <a href="#connect-to-lm-studio">LM Studio</a>
+</sub>
+</td>
+<td align="center">
+<b>🚀 Deploy</b><br>
+<sub>
+<a href="#oauth-21-support-multi-user-bearer-token-authentication">OAuth 2.1</a> · <a href="#stateless-mode-container-friendly">Stateless</a><br>
+<a href="#external-oauth-21-provider-mode">External OAuth</a> · <a href="#reverse-proxy-setup">Reverse Proxy</a>
+</sub>
+</td>
+<td align="center">
+<b>📐 Develop</b><br>
+<sub>
+<a href="#-development">Architecture</a> · <a href="#local-development-setup">Dev Setup</a><br>
+<a href="#-security">Security</a> · <a href="#-license">License</a>
+</sub>
+</td>
+</tr>
+</table>
+</div>
 
 **See it in action:**
 <div align="center">
@@ -39,71 +86,83 @@
 
 ---
 
-### A quick plug for AI-Enhanced Docs
-<details>
-<summary>◆ <b>But why?</b></summary>
-
-**This README was written with AI assistance, and here's why that matters**
->
-> As a solo dev building open source tools, comprehensive documentation often wouldn't happen without AI help. Using agentic dev tools like **Roo** & **Claude Code** that understand the entire codebase, AI doesn't just regurgitate generic content - it extracts real implementation details and creates accurate, specific documentation.
->
-> In this case, Sonnet 4 took a pass & a human (me) verified them 8/16/25.
-</details>
-
 ## <span style="color:#adbcbc">Overview</span>
 
-A production-ready MCP server that integrates all major Google Workspace services with AI assistants. It supports both single-user operation and multi-user authentication via OAuth 2.1, making it a powerful backend for custom applications. Built with FastMCP for optimal performance, featuring advanced authentication handling, service caching, and streamlined development patterns.
-
-**Simplified Setup**: Now uses Google Desktop OAuth clients - no redirect URIs or port configuration needed!
-
-**Maintainer Docs**: Automated release and registry publishing guide at [`docs/mcp_registry_publishing_guide.md`](docs/mcp_registry_publishing_guide.md).
+Workspace MCP is the single most complete MCP server, the only that integrates all major Google Workspace services with AI assistants and all agent platforms. The entire toolset is available for CLI usage supporting both local and remote instances.
 
 ## <span style="color:#adbcbc">Features</span>
 
-<table align="center" style="width: 100%; max-width: 100%;">
+> **12 services** &ensp;—&ensp; Gmail · Drive · Calendar · Docs · Sheets · Slides · Forms · Chat · Apps Script · Tasks · Contacts · Search
+
+<table>
 <tr>
-<td width="50%" valign="top">
+<td valign="top" width="50%">
 
-**<span style="color:#72898f">@</span> Gmail** • **<span style="color:#72898f">≡</span> Drive** • **<span style="color:#72898f">⧖</span> Calendar** **<span style="color:#72898f">≡</span> Docs**
-- Complete Gmail management, end to end coverage
-- Full calendar management with advanced features
-- File operations with Office format support
-- Document creation, editing & comments
-- Deep, exhaustive support for fine grained editing
-
----
-
-**<span style="color:#72898f">≡</span> Forms** • **<span style="color:#72898f">@</span> Chat** • **<span style="color:#72898f">≡</span> Sheets** • **<span style="color:#72898f">≡</span> Slides**
-- Form creation, publish settings & response management
-- Space management & messaging capabilities
-- Spreadsheet operations with flexible cell management
-- Presentation creation, updates & content manipulation
-
----
-
-**<span style="color:#72898f">◆</span> Apps Script**
-- Automate cross-application workflows with custom code
-- Execute existing business logic and custom functions
-- Manage script projects, deployments & versions
-- Debug and modify Apps Script code programmatically
-- Bridge Google Workspace services through automation
+**📧 Gmail** — Complete email management, end-to-end coverage<br>
+**📁 Drive** — File operations with sharing, permissions, Office files, PDFs & images<br>
+**📅 Calendar** — Full event management with advanced features<br>
+**📝 Docs** — Deep, fine-grained editing, formatting & comments<br>
+**📊 Sheets** — Flexible cell management, formatting & conditional rules<br>
+**🖼️ Slides** — Presentation creation, updates & content manipulation<br>
+**📋 Forms** — Creation, publish settings & response management<br>
+**💬 Chat** — Space management, messaging & reactions
 
 </td>
-<td width="50%" valign="top">
+<td valign="top" width="50%">
 
-**<span style="color:#72898f">⊠</span> Authentication & Security**
-- Advanced OAuth 2.0 & OAuth 2.1 support
-- Automatic token refresh & session management
-- Transport-aware callback handling
-- Multi-user bearer token authentication
-- Innovative CORS proxy architecture
+**⚡ Apps Script** — Cross-application workflow automation<br>
+<sub>&ensp;Projects · deployments · versions · execution · debugging</sub>
+
+**✅ Tasks** — Task & list management with hierarchy<br>
+**👤 Contacts** — People API with groups & batch operations<br>
+**🔍 Custom Search** — Programmable Search Engine integration
 
 ---
 
-**<span style="color:#72898f">✓</span> Tasks** • **<span style="color:#72898f">👤</span> Contacts** • **<span style="color:#72898f">◆</span> Custom Search**
-- Task & task list management with hierarchy
-- Contact management via People API with groups
-- Programmable Search Engine (PSE) integration
+**🔐 Authentication & Security**<br>
+<sub>OAuth 2.0 & 2.1 · auto token refresh · multi-user bearer tokens · transport-aware callbacks · CORS proxy</sub>
+
+</td>
+</tr>
+</table>
+
+---
+
+## <span style="color:#adbcbc">Security & Compliance</span>
+
+<table>
+<tr>
+<td valign="top" width="50%">
+
+**For Security Teams**
+
+This server sends no data anywhere except Google's APIs, on behalf of the authenticated user, using your own OAuth client credentials. There is no telemetry, no usage reporting, no analytics, no license server, and no SaaS dependency. The entire data path is: your infrastructure → Google APIs.
+
+- **Fully open source** — every line is auditable in this repo
+- **Your OAuth client, your GCP project** — credentials never leave your environment
+- **You control the scopes** — read-only, granular per-service permissions, or full access
+- **You control the network** — deploy behind your reverse proxy, in your VPC, on your own terms
+- **No third-party services** — no intermediary servers, no token relays, no hosted backends
+- **Stateless mode** — zero disk writes for locked-down container environments
+- **Sensitive path blocking** — local file reads default to the managed attachment directory, and `validate_file_path()` still blocks `.env*` files plus common home-directory credential stores such as `~/.ssh/` and `~/.aws/` even if `ALLOWED_FILE_DIRS` is broadened
+
+Full dependency tree in `pyproject.toml`, pinned in `uv.lock`.
+
+</td>
+<td valign="top" width="50%">
+
+**For Legal & Procurement**
+
+This project is [MIT licensed](LICENSE) — not "open core," not "source available," not "free with a CLA." There is no dual licensing, no commercial tier gating features, and no contributor license agreement.
+
+- **Use commercially without restriction** — build products, sell services, deploy internally
+- **Fork, embed, redistribute** — MIT requires only attribution
+- **No CLA** — contributions remain under MIT
+- **No telemetry to disclose** — nothing to flag in a privacy review
+- **No network effects** — the server never contacts any endpoint you didn't configure
+- **Standard dependency licenses** — MIT, Apache 2.0, and BSD throughout the dependency chain; no copyleft, no AGPL
+
+The license is 21 lines and says what it means.
 
 </td>
 </tr>
@@ -113,86 +172,129 @@ A production-ready MCP server that integrates all major Google Workspace service
 
 ## Quick Start
 
-<details>
-<summary><b>Quick Reference Card</b> - Essential commands & configs at a glance</summary>
+> Set credentials → pick a launch command → connect your client
+
+<div align="center">
+
+> 💡 **New to Workspace MCP?** Check out the **[Interactive Quick Start Guide →](https://workspacemcp.com/quick-start)** with step-by-step setup, screenshots, and troubleshooting tips!
+
+</div>
 
 <table>
-<tr><td width="33%" valign="top">
+<tr>
+<td valign="top" width="50%">
 
-**Credentials**
+**Confidential Client Quick Start**
+
 ```bash
+# 1. Credentials
 export GOOGLE_OAUTH_CLIENT_ID="..."
 export GOOGLE_OAUTH_CLIENT_SECRET="..."
+
+# 2. Launch — pick a tier
+uvx workspace-mcp --tool-tier core       # essential tools
+uvx workspace-mcp --tool-tier extended   # core + management ops
+uvx workspace-mcp --tool-tier complete   # everything
+
+# Or cherry-pick services
+uv run main.py --tools gmail drive calendar
 ```
-[Full setup →](#credential-configuration)
 
-</td><td width="33%" valign="top">
+</td>
+<td valign="top" width="50%">
 
-**Launch Commands**
+**Secretless / Public OAuth 2.1 (PKCE) Quick Start**
+
 ```bash
-uvx workspace-mcp --tool-tier core
-uv run main.py --tools gmail drive
+# 1. Credentials
+export MCP_ENABLE_OAUTH21=true
+export GOOGLE_OAUTH_CLIENT_ID="..."
+export WORKSPACE_MCP_PORT=8000
+export GOOGLE_OAUTH_REDIRECT_URI="http://localhost:${WORKSPACE_MCP_PORT}/oauth2callback"
+export OAUTHLIB_INSECURE_TRANSPORT=1
+# Leave GOOGLE_OAUTH_CLIENT_SECRET unset for public PKCE clients
+export FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY="$(openssl rand -hex 32)"
+
+# 2. Launch — OAuth 2.1 requires HTTP transport
+uvx workspace-mcp --transport streamable-http --tool-tier core
+uvx workspace-mcp --transport streamable-http --tool-tier extended
+uvx workspace-mcp --transport streamable-http --tool-tier complete
+
+# Or cherry-pick services
+uv run main.py --transport streamable-http --tools gmail drive calendar
 ```
-[More options →](#start-the-server)
 
-</td><td width="34%" valign="top">
-
-**Tool Tiers**
-- `core` - Essential tools
-- `extended` - Core + extras
-- `complete` - Everything
-[Details →](#tool-tiers)
-
-</td></tr>
+</td>
+</tr>
 </table>
 
-</details>
+<sub>[Credential setup →](#-credential-configuration) · [All launch options →](#start-the-server) · [Tier details →](#tool-tiers)</sub>
 
-### 1. One-Click Claude Desktop Install (Recommended)
+<details open>
+<summary><b>Environment Variable Reference</b></summary>
+<sub>
 
-1. **Download:** Grab the latest `google_workspace_mcp.dxt` from the “Releases” page
-2. **Install:** Double-click the file – Claude Desktop opens and prompts you to **Install**
-3. **Configure:** In Claude Desktop → **Settings → Extensions → Google Workspace MCP**, paste your Google OAuth credentials
-4. **Use it:** Start a new Claude chat and call any Google Workspace tool
+| Variable | | Purpose |
+|----------|:---:|---------|
+| **🔐 Authentication** | | |
+| `GOOGLE_OAUTH_CLIENT_ID` | **required** | OAuth client ID from Google Cloud |
+| `GOOGLE_OAUTH_CLIENT_SECRET` | | OAuth client secret for confidential clients; optional for public OAuth 2.1 PKCE clients |
+| `OAUTHLIB_INSECURE_TRANSPORT` | **required**&ast; | Set to `1` for development — allows `http://` redirect |
+| `USER_GOOGLE_EMAIL` | | Default email for single-user auth |
+| `GOOGLE_CLIENT_SECRET_PATH` | | Custom path to `client_secret.json` |
+| `GOOGLE_MCP_CREDENTIALS_DIR` | | Credential directory — default `~/.google_workspace_mcp/credentials` |
+| `AUTH_BROWSER_TYPE` | | Browser mode when auto-opening the auth URL in stdio mode: `normal` (default) or `incognito` |
+| **🖥️ Server** | | |
+| `WORKSPACE_MCP_BASE_URI` | | Base server URI (no port) — default `http://localhost` |
+| `WORKSPACE_MCP_PORT` | | Listening port — default `8000`. Also controls the stdio-mode OAuth callback port. The `PORT` env var takes precedence if set. |
+| `WORKSPACE_MCP_HOST` | | Bind host — default `0.0.0.0` for OAuth 2.1 HTTP, `127.0.0.1` for legacy streamable HTTP. |
+| `WORKSPACE_MCP_TRANSPORT` | | `stdio` or `streamable-http`; used when `--transport` is not passed |
+| `WORKSPACE_MCP_HTTP_PORT` | | Advanced legacy-stdio sidecar `/mcp` port for local `workspace-cli` access. Disabled when empty. Binds to `127.0.0.1` only and is accessible to local processes. |
+| `WORKSPACE_EXTERNAL_URL` | | External URL for reverse proxy setups |
+| `WORKSPACE_ATTACHMENT_DIR` | | Downloaded attachments dir and default trusted local attachment directory — default `~/.workspace-mcp/attachments/` |
+| `WORKSPACE_MCP_URL` | | Remote MCP endpoint URL for CLI |
+| `ALLOWED_FILE_DIRS` | | Colon-separated allowlist for local file reads |
+| **🧰 Tool Selection** | | |
+| `WORKSPACE_MCP_TOOLS` | | Comma-separated services, e.g. `gmail,drive,calendar`; empty means all services |
+| `WORKSPACE_MCP_TOOL_TIER` | | `core`, `extended`, or `complete`; empty means all tools |
+| `WORKSPACE_MCP_READ_ONLY` | | `true`, `1`, or `yes` to request read-only scopes and filter write tools |
+| `WORKSPACE_MCP_PERMISSIONS` | | Space-separated `service:level` entries, e.g. `gmail:send drive:readonly`; mutually exclusive with tools and read-only |
+| **🔑 OAuth 2.1 & Multi-User** | | |
+| `MCP_ENABLE_OAUTH21` | | `true` to enable OAuth 2.1 multi-user support. Required for remote or shared HTTP endpoints (`--transport streamable-http`); optional for local-only legacy HTTP, which binds to `127.0.0.1` by default. |
+| `EXTERNAL_OAUTH21_PROVIDER` | | `true` for external OAuth flow with bearer tokens |
+| `WORKSPACE_MCP_STATELESS_MODE` | | `true` for stateless container-friendly operation |
+| `WORKSPACE_MCP_LOG_DIR` | | Directory for `mcp_server_debug.log` — defaults to `~/.google_workspace_mcp/logs` |
+| `GOOGLE_OAUTH_REDIRECT_URI` | | Override OAuth callback URL — default auto-constructed |
+| `OAUTH_CUSTOM_REDIRECT_URIS` | | Comma-separated additional redirect URIs |
+| `OAUTH_ALLOWED_ORIGINS` | | Comma-separated additional CORS origins |
+| `WORKSPACE_MCP_OAUTH_PROXY_STORAGE_BACKEND` | | `memory`, `disk`, or `valkey` — see [storage backends](#oauth-proxy-storage-backends) |
+| `FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY` | | Custom encryption key for OAuth proxy storage; required for public OAuth 2.1 clients when `GOOGLE_OAUTH_CLIENT_SECRET` is omitted |
+| `WORKSPACE_MCP_ALLOWED_CLIENT_REDIRECT_URIS` | | Comma-separated allowlist of redirect URIs that dynamically-registered OAuth clients may use. Default is unset (any URI permitted, per DCR). Supports FastMCP's glob patterns (`*`, `*.example.com`) |
+| **🗄️ Credential Store** | | |
+| `WORKSPACE_MCP_CREDENTIAL_STORE_BACKEND` | | `local_directory` (default) or `gcs` — see [credential store system](#credential-store-system) |
+| `WORKSPACE_MCP_CREDENTIALS_DIR` | | Directory for the `local_directory` backend |
+| `GOOGLE_MCP_CREDENTIALS_DIR` | | Backward-compatible alias for `WORKSPACE_MCP_CREDENTIALS_DIR` |
+| `WORKSPACE_MCP_GCS_BUCKET` | | **Required when backend is `gcs`** — GCS bucket name |
+| `WORKSPACE_MCP_GCS_PREFIX` | | Optional object-name prefix for the `gcs` backend |
+| `WORKSPACE_MCP_GCS_REQUIRE_CMEK` | | `true` to require a bucket default KMS key at startup (fails fast if unset) |
+| **🔧 Service Account** | | |
+| `GOOGLE_SERVICE_ACCOUNT_KEY_FILE` | | Path to service account JSON key file (domain-wide delegation) |
+| `GOOGLE_SERVICE_ACCOUNT_KEY_JSON` | | Inline service account JSON key (alternative to file) |
+| `DWD_ALLOWED_DOMAINS` | | Comma-separated domain allowlist for per-request impersonation (optional) |
+| **🔍 Custom Search** | | |
+| `GOOGLE_PSE_API_KEY` | | API key for Programmable Search Engine |
+| `GOOGLE_PSE_ENGINE_ID` | | Search Engine ID for PSE |
 
->
-**Why DXT?**
-> Desktop Extensions (`.dxt`) bundle the server, dependencies, and manifest so users go from download → working MCP in **one click** – no terminal, no JSON editing, no version conflicts.
+&ast;Required for development only. Claude Desktop stores credentials securely in the OS keychain — set them once in the extension pane.
 
-#### Required Configuration
-<details>
-<summary><b>Environment Variables</b> <sub><sup>← Click to configure in Claude Desktop</sup></sub></summary>
-
-<table>
-<tr><td width="50%" valign="top">
-
-**Required**
-| Variable | Purpose |
-|----------|---------|
-| `GOOGLE_OAUTH_CLIENT_ID` | OAuth client ID from Google Cloud |
-| `GOOGLE_OAUTH_CLIENT_SECRET` | OAuth client secret |
-| `OAUTHLIB_INSECURE_TRANSPORT=1` | Development only (allows `http://` redirect) |
-
-</td><td width="50%" valign="top">
-
-**Optional**
-| Variable | Purpose |
-|----------|---------|
-| `USER_GOOGLE_EMAIL` | Default email for single-user auth |
-| `GOOGLE_PSE_API_KEY` | API key for Custom Search |
-| `GOOGLE_PSE_ENGINE_ID` | Search Engine ID for Custom Search |
-| `MCP_ENABLE_OAUTH21` | Set to `true` for OAuth 2.1 support |
-| `EXTERNAL_OAUTH21_PROVIDER` | Set to `true` for external OAuth flow with bearer tokens (requires OAuth 2.1) |
-| `WORKSPACE_MCP_STATELESS_MODE` | Set to `true` for stateless operation (requires OAuth 2.1) |
-| `AUTH_BROWSER_TYPE` | Browser mode for OAuth: `normal` (default) or `incognito` |
-
-</td></tr>
-</table>
-
-Claude Desktop stores these securely in the OS keychain; set them once in the extension pane.
+</sub>
 </details>
 
 ---
+
+### Quick Start — Connect Claude to Google Workspace
+
+The recommended setup is to run an instance and connect Claude to it via a **Connector**. Full instructions at **[workspacemcp.com/quick-start](https://workspacemcp.com/quick-start)**.
 
 <div align="center">
   <video width="832" src="https://github.com/user-attachments/assets/83cca4b3-5e94-448b-acb3-6e3a27341d3a"></video>
@@ -202,215 +304,47 @@ Claude Desktop stores these securely in the OS keychain; set them once in the ex
 
 ### Prerequisites
 
-- **Python 3.10+**
-- **[uvx](https://github.com/astral-sh/uv)** (for instant installation) or [uv](https://github.com/astral-sh/uv) (for development)
-- **Google Cloud Project** with OAuth 2.0 credentials
+**Python 3.10+** · **[uv/uvx](https://github.com/astral-sh/uv)** · **Google Cloud Project** with OAuth 2.0 credentials
+
+If you want the GCS credential store backend, install the optional dependency first:
+
+```bash
+uv sync --extra gcs
+# or
+pip install "workspace-mcp[gcs]"
+```
 
 ### Configuration
 
 <details open>
-<summary><b>Google Cloud Setup</b> <sub><sup>← OAuth 2.0 credentials & API enablement</sup></sub></summary>
+<summary><b>Google Cloud Setup</b></summary>
 
-<table>
-<tr>
-<td width="33%" align="center">
+1. **Create Project** — [Open Console →](https://console.cloud.google.com/) → Create new project
+2. **Create OAuth Credentials** — APIs & Services → Credentials → Create Credentials → OAuth Client ID
+   - Choose **Desktop Application** for a public PKCE client (no redirect URIs needed) or **Web Application** for a confidential client
+   - Download and note your Client ID and, if issued, Client Secret
+3. **Enable APIs** — APIs & Services → Library, then enable each service:
 
-**1. Create Project**
-```text
-console.cloud.google.com
+   | | | | |
+   |:--|:--|:--|:--|
+   | [Calendar](https://console.cloud.google.com/flows/enableapi?apiid=calendar-json.googleapis.com) | [Drive](https://console.cloud.google.com/flows/enableapi?apiid=drive.googleapis.com) | [Gmail](https://console.cloud.google.com/flows/enableapi?apiid=gmail.googleapis.com) | [Docs](https://console.cloud.google.com/flows/enableapi?apiid=docs.googleapis.com) |
+   | [Sheets](https://console.cloud.google.com/flows/enableapi?apiid=sheets.googleapis.com) | [Slides](https://console.cloud.google.com/flows/enableapi?apiid=slides.googleapis.com) | [Forms](https://console.cloud.google.com/flows/enableapi?apiid=forms.googleapis.com) | [Tasks](https://console.cloud.google.com/flows/enableapi?apiid=tasks.googleapis.com) |
+   | [Chat](https://console.cloud.google.com/flows/enableapi?apiid=chat.googleapis.com) | [People](https://console.cloud.google.com/flows/enableapi?apiid=people.googleapis.com) | [Custom Search](https://console.cloud.google.com/flows/enableapi?apiid=customsearch.googleapis.com) | [Apps Script](https://console.cloud.google.com/flows/enableapi?apiid=script.googleapis.com) |
 
-→ Create new project
-→ Note project name
-```
-<sub>[Open Console →](https://console.cloud.google.com/)</sub>
-
-</td>
-<td width="33%" align="center">
-
-**2. OAuth Credentials**
-```text
-APIs & Services → Credentials
-→ Create Credentials
-→ OAuth Client ID
-→ Desktop Application
-```
-<sub>Download & save credentials</sub>
-
-</td>
-<td width="34%" align="center">
-
-**3. Enable APIs**
-```text
-APIs & Services → Library
-
-Search & enable:
-Calendar, Drive, Gmail,
-Docs, Sheets, Slides,
-Forms, Tasks, People,
-Chat, Search
-```
-<sub>See quick links below</sub>
-
-</td>
-</tr>
-<tr>
-<td colspan="3">
-
-<details>
-<summary><b>OAuth Credential Setup Guide</b> <sub><sup>← Step-by-step instructions</sup></sub></summary>
-
-**Complete Setup Process:**
-
-1. **Create OAuth 2.0 Credentials** - Visit [Google Cloud Console](https://console.cloud.google.com/)
-   - Create a new project (or use existing)
-   - Navigate to **APIs & Services → Credentials**
-   - Click **Create Credentials → OAuth Client ID**
-   - Choose **Desktop Application** as the application type (no redirect URIs needed!)
-   - Download credentials and note the Client ID and Client Secret
-
-2. **Enable Required APIs** - In **APIs & Services → Library**
-   - Search for and enable each required API
-   - Or use the quick links below for one-click enabling
-
-3. **Configure Environment** - Set your credentials:
+4. **Set Credentials** — see [Environment Variable Reference](#quick-start) above, or:
    ```bash
    export GOOGLE_OAUTH_CLIENT_ID="your-client-id"
    export GOOGLE_OAUTH_CLIENT_SECRET="your-secret"
    ```
+   For public OAuth 2.1 PKCE clients, omit `GOOGLE_OAUTH_CLIENT_SECRET` and set `FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY` instead.
 
-[Full Documentation →](https://developers.google.com/workspace/guides/auth-overview)
-
-</details>
-
-</td>
-</tr>
-</table>
-
-<details>
-  <summary><b>Quick API Enable Links</b> <sub><sup>← One-click enable each Google API</sup></sub></summary>
-  You can enable each one by clicking the links below (make sure you're logged into the Google Cloud Console and have the correct project selected):
-
-* [Enable Google Calendar API](https://console.cloud.google.com/flows/enableapi?apiid=calendar-json.googleapis.com)
-* [Enable Google Drive API](https://console.cloud.google.com/flows/enableapi?apiid=drive.googleapis.com)
-* [Enable Gmail API](https://console.cloud.google.com/flows/enableapi?apiid=gmail.googleapis.com)
-* [Enable Google Docs API](https://console.cloud.google.com/flows/enableapi?apiid=docs.googleapis.com)
-* [Enable Google Sheets API](https://console.cloud.google.com/flows/enableapi?apiid=sheets.googleapis.com)
-* [Enable Google Slides API](https://console.cloud.google.com/flows/enableapi?apiid=slides.googleapis.com)
-* [Enable Google Forms API](https://console.cloud.google.com/flows/enableapi?apiid=forms.googleapis.com)
-* [Enable Google Tasks API](https://console.cloud.google.com/flows/enableapi?apiid=tasks.googleapis.com)
-* [Enable Google Chat API](https://console.cloud.google.com/flows/enableapi?apiid=chat.googleapis.com)
-* [Enable Google People API](https://console.cloud.google.com/flows/enableapi?apiid=people.googleapis.com)
-* [Enable Google Custom Search API](https://console.cloud.google.com/flows/enableapi?apiid=customsearch.googleapis.com)
-* [Enable Google Apps Script API](https://console.cloud.google.com/flows/enableapi?apiid=script.googleapis.com)
-
-</details>
-
-</details>
-
-1.1. **Credentials**: See [Credential Configuration](#credential-configuration) for detailed setup options
-
-2. **Environment Configuration**:
-
-<details open>
-<summary>◆ <b>Environment Variables</b> <sub><sup>← Configure your runtime environment</sup></sub></summary>
-
-<table>
-<tr>
-<td width="33%" align="center">
-
-**◆ Development Mode**
-```bash
-export OAUTHLIB_INSECURE_TRANSPORT=1
-```
-<sub>Allows HTTP redirect URIs</sub>
-
-</td>
-<td width="33%" align="center">
-
-**@ Default User**
-```bash
-export USER_GOOGLE_EMAIL=\
-  your.email@gmail.com
-```
-<sub>Single-user authentication</sub>
-
-</td>
-<td width="34%" align="center">
-
-**◆ Custom Search**
-```bash
-export GOOGLE_PSE_API_KEY=xxx
-export GOOGLE_PSE_ENGINE_ID=yyy
-```
-<sub>Optional: Search API setup</sub>
-
-</td>
-</tr>
-</table>
-
-</details>
-
-3. **Server Configuration**:
-
-<details open>
-<summary>◆ <b>Server Settings</b> <sub><sup>← Customize ports, URIs & proxies</sup></sub></summary>
-
-<table>
-<tr>
-<td width="33%" align="center">
-
-**◆ Base Configuration**
-```bash
-export WORKSPACE_MCP_BASE_URI=
-  http://localhost
-export WORKSPACE_MCP_PORT=8000
-export WORKSPACE_MCP_HOST=0.0.0.0  # Use 127.0.0.1 for localhost-only
-```
-<sub>Server URL & port settings</sub>
-
-</td>
-<td width="33%" align="center">
-
-**↻ Proxy Support**
-```bash
-export MCP_ENABLE_OAUTH21=
-  true
-```
-<sub>Leverage multi-user OAuth2.1 clients</sub>
-
-</td>
-<td width="34%" align="center">
-
-**@ Default Email**
-```bash
-export USER_GOOGLE_EMAIL=\
-  your.email@gmail.com
-```
-<sub>Skip email in auth flows in single user mode</sub>
-
-</td>
-</tr>
-</table>
-
-<details>
-<summary>≡ <b>Configuration Details</b> <sub><sup>← Learn more about each setting</sup></sub></summary>
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `WORKSPACE_MCP_BASE_URI` | Base server URI (no port) | `http://localhost` |
-| `WORKSPACE_MCP_PORT` | Server listening port | `8000` |
-| `WORKSPACE_MCP_HOST` | Server bind host | `0.0.0.0` |
-| `WORKSPACE_EXTERNAL_URL` | External URL for reverse proxy setups | None |
-| `GOOGLE_OAUTH_REDIRECT_URI` | Override OAuth callback URL | Auto-constructed |
-| `USER_GOOGLE_EMAIL` | Default auth email | None |
-
-</details>
+<sub>[Full OAuth documentation →](https://developers.google.com/workspace/guides/auth-overview) · [Credential setup details →](#-credential-configuration)</sub>
 
 </details>
 
 ### Google Custom Search Setup
 
-<details>
+<details open>
 <summary>◆ <b>Custom Search Configuration</b> <sub><sup>← Enable web search capabilities</sup></sub></summary>
 
 <table>
@@ -458,7 +392,7 @@ export GOOGLE_PSE_ENGINE_ID=\
 <tr>
 <td colspan="3">
 
-<details>
+<details open>
 <summary>≡ <b>Quick Setup Guide</b> <sub><sup>← Step-by-step instructions</sup></sub></summary>
 
 **Complete Setup Process:**
@@ -490,7 +424,9 @@ export GOOGLE_PSE_ENGINE_ID=\
 
 ### Start the Server
 
-> **📌 Transport Mode Guidance**: Use **streamable HTTP mode** (`--transport streamable-http`) for all modern MCP clients including Claude Code, VS Code MCP, and MCP Inspector. Stdio mode is only for clients with incomplete MCP specification support.
+> **📌 Transport Mode Guidance**: Use **streamable HTTP mode** (`--transport streamable-http`) for all modern MCP clients including Claude Code, VS Code MCP, and MCP Inspector. For Claude Desktop, run an instance and connect via a [Connector](https://workspacemcp.com/quick-start). Stdio mode is a legacy fallback. For deployments, prefer OAuth 2.1 with stateless mode (`MCP_ENABLE_OAUTH21=true`, `WORKSPACE_MCP_STATELESS_MODE=true`) unless you need local attachment or credential storage.
+
+> **OAuth state safety**: Legacy stdio starts a local-only OAuth callback server. In single-user mode only, it may recover a missing Google `state` parameter by consuming the most recent pending local OAuth state. This fallback is intentionally disabled outside single-user mode because it can cross session boundaries. Do not enable or emulate this behavior in streamable HTTP, hosted, or multi-user deployments; those modes must require an explicit state match.
 
 <details open>
 <summary>▶ <b>Launch Commands</b> <sub><sup>← Choose your startup mode</sup></sub></summary>
@@ -510,6 +446,8 @@ uv run main.py
 
 **◆ HTTP Mode (Recommended)**
 ```bash
+export MCP_ENABLE_OAUTH21=true
+export GOOGLE_OAUTH_CLIENT_ID="..."
 uv run main.py \
   --transport streamable-http
 ```
@@ -531,7 +469,7 @@ uv run main.py \
 <tr>
 <td colspan="3">
 
-<details>
+<details open>
 <summary>◆ <b>Advanced Options</b> <sub><sup>← Tool selection, tiers & Docker</sup></sub></summary>
 
 **▶ Selective Tool Loading**
@@ -559,6 +497,33 @@ Read-only mode provides secure, restricted access by:
 - Automatically filtering out tools that require write permissions at startup
 - Allowing read operations: list, get, search, and export across all services
 
+**🔐 Granular Permissions**
+```bash
+# Per-service permission levels
+uv run main.py --permissions gmail:organize drive:readonly
+
+# Combine permissions with tier filtering
+uv run main.py --permissions gmail:send drive:full --tool-tier core
+```
+Granular permissions mode provides service-by-service scope control:
+- Format: `service:level` (one entry per service)
+- Gmail levels: `readonly`, `organize`, `drafts`, `send`, `full` (cumulative)
+- Tasks levels: `readonly`, `manage`, `full` (cumulative; `manage` allows create/update/move but denies `delete` and `clear_completed`)
+- Other services currently support: `readonly`, `full`
+- `--permissions` and `--read-only` are mutually exclusive
+- `--permissions` cannot be combined with `--tools`; enabled services are determined by the `--permissions` entries (optionally filtered by `--tool-tier`)
+- With `--tool-tier`, only tier-matched tools are enabled and only services that have tools in the selected tier are imported
+
+The `WORKSPACE_MCP_TOOLS`, `WORKSPACE_MCP_TOOL_TIER`, `WORKSPACE_MCP_READ_ONLY`, and `WORKSPACE_MCP_PERMISSIONS` environment variables provide the same controls for plugin and container installs. Empty strings are ignored. Non-empty malformed values fail closed at startup. Explicit CLI flags take precedence over mutually exclusive env vars.
+
+**Advanced legacy stdio sidecar**
+```bash
+# Optional bridge only for local legacy stdio sessions
+WORKSPACE_MCP_HTTP_PORT=8001 uv run main.py
+workspace-cli --url http://127.0.0.1:8001/mcp list
+```
+The sidecar is disabled unless `WORKSPACE_MCP_HTTP_PORT` is set. It only exists to bridge local `workspace-cli` calls into a legacy stdio server. Do not use it for normal Claude Code, VS Code, hosted, or multi-user deployments; use streamable HTTP with OAuth 2.1 instead. When enabled, it validates ports in the `1..65535` range, binds to `127.0.0.1`, and logs a warning if the port is already in use while keeping stdio running.
+
 **★ Tool Tiers**
 ```bash
 uv run main.py --tool-tier core      # ● Essential tools only
@@ -570,6 +535,8 @@ uv run main.py --tool-tier complete  # ○ All available tools
 ```bash
 docker build -t workspace-mcp .
 docker run -p 8000:8000 -v $(pwd):/app \
+  -e MCP_ENABLE_OAUTH21=true \
+  -e GOOGLE_OAUTH_CLIENT_ID="..." \
   workspace-mcp --transport streamable-http
 
 # With tool selection via environment variables
@@ -587,12 +554,20 @@ docker run -e TOOLS="gmail drive calendar" workspace-mcp
 
 </details>
 
-### CLI Mode
+### CLI
 
-The server supports a CLI mode for direct tool invocation without running the full MCP server. This is ideal for scripting, automation, and use by coding agents (Codex, Claude Code).
+The `workspace-cli` command lists tools and calls them against a running server — with encrypted, disk-backed OAuth token caching so you only authenticate once. On first run it opens a browser for Google consent; subsequent runs reuse the cached tokens automatically.
+
+Tokens are stored encrypted at `~/.workspace-mcp/cli-tokens/` using a Fernet key auto-generated at `~/.workspace-mcp/.cli-encryption-key`.
+
+To use workspace-cli globally, you'll want to start in this repo and run `uv tool install .`
+
+Once complete, you'll have workspace-cli available globally via `workspace-cli`
+
+Note: there is a public (but abandoned) pypi package with the same name - do not use uvx, as it will pull the wrong thing. 
 
 <details open>
-<summary>▶ <b>CLI Commands</b> <sub><sup>← Direct tool execution from command line</sup></sub></summary>
+<summary>▶ <b>workspace-cli Commands</b> <sub><sup>← Persistent OAuth, no re-auth on every call</sup></sub></summary>
 
 <table>
 <tr>
@@ -600,92 +575,44 @@ The server supports a CLI mode for direct tool invocation without running the fu
 
 **▶ List Tools**
 ```bash
-workspace-mcp --cli
-workspace-mcp --cli list
-workspace-mcp --cli list --json
+uv run workspace-cli list
+uv run workspace-cli --url https://custom.server/mcp list
+
+# Or, if installed globally:
+workspace-cli list
+workspace-cli --url https://custom.server/mcp list
 ```
 <sub>View all available tools</sub>
 
 </td>
 <td width="50%" align="center">
 
-**◆ Tool Help**
+**◆ Call a Tool**
 ```bash
-workspace-mcp --cli search_gmail_messages --help
+uv run workspace-cli call search_gmail_messages \
+  query="is:unread" max_results=5
 ```
-<sub>Show parameters and documentation</sub>
-
-</td>
-</tr>
-<tr>
-<td width="50%" align="center">
-
-**▶ Run with Arguments**
-```bash
-workspace-mcp --cli search_gmail_messages \
-  --args '{"query": "is:unread"}'
-```
-<sub>Execute tool with inline JSON</sub>
-
-</td>
-<td width="50%" align="center">
-
-**◆ Pipe from Stdin**
-```bash
-echo '{"query": "is:unread"}' | \
-  workspace-mcp --cli search_gmail_messages
-```
-<sub>Pass arguments via stdin</sub>
+<sub>Execute a tool with key=value arguments</sub>
 
 </td>
 </tr>
 </table>
 
-<details>
-<summary>≡ <b>CLI Usage Details</b> <sub><sup>← Complete reference</sup></sub></summary>
+Set URL for remote endpoints with `--url` or the `WORKSPACE_MCP_URL` environment variable.
 
-**Command Structure:**
+<details open>
+<summary>≡ <b>Advanced: FastMCP CLI</b> <sub><sup>← inspect, install, discover</sup></sub></summary>
+
+The upstream [FastMCP CLI](https://gofastmcp.com/cli) is also bundled and provides additional commands for schema inspection, client installation, and editor discovery. Note that `fastmcp` uses in-memory token storage, so each invocation may re-trigger the OAuth flow.
+
 ```bash
-workspace-mcp --cli [command] [options]
+fastmcp inspect fastmcp_server.py                        # print tools, resources, prompts
+fastmcp install claude-code fastmcp_server.py             # one-command client setup
+fastmcp install cursor fastmcp_server.py
+fastmcp discover                                          # find servers configured in editors
 ```
 
-**Commands:**
-| Command | Description |
-|---------|-------------|
-| `list` (default) | List all available tools |
-| `<tool_name>` | Execute the specified tool |
-| `<tool_name> --help` | Show detailed help for a tool |
-
-**Options:**
-| Option | Description |
-|--------|-------------|
-| `--args`, `-a` | JSON string with tool arguments |
-| `--json`, `-j` | Output in JSON format (for `list` command) |
-| `--help`, `-h` | Show help for a tool |
-
-**Examples:**
-```bash
-# List all Gmail tools
-workspace-mcp --cli list | grep gmail
-
-# Search for unread emails
-workspace-mcp --cli search_gmail_messages --args '{"query": "is:unread", "max_results": 5}'
-
-# Get calendar events for today
-workspace-mcp --cli get_events --args '{"calendar_id": "primary", "time_min": "2024-01-15T00:00:00Z"}'
-
-# Create a Drive file from a URL
-workspace-mcp --cli create_drive_file --args '{"name": "doc.pdf", "source_url": "https://example.com/file.pdf"}'
-
-# Combine with jq for processing
-workspace-mcp --cli list --json | jq '.tools[] | select(.name | contains("gmail"))'
-```
-
-**Notes:**
-- CLI mode uses OAuth 2.0 (same credentials as server mode)
-- Authentication flows work the same way - browser opens for first-time auth
-- Results are printed to stdout; errors go to stderr
-- Exit code 0 on success, 1 on error
+See `fastmcp --help` or the [FastMCP CLI docs](https://gofastmcp.com/cli) for the full command reference.
 
 </details>
 
@@ -737,6 +664,9 @@ uv run main.py --tool-tier complete                        # Enable all availabl
 uv run main.py --tools gmail drive --tool-tier core        # Core tools for specific services
 uv run main.py --tools gmail --tool-tier extended          # Extended Gmail functionality only
 uv run main.py --tools docs sheets --tool-tier complete    # Full access to Docs and Sheets
+
+# Combine tier selection with granular permission levels
+uv run main.py --permissions gmail:organize drive:full --tool-tier core
 ```
 
 ## 📋 Credential Configuration
@@ -786,7 +716,7 @@ cp .env.oauth21 .env
 <tr>
 <td colspan="3">
 
-<details>
+<details open>
 <summary>📖 <b>Credential Loading Details</b> <sub><sup>← Understanding priority & best practices</sup></sub></summary>
 
 **Loading Priority**
@@ -816,70 +746,65 @@ cp .env.oauth21 .env
 
 > **Note**: All tools support automatic authentication via `@require_google_service()` decorators with 30-minute service caching.
 
-<table width="100%">
-<tr>
-<td width="50%" valign="top">
+<div align="center">
 
-### 📅 **Google Calendar** <sub>[`calendar_tools.py`](gcalendar/calendar_tools.py)</sub>
+> 📖 **Looking for detailed parameters?** Visit the **[Complete Documentation →](https://workspacemcp.com/docs)** for comprehensive tool reference, examples, and API guides!
 
-| Tool | Tier | Description |
+</div>
+
+#### 📅 Google Calendar <sub>[`calendar_tools.py`](gcalendar/calendar_tools.py)</sub>
+
+| <sub>Tool</sub> | <sub>Tier</sub> | <sub>Description</sub> |
 |------|------|-------------|
-| `list_calendars` | **Core** | List accessible calendars |
-| `get_events` | **Core** | Retrieve events with time range filtering |
-| `create_event` | **Core** | Create events with attachments & reminders |
-| `modify_event` | **Core** | Update existing events |
-| `delete_event` | Extended | Remove events |
+| <sub>`list_calendars`</sub> | <sub>Core</sub> | <sub>List accessible calendars</sub> |
+| <sub>`get_events`</sub> | <sub>Core</sub> | <sub>Retrieve events with time range filtering</sub> |
+| <sub>`manage_event`</sub> | <sub>Core</sub> | <sub>Create, update, or delete calendar events</sub> |
+| <sub>`create_calendar`</sub> | <sub>Extended</sub> | <sub>Create a new secondary Google Calendar</sub> |
+| <sub>`query_freebusy`</sub> | <sub>Extended</sub> | <sub>Query free/busy information for calendars</sub> |
+| <sub>`manage_out_of_office`</sub> | <sub>Extended</sub> | <sub>Create, list, update, or delete Out of Office events</sub> |
+| <sub>`manage_focus_time`</sub> | <sub>Extended</sub> | <sub>Create, list, update, or delete Focus Time events</sub> |
 
-</td>
-<td width="50%" valign="top">
+#### 📁 Google Drive <sub>[`drive_tools.py`](gdrive/drive_tools.py)</sub>
 
-### 📁 **Google Drive** <sub>[`drive_tools.py`](gdrive/drive_tools.py)</sub>
-
-| Tool | Tier | Description |
+| <sub>Tool</sub> | <sub>Tier</sub> | <sub>Description</sub> |
 |------|------|-------------|
-| `search_drive_files` | **Core** | Search files with query syntax |
-| `get_drive_file_content` | **Core** | Read file content (Office formats) |
-| `get_drive_file_download_url` | **Core** | Get download URL for Drive files |
-| `create_drive_file` | **Core** | Create files or fetch from URLs |
-| `import_to_google_doc` | **Core** | Import files (MD, DOCX, HTML, etc.) as Google Docs |
-| `share_drive_file` | **Core** | Share file with users/groups/domains/anyone |
-| `get_drive_shareable_link` | **Core** | Get shareable links for a file |
-| `list_drive_items` | Extended | List folder contents |
-| `copy_drive_file` | Extended | Copy existing files (templates) with optional renaming |
-| `update_drive_file` | Extended | Update file metadata, move between folders |
-| `batch_share_drive_file` | Extended | Share file with multiple recipients |
-| `update_drive_permission` | Extended | Modify permission role |
-| `remove_drive_permission` | Extended | Revoke file access |
-| `transfer_drive_ownership` | Extended | Transfer file ownership to another user |
-| `set_drive_file_permissions` | Extended | Set link sharing and file-level sharing settings |
-| `get_drive_file_permissions` | Complete | Get detailed file permissions |
-| `check_drive_file_public_access` | Complete | Check public sharing status |
+| <sub>`search_drive_files`</sub> | <sub>Core</sub> | <sub>Search files with query syntax</sub> |
+| <sub>`get_drive_file_content`</sub> | <sub>Core</sub> | <sub>Read file content (Office, PDF, image)</sub> |
+| <sub>`get_drive_file_download_url`</sub> | <sub>Core</sub> | <sub>Download Drive files to local disk</sub> |
+| <sub>`create_drive_file`</sub> | <sub>Core</sub> | <sub>Create files or fetch from URLs</sub> |
+| <sub>`create_drive_folder`</sub> | <sub>Core</sub> | <sub>Create empty folders in Drive or shared drives</sub> |
+| <sub>`import_to_google_doc`</sub> | <sub>Core</sub> | <sub>Import files (MD, DOCX, HTML, etc.) as Google Docs</sub> |
+| <sub>`import_to_google_slides`</sub> | <sub>Core</sub> | <sub>Import presentation files (PPTX, PPT, ODP) as Google Slides</sub> |
+| <sub>`import_to_google_sheets`</sub> | <sub>Core</sub> | <sub>Import spreadsheet files (XLSX, CSV, TSV, etc.) as Google Sheets</sub> |
+| <sub>`get_drive_shareable_link`</sub> | <sub>Core</sub> | <sub>Get shareable links for a file</sub> |
+| <sub>`list_drive_items`</sub> | <sub>Extended</sub> | <sub>List folder contents or shared drives</sub> |
+| <sub>`copy_drive_file`</sub> | <sub>Extended</sub> | <sub>Copy existing files (templates) with optional renaming</sub> |
+| <sub>`update_drive_file`</sub> | <sub>Extended</sub> | <sub>Update metadata, move files, or replace Google Apps content</sub> |
+| <sub>`manage_drive_access`</sub> | <sub>Extended</sub> | <sub>Grant, update, revoke permissions, and transfer ownership</sub> |
+| <sub>`set_drive_file_permissions`</sub> | <sub>Extended</sub> | <sub>Set link sharing and file-level sharing settings</sub> |
+| <sub>`get_drive_file_permissions`</sub> | <sub>Complete</sub> | <sub>Get file metadata, parents, and permissions</sub> |
+| <sub>`check_drive_file_public_access`</sub> | <sub>Complete</sub> | <sub>Check public sharing status</sub> |
 
-</td>
-</tr>
-<tr>
+#### 📧 Gmail <sub>[`gmail_tools.py`](gmail/gmail_tools.py)</sub>
 
-<tr>
-<td width="50%" valign="top">
-
-### 📧 **Gmail** <sub>[`gmail_tools.py`](gmail/gmail_tools.py)</sub>
-
-| Tool | Tier | Description |
+| <sub>Tool</sub> | <sub>Tier</sub> | <sub>Description</sub> |
 |------|------|-------------|
-| `search_gmail_messages` | **Core** | Search with Gmail operators |
-| `get_gmail_message_content` | **Core** | Retrieve message content |
-| `get_gmail_messages_content_batch` | **Core** | Batch retrieve message content |
-| `send_gmail_message` | **Core** | Send emails |
-| `get_gmail_thread_content` | Extended | Get full thread content |
-| `modify_gmail_message_labels` | Extended | Modify message labels |
-| `list_gmail_labels` | Extended | List available labels |
-| `manage_gmail_label` | Extended | Create/update/delete labels |
-| `draft_gmail_message` | Extended | Create drafts |
-| `get_gmail_threads_content_batch` | Complete | Batch retrieve thread content |
-| `batch_modify_gmail_message_labels` | Complete | Batch modify labels |
-| `start_google_auth` | Complete | Legacy OAuth 2.0 auth (disabled when OAuth 2.1 is enabled) |
+| <sub>`search_gmail_messages`</sub> | <sub>Core</sub> | <sub>Search with Gmail operators</sub> |
+| <sub>`get_gmail_message_content`</sub> | <sub>Core</sub> | <sub>Retrieve message content</sub> |
+| <sub>`get_gmail_messages_content_batch`</sub> | <sub>Core</sub> | <sub>Batch retrieve message content</sub> |
+| <sub>`send_gmail_message`</sub> | <sub>Core</sub> | <sub>Send emails</sub> |
+| <sub>`get_gmail_thread_content`</sub> | <sub>Extended</sub> | <sub>Get full thread content</sub> |
+| <sub>`modify_gmail_message_labels`</sub> | <sub>Extended</sub> | <sub>Modify message labels</sub> |
+| <sub>`list_gmail_labels`</sub> | <sub>Extended</sub> | <sub>List available labels</sub> |
+| <sub>`list_gmail_filters`</sub> | <sub>Extended</sub> | <sub>List Gmail filters</sub> |
+| <sub>`manage_gmail_label`</sub> | <sub>Extended</sub> | <sub>Create/update/delete labels</sub> |
+| <sub>`manage_gmail_filter`</sub> | <sub>Extended</sub> | <sub>Create or delete Gmail filters</sub> |
+| <sub>`draft_gmail_message`</sub> | <sub>Extended</sub> | <sub>Create drafts</sub> |
+| <sub>`get_gmail_threads_content_batch`</sub> | <sub>Complete</sub> | <sub>Batch retrieve thread content</sub> |
+| <sub>`batch_modify_gmail_message_labels`</sub> | <sub>Complete</sub> | <sub>Batch modify labels</sub> |
+| <sub>`start_google_auth`</sub> | <sub>Complete</sub> | <sub>Legacy OAuth 2.0 auth (disabled when OAuth 2.1 is enabled)</sub> |
 
-<details>
+<details open>
 <summary><b>📎 Email Attachments</b> <sub><sup>← Send emails with files</sup></sub></summary>
 
 Both `send_gmail_message` and `draft_gmail_message` support attachments via two methods:
@@ -903,189 +828,168 @@ attachments=[{
 
 </details>
 
-</td>
-<td width="50%" valign="top">
+<details open>
+<summary><b>📥 Downloaded Attachment Storage</b> <sub><sup>← Where downloaded files are saved</sup></sub></summary>
 
-### 📝 **Google Docs** <sub>[`docs_tools.py`](gdocs/docs_tools.py)</sub>
+When downloading Gmail attachments (`get_gmail_attachment_content`) or Drive files (`get_drive_file_download_url`), files are saved to a persistent local directory rather than a temporary folder in the working directory.
 
-| Tool | Tier | Description |
+**Default location:** `~/.workspace-mcp/attachments/`
+
+Files are saved with their original filename plus a short UUID suffix for uniqueness (e.g., `invoice_a1b2c3d4.pdf`). In **stdio mode**, the tool returns the absolute file path for direct filesystem access. In **HTTP mode**, it returns a download URL via the `/attachments/{file_id}` endpoint.
+
+To customize the storage directory:
+```bash
+export WORKSPACE_ATTACHMENT_DIR="/path/to/custom/dir"
+```
+
+Saved files expire after 1 hour and are cleaned up automatically.
+
+</details>
+
+#### 📝 Google Docs <sub>[`docs_tools.py`](gdocs/docs_tools.py)</sub>
+
+| <sub>Tool</sub> | <sub>Tier</sub> | <sub>Description</sub> |
 |------|------|-------------|
-| `get_doc_content` | **Core** | Extract document text |
-| `create_doc` | **Core** | Create new documents |
-| `modify_doc_text` | **Core** | Modify document text |
-| `search_docs` | Extended | Find documents by name |
-| `find_and_replace_doc` | Extended | Find and replace text |
-| `list_docs_in_folder` | Extended | List docs in folder |
-| `insert_doc_elements` | Extended | Add tables, lists, page breaks |
-| `update_paragraph_style` | Extended | Apply heading styles, lists (bulleted/numbered with nesting), and paragraph formatting |
-| `insert_doc_image` | Complete | Insert images from Drive/URLs |
-| `update_doc_headers_footers` | Complete | Modify headers and footers |
-| `batch_update_doc` | Complete | Execute multiple operations |
-| `inspect_doc_structure` | Complete | Analyze document structure |
-| `export_doc_to_pdf` | Extended | Export document to PDF |
-| `create_table_with_data` | Complete | Create data tables |
-| `debug_table_structure` | Complete | Debug table issues |
-| `*_document_comments` | Complete | Read, Reply, Create, Resolve |
+| <sub>`get_doc_content`</sub> | <sub>Core</sub> | <sub>Extract document text</sub> |
+| <sub>`create_doc`</sub> | <sub>Core</sub> | <sub>Create new documents</sub> |
+| <sub>`modify_doc_text`</sub> | <sub>Core</sub> | <sub>Insert, replace, and richly format text with tab/segment targeting, append-to-segment support, advanced typography, and link management</sub> |
+| <sub>`search_docs`</sub> | <sub>Extended</sub> | <sub>Find documents by name</sub> |
+| <sub>`find_and_replace_doc`</sub> | <sub>Extended</sub> | <sub>Find and replace text</sub> |
+| <sub>`list_docs_in_folder`</sub> | <sub>Extended</sub> | <sub>List docs in folder</sub> |
+| <sub>`insert_doc_elements`</sub> | <sub>Extended</sub> | <sub>Add tables, lists, page breaks</sub> |
+| <sub>`update_paragraph_style`</sub> | <sub>Extended</sub> | <sub>Apply advanced paragraph styling including headings, spacing, direction, pagination controls, shading, and bulleted/numbered/checkbox lists with nesting</sub> |
+| <sub>`get_doc_as_markdown`</sub> | <sub>Extended</sub> | <sub>Export document as formatted Markdown with optional comments</sub> |
+| <sub>`insert_doc_image`</sub> | <sub>Complete</sub> | <sub>Insert images from Drive/URLs</sub> |
+| <sub>`update_doc_headers_footers`</sub> | <sub>Complete</sub> | <sub>Create or update headers and footers with correct segment-aware writes</sub> |
+| <sub>`batch_update_doc`</sub> | <sub>Complete</sub> | <sub>Execute atomic multi-step Docs API operations including named ranges, section breaks, document/section layout, header/footer creation, segment-aware inserts, images, tables, and rich formatting</sub> |
+| <sub>`inspect_doc_structure`</sub> | <sub>Complete</sub> | <sub>Analyze document structure, including safe insertion points, tables, section breaks, headers/footers, and named ranges</sub> |
+| <sub>`export_doc_to_pdf`</sub> | <sub>Extended</sub> | <sub>Export document to PDF</sub> |
+| <sub>`create_table_with_data`</sub> | <sub>Complete</sub> | <sub>Create data tables</sub> |
+| <sub>`debug_table_structure`</sub> | <sub>Complete</sub> | <sub>Debug table issues</sub> |
+| <sub>`list_document_comments`</sub> | <sub>Complete</sub> | <sub>List all document comments</sub> |
+| <sub>`manage_document_comment`</sub> | <sub>Complete</sub> | <sub>Create, reply to, or resolve comments</sub> |
+| <sub>`manage_doc_tab`</sub> | <sub>Complete</sub> | <sub>Create, rename, delete, or populate tabs from markdown</sub> |
 
-</td>
-</tr>
+#### 📊 Google Sheets <sub>[`sheets_tools.py`](gsheets/sheets_tools.py)</sub>
 
-<tr>
-<td width="50%" valign="top">
-
-### 📊 **Google Sheets** <sub>[`sheets_tools.py`](gsheets/sheets_tools.py)</sub>
-
-| Tool | Tier | Description |
+| <sub>Tool</sub> | <sub>Tier</sub> | <sub>Description</sub> |
 |------|------|-------------|
-| `read_sheet_values` | **Core** | Read cell ranges |
-| `modify_sheet_values` | **Core** | Write/update/clear cells |
-| `create_spreadsheet` | **Core** | Create new spreadsheets |
-| `list_spreadsheets` | Extended | List accessible spreadsheets |
-| `get_spreadsheet_info` | Extended | Get spreadsheet metadata |
-| `format_sheet_range` | Extended | Apply colors, number formats, text wrapping, alignment, bold/italic, font size |
-| `create_sheet` | Complete | Add sheets to existing files |
-| `*_sheet_comment` | Complete | Read/create/reply/resolve comments |
+| <sub>`read_sheet_values`</sub> | <sub>Core</sub> | <sub>Read cell ranges</sub> |
+| <sub>`modify_sheet_values`</sub> | <sub>Core</sub> | <sub>Write/update/clear cells</sub> |
+| <sub>`create_spreadsheet`</sub> | <sub>Core</sub> | <sub>Create new spreadsheets</sub> |
+| <sub>`list_spreadsheets`</sub> | <sub>Extended</sub> | <sub>List accessible spreadsheets</sub> |
+| <sub>`get_spreadsheet_info`</sub> | <sub>Extended</sub> | <sub>Get spreadsheet metadata</sub> |
+| <sub>`format_sheet_range`</sub> | <sub>Extended</sub> | <sub>Apply colors, number formats, text wrapping, alignment, bold/italic, font size</sub> |
+| <sub>`list_sheet_tables`</sub> | <sub>Extended</sub> | <sub>List structured tables with IDs, names, ranges, and columns</sub> |
+| <sub>`create_sheet`</sub> | <sub>Complete</sub> | <sub>Add sheets to existing files</sub> |
+| <sub>`move_sheet_rows`</sub> | <sub>Complete</sub> | <sub>Move rows between sheets within a spreadsheet</sub> |
+| <sub>`append_table_rows`</sub> | <sub>Complete</sub> | <sub>Append rows to a structured table, auto-extending the table range</sub> |
+| <sub>`list_spreadsheet_comments`</sub> | <sub>Complete</sub> | <sub>List all spreadsheet comments</sub> |
+| <sub>`manage_spreadsheet_comment`</sub> | <sub>Complete</sub> | <sub>Create, reply to, or resolve comments</sub> |
+| <sub>`manage_conditional_formatting`</sub> | <sub>Complete</sub> | <sub>Add, update, or delete conditional formatting rules</sub> |
 
-</td>
-<td width="50%" valign="top">
+#### 🖼️ Google Slides <sub>[`slides_tools.py`](gslides/slides_tools.py)</sub>
 
-### 🖼️ **Google Slides** <sub>[`slides_tools.py`](gslides/slides_tools.py)</sub>
-
-| Tool | Tier | Description |
+| <sub>Tool</sub> | <sub>Tier</sub> | <sub>Description</sub> |
 |------|------|-------------|
-| `create_presentation` | **Core** | Create new presentations |
-| `get_presentation` | **Core** | Retrieve presentation details |
-| `batch_update_presentation` | Extended | Apply multiple updates |
-| `get_page` | Extended | Get specific slide information |
-| `get_page_thumbnail` | Extended | Generate slide thumbnails |
-| `*_presentation_comment` | Complete | Read/create/reply/resolve comments |
+| <sub>`create_presentation`</sub> | <sub>Core</sub> | <sub>Create new presentations</sub> |
+| <sub>`get_presentation`</sub> | <sub>Core</sub> | <sub>Retrieve presentation details</sub> |
+| <sub>`batch_update_presentation`</sub> | <sub>Extended</sub> | <sub>Apply multiple updates</sub> |
+| <sub>`get_page`</sub> | <sub>Extended</sub> | <sub>Get specific slide information</sub> |
+| <sub>`get_page_thumbnail`</sub> | <sub>Extended</sub> | <sub>Generate slide thumbnails</sub> |
+| <sub>`list_presentation_comments`</sub> | <sub>Complete</sub> | <sub>List all presentation comments</sub> |
+| <sub>`manage_presentation_comment`</sub> | <sub>Complete</sub> | <sub>Create, reply to, or resolve comments</sub> |
 
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
+#### 📋 Google Forms <sub>[`forms_tools.py`](gforms/forms_tools.py)</sub>
 
-### 📝 **Google Forms** <sub>[`forms_tools.py`](gforms/forms_tools.py)</sub>
-
-| Tool | Tier | Description |
+| <sub>Tool</sub> | <sub>Tier</sub> | <sub>Description</sub> |
 |------|------|-------------|
-| `create_form` | **Core** | Create new forms |
-| `get_form` | **Core** | Retrieve form details & URLs |
-| `set_publish_settings` | Complete | Configure form settings |
-| `get_form_response` | Complete | Get individual responses |
-| `list_form_responses` | Extended | List all responses with pagination |
-| `batch_update_form` | Complete | Apply batch updates (questions, settings) |
+| <sub>`create_form`</sub> | <sub>Core</sub> | <sub>Create new forms</sub> |
+| <sub>`get_form`</sub> | <sub>Core</sub> | <sub>Retrieve form details & URLs</sub> |
+| <sub>`set_publish_settings`</sub> | <sub>Complete</sub> | <sub>Configure form settings</sub> |
+| <sub>`get_form_response`</sub> | <sub>Complete</sub> | <sub>Get individual responses</sub> |
+| <sub>`list_form_responses`</sub> | <sub>Extended</sub> | <sub>List all responses with pagination</sub> |
+| <sub>`batch_update_form`</sub> | <sub>Complete</sub> | <sub>Apply batch updates (questions, settings)</sub> |
 
-</td>
-<td width="50%" valign="top">
+#### ✓ Google Tasks <sub>[`tasks_tools.py`](gtasks/tasks_tools.py)</sub>
 
-### ✓ **Google Tasks** <sub>[`tasks_tools.py`](gtasks/tasks_tools.py)</sub>
-
-| Tool | Tier | Description |
+| <sub>Tool</sub> | <sub>Tier</sub> | <sub>Description</sub> |
 |------|------|-------------|
-| `list_tasks` | **Core** | List tasks with filtering |
-| `get_task` | **Core** | Retrieve task details |
-| `create_task` | **Core** | Create tasks with hierarchy |
-| `update_task` | **Core** | Modify task properties |
-| `delete_task` | Extended | Remove tasks |
-| `move_task` | Complete | Reposition tasks |
-| `clear_completed_tasks` | Complete | Hide completed tasks |
-| `*_task_list` | Complete | List/get/create/update/delete task lists |
+| <sub>`list_tasks`</sub> | <sub>Core</sub> | <sub>List tasks with filtering</sub> |
+| <sub>`get_task`</sub> | <sub>Core</sub> | <sub>Retrieve task details</sub> |
+| <sub>`manage_task`</sub> | <sub>Core</sub> | <sub>Create, update, delete, or move tasks</sub> |
+| <sub>`list_task_lists`</sub> | <sub>Complete</sub> | <sub>List task lists</sub> |
+| <sub>`get_task_list`</sub> | <sub>Complete</sub> | <sub>Get task list details</sub> |
+| <sub>`manage_task_list`</sub> | <sub>Complete</sub> | <sub>Create, update, delete task lists, or clear completed tasks</sub> |
 
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
+#### 👤 Google Contacts <sub>[`contacts_tools.py`](gcontacts/contacts_tools.py)</sub>
 
-### 👤 **Google Contacts** <sub>[`contacts_tools.py`](gcontacts/contacts_tools.py)</sub>
-
-| Tool | Tier | Description |
+| <sub>Tool</sub> | <sub>Tier</sub> | <sub>Description</sub> |
 |------|------|-------------|
-| `search_contacts` | **Core** | Search contacts by name, email, phone |
-| `get_contact` | **Core** | Retrieve detailed contact info |
-| `list_contacts` | **Core** | List contacts with pagination |
-| `create_contact` | **Core** | Create new contacts |
-| `update_contact` | Extended | Update existing contacts |
-| `delete_contact` | Extended | Delete contacts |
-| `list_contact_groups` | Extended | List contact groups/labels |
-| `get_contact_group` | Extended | Get group details with members |
-| `batch_*_contacts` | Complete | Batch create/update/delete contacts |
-| `*_contact_group` | Complete | Create/update/delete contact groups |
-| `modify_contact_group_members` | Complete | Add/remove contacts from groups |
+| <sub>`search_contacts`</sub> | <sub>Core</sub> | <sub>Search contacts by name, email, phone</sub> |
+| <sub>`get_contact`</sub> | <sub>Core</sub> | <sub>Retrieve detailed contact info</sub> |
+| <sub>`list_contacts`</sub> | <sub>Core</sub> | <sub>List contacts with pagination</sub> |
+| <sub>`manage_contact`</sub> | <sub>Core</sub> | <sub>Create, update, or delete contacts</sub> |
+| <sub>`list_contact_groups`</sub> | <sub>Extended</sub> | <sub>List contact groups/labels</sub> |
+| <sub>`get_contact_group`</sub> | <sub>Extended</sub> | <sub>Get group details with members</sub> |
+| <sub>`manage_contacts_batch`</sub> | <sub>Complete</sub> | <sub>Batch create, update, or delete contacts</sub> |
+| <sub>`manage_contact_group`</sub> | <sub>Complete</sub> | <sub>Create, update, delete groups, or modify membership</sub> |
 
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
+#### 💬 Google Chat <sub>[`chat_tools.py`](gchat/chat_tools.py)</sub>
 
-### 💬 **Google Chat** <sub>[`chat_tools.py`](gchat/chat_tools.py)</sub>
-
-| Tool | Tier | Description |
+| <sub>Tool</sub> | <sub>Tier</sub> | <sub>Description</sub> |
 |------|------|-------------|
-| `list_spaces` | Extended | List chat spaces/rooms |
-| `get_messages` | **Core** | Retrieve space messages |
-| `send_message` | **Core** | Send messages to spaces |
-| `search_messages` | **Core** | Search across chat history |
+| <sub>`list_spaces`</sub> | <sub>Extended</sub> | <sub>List chat spaces/rooms</sub> |
+| <sub>`get_messages`</sub> | <sub>Core</sub> | <sub>Retrieve space messages</sub> |
+| <sub>`send_message`</sub> | <sub>Core</sub> | <sub>Send messages to spaces</sub> |
+| <sub>`search_messages`</sub> | <sub>Core</sub> | <sub>Search across chat history</sub> |
+| <sub>`create_reaction`</sub> | <sub>Core</sub> | <sub>Add emoji reaction to a message</sub> |
+| <sub>`download_chat_attachment`</sub> | <sub>Extended</sub> | <sub>Download attachment from a chat message</sub> |
 
-</td>
-<td width="50%" valign="top">
+#### 🔍 Google Custom Search <sub>[`search_tools.py`](gsearch/search_tools.py)</sub>
 
-### 🔍 **Google Custom Search** <sub>[`search_tools.py`](gsearch/search_tools.py)</sub>
-
-| Tool | Tier | Description |
+| <sub>Tool</sub> | <sub>Tier</sub> | <sub>Description</sub> |
 |------|------|-------------|
-| `search_custom` | **Core** | Perform web searches |
-| `get_search_engine_info` | Complete | Retrieve search engine metadata |
-| `search_custom_siterestrict` | Extended | Search within specific domains |
+| <sub>`search_custom`</sub> | <sub>Core</sub> | <sub>Perform web searches (supports site restrictions via sites parameter)</sub> |
+| <sub>`get_search_engine_info`</sub> | <sub>Complete</sub> | <sub>Retrieve search engine metadata</sub> |
 
-</td>
-</tr>
-<tr>
-<td colspan="2" valign="top">
+#### ⚡ Google Apps Script <sub>[`apps_script_tools.py`](gappsscript/apps_script_tools.py)</sub>
 
-### **Google Apps Script** <sub>[`apps_script_tools.py`](gappsscript/apps_script_tools.py)</sub>
-
-| Tool | Tier | Description |
+| <sub>Tool</sub> | <sub>Tier</sub> | <sub>Description</sub> |
 |------|------|-------------|
-| `list_script_projects` | **Core** | List accessible Apps Script projects |
-| `get_script_project` | **Core** | Get complete project with all files |
-| `get_script_content` | **Core** | Retrieve specific file content |
-| `create_script_project` | **Core** | Create new standalone or bound project |
-| `update_script_content` | **Core** | Update or create script files |
-| `run_script_function` | **Core** | Execute function with parameters |
-| `create_deployment` | Extended | Create new script deployment |
-| `list_deployments` | Extended | List all project deployments |
-| `update_deployment` | Extended | Update deployment configuration |
-| `delete_deployment` | Extended | Remove deployment |
-| `list_script_processes` | Extended | View recent executions and status |
+| <sub>`list_script_projects`</sub> | <sub>Core</sub> | <sub>List accessible Apps Script projects</sub> |
+| <sub>`get_script_project`</sub> | <sub>Core</sub> | <sub>Get complete project with all files</sub> |
+| <sub>`get_script_content`</sub> | <sub>Core</sub> | <sub>Retrieve specific file content</sub> |
+| <sub>`create_script_project`</sub> | <sub>Core</sub> | <sub>Create new standalone or bound project</sub> |
+| <sub>`update_script_content`</sub> | <sub>Core</sub> | <sub>Update or create script files</sub> |
+| <sub>`run_script_function`</sub> | <sub>Core</sub> | <sub>Execute function with parameters</sub> |
+| <sub>`list_deployments`</sub> | <sub>Extended</sub> | <sub>List all project deployments</sub> |
+| <sub>`manage_deployment`</sub> | <sub>Extended</sub> | <sub>Create, update, or delete script deployments</sub> |
+| <sub>`list_script_processes`</sub> | <sub>Extended</sub> | <sub>View recent executions and status</sub> |
 
-</td>
-</tr>
-</table>
+<sub>
 
+**Tool Tier Legend:**<br>
+<span style="color:#2d5b69">●</span> **Core** — Essential tools for basic functionality · Minimal API usage · Getting started<br>
+<span style="color:#72898f">●</span> **Extended** — Core + additional features · Regular usage · Expanded capabilities<br>
+<span style="color:#adbcbc">●</span> **Complete** — All available tools including advanced features · Power users · Full API access
 
-**Tool Tier Legend:**
-- <span style="color:#2d5b69">•</span> **Core**: Essential tools for basic functionality • Minimal API usage • Getting started
-- <span style="color:#72898f">•</span> **Extended**: Core tools + additional features • Regular usage • Expanded capabilities
-- <span style="color:#adbcbc">•</span> **Complete**: All available tools including advanced features • Power users • Full API access
+</sub>
 
 ---
 
 ### Connect to Claude Desktop
 
-The server supports two transport modes:
+The recommended way to use Google Workspace MCP with Claude Desktop is to run a server instance and connect Claude to it via a **Connector**. This provides proper OAuth flow, multi-user support, and the best experience.
 
-#### Stdio Mode (Legacy - For Clients with Incomplete MCP Support)
-
-> **⚠️ Important**: Stdio mode is a **legacy fallback** for clients that don't properly implement the MCP specification with OAuth 2.1 and streamable HTTP support. **Claude Code and other modern MCP clients should use streamable HTTP mode** (`--transport streamable-http`) for proper OAuth flow and multi-user support.
-
-In general, you should use the one-click DXT installer package for Claude Desktop.
-If you are unable to for some reason, you can configure it manually via `claude_desktop_config.json`
-
-**Manual Claude Configuration (Alternative)**
+See the **[Quick Start Guide](https://workspacemcp.com/quick-start)** for setup instructions.
 
 <details>
-<summary>📝 <b>Claude Desktop JSON Config</b> <sub><sup>← Click for manual setup instructions</sup></sub></summary>
+<summary>📝 <b>Legacy: Manual stdio configuration</b> <sub><sup>← For clients without Connector support</sup></sub></summary>
+
+> **⚠️ Note**: Stdio mode is a legacy fallback for clients that don't support Connectors. Prefer the Connector-based approach above.
+>
+> **OAuth callback caveat**: The legacy stdio callback path includes a local recovery fallback for rare Google redirects that omit the `state` parameter, but only when `--single-user` is active. That recovery can only be safe in a single-user local process; in HTTP or hosted multi-user scenarios it could consume another user's pending OAuth state. There is no environment variable to enable this globally.
 
 1. Open Claude Desktop Settings → Developer → Edit Config
    - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
@@ -1166,14 +1070,14 @@ uv run pytest
 ```
 
 - `uv sync --group test` installs only the testing stack if you need a slimmer environment.
-- `uv run main.py --transport streamable-http` launches the server with your checked-out code for manual verification.
+- `MCP_ENABLE_OAUTH21=true GOOGLE_OAUTH_CLIENT_ID=... uv run main.py --transport streamable-http` launches the HTTP server with your checked-out code for manual verification.
 - Ruff is part of the `dev` group because pre-push hooks call `ruff check` automatically—run it locally before committing to avoid hook failures.
 
 </details>
 
 ### OAuth 2.1 Support (Multi-User Bearer Token Authentication)
 
-The server includes OAuth 2.1 support for bearer token authentication, enabling multi-user session management. **OAuth 2.1 automatically reuses your existing `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` credentials** - no additional configuration needed!
+The server includes OAuth 2.1 support for bearer token authentication, enabling multi-user session management. **OAuth 2.1 automatically reuses your existing `GOOGLE_OAUTH_CLIENT_ID` and, for confidential clients, `GOOGLE_OAUTH_CLIENT_SECRET` credentials** - no additional Google-side configuration needed. Public PKCE clients are also supported: if you omit `GOOGLE_OAUTH_CLIENT_SECRET`, set `FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY` explicitly.
 
 **When to use OAuth 2.1:**
 - Multiple users accessing the same MCP server instance
@@ -1182,13 +1086,14 @@ The server includes OAuth 2.1 support for bearer token authentication, enabling 
 - Production environments requiring secure session management
 - Browser-based clients requiring CORS support
 
-**⚠️ Important: OAuth 2.1 and Single-User Mode are mutually exclusive**
+**⚠️ Important: Mutually exclusive authentication modes**
 
-OAuth 2.1 mode (`MCP_ENABLE_OAUTH21=true`) cannot be used together with the `--single-user` flag:
+OAuth 2.1 mode (`MCP_ENABLE_OAUTH21=true`) cannot be used together with `--single-user` or service account mode:
 - **Single-user mode**: For legacy clients that pass user emails in tool calls
 - **OAuth 2.1 mode**: For modern multi-user scenarios with bearer token authentication
+- **Service account mode**: For headless/server-to-server use via domain-wide delegation
 
-Choose one authentication method - using both will result in a startup error.
+Choose one authentication method - combining incompatible modes will result in a startup error.
 
 **Enabling OAuth 2.1:**
 To enable OAuth 2.1, set the `MCP_ENABLE_OAUTH21` environment variable to `true`.
@@ -1199,18 +1104,36 @@ export MCP_ENABLE_OAUTH21=true
 uv run main.py --transport streamable-http
 ```
 
-If `MCP_ENABLE_OAUTH21` is not set to `true`, the server will use legacy authentication, which is suitable for clients that do not support OAuth 2.1.
+If `MCP_ENABLE_OAUTH21` is not set to `true`, the server uses legacy authentication. In `streamable-http` mode, legacy authentication binds to `127.0.0.1` by default to keep cached Google credentials local. Set `WORKSPACE_MCP_HOST` explicitly only for trusted networks; use OAuth 2.1 for remote or shared HTTP deployments.
 
-<details>
+Streamable HTTP requests with an `Origin` header are checked against loopback origins, `WORKSPACE_EXTERNAL_URL`, and `OAUTH_ALLOWED_ORIGINS` to reduce DNS-rebinding risk. Non-browser MCP clients that omit `Origin` are unaffected.
+
+> **vscode-webview origins**: Origins with the `vscode-webview://` scheme are scoped per-extension using the authority component (e.g. `vscode-webview://publisher.extension`). Adding a vscode-webview URI to `OAUTH_ALLOWED_ORIGINS` permits only the specific extension identified by that authority; other extensions are rejected.
+
+<details open>
 <summary>🔐 <b>How the FastMCP GoogleProvider handles OAuth</b> <sub><sup>← Advanced OAuth 2.1 details</sup></sub></summary>
 
 FastMCP ships a native `GoogleProvider` that we now rely on directly. It solves the two tricky parts of using Google OAuth with MCP clients:
 
-1.  **Dynamic Client Registration**: Google still doesn't support OAuth 2.1 DCR, but the FastMCP provider exposes the full DCR surface and forwards registrations to Google using your fixed credentials. MCP clients register as usual and the provider hands them your Google client ID/secret under the hood.
+1.  **Dynamic Client Registration**: Google still doesn't support OAuth 2.1 DCR, but the FastMCP provider exposes the full DCR surface and forwards registrations to Google using your fixed credentials. MCP clients register as usual and the provider hands them your Google client ID and, when configured, client secret under the hood.
 
 2.  **CORS & Browser Compatibility**: The provider includes an OAuth proxy that serves all discovery, authorization, and token endpoints with proper CORS headers. We no longer maintain custom `/oauth2/*` routes—the provider handles the upstream exchanges securely and advertises the correct metadata to clients.
 
 The result is a leaner server that still enables any OAuth 2.1 compliant client (including browser-based ones) to authenticate through Google without bespoke code.
+
+**Restricting DCR client redirect URIs:**
+
+By default, any client going through Dynamic Client Registration can declare any `redirect_uri`. For publicly-exposed deployments, this is a phishing vector — an attacker can register a client with a `redirect_uri` they control and harvest authorization codes from tricked users. Set `WORKSPACE_MCP_ALLOWED_CLIENT_REDIRECT_URIS` to a comma-separated allowlist of permitted URIs:
+
+```bash
+# Public deployment — restrict to Claude's hosted OAuth callbacks
+export WORKSPACE_MCP_ALLOWED_CLIENT_REDIRECT_URIS="https://claude.ai/api/mcp/auth_callback,https://claude.com/api/mcp/auth_callback"
+
+# Add Claude Code CLI (loopback redirects on ephemeral ports)
+export WORKSPACE_MCP_ALLOWED_CLIENT_REDIRECT_URIS="https://claude.ai/api/mcp/auth_callback,https://claude.com/api/mcp/auth_callback,http://localhost:*/callback,http://127.0.0.1:*/callback"
+```
+
+Patterns use FastMCP's matcher: `*` wildcards any port or path component; `*.example.com` matches subdomains. Leaving the variable unset preserves the default DCR behaviour (any URI accepted), which is appropriate for local development but unsafe for public deployments.
 
 </details>
 
@@ -1222,6 +1145,7 @@ The server supports a stateless mode designed for containerized environments whe
 ```bash
 # Stateless mode requires OAuth 2.1 to be enabled
 export MCP_ENABLE_OAUTH21=true
+export GOOGLE_OAUTH_CLIENT_ID="..."
 export WORKSPACE_MCP_STATELESS_MODE=true
 uv run main.py --transport streamable-http
 ```
@@ -1276,10 +1200,12 @@ export WORKSPACE_MCP_OAUTH_PROXY_VALKEY_HOST=redis.example.com
 export WORKSPACE_MCP_OAUTH_PROXY_VALKEY_PORT=6379
 ```
 
+> Disk support requires `workspace-mcp[disk]` (or `py-key-value-aio[disk]`) when installing from source.
+> The official Docker image includes the `disk` extra by default.
 > Valkey support is optional. Install `workspace-mcp[valkey]` (or `py-key-value-aio[valkey]`) only if you enable the Valkey backend.
 > Windows: building `valkey-glide` from source requires MSVC C++ build tools with C11 support. If you see `aws-lc-sys` C11 errors, set `CFLAGS=/std:c11`.
 
-<details>
+<details open>
 <summary>🔐 <b>Valkey/Redis Configuration Options</b></summary>
 
 | Variable | Default | Description |
@@ -1293,7 +1219,7 @@ export WORKSPACE_MCP_OAUTH_PROXY_VALKEY_PORT=6379
 | `WORKSPACE_MCP_OAUTH_PROXY_VALKEY_REQUEST_TIMEOUT_MS` | 5000 | Request timeout for remote hosts |
 | `WORKSPACE_MCP_OAUTH_PROXY_VALKEY_CONNECTION_TIMEOUT_MS` | 10000 | Connection timeout for remote hosts |
 
-**Encryption:** Disk and Valkey storage are encrypted with Fernet. The encryption key is derived from `FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY` if set, otherwise from `GOOGLE_OAUTH_CLIENT_SECRET`.
+**Encryption:** Disk and Valkey storage are encrypted with Fernet. The encryption key is derived from `FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY` if set, otherwise from `GOOGLE_OAUTH_CLIENT_SECRET`. Public OAuth 2.1 client setups without a client secret must set `FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY`.
 
 </details>
 
@@ -1305,27 +1231,27 @@ The server supports an external OAuth 2.1 provider mode for scenarios where auth
 ```bash
 # External OAuth provider mode requires OAuth 2.1 to be enabled
 export MCP_ENABLE_OAUTH21=true
+export GOOGLE_OAUTH_CLIENT_ID="..."
 export EXTERNAL_OAUTH21_PROVIDER=true
 uv run main.py --transport streamable-http
 ```
 
 **How It Works:**
-- **Protocol-level auth disabled**: MCP handshake (`initialize`) and `tools/list` do not require authentication
-- **Tool-level auth required**: All tool calls must include `Authorization: Bearer <token>` header
-- **External OAuth flow**: Your external system handles the OAuth flow and obtains Google access tokens
-- **Token validation**: Server validates bearer tokens via Google's tokeninfo API
+- **Protocol-level auth enabled**: All MCP requests (including `initialize` and `tools/list`) require a valid Bearer token, following the standard OAuth 2.1 flow. Unauthenticated requests receive a `401` with resource metadata pointing to Google's authorization server.
+- **External OAuth flow**: Your external system handles the OAuth flow and obtains Google access tokens (`ya29.*`)
+- **Token validation**: Server validates bearer tokens by calling Google's userinfo API
 - **Multi-user support**: Each request is authenticated independently based on its bearer token
+- **Resource metadata discovery**: The server serves `/.well-known/oauth-protected-resource` (RFC 9728) advertising Google as the authorization server and the required scopes
 
 **Key Features:**
-- **No local OAuth flow**: Server does not provide OAuth callback endpoints or manage OAuth state
-- **Bearer token only**: All authentication via Authorization headers
+- **No local OAuth flow**: Server does not provide `/authorize`, `/token`, or `/register` endpoints — only resource metadata
+- **Bearer token only**: All authentication via `Authorization: Bearer <token>` headers
 - **Stateless by design**: Works seamlessly with `WORKSPACE_MCP_STATELESS_MODE=true`
 - **External identity providers**: Integrate with your existing authentication infrastructure
-- **Tool discovery**: Clients can list available tools without authentication
 
 **Requirements:**
 - Must be used with `MCP_ENABLE_OAUTH21=true`
-- OAuth credentials still required for token validation (`GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`)
+- OAuth client ID still required for token validation; client secret is optional for public clients (`GOOGLE_OAUTH_CLIENT_ID`, optional `GOOGLE_OAUTH_CLIENT_SECRET`)
 - External system must obtain valid Google OAuth access tokens (ya29.*)
 - Each tool call request must include valid bearer token
 
@@ -1337,11 +1263,67 @@ uv run main.py --transport streamable-http
 - Mobile or web apps with their own OAuth implementation
 
 
+### Service Account Mode (Domain-Wide Delegation)
+
+> **WARNING: This mode uses Google Workspace domain-wide delegation, which grants the service account the ability to impersonate any user in your domain for the configured scopes. This is powerful and dangerous — do not use this unless you fully understand the security implications. A misconfigured service account with broad scopes can read, modify, and delete data across every user in your organization. Only use this in tightly controlled environments where you know exactly what you're doing.**
+
+Service account mode allows the server to authenticate using a Google Cloud service account with domain-wide delegation instead of interactive OAuth flows. The service account impersonates a single configured domain user for all API calls.
+
+**When to use service account mode:**
+- Headless or unattended environments where no browser is available for OAuth consent
+- Server-to-server integrations that need to act on behalf of a specific domain user
+- CI/CD pipelines or automation scripts
+- Environments where you cannot or do not want to manage per-user OAuth tokens
+
+**Enabling Service Account Mode:**
+
+```bash
+# Option 1: Key file on disk
+export GOOGLE_SERVICE_ACCOUNT_KEY_FILE="/path/to/service-account-key.json"
+export USER_GOOGLE_EMAIL="user@yourdomain.com"
+uv run main.py
+
+# Option 2: Inline JSON key (e.g., from a secret manager)
+export GOOGLE_SERVICE_ACCOUNT_KEY_JSON='{"type":"service_account","project_id":"...","private_key":"...","client_email":"..."}'
+export USER_GOOGLE_EMAIL="user@yourdomain.com"
+uv run main.py
+```
+
+**Prerequisites:**
+1. A Google Cloud service account with a JSON key
+2. Domain-wide delegation enabled for the service account in your Google Workspace Admin Console (Security → API controls → Domain-wide delegation)
+3. The required OAuth scopes authorized for the service account's client ID in the Admin Console
+4. `USER_GOOGLE_EMAIL` set to the domain user the service account will impersonate
+
+**Incompatibilities:**
+- Cannot be combined with `--single-user` mode
+- Cannot be combined with `MCP_ENABLE_OAUTH21=true`
+- Only one key source may be provided — set either `GOOGLE_SERVICE_ACCOUNT_KEY_FILE` or `GOOGLE_SERVICE_ACCOUNT_KEY_JSON`, not both
+
+**Key Behaviors:**
+- The OAuth callback server is not started (no interactive auth needed)
+- Credentials directory permission checks are skipped
+- When a tool call supplies `user_google_email`, service account mode uses that email as the domain-wide delegation impersonation subject.
+- `USER_GOOGLE_EMAIL` is still required and serves as the fallback when no caller email is provided.
+- The service account key is validated at startup (checks for required fields and correct type)
+
+**Per-Request Impersonation:**
+
+The caller-supplied `user_google_email` on each tool call is used as the DWD impersonation subject instead of the static `USER_GOOGLE_EMAIL`. This lets a single server instance act on behalf of multiple domain users.
+
+```bash
+# Optional: restrict which domains may be impersonated
+export DWD_ALLOWED_DOMAINS="corp.com,subsidiary.io"
+```
+
+- If `DWD_ALLOWED_DOMAINS` is set, only emails whose domain appears in the comma-separated list are accepted; all others raise an authentication error.
+- If `DWD_ALLOWED_DOMAINS` is unset, any email accepted by the service account's delegation scope is allowed.
+
 ### VS Code MCP Client Support
 
 > **✅ Recommended**: VS Code MCP extension properly supports the full MCP specification. **Always use HTTP transport mode** for proper OAuth 2.1 authentication.
 
-<details>
+<details open>
 <summary>🆚 <b>VS Code Configuration</b> <sub><sup>← Setup for VS Code MCP extension</sup></sub></summary>
 
 ```json
@@ -1355,23 +1337,33 @@ uv run main.py --transport streamable-http
 }
 ```
 
-*Note: Make sure to start the server with `--transport streamable-http` when using VS Code MCP.*
+*Note: Make sure to start the server with `--transport streamable-http` when using VS Code MCP. For remote or shared HTTP endpoints, see the [OAuth 2.1 note in the HTTP Mode section](#http-mode-for-debugging-or-web-interfaces).*
+
+> **Origin validation**: VS Code webview clients send a `vscode-webview://<extension-id>` origin, which is rejected by default. Add the specific origin to `OAUTH_ALLOWED_ORIGINS` (e.g. `OAUTH_ALLOWED_ORIGINS=vscode-webview://your.extension-id`) to permit it. Connections to a `localhost`/`127.0.0.1` URL are allowed without extra configuration.
 </details>
 
 ### Claude Code MCP Client Support
 
 > **✅ Recommended**: Claude Code is a modern MCP client that properly supports the full MCP specification. **Always use HTTP transport mode** with Claude Code for proper OAuth 2.1 authentication and multi-user support.
 
-<details>
+<details open>
 <summary>🆚 <b>Claude Code Configuration</b> <sub><sup>← Setup for Claude Code MCP support</sup></sub></summary>
 
 ```bash
 # Start the server in HTTP mode first
+export MCP_ENABLE_OAUTH21=true
+export GOOGLE_OAUTH_CLIENT_ID="..."
 uv run main.py --transport streamable-http
 
 # Then add to Claude Code
 claude mcp add --transport http workspace-mcp http://localhost:8000/mcp
+
+# Optional: install the bundled Claude skill for better Workspace tool routing
+mkdir -p ~/.claude/skills
+ln -s "$(pwd)/skills/managing-google-workspace" ~/.claude/skills/managing-google-workspace
 ```
+
+Or copy `skills/managing-google-workspace` into `~/.claude/skills/managing-google-workspace` if you prefer not to symlink it.
 </details>
 
 #### Reverse Proxy Setup
@@ -1401,8 +1393,9 @@ You also have options for:
 - Use `GOOGLE_OAUTH_REDIRECT_URI` when you only need to override the callback URL
 - The redirect URI must exactly match what's configured in your Google Cloud Console
 - Your reverse proxy must forward OAuth-related requests (`/oauth2callback`, `/oauth2/*`, `/.well-known/*`) to the MCP server
+- Do **not** set `Referrer-Policy: no-referrer` on your proxy. It makes browsers send `Origin: null` on the same-origin consent `POST`, which origin validation rejects with `{"error": "Origin not allowed"}` (logged as `Rejected HTTP request from Origin: null`) even when `WORKSPACE_EXTERNAL_URL` is correct. Use `strict-origin-when-cross-origin` (the browser default) or `same-origin` instead.
 
-<details>
+<details open>
 <summary>🚀 <b>Advanced uvx Commands</b> <sub><sup>← More startup options</sup></sub></summary>
 
 ```bash
@@ -1417,6 +1410,8 @@ uvx workspace-mcp --tool-tier extended  # Core + additional features
 uvx workspace-mcp --tool-tier complete  # All tools
 
 # Start in HTTP mode for debugging
+export MCP_ENABLE_OAUTH21=true
+export GOOGLE_OAUTH_CLIENT_ID="..."
 uvx workspace-mcp --transport streamable-http
 ```
 </details>
@@ -1435,7 +1430,7 @@ uv run main.py
 
 **Development Installation (For Contributors)**:
 
-<details>
+<details open>
 <summary>🔧 <b>Developer Setup JSON</b> <sub><sup>← For contributors & customization</sup></sub></summary>
 
 ```json
@@ -1474,22 +1469,30 @@ If you need to use HTTP mode with Claude Desktop:
 }
 ```
 
-*Note: Make sure to start the server with `--transport streamable-http` when using HTTP mode.*
+*Note: Make sure to start the server with `--transport streamable-http` when using HTTP mode. For remote or shared HTTP endpoints, also enable OAuth 2.1 with `MCP_ENABLE_OAUTH21=true` and `GOOGLE_OAUTH_CLIENT_ID`.*
 
 ### First-Time Authentication
 
-The server uses **Google Desktop OAuth** for simplified authentication:
+Legacy local authentication uses the Google OAuth consent flow. In `stdio` mode, the server tries to open the browser automatically so long Google OAuth URLs do not wrap in terminals or get corrupted during copy/paste, which improves reliability of the redirect flow.
 
-- **No redirect URIs needed**: Desktop OAuth clients handle authentication without complex callback URLs
-- **Automatic flow**: The server manages the entire OAuth process transparently
-- **Transport-agnostic**: Works seamlessly in both stdio and HTTP modes
+- In `stdio` mode, the server starts a local callback listener and tries to open the Google authorization page in your browser automatically.
+- If the browser cannot be opened, the tool response includes the authorization URL to open manually.
+- In `streamable-http` / OAuth 2.1 mode, use your MCP client's OAuth flow instead; the server does not try to open a browser on the host running the HTTP service.
+- When a legacy local auth tool call provides `user_google_email`, the server adds that value as `login_hint` on the Google authorization URL so Google can pre-select the account on the consent screen. This applies to the `stdio` flow whether the server opens the browser or returns the URL; `streamable-http` / OAuth 2.1 flows still rely on the MCP client's OAuth flow.
+
+Example:
+
+```text
+user_google_email="alex@example.com"
+Authorization URL: https://accounts.google.com/o/oauth2/v2/auth?...&login_hint=alex%40example.com
+```
 
 When calling a tool:
-1. Server returns authorization URL
-2. Open URL in browser and authorize
-3. Google provides an authorization code
-4. Paste the code when prompted (or it's handled automatically)
-5. Server completes authentication and retries your request
+1. If an opened browser page appears, complete Google authorization there.
+2. If no browser opens, open the returned authorization URL manually and complete Google authorization there.
+3. After successful authorization, the callback page displays the authenticated email address.
+4. Retry the original tool call with that email as `user_google_email`; the server needs this value to associate the stored Google credentials with the tool request, so the original request is not authorized until it is retried.
+5. Server completes authentication using the stored Google credentials.
 
 ---
 
@@ -1529,29 +1532,54 @@ async def your_new_tool(service, param1: str, param2: int = 10):
 
 ### Credential Store System
 
-The server includes an abstract credential store API and a default backend for managing Google OAuth
-credentials with support for multiple storage backends:
+The server includes an abstract credential store API with pluggable backends for managing Google OAuth credentials:
 
 **Features:**
 - **Abstract Interface**: `CredentialStore` base class defines standard operations (get, store, delete, list users)
-- **Local File Storage**: `LocalDirectoryCredentialStore` implementation stores credentials as JSON files
-- **Configurable Storage**: Environment variable `GOOGLE_MCP_CREDENTIALS_DIR` sets storage location
+- **Local File Storage**: `LocalDirectoryCredentialStore` — plaintext JSON files protected by filesystem permissions (0o600 / 0o700)
+- **GCS-Backed Storage**: `GCSCredentialStore` — stores each user's credentials as an object in a Google Cloud Storage bucket. Supports atomic read-modify-write via generation preconditions, first-class Cloud IAM / Audit Logs integration, and transparent bucket-level CMEK encryption at rest
+- **Configurable Storage**: Environment variables select backend and location
 - **Multi-User Support**: Store and manage credentials for multiple Google accounts
-- **Automatic Directory Creation**: Storage directory is created automatically if it doesn't exist
+- **Automatic Directory Creation**: Storage directory is created automatically if it doesn't exist (local backend)
 
 **Configuration:**
 ```bash
-# Optional: Set custom credentials directory
+# Install the optional dependency if you plan to use the GCS backend:
+# uv sync --extra gcs
+# or: pip install "workspace-mcp[gcs]"
+#
+# Select backend (default: local_directory). Supported: local_directory, gcs
+export WORKSPACE_MCP_CREDENTIAL_STORE_BACKEND="gcs"
+
+# --- local_directory options ---
+export WORKSPACE_MCP_CREDENTIALS_DIR="/path/to/credentials"
+# Backward-compatible alias:
 export GOOGLE_MCP_CREDENTIALS_DIR="/path/to/credentials"
 
-# Default locations (if GOOGLE_MCP_CREDENTIALS_DIR not set):
+# Default directory locations (if no directory env var is set):
 # - ~/.google_workspace_mcp/credentials (if home directory accessible)
 # - ./.credentials (fallback)
+
+# --- gcs options ---
+export WORKSPACE_MCP_GCS_BUCKET="my-workspace-mcp-tokens"   # required
+export WORKSPACE_MCP_GCS_PREFIX="credentials/"              # optional
+export WORKSPACE_MCP_GCS_REQUIRE_CMEK="true"                # optional; see below
 ```
+
+**Backend selection:**
+- `local_directory` (default): Plaintext JSON records. Suitable for local development and single-user stdio mode.
+  Existing pre-URL-encoding local credential filenames remain readable during migration; new writes use the URL-encoded filename mapping unless a legacy file already exists for that user.
+- `gcs`: Stores credentials as objects in a GCS bucket using the JSON API. Authenticates via Application Default Credentials — on Cloud Run this means the runtime service account needs `roles/storage.objectUser` (or equivalent) on the bucket. Does not support `list_users()` — designed for multi-user OAuth 2.1 mode where users are looked up individually by email.
+
+**CMEK enforcement (gcs backend):**
+
+By default GCS encrypts objects with Google-managed keys. For customer-managed encryption, set a default KMS key on the bucket (e.g. via Terraform's `google_storage_bucket.encryption.default_kms_key_name`). All credentials written to the bucket will inherit the key transparently — no application-level key to manage.
+
+To guard against accidentally deploying against a bucket without CMEK, set `WORKSPACE_MCP_GCS_REQUIRE_CMEK=true`. The store will verify the bucket has a default KMS key at startup and refuse to initialize otherwise. Note that this check reads bucket metadata, so the runtime service account additionally needs `storage.buckets.get` — grant `roles/storage.bucketViewer` on the bucket (or a custom role containing `storage.buckets.get`) in addition to the object-level role. `roles/storage.objectUser` alone covers only object operations.
 
 **Usage Example:**
 ```python
-from auth.credential_store import get_credential_store
+from auth.credential_store import get_credential_store, LocalDirectoryCredentialStore
 
 # Get the global credential store instance
 store = get_credential_store()
@@ -1562,8 +1590,11 @@ store.store_credential("user@example.com", credentials)
 # Retrieve credentials
 creds = store.get_credential("user@example.com")
 
-# List all users with stored credentials
-users = store.list_users()
+# List all users with stored credentials (local_directory backend only;
+# GCSCredentialStore intentionally does not support enumeration — use the
+# upstream identity provider to enumerate users instead).
+if isinstance(store, LocalDirectoryCredentialStore):
+    users = store.list_users()
 ```
 
 The credential store automatically handles credential serialization, expiry parsing, and provides error handling for storage operations.
@@ -1571,12 +1602,19 @@ The credential store automatically handles credential serialization, expiry pars
 ---
 
 ## <span style="color:#adbcbc">⊠ Security</span>
-
+- **Prompt Injection**: This MCP server has the capability to retrieve your email, calendar events and drive files. Those emails, events and files could potentially contain prompt injections - i.e. hidden white text that tells it to forward your emails to a different address. You should exercise caution and in general, only connect trusted data to an LLM!
 - **Credentials**: Never commit `.env`, `client_secret.json` or the `.credentials/` directory to source control!
-- **OAuth Callback**: Uses `http://localhost:8000/oauth2callback` for development (requires `OAUTHLIB_INSECURE_TRANSPORT=1`)
+- **OAuth Callback**: Uses `http://localhost:8000/oauth2callback` for development (requires `OAUTHLIB_INSECURE_TRANSPORT=1`). If another process is already using port 8000, set `WORKSPACE_MCP_PORT` to a free port to avoid conflicts — e.g. `export WORKSPACE_MCP_PORT=8123`. If you use a **web/confidential OAuth client** (not the recommended Desktop client), also update the redirect URI in Google Cloud Console to match the new port (e.g. `http://localhost:8123/oauth2callback`); Desktop and PKCE clients do not require this.
 - **Transport-Aware Callbacks**: Stdio mode starts a minimal HTTP server only for OAuth, ensuring callbacks work in all modes
 - **Production**: Use HTTPS & OAuth 2.1 and configure accordingly
 - **Scope Minimization**: Tools request only necessary permissions
+- **Local File Access Control**: Tools that read local files (e.g., attachments, `file://` uploads) are restricted to the managed attachment directory by default. Override this with the `ALLOWED_FILE_DIRS` environment variable if you intentionally need broader access:
+  ```bash
+  # Colon-separated list of directories (semicolon on Windows) from which local file reads are permitted
+  export ALLOWED_FILE_DIRS="/home/user/documents:/data/shared"
+  ```
+  The managed attachment directory is controlled by `WORKSPACE_ATTACHMENT_DIR` and remains allowed even when `ALLOWED_FILE_DIRS` is set. Regardless of the allowlist, access to sensitive paths (`.env`, `.ssh/`, `.aws/`, `/etc/shadow`, credential files, etc.) is always blocked.
+- **Indirect Prompt Injection**: In agentic clients, email bodies, documents, and calendar events can contain malicious instructions that try to coerce the model into exfiltrating local files. Do not broaden `ALLOWED_FILE_DIRS` unless you trust the client, the model behavior, and the data sources it can read.
 
 ---
 

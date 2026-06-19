@@ -1,20 +1,28 @@
+import base64
 import io
+import json
 import logging
 import os
 import zipfile
-import xml.etree.ElementTree as ET
 import ssl
 import asyncio
 import functools
 
-from typing import List, Optional
+from pathlib import Path
+from typing import Annotated, Any, List, Optional
 
+from pydantic import BeforeValidator
+from defusedxml import ElementTree as ET
+
+from fastmcp.exceptions import ToolError
 from googleapiclient.errors import HttpError
 from .api_enablement import get_api_enablement_message
 from auth.google_auth import GoogleAuthenticationError
 from auth.oauth_config import is_oauth21_enabled, is_external_oauth21_provider
 
 logger = logging.getLogger(__name__)
+
+GOOGLE_API_WRITE_RETRIES = 3
 
 
 class TransientNetworkError(Exception):
@@ -27,6 +35,213 @@ class UserInputError(Exception):
     """Raised for user-facing input/validation errors that shouldn't be retried."""
 
     pass
+
+
+def _coerce_json_str_to_type(v: Any, expected_type: type) -> Any:
+    """Coerce a JSON-encoded string to a specific container type."""
+    if not isinstance(v, str):
+        return v
+
+    try:
+        parsed = json.loads(v)
+    except (json.JSONDecodeError, TypeError):
+        return v
+
+    return parsed if isinstance(parsed, expected_type) else v
+
+
+def _coerce_json_str_to_list(v: Any) -> Any:
+    """Coerce a JSON-encoded string to a list.
+
+    Some MCP clients (e.g. Cowork) serialise array parameters as JSON strings
+    rather than native arrays.  This ``BeforeValidator`` transparently converts
+    ``'["a","b"]'`` → ``["a", "b"]`` so Pydantic validation succeeds.
+    """
+    return _coerce_json_str_to_type(v, list)
+
+
+StringList = Annotated[List[str], BeforeValidator(_coerce_json_str_to_list)]
+"""``List[str]`` that also accepts a JSON-encoded string of an array.
+
+Use in tool signatures instead of ``List[str]`` to work around MCP clients
+that send ``'["value"]'`` instead of ``["value"]``.
+"""
+
+
+DictList = Annotated[List[dict[str, Any]], BeforeValidator(_coerce_json_str_to_list)]
+"""``List[dict]`` that also accepts a JSON-encoded string of an array.
+
+Use in tool signatures instead of ``List[dict]`` to work around MCP clients
+that send ``'[{"key":"val"}]'`` instead of ``[{"key":"val"}]``.
+"""
+
+
+ObjectList = Annotated[List[object], BeforeValidator(_coerce_json_str_to_list)]
+"""``List[object]`` that also accepts a JSON-encoded string of an array."""
+
+
+def _coerce_json_str_to_dict(v: Any) -> Any:
+    """Coerce a JSON-encoded string to a dict.
+
+    Some MCP clients serialise dict parameters as JSON strings rather than
+    native objects.  This ``BeforeValidator`` transparently converts
+    ``'{"key":"val"}'`` -> ``{"key": "val"}`` so Pydantic validation succeeds.
+    """
+    return _coerce_json_str_to_type(v, dict)
+
+
+JsonDict = Annotated[dict[str, Any], BeforeValidator(_coerce_json_str_to_dict)]
+"""``dict`` that also accepts a JSON-encoded string of an object.
+
+Use in tool signatures instead of ``Dict[str, Any]`` to work around MCP clients
+that send ``'{"key":"val"}'`` instead of ``{"key": "val"}``.
+"""
+
+
+# Directories from which local file reads are allowed.
+# By default, only the managed attachment storage directory is trusted.
+# Override via ALLOWED_FILE_DIRS env var (os.pathsep-separated paths).
+_ALLOWED_FILE_DIRS_ENV = "ALLOWED_FILE_DIRS"
+
+
+def _get_allowed_file_dirs() -> list[Path]:
+    """Return the list of directories from which local file access is permitted."""
+    from core.attachment_storage import STORAGE_DIR
+
+    allowed_dirs: list[Path] = [STORAGE_DIR]
+    env_val = os.environ.get(_ALLOWED_FILE_DIRS_ENV)
+    if env_val:
+        allowed_dirs.extend(
+            Path(p_stripped).expanduser().resolve()
+            for p in env_val.split(os.pathsep)
+            if (p_stripped := p.strip())
+        )
+
+    unique_dirs: list[Path] = []
+    seen: set[Path] = set()
+    for path in allowed_dirs:
+        if path in seen:
+            continue
+        seen.add(path)
+        unique_dirs.append(path)
+    return unique_dirs
+
+
+def validate_file_path(file_path: str) -> Path:
+    """
+    Validate that a file path is safe to read from the server filesystem.
+
+    Resolves the path canonically (following symlinks), then verifies it falls
+    within one of the allowed base directories. Rejects paths to sensitive
+    system locations regardless of allowlist.
+
+    Args:
+        file_path: The raw file path string to validate.
+
+    Returns:
+        Path: The resolved, validated Path object.
+
+    Raises:
+        ValueError: If the path is outside allowed directories or targets
+                    a sensitive location.
+    """
+    resolved = Path(file_path).resolve()
+
+    if not resolved.exists():
+        raise FileNotFoundError(f"Path does not exist: {resolved}")
+
+    # Block sensitive file patterns regardless of allowlist
+    resolved_str = str(resolved)
+    file_name = resolved.name.lower()
+
+    path_parts = [part.lower() for part in resolved.parts]
+
+    # Block .env files and variants (.env, .env.local, .env.production, etc.)
+    if any(part == ".env" or part.startswith(".env.") for part in path_parts):
+        raise ValueError(
+            f"Access to '{resolved_str}' is not allowed: "
+            ".env files may contain secrets and cannot be read, uploaded, or attached."
+        )
+
+    # Block well-known sensitive system paths (including macOS /private variants)
+    sensitive_prefixes = (
+        "/proc",
+        "/sys",
+        "/dev",
+        "/etc/shadow",
+        "/etc/passwd",
+        "/private/etc/shadow",
+        "/private/etc/passwd",
+    )
+    for prefix in sensitive_prefixes:
+        if resolved_str == prefix or resolved_str.startswith(prefix + "/"):
+            raise ValueError(
+                f"Access to '{resolved_str}' is not allowed: "
+                "path is in a restricted system location."
+            )
+
+    # Block sensitive directories that commonly contain credentials/keys.
+    if ".ssh" in path_parts or ".aws" in path_parts:
+        raise ValueError(
+            f"Access to '{resolved_str}' is not allowed: "
+            "path is in a directory that commonly contains secrets or credentials."
+        )
+
+    home = Path.home()
+    sensitive_home_dirs = (
+        ".kube",
+        ".gnupg",
+        ".config/gcloud",
+    )
+    for sensitive_dir in sensitive_home_dirs:
+        blocked = home / sensitive_dir
+        if resolved == blocked or str(resolved).startswith(str(blocked) + "/"):
+            raise ValueError(
+                f"Access to '{resolved_str}' is not allowed: "
+                "path is in a directory that commonly contains secrets or credentials."
+            )
+
+    # Block other credential/secret file patterns
+    sensitive_names = {
+        ".credentials",
+        ".credentials.json",
+        "credentials.json",
+        "client_secret.json",
+        "client_secrets.json",
+        "service_account.json",
+        "service-account.json",
+        ".npmrc",
+        ".pypirc",
+        ".netrc",
+        ".git-credentials",
+        ".docker/config.json",
+    }
+    if file_name in sensitive_names:
+        raise ValueError(
+            f"Access to '{resolved_str}' is not allowed: "
+            "this file commonly contains secrets or credentials."
+        )
+
+    allowed_dirs = _get_allowed_file_dirs()
+    if not allowed_dirs:
+        raise ValueError(
+            "No allowed file directories configured. "
+            "Set the ALLOWED_FILE_DIRS environment variable or configure "
+            "WORKSPACE_ATTACHMENT_DIR."
+        )
+
+    for allowed in allowed_dirs:
+        try:
+            resolved.relative_to(allowed)
+            return resolved
+        except ValueError:
+            continue
+
+    raise ValueError(
+        f"Access to '{resolved_str}' is not allowed: "
+        f"path is outside permitted directories ({', '.join(str(d) for d in allowed_dirs)}). "
+        "Set ALLOWED_FILE_DIRS to adjust."
+    )
 
 
 def check_credentials_directory_permissions(credentials_dir: str = None) -> None:
@@ -96,7 +311,7 @@ def extract_office_xml_text(file_bytes: bytes, mime_type: str) -> Optional[str]:
     """
     Very light-weight XML scraper for Word, Excel, PowerPoint files.
     Returns plain-text if something readable is found, else None.
-    No external deps – just std-lib zipfile + ElementTree.
+    Uses zipfile + defusedxml.ElementTree.
     """
     shared_strings: List[str] = []
     ns_excel_main = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
@@ -242,6 +457,62 @@ def extract_office_xml_text(file_bytes: bytes, mime_type: str) -> Optional[str]:
         return None
 
 
+IMAGE_MIME_TYPES = {
+    "image/png",
+    "image/jpeg",
+    "image/gif",
+    "image/webp",
+    "image/bmp",
+    "image/tiff",
+    "image/svg+xml",
+}
+
+
+def extract_pdf_text(file_bytes: bytes) -> Optional[str]:
+    """
+    Extract text from a PDF using pypdf.
+    Returns plain text with pages separated by double newlines, or None on failure.
+    """
+    try:
+        from pypdf import PdfReader
+
+        reader = PdfReader(io.BytesIO(file_bytes))
+        pages = []
+        for page in reader.pages:
+            text = page.extract_text()
+            if text:
+                pages.append(text)
+        if not pages:
+            return None
+        return "\n\n".join(pages).strip() or None
+    except Exception as e:
+        logger.warning(f"Failed to extract PDF text: {e}")
+        return None
+
+
+def encode_image_content(file_bytes: bytes, mime_type: str) -> str:
+    """
+    Base64-encode image bytes with a mime type metadata prefix.
+
+    Args:
+        file_bytes: The image file content as bytes.
+        mime_type: The MIME type of the image (must start with "image/").
+
+    Returns:
+        str: Base64-encoded image with mime type prefix.
+
+    Raises:
+        ValueError: If mime_type is not an image MIME type.
+    """
+    if not mime_type.startswith("image/"):
+        raise ValueError(
+            f"Expected image/* MIME type, got '{mime_type}'. "
+            "Only image content can be base64-encoded for multimodal clients."
+        )
+    encoded = base64.b64encode(file_bytes).decode("ascii")
+    return f"[base64_image:{mime_type}]{encoded}"
+
+
 def handle_http_errors(
     tool_name: str, is_read_only: bool = False, service_type: Optional[str] = None
 ):
@@ -344,6 +615,9 @@ def handle_http_errors(
                     raise Exception(message) from error
                 except TransientNetworkError:
                     # Re-raise without wrapping to preserve the specific error type
+                    raise
+                except ToolError:
+                    # Re-raise explicit tool errors so FastMCP can surface them directly.
                     raise
                 except GoogleAuthenticationError:
                     # Re-raise authentication errors without wrapping

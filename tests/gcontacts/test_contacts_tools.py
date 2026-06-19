@@ -9,10 +9,13 @@ import os
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
+import pytest
+
 from gcontacts.contacts_tools import (
     _format_contact,
     _build_person_body,
 )
+from gcontacts.contacts_helpers import _parse_birthday
 
 
 class TestFormatContact:
@@ -181,10 +184,12 @@ class TestBuildPersonBody:
 
     def test_build_basic_body(self):
         """Test building a basic person body."""
+        from gcontacts.contacts_tools import EmailInput
+
         body = _build_person_body(
             given_name="John",
             family_name="Doe",
-            email="john@example.com",
+            emails=[EmailInput(address="john@example.com")],
         )
 
         assert body["names"][0]["givenName"] == "John"
@@ -193,16 +198,19 @@ class TestBuildPersonBody:
 
     def test_build_body_with_phone(self):
         """Test building a person body with phone."""
-        body = _build_person_body(phone="+1234567890")
+        from gcontacts.contacts_tools import PhoneInput
+
+        body = _build_person_body(phones=[PhoneInput(number="+1234567890")])
 
         assert body["phoneNumbers"][0]["value"] == "+1234567890"
 
     def test_build_body_with_organization(self):
         """Test building a person body with organization."""
+        from gcontacts.contacts_tools import OrganizationInput
+
         body = _build_person_body(
             given_name="Jane",
-            organization="Acme Corp",
-            job_title="Engineer",
+            organizations=[OrganizationInput(name="Acme Corp", title="Engineer")],
         )
 
         assert body["names"][0]["givenName"] == "Jane"
@@ -211,14 +219,18 @@ class TestBuildPersonBody:
 
     def test_build_body_organization_only(self):
         """Test building a person body with only organization name."""
-        body = _build_person_body(organization="Acme Corp")
+        from gcontacts.contacts_tools import OrganizationInput
+
+        body = _build_person_body(organizations=[OrganizationInput(name="Acme Corp")])
 
         assert body["organizations"][0]["name"] == "Acme Corp"
         assert "title" not in body["organizations"][0]
 
     def test_build_body_job_title_only(self):
         """Test building a person body with only job title."""
-        body = _build_person_body(job_title="CEO")
+        from gcontacts.contacts_tools import OrganizationInput
+
+        body = _build_person_body(organizations=[OrganizationInput(title="CEO")])
 
         assert body["organizations"][0]["title"] == "CEO"
         assert "name" not in body["organizations"][0]
@@ -260,13 +272,14 @@ class TestBuildPersonBody:
 
     def test_build_full_body(self):
         """Test building a person body with all fields."""
+        from gcontacts.contacts_tools import EmailInput, PhoneInput, OrganizationInput
+
         body = _build_person_body(
             given_name="John",
             family_name="Doe",
-            email="john@example.com",
-            phone="+1234567890",
-            organization="Acme Corp",
-            job_title="Engineer",
+            emails=[EmailInput(address="john@example.com")],
+            phones=[PhoneInput(number="+1234567890")],
+            organizations=[OrganizationInput(name="Acme Corp", title="Engineer")],
             notes="VIP contact",
             address="123 Main St",
         )
@@ -291,9 +304,7 @@ class TestImports:
         assert hasattr(contacts_tools, "list_contacts")
         assert hasattr(contacts_tools, "get_contact")
         assert hasattr(contacts_tools, "search_contacts")
-        assert hasattr(contacts_tools, "create_contact")
-        assert hasattr(contacts_tools, "update_contact")
-        assert hasattr(contacts_tools, "delete_contact")
+        assert hasattr(contacts_tools, "manage_contact")
 
     def test_import_group_tools(self):
         """Test that group tools can be imported."""
@@ -301,18 +312,13 @@ class TestImports:
 
         assert hasattr(contacts_tools, "list_contact_groups")
         assert hasattr(contacts_tools, "get_contact_group")
-        assert hasattr(contacts_tools, "create_contact_group")
-        assert hasattr(contacts_tools, "update_contact_group")
-        assert hasattr(contacts_tools, "delete_contact_group")
-        assert hasattr(contacts_tools, "modify_contact_group_members")
+        assert hasattr(contacts_tools, "manage_contact_group")
 
     def test_import_batch_tools(self):
         """Test that batch tools can be imported."""
         from gcontacts import contacts_tools
 
-        assert hasattr(contacts_tools, "batch_create_contacts")
-        assert hasattr(contacts_tools, "batch_update_contacts")
-        assert hasattr(contacts_tools, "batch_delete_contacts")
+        assert hasattr(contacts_tools, "manage_contacts_batch")
 
 
 class TestConstants:
@@ -344,3 +350,106 @@ class TestConstants:
         assert "name" in CONTACT_GROUP_FIELDS
         assert "groupType" in CONTACT_GROUP_FIELDS
         assert "memberCount" in CONTACT_GROUP_FIELDS
+
+
+class TestParseBirthday:
+    """Tests for _parse_birthday helper."""
+
+    def test_full_date(self):
+        """A full 'YYYY-MM-DD' string parses into a dated birthday object."""
+        result = _parse_birthday("1990-03-15")
+        assert result == {"date": {"year": 1990, "month": 3, "day": 15}}
+
+    def test_year_less_date(self):
+        """A year-less 'MM-DD' string parses without a year field."""
+        result = _parse_birthday("03-15")
+        assert result == {"date": {"month": 3, "day": 15}}
+
+    def test_strips_whitespace(self):
+        """Surrounding whitespace is trimmed before parsing."""
+        result = _parse_birthday("  1985-12-01  ")
+        assert result == {"date": {"year": 1985, "month": 12, "day": 1}}
+
+    def test_invalid_format_raises(self):
+        """An unrecognized date format raises ValueError."""
+        with pytest.raises(ValueError, match="Invalid birthday format"):
+            _parse_birthday("15/03/1990")
+
+    def test_single_part_raises(self):
+        """A single-component string (no separator) raises ValueError."""
+        with pytest.raises(ValueError):
+            _parse_birthday("1990")
+
+    def test_non_numeric_raises_format_error(self):
+        """Non-numeric components raise the friendly format ValueError, not int()'s."""
+        with pytest.raises(ValueError, match="Invalid birthday format"):
+            _parse_birthday("1990-ab-15")
+
+    def test_out_of_range_month_raises(self):
+        """A month outside 1-12 raises a range ValueError."""
+        with pytest.raises(ValueError, match="month must be 1-12"):
+            _parse_birthday("1990-13-15")
+
+    def test_out_of_range_day_raises(self):
+        """A day outside 1-31 raises a range ValueError."""
+        with pytest.raises(ValueError, match="day must be 1-31"):
+            _parse_birthday("03-45")
+
+    def test_empty_string_raises(self):
+        """An empty string has no numeric parts and raises the format ValueError."""
+        with pytest.raises(ValueError, match="Invalid birthday format"):
+            _parse_birthday("")
+
+    def test_impossible_day_month_combo_raises(self):
+        """A well-formed but non-existent date (Feb 30) raises a calendar ValueError."""
+        with pytest.raises(ValueError, match="not a real calendar date"):
+            _parse_birthday("2000-02-30")
+
+    def test_feb_29_non_leap_year_raises(self):
+        """Feb 29 in a non-leap year is rejected."""
+        with pytest.raises(ValueError, match="not a real calendar date"):
+            _parse_birthday("1990-02-29")
+
+    def test_feb_29_leap_year_allowed(self):
+        """Feb 29 in a leap year is a valid full date."""
+        assert _parse_birthday("2000-02-29") == {
+            "date": {"year": 2000, "month": 2, "day": 29}
+        }
+
+    def test_yearless_feb_29_allowed(self):
+        """Year-less Feb 29 is valid (validated against a leap year)."""
+        assert _parse_birthday("02-29") == {"date": {"month": 2, "day": 29}}
+
+    def test_year_zero_raises(self):
+        """A non-positive year is not a real calendar date."""
+        with pytest.raises(ValueError, match="not a real calendar date"):
+            _parse_birthday("0000-05-15")
+
+
+class TestBuildPersonBodyBirthday:
+    """Tests for birthday support in _build_person_body."""
+
+    def test_set_full_birthday(self):
+        """A full date populates the birthdays field with year, month, and day."""
+        body = _build_person_body(given_name="Test", birthday="1990-03-15")
+        assert body["birthdays"] == [{"date": {"year": 1990, "month": 3, "day": 15}}]
+
+    def test_set_yearless_birthday(self):
+        """A year-less date populates birthdays without a year field."""
+        body = _build_person_body(given_name="Test", birthday="03-15")
+        assert body["birthdays"] == [{"date": {"month": 3, "day": 15}}]
+
+    def test_clear_birthday_sentinel(self):
+        """The 'clear' sentinel produces an empty birthdays list (clears the field)."""
+        body = _build_person_body(given_name="Test", birthday="clear")
+        assert body["birthdays"] == []
+
+    def test_clear_birthday_empty_string(self):
+        """An empty string also clears the birthday (empty birthdays list)."""
+        body = _build_person_body(given_name="Test", birthday="")
+        assert body["birthdays"] == []
+
+    def test_no_birthday_param_omits_key(self):
+        """Omitting the birthday param leaves the birthdays key absent from the body."""
+        body = _build_person_body(given_name="Test")
+        assert "birthdays" not in body

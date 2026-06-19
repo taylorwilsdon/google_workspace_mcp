@@ -1,0 +1,75 @@
+{
+  "name": "google-workspace-mcp",
+  "description": "Complete Google Workspace integration -- Gmail, Drive, Calendar, Docs, Sheets, Slides, Forms, Tasks, Contacts, Chat, Apps Script, and Custom Search via MCP with workflow guidance.",
+  "author": {
+    "name": "taylorwilsdon"
+  },
+  "userConfig": {
+    "google_oauth_client_id": {
+      "title": "Google OAuth Client ID",
+      "description": "OAuth 2.0 Client ID from Google Cloud Console. Tip: if typing 'n' closes this prompt, paste from clipboard instead.",
+      "type": "string",
+      "sensitive": false,
+      "required": true
+    },
+    "google_oauth_client_secret": {
+      "title": "Google OAuth Client Secret",
+      "description": "OAuth 2.0 Client Secret from Google Cloud Console. Tip: if typing 'n' closes this prompt, paste from clipboard instead.",
+      "type": "string",
+      "sensitive": true,
+      "required": true
+    },
+    "tools": {
+      "title": "Services to enable",
+      "description": "Comma-separated list: gmail, drive, calendar, docs, sheets, chat, forms, slides, tasks, contacts, search, appscript. Leave empty for all. Tip: if typing 'n' closes this prompt, paste from clipboard instead.",
+      "type": "string",
+      "sensitive": false,
+      "required": false
+    },
+    "tool_tier": {
+      "title": "Tool tier",
+      "description": "core, extended, or complete. Leave empty for all tools. Tip: if typing 'n' closes this prompt, paste from clipboard instead.",
+      "type": "string",
+      "sensitive": false,
+      "required": false
+    },
+    "read_only": {
+      "title": "Read-only mode",
+      "description": "true to restrict to read-only scopes. Leave empty for full access.",
+      "type": "string",
+      "sensitive": false,
+      "required": false
+    },
+    "permissions": {
+      "title": "Per-service permissions",
+      "description": "Space-separated service:level pairs. Example: gmail:send drive:readonly. Gmail levels: readonly, organize, drafts, send, full. Other services: readonly, full. Mutually exclusive with read-only and tools. Leave empty for full access. Tip: if typing 'n' closes this prompt, paste from clipboard instead.",
+      "type": "string",
+      "sensitive": false,
+      "required": false
+    },
+    "http_port": {
+      "title": "workspace-cli HTTP sidecar port",
+      "description": "Advanced legacy-stdio bridge for local workspace-cli use. Leave empty for recommended streamable HTTP/OAuth 2.1 deployments. When enabled, the endpoint binds to 127.0.0.1 only but is accessible to local processes.",
+      "type": "string",
+      "sensitive": false,
+      "required": false,
+      "default": ""
+    }
+  },
+  "mcpServers": {
+    "google-workspace": {
+      "command": "uv",
+      "args": ["run", "--directory", "${CLAUDE_PLUGIN_ROOT}", "main.py"],
+      "env": {
+        "GOOGLE_OAUTH_CLIENT_ID": "${user_config.google_oauth_client_id}",
+        "GOOGLE_OAUTH_CLIENT_SECRET": "${user_config.google_oauth_client_secret}",
+        "WORKSPACE_MCP_TOOLS": "${user_config.tools}",
+        "WORKSPACE_MCP_TOOL_TIER": "${user_config.tool_tier}",
+        "WORKSPACE_MCP_READ_ONLY": "${user_config.read_only}",
+        "WORKSPACE_MCP_PERMISSIONS": "${user_config.permissions}",
+        "OAUTHLIB_INSECURE_TRANSPORT": "1",
+        "WORKSPACE_MCP_HTTP_PORT": "${user_config.http_port}"
+      }
+    }
+  }
+}

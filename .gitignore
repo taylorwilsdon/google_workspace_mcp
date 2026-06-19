@@ -5,6 +5,7 @@ __pycache__/
 .mcp.json
 claude.md
 .beads/*
+.beads/issues.jsonl
 
 # ---- Packaging ---------------------------------------------------------
 *.egg-info/
@@ -13,6 +14,9 @@ dist/
 
 # ---- Environments & tooling -------------------------------------------
 .env
+.env.*
+!.env.example
+!.env.sample
 .venv/
 venv/
 .idea/
@@ -23,6 +27,8 @@ venv/
 
 # ---- Secrets -----------------------------------------------------------
 client_secret.json
+client_secrets.json
+.mcpregistry_*_token
 
 # ---- Logs --------------------------------------------------------------
 mcp_server_debug.log
@@ -30,6 +36,9 @@ mcp_server_debug.log
 # ---- Local development files -------------------------------------------
 /.credentials
 /.claude
+.serena/
+Caddyfile
+ecosystem.config.cjs
 
 # ---- Agent instructions (not for distribution) -------------------------
 .github/instructions/

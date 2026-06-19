@@ -1,8 +1,8 @@
 {
-  "dxt_version": "0.1",
+  "manifest_version": "0.4",
   "name": "workspace-mcp",
   "display_name": "Google Workspace MCP",
-  "version": "1.6.2",
+  "version": "1.21.3",
   "description": "Full natural language control over Google Calendar, Drive, Gmail, Docs, Sheets, Slides, Forms, Tasks, Chat and Custom Search through all MCP clients, AI assistants and developer tools",
   "long_description": "A production-ready MCP server that integrates all major Google Workspace services with AI assistants. Includes Google PSE integration for custom web searches.",
   "author": {
@@ -14,7 +14,7 @@
   "documentation": "https://github.com/taylorwilsdon/google_workspace_mcp",
   "support": "https://github.com/taylorwilsdon/google_workspace_mcp/issues",
   "server": {
-    "type": "python",
+    "type": "uv",
     "entry_point": "main.py",
     "mcp_config": {
       "command": "uv",
@@ -56,7 +56,7 @@
     },
     {
       "name": "google_docs",
-      "description": "Manage Google Docs through AI with capability to search, extract, list, create and copy - including templated variable replacement support"
+      "description": "Manage Google Docs through AI with support for search, extraction, creation, structured editing, named ranges, layout and section formatting, headers/footers, rich styling, and atomic batch document generation"
     },
     {
       "name": "google_sheets",
@@ -83,6 +83,17 @@
       "description": "Perform custom web searches through AI using Google Programmable Search Engine with site-specific and filtered search capabilities"
     }
   ],
+  "tools_generated": true,
+  "compatibility": {
+    "platforms": [
+      "darwin",
+      "win32",
+      "linux"
+    ],
+    "runtimes": {
+      "python": ">=3.10"
+    }
+  },
   "user_config": {
     "GOOGLE_OAUTH_CLIENT_ID": {
       "type": "string",
@@ -182,6 +193,10 @@
     "oauth",
     "productivity",
     "ai-assistant"
+  ],
+  "privacy_policies": [
+    "https://policies.google.com/privacy",
+    "https://workspacemcp.com/privacy"
   ],
   "license": "MIT",
   "repository": {

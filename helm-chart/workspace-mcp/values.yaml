@@ -84,8 +84,9 @@ env:
   # If set, this overrides the base_uri:port combination for OAuth endpoints
   WORKSPACE_EXTERNAL_URL: ""
   
-  # OAuth 2.1 support
-  MCP_ENABLE_OAUTH21: "false"
+  # OAuth 2.1 support. The chart runs streamable HTTP behind a Kubernetes
+  # Service, so OAuth 2.1 is the safe default for network-reachable deployments.
+  MCP_ENABLE_OAUTH21: "true"
   
   # Development only - set to "1" for local development
   OAUTHLIB_INSECURE_TRANSPORT: "0"

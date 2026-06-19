@@ -10,7 +10,8 @@ from typing import List, Dict, Any, Optional
 
 from auth.service_decorator import require_google_service
 from core.server import server
-from core.utils import handle_http_errors
+from mcp.types import ToolAnnotations
+from core.utils import handle_http_errors, ObjectList
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,15 @@ async def _list_script_projects_impl(
     return "\n".join(output)
 
 
-@server.tool()
+@server.tool(
+    title="List Script Projects",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
 @handle_http_errors("list_script_projects", is_read_only=True, service_type="drive")
 @require_google_service("drive", "drive_read")
 async def list_script_projects(
@@ -141,7 +150,15 @@ async def _get_script_project_impl(
     return "\n".join(output)
 
 
-@server.tool()
+@server.tool(
+    title="Get Script Project",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
 @handle_http_errors("get_script_project", is_read_only=True, service_type="script")
 @require_google_service("script", "script_readonly")
 async def get_script_project(
@@ -199,7 +216,15 @@ async def _get_script_content_impl(
     return "\n".join(output)
 
 
-@server.tool()
+@server.tool(
+    title="Get Script Content",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
 @handle_http_errors("get_script_content", is_read_only=True, service_type="script")
 @require_google_service("script", "script_readonly")
 async def get_script_content(
@@ -256,7 +281,15 @@ async def _create_script_project_impl(
     return "\n".join(output)
 
 
-@server.tool()
+@server.tool(
+    title="Create Script Project",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
 @handle_http_errors("create_script_project", service_type="script")
 @require_google_service("script", "script_projects")
 async def create_script_project(
@@ -310,7 +343,15 @@ async def _update_script_content_impl(
     return "\n".join(output)
 
 
-@server.tool()
+@server.tool(
+    title="Update Script Content",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
 @handle_http_errors("update_script_content", service_type="script")
 @require_google_service("script", "script_projects")
 async def update_script_content(
@@ -381,15 +422,23 @@ async def _run_script_function_impl(
         return f"Execution failed\nFunction: {function_name}\nError: {str(e)}"
 
 
-@server.tool()
+@server.tool(
+    title="Run Script Function",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
 @handle_http_errors("run_script_function", service_type="script")
-@require_google_service("script", "script_projects")
+@require_google_service("script", "script_run")
 async def run_script_function(
     service: Any,
     user_google_email: str,
     script_id: str,
     function_name: str,
-    parameters: Optional[list[object]] = None,
+    parameters: Optional[ObjectList] = None,
     dev_mode: bool = False,
 ) -> str:
     """
@@ -463,32 +512,66 @@ async def _create_deployment_impl(
     return "\n".join(output)
 
 
-@server.tool()
-@handle_http_errors("create_deployment", service_type="script")
+@server.tool(
+    title="Manage Deployment",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("manage_deployment", service_type="script")
 @require_google_service("script", "script_deployments")
-async def create_deployment(
+async def manage_deployment(
     service: Any,
     user_google_email: str,
+    action: str,
     script_id: str,
-    description: str,
+    deployment_id: Optional[str] = None,
+    description: Optional[str] = None,
     version_description: Optional[str] = None,
 ) -> str:
     """
-    Creates a new deployment of the script.
+    Manages Apps Script deployments. Supports creating, updating, and deleting deployments.
 
     Args:
         service: Injected Google API service client
         user_google_email: User's email address
+        action: Action to perform - "create", "update", or "delete"
         script_id: The script project ID
-        description: Deployment description
-        version_description: Optional version description
+        deployment_id: The deployment ID (required for update and delete)
+        description: Deployment description (required for create and update)
+        version_description: Optional version description (for create only)
 
     Returns:
-        str: Formatted string with deployment details
+        str: Formatted string with deployment details or confirmation
     """
-    return await _create_deployment_impl(
-        service, user_google_email, script_id, description, version_description
-    )
+    action = action.lower().strip()
+    if action == "create":
+        if description is None or description.strip() == "":
+            raise ValueError("description is required for create action")
+        return await _create_deployment_impl(
+            service, user_google_email, script_id, description, version_description
+        )
+    elif action == "update":
+        if not deployment_id:
+            raise ValueError("deployment_id is required for update action")
+        if description is None or description.strip() == "":
+            raise ValueError("description is required for update action")
+        return await _update_deployment_impl(
+            service, user_google_email, script_id, deployment_id, description
+        )
+    elif action == "delete":
+        if not deployment_id:
+            raise ValueError("deployment_id is required for delete action")
+        return await _delete_deployment_impl(
+            service, user_google_email, script_id, deployment_id
+        )
+    else:
+        raise ValueError(
+            f"Invalid action '{action}'. Must be 'create', 'update', or 'delete'."
+        )
 
 
 async def _list_deployments_impl(
@@ -523,7 +606,15 @@ async def _list_deployments_impl(
     return "\n".join(output)
 
 
-@server.tool()
+@server.tool(
+    title="List Deployments",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
 @handle_http_errors("list_deployments", is_read_only=True, service_type="script")
 @require_google_service("script", "script_deployments_readonly")
 async def list_deployments(
@@ -578,34 +669,6 @@ async def _update_deployment_impl(
     return "\n".join(output)
 
 
-@server.tool()
-@handle_http_errors("update_deployment", service_type="script")
-@require_google_service("script", "script_deployments")
-async def update_deployment(
-    service: Any,
-    user_google_email: str,
-    script_id: str,
-    deployment_id: str,
-    description: Optional[str] = None,
-) -> str:
-    """
-    Updates an existing deployment configuration.
-
-    Args:
-        service: Injected Google API service client
-        user_google_email: User's email address
-        script_id: The script project ID
-        deployment_id: The deployment ID to update
-        description: Optional new description
-
-    Returns:
-        str: Formatted string confirming update
-    """
-    return await _update_deployment_impl(
-        service, user_google_email, script_id, deployment_id, description
-    )
-
-
 async def _delete_deployment_impl(
     service: Any,
     user_google_email: str,
@@ -628,32 +691,6 @@ async def _delete_deployment_impl(
 
     logger.info(f"[delete_deployment] Deleted deployment {deployment_id}")
     return output
-
-
-@server.tool()
-@handle_http_errors("delete_deployment", service_type="script")
-@require_google_service("script", "script_deployments")
-async def delete_deployment(
-    service: Any,
-    user_google_email: str,
-    script_id: str,
-    deployment_id: str,
-) -> str:
-    """
-    Deletes a deployment.
-
-    Args:
-        service: Injected Google API service client
-        user_google_email: User's email address
-        script_id: The script project ID
-        deployment_id: The deployment ID to delete
-
-    Returns:
-        str: Confirmation message
-    """
-    return await _delete_deployment_impl(
-        service, user_google_email, script_id, deployment_id
-    )
 
 
 async def _list_script_processes_impl(
@@ -698,7 +735,15 @@ async def _list_script_processes_impl(
     return "\n".join(output)
 
 
-@server.tool()
+@server.tool(
+    title="List Script Processes",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
 @handle_http_errors("list_script_processes", is_read_only=True, service_type="script")
 @require_google_service("script", "script_readonly")
 async def list_script_processes(
@@ -746,7 +791,15 @@ async def _delete_script_project_impl(
     return f"Deleted Apps Script project: {script_id}"
 
 
-@server.tool()
+@server.tool(
+    title="Delete Script Project",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
 @handle_http_errors("delete_script_project", is_read_only=False, service_type="drive")
 @require_google_service("drive", "drive_full")
 async def delete_script_project(
@@ -807,7 +860,15 @@ async def _list_versions_impl(
     return "\n".join(output)
 
 
-@server.tool()
+@server.tool(
+    title="List Versions",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
 @handle_http_errors("list_versions", is_read_only=True, service_type="script")
 @require_google_service("script", "script_readonly")
 async def list_versions(
@@ -865,7 +926,15 @@ async def _create_version_impl(
     return "\n".join(output)
 
 
-@server.tool()
+@server.tool(
+    title="Create Version",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
 @handle_http_errors("create_version", is_read_only=False, service_type="script")
 @require_google_service("script", "script_full")
 async def create_version(
@@ -926,7 +995,15 @@ async def _get_version_impl(
     return "\n".join(output)
 
 
-@server.tool()
+@server.tool(
+    title="Get Version",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
 @handle_http_errors("get_version", is_read_only=True, service_type="script")
 @require_google_service("script", "script_readonly")
 async def get_version(
@@ -1023,7 +1100,15 @@ async def _get_script_metrics_impl(
     return "\n".join(output)
 
 
-@server.tool()
+@server.tool(
+    title="Get Script Metrics",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
 @handle_http_errors("get_script_metrics", is_read_only=True, service_type="script")
 @require_google_service("script", "script_readonly")
 async def get_script_metrics(
@@ -1274,7 +1359,15 @@ def _generate_trigger_code_impl(
     return "\n".join(instructions) + "\n\n" + code
 
 
-@server.tool()
+@server.tool(
+    title="Generate Trigger Code",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    ),
+)
 async def generate_trigger_code(
     trigger_type: str,
     function_name: str,

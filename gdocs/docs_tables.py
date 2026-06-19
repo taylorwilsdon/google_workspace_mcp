@@ -8,6 +8,8 @@ in Google Docs, including population with data and formatting.
 import logging
 from typing import Dict, Any, List, Optional, Union, Tuple
 
+from gdocs.docs_helpers import create_update_table_cell_style_request
+
 logger = logging.getLogger(__name__)
 
 
@@ -278,69 +280,27 @@ def build_table_style_requests(
     """
     requests = []
 
-    # Table cell style update
-    if any(
-        k in style_options for k in ["border_width", "border_color", "background_color"]
-    ):
-        table_cell_style = {}
-        fields = []
-
-        if "border_width" in style_options:
-            border_width = {"magnitude": style_options["border_width"], "unit": "PT"}
-            table_cell_style["borderTop"] = {"width": border_width}
-            table_cell_style["borderBottom"] = {"width": border_width}
-            table_cell_style["borderLeft"] = {"width": border_width}
-            table_cell_style["borderRight"] = {"width": border_width}
-            fields.extend(["borderTop", "borderBottom", "borderLeft", "borderRight"])
-
-        if "border_color" in style_options:
-            border_color = {"color": {"rgbColor": style_options["border_color"]}}
-            if "borderTop" in table_cell_style:
-                table_cell_style["borderTop"]["color"] = border_color["color"]
-                table_cell_style["borderBottom"]["color"] = border_color["color"]
-                table_cell_style["borderLeft"]["color"] = border_color["color"]
-                table_cell_style["borderRight"]["color"] = border_color["color"]
-
-        if "background_color" in style_options:
-            table_cell_style["backgroundColor"] = {
-                "color": {"rgbColor": style_options["background_color"]}
-            }
-            fields.append("backgroundColor")
-
-        if table_cell_style and fields:
-            requests.append(
-                {
-                    "updateTableCellStyle": {
-                        "tableStartLocation": {"index": table_start_index},
-                        "tableCellStyle": table_cell_style,
-                        "fields": ",".join(fields),
-                    }
-                }
-            )
+    style_request = create_update_table_cell_style_request(
+        table_start_index=table_start_index,
+        background_color=style_options.get("background_color"),
+        border_color=style_options.get("border_color"),
+        border_width=style_options.get("border_width"),
+    )
+    if style_request:
+        requests.append(style_request)
 
     # Header row specific styling
     if "header_background" in style_options:
-        requests.append(
-            {
-                "updateTableCellStyle": {
-                    "tableRange": {
-                        "tableCellLocation": {
-                            "tableStartLocation": {"index": table_start_index},
-                            "rowIndex": 0,
-                            "columnIndex": 0,
-                        },
-                        "rowSpan": 1,
-                        "columnSpan": 100,  # Large number to cover all columns
-                    },
-                    "tableCellStyle": {
-                        "backgroundColor": {
-                            "color": {"rgbColor": style_options["header_background"]}
-                        }
-                    },
-                    "fields": "backgroundColor",
-                }
-            }
+        header_request = create_update_table_cell_style_request(
+            table_start_index=table_start_index,
+            background_color=style_options["header_background"],
+            row_index=0,
+            column_index=0,
+            row_span=1,
+            column_span=100,  # Large number to cover all columns
         )
+        if header_request:
+            requests.append(header_request)
 
     return requests
 

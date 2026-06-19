@@ -37,7 +37,7 @@ The following table lists the configurable parameters and their default values:
 | `secrets.googleOAuth.userEmail` | Default user email for single-user mode | `""` |
 | `singleUserMode` | Enable single-user mode | `false` |
 | `tools.enabled` | List of tools to enable | `[]` (all tools enabled) |
-| `env.MCP_ENABLE_OAUTH21` | Enable OAuth 2.1 support | `"false"` |
+| `env.MCP_ENABLE_OAUTH21` | Enable OAuth 2.1 support for streamable HTTP | `"true"` |
 | `service.type` | Kubernetes service type | `ClusterIP` |
 | `service.port` | Service port | `8000` |
 | `ingress.enabled` | Enable ingress | `false` |
@@ -79,21 +79,25 @@ helm install workspace-mcp ./helm-chart/workspace-mcp \
 
 ### Single-user mode deployment:
 
+Single-user mode is a legacy local-auth mode and is incompatible with OAuth 2.1.
+For Kubernetes, prefer the default OAuth 2.1 mode unless this deployment is
+strictly limited to trusted network paths.
+
 ```bash
 helm install workspace-mcp ./helm-chart/workspace-mcp \
   --set secrets.googleOAuth.clientId="your-client-id" \
   --set secrets.googleOAuth.clientSecret="your-secret" \
+  --set env.MCP_ENABLE_OAUTH21="false" \
   --set singleUserMode=true \
   --set secrets.googleOAuth.userEmail="user@yourdomain.com"
 ```
 
-### Enable OAuth 2.1 for multi-user environments:
+### OAuth 2.1 multi-user deployment:
 
 ```bash
 helm install workspace-mcp ./helm-chart/workspace-mcp \
   --set secrets.googleOAuth.clientId="your-client-id" \
-  --set secrets.googleOAuth.clientSecret="your-secret" \
-  --set env.MCP_ENABLE_OAUTH21="true"
+  --set secrets.googleOAuth.clientSecret="your-secret"
 ```
 
 ## Uninstalling the Chart

@@ -10,21 +10,23 @@ import json
 import copy
 from typing import List, Optional, Union
 
+from mcp.types import ToolAnnotations
+
 from auth.service_decorator import require_google_service
 from core.server import server
-from core.utils import handle_http_errors, UserInputError
+from core.utils import handle_http_errors, UserInputError, StringList
 from core.comments import create_comment_tools
 from gsheets.sheets_helpers import (
-    _a1_range_cell_count,
     CONDITION_TYPES,
     _a1_range_for_values,
+    _column_to_index,
     _build_boolean_rule,
     _build_gradient_rule,
+    _fetch_cell_formulas,
     _fetch_detailed_sheet_errors,
-    _fetch_sheet_hyperlinks,
+    _fetch_grid_metadata,
     _fetch_sheets_with_rules,
     _format_conditional_rules_section,
-    _format_sheet_hyperlink_section,
     _format_sheet_error_section,
     _parse_a1_range,
     _parse_condition_values,
@@ -36,10 +38,17 @@ from gsheets.sheets_helpers import (
 
 # Configure module logger
 logger = logging.getLogger(__name__)
-MAX_HYPERLINK_FETCH_CELLS = 5000
 
 
-@server.tool()
+@server.tool(
+    title="List Spreadsheets",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
 @handle_http_errors("list_spreadsheets", is_read_only=True, service_type="sheets")
 @require_google_service("drive", "drive_read")
 async def list_spreadsheets(
@@ -92,7 +101,15 @@ async def list_spreadsheets(
     return text_output
 
 
-@server.tool()
+@server.tool(
+    title="Get Spreadsheet Info",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
 @handle_http_errors("get_spreadsheet_info", is_read_only=True, service_type="sheets")
 @require_google_service("sheets", "sheets_read")
 async def get_spreadsheet_info(
@@ -170,7 +187,15 @@ async def get_spreadsheet_info(
     return text_output
 
 
-@server.tool()
+@server.tool(
+    title="Read Sheet Values",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
 @handle_http_errors("read_sheet_values", is_read_only=True, service_type="sheets")
 @require_google_service("sheets", "sheets_read")
 async def read_sheet_values(
@@ -179,6 +204,8 @@ async def read_sheet_values(
     spreadsheet_id: str,
     range_name: str = "A1:Z1000",
     include_hyperlinks: bool = False,
+    include_notes: bool = False,
+    include_formulas: bool = False,
 ) -> str:
     """
     Reads values from a specific range in a Google Sheet.
@@ -189,6 +216,11 @@ async def read_sheet_values(
         range_name (str): The range to read (e.g., "Sheet1!A1:D10", "A1:D10"). Defaults to "A1:Z1000".
         include_hyperlinks (bool): If True, also fetch hyperlink metadata for the range.
             Defaults to False to avoid expensive includeGridData requests.
+        include_notes (bool): If True, also fetch cell notes for the range.
+            Defaults to False to avoid expensive includeGridData requests.
+        include_formulas (bool): If True, also fetch raw formula strings for cells that
+            contain formulas. Useful for identifying cross-sheet references before writing
+            back to a range. Defaults to False to avoid an extra API request.
 
     Returns:
         str: The formatted values from the specified range.
@@ -205,47 +237,39 @@ async def read_sheet_values(
     )
 
     values = result.get("values", [])
-    if not values:
+    resolved_range = result.get("range", range_name)
+
+    hyperlink_section, notes_section = await _fetch_grid_metadata(
+        service,
+        spreadsheet_id,
+        resolved_range,
+        values,
+        include_hyperlinks=include_hyperlinks,
+        include_notes=include_notes,
+    )
+
+    formula_section = ""
+    formula_values = []
+    if include_formulas:
+        formula_section, formula_values = await _fetch_cell_formulas(
+            service, spreadsheet_id, resolved_range
+        )
+
+    if not values and not formula_values:
         return f"No data found in range '{range_name}' for {user_google_email}."
 
-    resolved_range = result.get("range", range_name)
-    detailed_range = _a1_range_for_values(resolved_range, values) or resolved_range
+    if not values:
+        logger.info(
+            "[read_sheet_values] Range '%s' has formula cells but no displayed values",
+            resolved_range,
+        )
+        return (
+            f"No displayed values found in range '{range_name}' in spreadsheet {spreadsheet_id} "
+            f"for {user_google_email}. The range contains formula cells."
+            + formula_section
+        )
 
-    hyperlink_section = ""
-    if include_hyperlinks:
-        # Use a tight A1 range for includeGridData fetches to avoid expensive
-        # open-ended requests (e.g., A:Z).
-        hyperlink_range = _a1_range_for_values(resolved_range, values)
-        if not hyperlink_range:
-            logger.info(
-                "[read_sheet_values] Skipping hyperlink fetch for range '%s': unable to determine tight bounds",
-                resolved_range,
-            )
-        else:
-            cell_count = _a1_range_cell_count(hyperlink_range) or sum(
-                len(row) for row in values
-            )
-            if cell_count <= MAX_HYPERLINK_FETCH_CELLS:
-                try:
-                    hyperlinks = await _fetch_sheet_hyperlinks(
-                        service, spreadsheet_id, hyperlink_range
-                    )
-                    hyperlink_section = _format_sheet_hyperlink_section(
-                        hyperlinks=hyperlinks, range_label=hyperlink_range
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "[read_sheet_values] Failed fetching hyperlinks for range '%s': %s",
-                        hyperlink_range,
-                        exc,
-                    )
-            else:
-                logger.info(
-                    "[read_sheet_values] Skipping hyperlink fetch for large range '%s' (%d cells > %d limit)",
-                    hyperlink_range,
-                    cell_count,
-                    MAX_HYPERLINK_FETCH_CELLS,
-                )
+    detailed_range = _a1_range_for_values(resolved_range, values) or resolved_range
 
     detailed_errors_section = ""
     if _values_contain_sheets_errors(values):
@@ -277,10 +301,24 @@ async def read_sheet_values(
     )
 
     logger.info(f"Successfully read {len(values)} rows for {user_google_email}.")
-    return text_output + hyperlink_section + detailed_errors_section
+    return (
+        text_output
+        + hyperlink_section
+        + notes_section
+        + formula_section
+        + detailed_errors_section
+    )
 
 
-@server.tool()
+@server.tool(
+    title="Modify Sheet Values",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
 @handle_http_errors("modify_sheet_values", service_type="sheets")
 @require_google_service("sheets", "sheets_write")
 async def modify_sheet_values(
@@ -649,7 +687,15 @@ async def _format_sheet_range_impl(
     }
 
 
-@server.tool()
+@server.tool(
+    title="Format Sheet Range",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
 @handle_http_errors("format_sheet_range", service_type="sheets")
 @require_google_service("sheets", "sheets_write")
 async def format_sheet_range(
@@ -728,416 +774,428 @@ async def format_sheet_range(
     )
 
 
-@server.tool()
-@handle_http_errors("add_conditional_formatting", service_type="sheets")
+@server.tool(
+    title="Manage Conditional Formatting",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("manage_conditional_formatting", service_type="sheets")
 @require_google_service("sheets", "sheets_write")
-async def add_conditional_formatting(
+async def manage_conditional_formatting(
     service,
     user_google_email: str,
     spreadsheet_id: str,
-    range_name: str,
-    condition_type: str,
-    condition_values: Optional[Union[str, List[Union[str, int, float]]]] = None,
-    background_color: Optional[str] = None,
-    text_color: Optional[str] = None,
-    rule_index: Optional[int] = None,
-    gradient_points: Optional[Union[str, List[dict]]] = None,
-) -> str:
-    """
-    Adds a conditional formatting rule to a range.
-
-    Args:
-        user_google_email (str): The user's Google email address. Required.
-        spreadsheet_id (str): The ID of the spreadsheet. Required.
-        range_name (str): A1-style range (optionally with sheet name). Required.
-        condition_type (str): Sheets condition type (e.g., NUMBER_GREATER, TEXT_CONTAINS, DATE_BEFORE, CUSTOM_FORMULA).
-        condition_values (Optional[Union[str, List[Union[str, int, float]]]]): Values for the condition; accepts a list or a JSON string representing a list. Depends on condition_type.
-        background_color (Optional[str]): Hex background color to apply when condition matches.
-        text_color (Optional[str]): Hex text color to apply when condition matches.
-        rule_index (Optional[int]): Optional position to insert the rule (0-based) within the sheet's rules.
-        gradient_points (Optional[Union[str, List[dict]]]): List (or JSON list) of gradient points for a color scale. If provided, a gradient rule is created and boolean parameters are ignored.
-
-    Returns:
-        str: Confirmation of the added rule.
-    """
-    logger.info(
-        "[add_conditional_formatting] Invoked. Email: '%s', Spreadsheet: %s, Range: %s, Type: %s, Values: %s",
-        user_google_email,
-        spreadsheet_id,
-        range_name,
-        condition_type,
-        condition_values,
-    )
-
-    if rule_index is not None and (not isinstance(rule_index, int) or rule_index < 0):
-        raise UserInputError("rule_index must be a non-negative integer when provided.")
-
-    condition_values_list = _parse_condition_values(condition_values)
-    gradient_points_list = _parse_gradient_points(gradient_points)
-
-    sheets, sheet_titles = await _fetch_sheets_with_rules(service, spreadsheet_id)
-    grid_range = _parse_a1_range(range_name, sheets)
-
-    target_sheet = None
-    for sheet in sheets:
-        if sheet.get("properties", {}).get("sheetId") == grid_range.get("sheetId"):
-            target_sheet = sheet
-            break
-    if target_sheet is None:
-        raise UserInputError(
-            "Target sheet not found while adding conditional formatting."
-        )
-
-    current_rules = target_sheet.get("conditionalFormats", []) or []
-
-    insert_at = rule_index if rule_index is not None else len(current_rules)
-    if insert_at > len(current_rules):
-        raise UserInputError(
-            f"rule_index {insert_at} is out of range for sheet '{target_sheet.get('properties', {}).get('title', 'Unknown')}' "
-            f"(current count: {len(current_rules)})."
-        )
-
-    if gradient_points_list:
-        new_rule = _build_gradient_rule([grid_range], gradient_points_list)
-        rule_desc = "gradient"
-        values_desc = ""
-        applied_parts = [f"gradient points {len(gradient_points_list)}"]
-    else:
-        rule, cond_type_normalized = _build_boolean_rule(
-            [grid_range],
-            condition_type,
-            condition_values_list,
-            background_color,
-            text_color,
-        )
-        new_rule = rule
-        rule_desc = cond_type_normalized
-        values_desc = ""
-        if condition_values_list:
-            values_desc = f" with values {condition_values_list}"
-        applied_parts = []
-        if background_color:
-            applied_parts.append(f"background {background_color}")
-        if text_color:
-            applied_parts.append(f"text {text_color}")
-
-    new_rules_state = copy.deepcopy(current_rules)
-    new_rules_state.insert(insert_at, new_rule)
-
-    add_rule_request = {"rule": new_rule}
-    if rule_index is not None:
-        add_rule_request["index"] = rule_index
-
-    request_body = {"requests": [{"addConditionalFormatRule": add_rule_request}]}
-
-    await asyncio.to_thread(
-        service.spreadsheets()
-        .batchUpdate(spreadsheetId=spreadsheet_id, body=request_body)
-        .execute
-    )
-
-    format_desc = ", ".join(applied_parts) if applied_parts else "format applied"
-
-    sheet_title = target_sheet.get("properties", {}).get("title", "Unknown")
-    state_text = _format_conditional_rules_section(
-        sheet_title, new_rules_state, sheet_titles, indent=""
-    )
-
-    return "\n".join(
-        [
-            f"Added conditional format on '{range_name}' in spreadsheet {spreadsheet_id} "
-            f"for {user_google_email}: {rule_desc}{values_desc}; format: {format_desc}.",
-            state_text,
-        ]
-    )
-
-
-@server.tool()
-@handle_http_errors("update_conditional_formatting", service_type="sheets")
-@require_google_service("sheets", "sheets_write")
-async def update_conditional_formatting(
-    service,
-    user_google_email: str,
-    spreadsheet_id: str,
-    rule_index: int,
+    action: str,
     range_name: Optional[str] = None,
     condition_type: Optional[str] = None,
     condition_values: Optional[Union[str, List[Union[str, int, float]]]] = None,
     background_color: Optional[str] = None,
     text_color: Optional[str] = None,
-    sheet_name: Optional[str] = None,
+    rule_index: Optional[int] = None,
     gradient_points: Optional[Union[str, List[dict]]] = None,
+    sheet_name: Optional[str] = None,
 ) -> str:
     """
-    Updates an existing conditional formatting rule by index on a sheet.
+    Manages conditional formatting rules on a Google Sheet. Supports adding,
+    updating, and deleting conditional formatting rules via a single tool.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
         spreadsheet_id (str): The ID of the spreadsheet. Required.
-        range_name (Optional[str]): A1-style range to apply the updated rule (optionally with sheet name). If omitted, existing ranges are preserved.
-        rule_index (int): Index of the rule to update (0-based).
-        condition_type (Optional[str]): Sheets condition type. If omitted, the existing rule's type is preserved.
-        condition_values (Optional[Union[str, List[Union[str, int, float]]]]): Values for the condition.
-        background_color (Optional[str]): Hex background color when condition matches.
-        text_color (Optional[str]): Hex text color when condition matches.
-        sheet_name (Optional[str]): Sheet name to locate the rule when range_name is omitted. Defaults to first sheet.
-        gradient_points (Optional[Union[str, List[dict]]]): If provided, updates the rule to a gradient color scale using these points.
+        action (str): The operation to perform. Must be one of "add", "update",
+            or "delete".
+        range_name (Optional[str]): A1-style range (optionally with sheet name).
+            Required for "add". Optional for "update" (preserves existing ranges
+            if omitted). Not used for "delete".
+        condition_type (Optional[str]): Sheets condition type (e.g., NUMBER_GREATER,
+            TEXT_CONTAINS, DATE_BEFORE, CUSTOM_FORMULA). Required for "add".
+            Optional for "update" (preserves existing type if omitted).
+        condition_values (Optional[Union[str, List[Union[str, int, float]]]]): Values
+            for the condition; accepts a list or a JSON string representing a list.
+            Depends on condition_type. Used by "add" and "update".
+        background_color (Optional[str]): Hex background color to apply when
+            condition matches. Used by "add" and "update".
+        text_color (Optional[str]): Hex text color to apply when condition matches.
+            Used by "add" and "update".
+        rule_index (Optional[int]): 0-based index of the rule. For "add", optionally
+            specifies insertion position. Required for "update" and "delete".
+        gradient_points (Optional[Union[str, List[dict]]]): List (or JSON list) of
+            gradient points for a color scale. If provided, a gradient rule is created
+            and boolean parameters are ignored. Used by "add" and "update".
+        sheet_name (Optional[str]): Sheet name to locate the rule when range_name is
+            omitted. Defaults to the first sheet. Used by "update" and "delete".
 
     Returns:
-        str: Confirmation of the updated rule and the current rule state.
+        str: Confirmation of the operation and the current rule state.
     """
+    allowed_actions = {"add", "update", "delete"}
+    action_normalized = action.strip().lower()
+    if action_normalized not in allowed_actions:
+        raise UserInputError(
+            f"action must be one of {sorted(allowed_actions)}, got '{action}'."
+        )
+
     logger.info(
-        "[update_conditional_formatting] Invoked. Email: '%s', Spreadsheet: %s, Range: %s, Rule Index: %s",
+        "[manage_conditional_formatting] Invoked. Action: '%s', Email: '%s', Spreadsheet: %s",
+        action_normalized,
         user_google_email,
         spreadsheet_id,
-        range_name,
-        rule_index,
     )
 
-    if not isinstance(rule_index, int) or rule_index < 0:
-        raise UserInputError("rule_index must be a non-negative integer.")
+    if action_normalized == "add":
+        if not range_name:
+            raise UserInputError("range_name is required for action 'add'.")
+        if not condition_type and not gradient_points:
+            raise UserInputError(
+                "condition_type (or gradient_points) is required for action 'add'."
+            )
 
-    condition_values_list = _parse_condition_values(condition_values)
-    gradient_points_list = _parse_gradient_points(gradient_points)
+        if rule_index is not None and (
+            not isinstance(rule_index, int) or rule_index < 0
+        ):
+            raise UserInputError(
+                "rule_index must be a non-negative integer when provided."
+            )
 
-    sheets, sheet_titles = await _fetch_sheets_with_rules(service, spreadsheet_id)
+        gradient_points_list = _parse_gradient_points(gradient_points)
+        condition_values_list = (
+            None if gradient_points_list else _parse_condition_values(condition_values)
+        )
 
-    target_sheet = None
-    grid_range = None
-    if range_name:
+        sheets, sheet_titles = await _fetch_sheets_with_rules(service, spreadsheet_id)
         grid_range = _parse_a1_range(range_name, sheets)
+
+        target_sheet = None
         for sheet in sheets:
             if sheet.get("properties", {}).get("sheetId") == grid_range.get("sheetId"):
                 target_sheet = sheet
                 break
-    else:
+        if target_sheet is None:
+            raise UserInputError(
+                "Target sheet not found while adding conditional formatting."
+            )
+
+        current_rules = target_sheet.get("conditionalFormats", []) or []
+
+        insert_at = rule_index if rule_index is not None else len(current_rules)
+        if insert_at > len(current_rules):
+            raise UserInputError(
+                f"rule_index {insert_at} is out of range for sheet "
+                f"'{target_sheet.get('properties', {}).get('title', 'Unknown')}' "
+                f"(current count: {len(current_rules)})."
+            )
+
+        if gradient_points_list:
+            new_rule = _build_gradient_rule([grid_range], gradient_points_list)
+            rule_desc = "gradient"
+            values_desc = ""
+            applied_parts = [f"gradient points {len(gradient_points_list)}"]
+        else:
+            rule, cond_type_normalized = _build_boolean_rule(
+                [grid_range],
+                condition_type,
+                condition_values_list,
+                background_color,
+                text_color,
+            )
+            new_rule = rule
+            rule_desc = cond_type_normalized
+            values_desc = ""
+            if condition_values_list:
+                values_desc = f" with values {condition_values_list}"
+            applied_parts = []
+            if background_color:
+                applied_parts.append(f"background {background_color}")
+            if text_color:
+                applied_parts.append(f"text {text_color}")
+
+        new_rules_state = copy.deepcopy(current_rules)
+        new_rules_state.insert(insert_at, new_rule)
+
+        add_rule_request = {"rule": new_rule}
+        if rule_index is not None:
+            add_rule_request["index"] = rule_index
+
+        request_body = {"requests": [{"addConditionalFormatRule": add_rule_request}]}
+
+        await asyncio.to_thread(
+            service.spreadsheets()
+            .batchUpdate(spreadsheetId=spreadsheet_id, body=request_body)
+            .execute
+        )
+
+        format_desc = ", ".join(applied_parts) if applied_parts else "format applied"
+
+        sheet_title = target_sheet.get("properties", {}).get("title", "Unknown")
+        state_text = _format_conditional_rules_section(
+            sheet_title, new_rules_state, sheet_titles, indent=""
+        )
+
+        return "\n".join(
+            [
+                f"Added conditional format on '{range_name}' in spreadsheet "
+                f"{spreadsheet_id} for {user_google_email}: "
+                f"{rule_desc}{values_desc}; format: {format_desc}.",
+                state_text,
+            ]
+        )
+
+    elif action_normalized == "update":
+        if rule_index is None:
+            raise UserInputError("rule_index is required for action 'update'.")
+        if not isinstance(rule_index, int) or rule_index < 0:
+            raise UserInputError("rule_index must be a non-negative integer.")
+
+        gradient_points_list = _parse_gradient_points(gradient_points)
+        condition_values_list = (
+            None
+            if gradient_points_list is not None
+            else _parse_condition_values(condition_values)
+        )
+
+        sheets, sheet_titles = await _fetch_sheets_with_rules(service, spreadsheet_id)
+
+        target_sheet = None
+        grid_range = None
+        if range_name:
+            grid_range = _parse_a1_range(range_name, sheets)
+            for sheet in sheets:
+                if sheet.get("properties", {}).get("sheetId") == grid_range.get(
+                    "sheetId"
+                ):
+                    target_sheet = sheet
+                    break
+        else:
+            target_sheet = _select_sheet(sheets, sheet_name)
+
+        if target_sheet is None:
+            raise UserInputError(
+                "Target sheet not found while updating conditional formatting."
+            )
+
+        sheet_props = target_sheet.get("properties", {})
+        sheet_id = sheet_props.get("sheetId")
+        sheet_title = sheet_props.get("title", f"Sheet {sheet_id}")
+
+        rules = target_sheet.get("conditionalFormats", []) or []
+        if rule_index >= len(rules):
+            raise UserInputError(
+                f"rule_index {rule_index} is out of range for sheet "
+                f"'{sheet_title}' (current count: {len(rules)})."
+            )
+
+        existing_rule = rules[rule_index]
+        ranges_to_use = existing_rule.get("ranges", [])
+        if range_name:
+            ranges_to_use = [grid_range]
+        if not ranges_to_use:
+            ranges_to_use = [{"sheetId": sheet_id}]
+
+        new_rule = None
+        rule_desc = ""
+        values_desc = ""
+        format_desc = ""
+
+        if gradient_points_list is not None:
+            new_rule = _build_gradient_rule(ranges_to_use, gradient_points_list)
+            rule_desc = "gradient"
+            format_desc = f"gradient points {len(gradient_points_list)}"
+        elif "gradientRule" in existing_rule:
+            if any(
+                [
+                    background_color,
+                    text_color,
+                    condition_type,
+                    condition_values_list,
+                ]
+            ):
+                raise UserInputError(
+                    "Existing rule is a gradient rule. Provide gradient_points "
+                    "to update it, or omit formatting/condition parameters to "
+                    "keep it unchanged."
+                )
+            new_rule = {
+                "ranges": ranges_to_use,
+                "gradientRule": existing_rule.get("gradientRule", {}),
+            }
+            rule_desc = "gradient"
+            format_desc = "gradient (unchanged)"
+        else:
+            existing_boolean = existing_rule.get("booleanRule", {})
+            existing_condition = existing_boolean.get("condition", {})
+            existing_format = copy.deepcopy(existing_boolean.get("format", {}))
+
+            cond_type = (condition_type or existing_condition.get("type", "")).upper()
+            if not cond_type:
+                raise UserInputError("condition_type is required for boolean rules.")
+            if cond_type not in CONDITION_TYPES:
+                raise UserInputError(
+                    f"condition_type must be one of {sorted(CONDITION_TYPES)}."
+                )
+
+            if condition_values_list is not None:
+                cond_values = [
+                    {"userEnteredValue": str(val)} for val in condition_values_list
+                ]
+            else:
+                cond_values = existing_condition.get("values")
+
+            new_format = copy.deepcopy(existing_format) if existing_format else {}
+            if background_color is not None:
+                bg_color_parsed = _parse_hex_color(background_color)
+                if bg_color_parsed:
+                    new_format["backgroundColor"] = bg_color_parsed
+                elif "backgroundColor" in new_format:
+                    del new_format["backgroundColor"]
+            if text_color is not None:
+                text_color_parsed = _parse_hex_color(text_color)
+                text_format = copy.deepcopy(new_format.get("textFormat", {}))
+                if text_color_parsed:
+                    text_format["foregroundColor"] = text_color_parsed
+                elif "foregroundColor" in text_format:
+                    del text_format["foregroundColor"]
+                if text_format:
+                    new_format["textFormat"] = text_format
+                elif "textFormat" in new_format:
+                    del new_format["textFormat"]
+
+            if not new_format:
+                raise UserInputError(
+                    "At least one format option must remain on the rule."
+                )
+
+            new_rule = {
+                "ranges": ranges_to_use,
+                "booleanRule": {
+                    "condition": {"type": cond_type},
+                    "format": new_format,
+                },
+            }
+            if cond_values:
+                new_rule["booleanRule"]["condition"]["values"] = cond_values
+
+            rule_desc = cond_type
+            if condition_values_list:
+                values_desc = f" with values {condition_values_list}"
+            format_parts = []
+            if "backgroundColor" in new_format:
+                format_parts.append("background updated")
+            if "textFormat" in new_format and new_format["textFormat"].get(
+                "foregroundColor"
+            ):
+                format_parts.append("text color updated")
+            format_desc = (
+                ", ".join(format_parts) if format_parts else "format preserved"
+            )
+
+        new_rules_state = copy.deepcopy(rules)
+        new_rules_state[rule_index] = new_rule
+
+        request_body = {
+            "requests": [
+                {
+                    "updateConditionalFormatRule": {
+                        "index": rule_index,
+                        "sheetId": sheet_id,
+                        "rule": new_rule,
+                    }
+                }
+            ]
+        }
+
+        await asyncio.to_thread(
+            service.spreadsheets()
+            .batchUpdate(spreadsheetId=spreadsheet_id, body=request_body)
+            .execute
+        )
+
+        state_text = _format_conditional_rules_section(
+            sheet_title, new_rules_state, sheet_titles, indent=""
+        )
+
+        return "\n".join(
+            [
+                f"Updated conditional format at index {rule_index} on sheet "
+                f"'{sheet_title}' in spreadsheet {spreadsheet_id} "
+                f"for {user_google_email}: "
+                f"{rule_desc}{values_desc}; format: {format_desc}.",
+                state_text,
+            ]
+        )
+
+    else:  # action_normalized == "delete"
+        if rule_index is None:
+            raise UserInputError("rule_index is required for action 'delete'.")
+        if not isinstance(rule_index, int) or rule_index < 0:
+            raise UserInputError("rule_index must be a non-negative integer.")
+
+        sheets, sheet_titles = await _fetch_sheets_with_rules(service, spreadsheet_id)
         target_sheet = _select_sheet(sheets, sheet_name)
 
-    if target_sheet is None:
-        raise UserInputError(
-            "Target sheet not found while updating conditional formatting."
-        )
-
-    sheet_props = target_sheet.get("properties", {})
-    sheet_id = sheet_props.get("sheetId")
-    sheet_title = sheet_props.get("title", f"Sheet {sheet_id}")
-
-    rules = target_sheet.get("conditionalFormats", []) or []
-    if rule_index >= len(rules):
-        raise UserInputError(
-            f"rule_index {rule_index} is out of range for sheet '{sheet_title}' (current count: {len(rules)})."
-        )
-
-    existing_rule = rules[rule_index]
-    ranges_to_use = existing_rule.get("ranges", [])
-    if range_name:
-        ranges_to_use = [grid_range]
-    if not ranges_to_use:
-        ranges_to_use = [{"sheetId": sheet_id}]
-
-    new_rule = None
-    rule_desc = ""
-    values_desc = ""
-    format_desc = ""
-
-    if gradient_points_list is not None:
-        new_rule = _build_gradient_rule(ranges_to_use, gradient_points_list)
-        rule_desc = "gradient"
-        format_desc = f"gradient points {len(gradient_points_list)}"
-    elif "gradientRule" in existing_rule:
-        if any([background_color, text_color, condition_type, condition_values_list]):
+        sheet_props = target_sheet.get("properties", {})
+        sheet_id = sheet_props.get("sheetId")
+        target_sheet_name = sheet_props.get("title", f"Sheet {sheet_id}")
+        rules = target_sheet.get("conditionalFormats", []) or []
+        if rule_index >= len(rules):
             raise UserInputError(
-                "Existing rule is a gradient rule. Provide gradient_points to update it, or omit formatting/condition parameters to keep it unchanged."
-            )
-        new_rule = {
-            "ranges": ranges_to_use,
-            "gradientRule": existing_rule.get("gradientRule", {}),
-        }
-        rule_desc = "gradient"
-        format_desc = "gradient (unchanged)"
-    else:
-        existing_boolean = existing_rule.get("booleanRule", {})
-        existing_condition = existing_boolean.get("condition", {})
-        existing_format = copy.deepcopy(existing_boolean.get("format", {}))
-
-        cond_type = (condition_type or existing_condition.get("type", "")).upper()
-        if not cond_type:
-            raise UserInputError("condition_type is required for boolean rules.")
-        if cond_type not in CONDITION_TYPES:
-            raise UserInputError(
-                f"condition_type must be one of {sorted(CONDITION_TYPES)}."
+                f"rule_index {rule_index} is out of range for sheet "
+                f"'{target_sheet_name}' (current count: {len(rules)})."
             )
 
-        if condition_values_list is not None:
-            cond_values = [
-                {"userEnteredValue": str(val)} for val in condition_values_list
+        new_rules_state = copy.deepcopy(rules)
+        del new_rules_state[rule_index]
+
+        request_body = {
+            "requests": [
+                {
+                    "deleteConditionalFormatRule": {
+                        "index": rule_index,
+                        "sheetId": sheet_id,
+                    }
+                }
             ]
-        else:
-            cond_values = existing_condition.get("values")
-
-        new_format = copy.deepcopy(existing_format) if existing_format else {}
-        if background_color is not None:
-            bg_color_parsed = _parse_hex_color(background_color)
-            if bg_color_parsed:
-                new_format["backgroundColor"] = bg_color_parsed
-            elif "backgroundColor" in new_format:
-                del new_format["backgroundColor"]
-        if text_color is not None:
-            text_color_parsed = _parse_hex_color(text_color)
-            text_format = copy.deepcopy(new_format.get("textFormat", {}))
-            if text_color_parsed:
-                text_format["foregroundColor"] = text_color_parsed
-            elif "foregroundColor" in text_format:
-                del text_format["foregroundColor"]
-            if text_format:
-                new_format["textFormat"] = text_format
-            elif "textFormat" in new_format:
-                del new_format["textFormat"]
-
-        if not new_format:
-            raise UserInputError("At least one format option must remain on the rule.")
-
-        new_rule = {
-            "ranges": ranges_to_use,
-            "booleanRule": {
-                "condition": {"type": cond_type},
-                "format": new_format,
-            },
         }
-        if cond_values:
-            new_rule["booleanRule"]["condition"]["values"] = cond_values
 
-        rule_desc = cond_type
-        if condition_values_list:
-            values_desc = f" with values {condition_values_list}"
-        format_parts = []
-        if "backgroundColor" in new_format:
-            format_parts.append("background updated")
-        if "textFormat" in new_format and new_format["textFormat"].get(
-            "foregroundColor"
-        ):
-            format_parts.append("text color updated")
-        format_desc = ", ".join(format_parts) if format_parts else "format preserved"
-
-    new_rules_state = copy.deepcopy(rules)
-    new_rules_state[rule_index] = new_rule
-
-    request_body = {
-        "requests": [
-            {
-                "updateConditionalFormatRule": {
-                    "index": rule_index,
-                    "sheetId": sheet_id,
-                    "rule": new_rule,
-                }
-            }
-        ]
-    }
-
-    await asyncio.to_thread(
-        service.spreadsheets()
-        .batchUpdate(spreadsheetId=spreadsheet_id, body=request_body)
-        .execute
-    )
-
-    state_text = _format_conditional_rules_section(
-        sheet_title, new_rules_state, sheet_titles, indent=""
-    )
-
-    return "\n".join(
-        [
-            f"Updated conditional format at index {rule_index} on sheet '{sheet_title}' in spreadsheet {spreadsheet_id} "
-            f"for {user_google_email}: {rule_desc}{values_desc}; format: {format_desc}.",
-            state_text,
-        ]
-    )
-
-
-@server.tool()
-@handle_http_errors("delete_conditional_formatting", service_type="sheets")
-@require_google_service("sheets", "sheets_write")
-async def delete_conditional_formatting(
-    service,
-    user_google_email: str,
-    spreadsheet_id: str,
-    rule_index: int,
-    sheet_name: Optional[str] = None,
-) -> str:
-    """
-    Deletes an existing conditional formatting rule by index on a sheet.
-
-    Args:
-        user_google_email (str): The user's Google email address. Required.
-        spreadsheet_id (str): The ID of the spreadsheet. Required.
-        rule_index (int): Index of the rule to delete (0-based).
-        sheet_name (Optional[str]): Name of the sheet that contains the rule. Defaults to the first sheet if not provided.
-
-    Returns:
-        str: Confirmation of the deletion and the current rule state.
-    """
-    logger.info(
-        "[delete_conditional_formatting] Invoked. Email: '%s', Spreadsheet: %s, Sheet: %s, Rule Index: %s",
-        user_google_email,
-        spreadsheet_id,
-        sheet_name,
-        rule_index,
-    )
-
-    if not isinstance(rule_index, int) or rule_index < 0:
-        raise UserInputError("rule_index must be a non-negative integer.")
-
-    sheets, sheet_titles = await _fetch_sheets_with_rules(service, spreadsheet_id)
-    target_sheet = _select_sheet(sheets, sheet_name)
-
-    sheet_props = target_sheet.get("properties", {})
-    sheet_id = sheet_props.get("sheetId")
-    target_sheet_name = sheet_props.get("title", f"Sheet {sheet_id}")
-    rules = target_sheet.get("conditionalFormats", []) or []
-    if rule_index >= len(rules):
-        raise UserInputError(
-            f"rule_index {rule_index} is out of range for sheet '{target_sheet_name}' (current count: {len(rules)})."
+        await asyncio.to_thread(
+            service.spreadsheets()
+            .batchUpdate(spreadsheetId=spreadsheet_id, body=request_body)
+            .execute
         )
 
-    new_rules_state = copy.deepcopy(rules)
-    del new_rules_state[rule_index]
+        state_text = _format_conditional_rules_section(
+            target_sheet_name, new_rules_state, sheet_titles, indent=""
+        )
 
-    request_body = {
-        "requests": [
-            {
-                "deleteConditionalFormatRule": {
-                    "index": rule_index,
-                    "sheetId": sheet_id,
-                }
-            }
-        ]
-    }
-
-    await asyncio.to_thread(
-        service.spreadsheets()
-        .batchUpdate(spreadsheetId=spreadsheet_id, body=request_body)
-        .execute
-    )
-
-    state_text = _format_conditional_rules_section(
-        target_sheet_name, new_rules_state, sheet_titles, indent=""
-    )
-
-    return "\n".join(
-        [
-            f"Deleted conditional format at index {rule_index} on sheet '{target_sheet_name}' in spreadsheet {spreadsheet_id} for {user_google_email}.",
-            state_text,
-        ]
-    )
+        return "\n".join(
+            [
+                f"Deleted conditional format at index {rule_index} on sheet "
+                f"'{target_sheet_name}' in spreadsheet {spreadsheet_id} "
+                f"for {user_google_email}.",
+                state_text,
+            ]
+        )
 
 
-@server.tool()
+@server.tool(
+    title="Create Spreadsheet",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
 @handle_http_errors("create_spreadsheet", service_type="sheets")
 @require_google_service("sheets", "sheets_write")
 async def create_spreadsheet(
     service,
     user_google_email: str,
     title: str,
-    sheet_names: Optional[List[str]] = None,
+    sheet_names: Optional[StringList] = None,
 ) -> str:
     """
     Creates a new Google Spreadsheet.
@@ -1186,31 +1244,93 @@ async def create_spreadsheet(
     return text_output
 
 
-@server.tool()
+@server.tool(
+    title="Create Sheet",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
 @handle_http_errors("create_sheet", service_type="sheets")
 @require_google_service("sheets", "sheets_write")
 async def create_sheet(
     service,
     user_google_email: str,
     spreadsheet_id: str,
-    sheet_name: str,
+    sheet_name: Optional[str] = None,
+    source_sheet_name: Optional[str] = None,
+    insert_sheet_index: Optional[int] = None,
 ) -> str:
-    """
-    Creates a new sheet within an existing spreadsheet.
+    """Creates a new sheet or duplicates an existing sheet (user_google_email: str, spreadsheet_id: str, sheet_name: Optional[str] = None, source_sheet_name: Optional[str] = None, insert_sheet_index: Optional[int] = None)."""
+    if insert_sheet_index is not None and (
+        isinstance(insert_sheet_index, bool)
+        or not isinstance(insert_sheet_index, int)
+        or insert_sheet_index < 0
+    ):
+        raise UserInputError("insert_sheet_index must be a non-negative integer.")
 
-    Args:
-        user_google_email (str): The user's Google email address. Required.
-        spreadsheet_id (str): The ID of the spreadsheet. Required.
-        sheet_name (str): The name of the new sheet. Required.
+    if source_sheet_name is not None:
+        source_sheet_name = source_sheet_name.strip()
+        if not source_sheet_name:
+            raise UserInputError("source_sheet_name must be a non-empty string")
 
-    Returns:
-        str: Confirmation message of the successful sheet creation.
-    """
+        logger.info(
+            f"[create_sheet] Duplicate invoked. Email: '{user_google_email}', "
+            f"Spreadsheet: {spreadsheet_id}, Source: {source_sheet_name}"
+        )
+
+        spreadsheet = await asyncio.to_thread(
+            service.spreadsheets()
+            .get(spreadsheetId=spreadsheet_id, fields="sheets.properties")
+            .execute
+        )
+
+        sheets = spreadsheet.get("sheets", [])
+        source_sheet = _select_sheet(sheets, source_sheet_name)
+        source_sheet_id = source_sheet["properties"]["sheetId"]
+
+        dup_request = {"sourceSheetId": source_sheet_id}
+        if sheet_name is not None:
+            dup_request["newSheetName"] = sheet_name
+        if insert_sheet_index is not None:
+            dup_request["insertSheetIndex"] = insert_sheet_index
+
+        request_body = {"requests": [{"duplicateSheet": dup_request}]}
+
+        response = await asyncio.to_thread(
+            service.spreadsheets()
+            .batchUpdate(spreadsheetId=spreadsheet_id, body=request_body)
+            .execute
+        )
+
+        new_props = response["replies"][0]["duplicateSheet"]["properties"]
+        new_id = new_props["sheetId"]
+        new_title = new_props["title"]
+
+        text_output = (
+            f"Successfully duplicated '{source_sheet_name}' to '{new_title}' "
+            f"(ID: {new_id}) in spreadsheet {spreadsheet_id} for {user_google_email}."
+        )
+
+        logger.info(
+            f"Successfully duplicated sheet for {user_google_email}. "
+            f"New sheet: '{new_title}' (ID: {new_id})"
+        )
+        return text_output
+
     logger.info(
         f"[create_sheet] Invoked. Email: '{user_google_email}', Spreadsheet: {spreadsheet_id}, Sheet: {sheet_name}"
     )
 
-    request_body = {"requests": [{"addSheet": {"properties": {"title": sheet_name}}}]}
+    add_request: dict = {"properties": {}}
+    if sheet_name is not None:
+        add_request["properties"]["title"] = sheet_name
+    if insert_sheet_index is not None:
+        add_request["properties"]["index"] = insert_sheet_index
+
+    request_body = {"requests": [{"addSheet": add_request}]}
 
     response = await asyncio.to_thread(
         service.spreadsheets()
@@ -1218,9 +1338,11 @@ async def create_sheet(
         .execute
     )
 
-    sheet_id = response["replies"][0]["addSheet"]["properties"]["sheetId"]
+    sheet_props = response["replies"][0]["addSheet"]["properties"]
+    sheet_id = sheet_props["sheetId"]
+    created_sheet_name = sheet_props.get("title", sheet_name or "Untitled")
 
-    text_output = f"Successfully created sheet '{sheet_name}' (ID: {sheet_id}) in spreadsheet {spreadsheet_id} for {user_google_email}."
+    text_output = f"Successfully created sheet '{created_sheet_name}' (ID: {sheet_id}) in spreadsheet {spreadsheet_id} for {user_google_email}."
 
     logger.info(
         f"Successfully created sheet for {user_google_email}. Sheet ID: {sheet_id}"
@@ -1228,11 +1350,1091 @@ async def create_sheet(
     return text_output
 
 
+def _to_extended_value(val) -> dict:
+    """Convert a Python value to a Sheets API ExtendedValue dict."""
+    if isinstance(val, bool):
+        return {"boolValue": val}
+    if isinstance(val, (int, float)):
+        return {"numberValue": val}
+    s = str(val)
+    if s.startswith("="):
+        return {"formulaValue": s}
+    return {"stringValue": s}
+
+
+@server.tool(
+    title="List Sheet Tables",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("list_sheet_tables", is_read_only=True, service_type="sheets")
+@require_google_service("sheets", "sheets_read")
+async def list_sheet_tables(
+    service,
+    user_google_email: str,
+    spreadsheet_id: str,
+) -> str:
+    """
+    Lists all structured tables in a spreadsheet with their IDs, names, ranges,
+    and column details. Use this to find table IDs for append_table_rows.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        spreadsheet_id (str): The ID of the spreadsheet. Required.
+
+    Returns:
+        str: Formatted list of tables with their IDs, names, ranges, and columns.
+    """
+    logger.info(
+        f"[list_sheet_tables] Invoked. Email: '{user_google_email}', "
+        f"Spreadsheet: {spreadsheet_id}"
+    )
+
+    spreadsheet = await asyncio.to_thread(
+        service.spreadsheets()
+        .get(
+            spreadsheetId=spreadsheet_id,
+            fields="sheets(properties(title,sheetId),tables)",
+        )
+        .execute
+    )
+
+    tables_found = []
+    for sheet in spreadsheet.get("sheets", []):
+        sheet_title = sheet.get("properties", {}).get("title", "Unknown")
+        for table in sheet.get("tables", []):
+            table_id = table.get("tableId")
+            name = table.get("name", "Unnamed")
+            range_info = table.get("range", {})
+
+            start_row = range_info.get("startRowIndex", 0)
+            end_row = range_info.get("endRowIndex", "?")
+            start_col = range_info.get("startColumnIndex", 0)
+            end_col = range_info.get("endColumnIndex", "?")
+
+            columns = []
+            for col in table.get("columnProperties", []):
+                col_name = col.get("columnName", "")
+                columns.append(col_name)
+
+            tables_found.append(
+                f"  Table ID: {table_id}\n"
+                f"  Name: {name}\n"
+                f"  Sheet: {sheet_title}\n"
+                f"  Range: rows {start_row}-{end_row}, cols {start_col}-{end_col}\n"
+                f"  Columns: {', '.join(columns) if columns else 'N/A'}"
+            )
+
+    if not tables_found:
+        text_output = (
+            f"No structured tables found in spreadsheet {spreadsheet_id} "
+            f"for {user_google_email}."
+        )
+    else:
+        text_output = (
+            f"Found {len(tables_found)} table(s) in spreadsheet {spreadsheet_id} "
+            f"for {user_google_email}:\n\n" + "\n\n".join(tables_found)
+        )
+
+    logger.info(
+        f"[list_sheet_tables] Found {len(tables_found)} tables for {user_google_email}"
+    )
+    return text_output
+
+
+@server.tool(
+    title="Append Table Rows",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("append_table_rows", service_type="sheets")
+@require_google_service("sheets", "sheets_write")
+async def append_table_rows(
+    service,
+    user_google_email: str,
+    spreadsheet_id: str,
+    table_id: str,
+    values: Union[str, List[List]],
+) -> str:
+    """
+    Appends rows to a structured table in a Google Sheet. The rows are added
+    to the end of the table body, automatically extending the table range.
+
+    Use list_sheet_tables first to find the table ID.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        spreadsheet_id (str): The ID of the spreadsheet. Required.
+        table_id (str): The ID of the table to append to (get from list_sheet_tables). Required.
+        values (Union[str, List[List]]): 2D array of values to append. Each inner
+            list is one row. Can be a JSON string or Python list. Required.
+
+    Returns:
+        str: Confirmation message with the number of rows appended.
+    """
+    logger.info(
+        f"[append_table_rows] Invoked. Email: '{user_google_email}', "
+        f"Spreadsheet: {spreadsheet_id}, Table: {table_id}"
+    )
+
+    # Parse values if JSON string
+    if isinstance(values, str):
+        try:
+            values = json.loads(values)
+        except json.JSONDecodeError as e:
+            raise UserInputError(f"Invalid JSON in values parameter: {e}")
+
+    if not values or not isinstance(values, list):
+        raise UserInputError("values must be a non-empty 2D list of cell values.")
+
+    # Resolve the sheet ID for the table before building the request
+    spreadsheet = await asyncio.to_thread(
+        service.spreadsheets()
+        .get(
+            spreadsheetId=spreadsheet_id,
+            fields="sheets(properties(sheetId),tables(tableId))",
+        )
+        .execute
+    )
+
+    sheet_id = None
+    for sheet in spreadsheet.get("sheets", []):
+        for table in sheet.get("tables", []):
+            if table.get("tableId") == table_id:
+                sheet_id = sheet["properties"]["sheetId"]
+                break
+        if sheet_id is not None:
+            break
+
+    if sheet_id is None:
+        raise UserInputError(
+            f"Table '{table_id}' not found in spreadsheet {spreadsheet_id}. "
+            f"Use list_sheet_tables to find valid table IDs."
+        )
+
+    # Build cell data for appendCells
+    rows = []
+    for row_values in values:
+        if not isinstance(row_values, list):
+            raise UserInputError(
+                "Each row in values must be a list. "
+                'Expected format: [["val1", "val2"], ["val3", "val4"]]'
+            )
+        cells = []
+        for val in row_values:
+            cells.append({"userEnteredValue": _to_extended_value(val)})
+        rows.append({"values": cells})
+
+    request_body = {
+        "requests": [
+            {
+                "appendCells": {
+                    "sheetId": sheet_id,
+                    "tableId": table_id,
+                    "rows": rows,
+                    "fields": "userEnteredValue",
+                }
+            }
+        ]
+    }
+
+    await asyncio.to_thread(
+        service.spreadsheets()
+        .batchUpdate(spreadsheetId=spreadsheet_id, body=request_body)
+        .execute
+    )
+
+    num_rows = len(values)
+    text_output = (
+        f"Successfully appended {num_rows} row(s) to table '{table_id}' "
+        f"in spreadsheet {spreadsheet_id} for {user_google_email}."
+    )
+
+    logger.info(f"[append_table_rows] Appended {num_rows} rows for {user_google_email}")
+    return text_output
+
+
+def _build_column_visibility_requests(sheet_id, letters, hidden, label):
+    """Build updateDimensionProperties requests to hide/unhide columns."""
+    if not isinstance(letters, list):
+        raise UserInputError(f"{label} must be a list of column letters.")
+    reqs = []
+    for col_letter in letters:
+        col_idx = _column_to_index(str(col_letter).upper())
+        if col_idx is None:
+            raise UserInputError(f"Invalid column letter in {label}: '{col_letter}'.")
+        reqs.append(
+            {
+                "updateDimensionProperties": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "dimension": "COLUMNS",
+                        "startIndex": col_idx,
+                        "endIndex": col_idx + 1,
+                    },
+                    "properties": {"hiddenByUser": hidden},
+                    "fields": "hiddenByUser",
+                }
+            }
+        )
+    return reqs
+
+
+def _build_row_visibility_requests(sheet_id, row_nums, hidden, label):
+    """Build updateDimensionProperties requests to hide/unhide rows."""
+    if not isinstance(row_nums, list):
+        raise UserInputError(f"{label} must be a list of row numbers.")
+    reqs = []
+    for row_num in row_nums:
+        try:
+            row_num = int(row_num)
+        except ValueError as exc:
+            raise UserInputError(
+                f"Row number must be an integer in {label}, got {row_num}."
+            ) from exc
+        if row_num < 1:
+            raise UserInputError(f"Row number must be >= 1 in {label}, got {row_num}.")
+        reqs.append(
+            {
+                "updateDimensionProperties": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "dimension": "ROWS",
+                        "startIndex": row_num - 1,
+                        "endIndex": row_num,
+                    },
+                    "properties": {"hiddenByUser": hidden},
+                    "fields": "hiddenByUser",
+                }
+            }
+        )
+    return reqs
+
+
+async def _resize_sheet_dimensions_impl(
+    service,
+    spreadsheet_id: str,
+    sheet_name: Optional[str] = None,
+    column_sizes: Optional[Union[str, dict]] = None,
+    row_sizes: Optional[Union[str, dict]] = None,
+    auto_resize_columns: Optional[Union[str, List[str]]] = None,
+    auto_resize_rows: Optional[Union[str, List[int]]] = None,
+    frozen_row_count: Optional[int] = None,
+    frozen_column_count: Optional[int] = None,
+    hide_columns: Optional[Union[str, List[str]]] = None,
+    unhide_columns: Optional[Union[str, List[str]]] = None,
+    hide_rows: Optional[Union[str, List[int]]] = None,
+    unhide_rows: Optional[Union[str, List[int]]] = None,
+    insert_rows: Optional[int] = None,
+    insert_rows_at: Optional[int] = None,
+    insert_columns: Optional[int] = None,
+    insert_columns_at: Optional[str] = None,
+    delete_rows: Optional[Union[str, List[int]]] = None,
+    delete_row_range: Optional[str] = None,
+    delete_columns: Optional[Union[str, List[str]]] = None,
+) -> dict:
+    """Internal implementation for resize_sheet_dimensions.
+
+    Manages sheet-level dimension properties: resize columns/rows, auto-resize
+    to fit content, freeze rows/columns, hide/unhide rows/columns, and
+    insert/delete rows/columns.
+
+    Args:
+        service: Google Sheets API service client.
+        spreadsheet_id: The ID of the spreadsheet.
+        sheet_name: Sheet name to target. Defaults to the first sheet.
+        column_sizes: Dict mapping column letters to pixel widths.
+        row_sizes: Dict mapping 1-based row numbers to pixel heights.
+        auto_resize_columns: List of column letters to auto-resize to fit content.
+        auto_resize_rows: List of 1-based row numbers to auto-resize to fit content.
+        frozen_row_count: Number of rows to freeze from the top (0 to unfreeze).
+        frozen_column_count: Number of columns to freeze from the left (0 to unfreeze).
+        hide_columns: List of column letters to hide.
+        unhide_columns: List of column letters to unhide.
+        hide_rows: List of 1-based row numbers to hide.
+        unhide_rows: List of 1-based row numbers to unhide.
+        insert_rows: Number of rows to insert.
+        insert_rows_at: 1-based row number to insert before. Appends to end if omitted.
+        insert_columns: Number of columns to insert.
+        insert_columns_at: Column letter to insert before (e.g. "C"). Appends to end if omitted.
+        delete_rows: List of 1-based row numbers to delete.
+        delete_row_range: Contiguous range of rows to delete, as "start:end"
+            (1-based, inclusive). Example: "5:10". More efficient than
+            delete_rows for large contiguous ranges.
+        delete_columns: List of column letters to delete.
+
+    Returns:
+        Dictionary with keys: spreadsheet_id, summary.
+    """
+    has_any = any(
+        [
+            column_sizes,
+            row_sizes,
+            auto_resize_columns,
+            auto_resize_rows,
+            frozen_row_count is not None,
+            frozen_column_count is not None,
+            hide_columns,
+            unhide_columns,
+            hide_rows,
+            unhide_rows,
+            insert_rows is not None,
+            insert_columns is not None,
+            delete_rows,
+            delete_row_range,
+            delete_columns,
+        ]
+    )
+    if not has_any:
+        raise UserInputError(
+            "Provide at least one of: column_sizes, row_sizes, "
+            "auto_resize_columns, auto_resize_rows, frozen_row_count, "
+            "frozen_column_count, hide_columns, unhide_columns, "
+            "hide_rows, unhide_rows, insert_rows, insert_columns, "
+            "delete_rows, delete_row_range, or delete_columns."
+        )
+
+    # Parse JSON string parameters
+    def _parse_json(value, name):
+        if not isinstance(value, str):
+            return value
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError as e:
+            raise UserInputError(f"Invalid JSON for {name}: {e}")
+
+    column_sizes = _parse_json(column_sizes, "column_sizes")
+    row_sizes = _parse_json(row_sizes, "row_sizes")
+    auto_resize_columns = _parse_json(auto_resize_columns, "auto_resize_columns")
+    auto_resize_rows = _parse_json(auto_resize_rows, "auto_resize_rows")
+    hide_columns = _parse_json(hide_columns, "hide_columns")
+    unhide_columns = _parse_json(unhide_columns, "unhide_columns")
+    hide_rows = _parse_json(hide_rows, "hide_rows")
+    unhide_rows = _parse_json(unhide_rows, "unhide_rows")
+    delete_rows = _parse_json(delete_rows, "delete_rows")
+    delete_columns = _parse_json(delete_columns, "delete_columns")
+
+    # Get sheet metadata to resolve sheet ID
+    metadata = await asyncio.to_thread(
+        service.spreadsheets()
+        .get(
+            spreadsheetId=spreadsheet_id,
+            fields="sheets(properties(sheetId,title))",
+        )
+        .execute
+    )
+    sheets = metadata.get("sheets", [])
+    if not sheets:
+        raise UserInputError("No sheets found in spreadsheet.")
+
+    # Find target sheet
+    target_sheet = None
+    if sheet_name:
+        for sheet in sheets:
+            if sheet.get("properties", {}).get("title") == sheet_name:
+                target_sheet = sheet
+                break
+        if not target_sheet:
+            raise UserInputError(f"Sheet '{sheet_name}' not found.")
+    else:
+        target_sheet = sheets[0]
+
+    sheet_id = target_sheet["properties"]["sheetId"]
+
+    requests = []
+    applied_parts = []
+
+    # Build column resize requests
+    if column_sizes:
+        if not isinstance(column_sizes, dict):
+            raise UserInputError(
+                "column_sizes must be a dict mapping column letters to pixel widths."
+            )
+        for col_letter, pixel_size in column_sizes.items():
+            col_idx = _column_to_index(col_letter.upper())
+            if col_idx is None:
+                raise UserInputError(f"Invalid column letter: '{col_letter}'.")
+            if not isinstance(pixel_size, (int, float)) or pixel_size <= 0:
+                raise UserInputError(
+                    f"Pixel size for column '{col_letter}' must be a positive number."
+                )
+            requests.append(
+                {
+                    "updateDimensionProperties": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "dimension": "COLUMNS",
+                            "startIndex": col_idx,
+                            "endIndex": col_idx + 1,
+                        },
+                        "properties": {"pixelSize": int(pixel_size)},
+                        "fields": "pixelSize",
+                    }
+                }
+            )
+        applied_parts.append(
+            f"resized columns: {', '.join(f'{k}={v}px' for k, v in column_sizes.items())}"
+        )
+
+    # Build row resize requests
+    if row_sizes:
+        if not isinstance(row_sizes, dict):
+            raise UserInputError(
+                "row_sizes must be a dict mapping row numbers to pixel heights."
+            )
+        for row_num_str, pixel_size in row_sizes.items():
+            try:
+                row_num = int(row_num_str)
+            except ValueError as exc:
+                raise UserInputError(
+                    f"Row number must be an integer >= 1, got {row_num_str}."
+                ) from exc
+            if row_num < 1:
+                raise UserInputError(f"Row number must be >= 1, got {row_num}.")
+            if not isinstance(pixel_size, (int, float)) or pixel_size <= 0:
+                raise UserInputError(
+                    f"Pixel size for row {row_num} must be a positive number."
+                )
+            requests.append(
+                {
+                    "updateDimensionProperties": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "dimension": "ROWS",
+                            "startIndex": row_num - 1,
+                            "endIndex": row_num,
+                        },
+                        "properties": {"pixelSize": int(pixel_size)},
+                        "fields": "pixelSize",
+                    }
+                }
+            )
+        applied_parts.append(
+            f"resized rows: {', '.join(f'{k}={v}px' for k, v in row_sizes.items())}"
+        )
+
+    # Build auto-resize column requests
+    if auto_resize_columns:
+        if not isinstance(auto_resize_columns, list):
+            raise UserInputError(
+                "auto_resize_columns must be a list of column letters."
+            )
+        for col_letter in auto_resize_columns:
+            col_idx = _column_to_index(str(col_letter).upper())
+            if col_idx is None:
+                raise UserInputError(f"Invalid column letter: '{col_letter}'.")
+            requests.append(
+                {
+                    "autoResizeDimensions": {
+                        "dimensions": {
+                            "sheetId": sheet_id,
+                            "dimension": "COLUMNS",
+                            "startIndex": col_idx,
+                            "endIndex": col_idx + 1,
+                        }
+                    }
+                }
+            )
+        applied_parts.append(
+            f"auto-resized columns: {', '.join(str(c) for c in auto_resize_columns)}"
+        )
+
+    # Build auto-resize row requests
+    if auto_resize_rows:
+        if not isinstance(auto_resize_rows, list):
+            raise UserInputError("auto_resize_rows must be a list of row numbers.")
+        for row_num in auto_resize_rows:
+            try:
+                parsed_row_num = int(row_num)
+            except ValueError as exc:
+                raise UserInputError(
+                    f"Row number must be an integer >= 1, got {row_num}."
+                ) from exc
+            if parsed_row_num < 1:
+                raise UserInputError(f"Row number must be >= 1, got {parsed_row_num}.")
+            requests.append(
+                {
+                    "autoResizeDimensions": {
+                        "dimensions": {
+                            "sheetId": sheet_id,
+                            "dimension": "ROWS",
+                            "startIndex": parsed_row_num - 1,
+                            "endIndex": parsed_row_num,
+                        }
+                    }
+                }
+            )
+        applied_parts.append(
+            f"auto-resized rows: {', '.join(str(r) for r in auto_resize_rows)}"
+        )
+
+    # Build freeze requests
+    grid_properties = {}
+    grid_fields = []
+    if frozen_row_count is not None:
+        if not isinstance(frozen_row_count, int) or frozen_row_count < 0:
+            raise UserInputError("frozen_row_count must be a non-negative integer.")
+        grid_properties["frozenRowCount"] = frozen_row_count
+        grid_fields.append("gridProperties.frozenRowCount")
+        applied_parts.append(
+            f"froze {frozen_row_count} row(s)"
+            if frozen_row_count > 0
+            else "unfroze rows"
+        )
+
+    if frozen_column_count is not None:
+        if not isinstance(frozen_column_count, int) or frozen_column_count < 0:
+            raise UserInputError("frozen_column_count must be a non-negative integer.")
+        grid_properties["frozenColumnCount"] = frozen_column_count
+        grid_fields.append("gridProperties.frozenColumnCount")
+        applied_parts.append(
+            f"froze {frozen_column_count} column(s)"
+            if frozen_column_count > 0
+            else "unfroze columns"
+        )
+
+    if grid_properties:
+        requests.append(
+            {
+                "updateSheetProperties": {
+                    "properties": {
+                        "sheetId": sheet_id,
+                        "gridProperties": grid_properties,
+                    },
+                    "fields": ",".join(grid_fields),
+                }
+            }
+        )
+
+    # Build hide/unhide column requests
+    if hide_columns:
+        requests.extend(
+            _build_column_visibility_requests(
+                sheet_id, hide_columns, True, "hide_columns"
+            )
+        )
+        applied_parts.append(f"hid columns: {', '.join(str(c) for c in hide_columns)}")
+
+    if unhide_columns:
+        requests.extend(
+            _build_column_visibility_requests(
+                sheet_id, unhide_columns, False, "unhide_columns"
+            )
+        )
+        applied_parts.append(
+            f"unhid columns: {', '.join(str(c) for c in unhide_columns)}"
+        )
+
+    # Build hide/unhide row requests
+    if hide_rows:
+        requests.extend(
+            _build_row_visibility_requests(sheet_id, hide_rows, True, "hide_rows")
+        )
+        applied_parts.append(f"hid rows: {', '.join(str(r) for r in hide_rows)}")
+
+    if unhide_rows:
+        requests.extend(
+            _build_row_visibility_requests(sheet_id, unhide_rows, False, "unhide_rows")
+        )
+        applied_parts.append(f"unhid rows: {', '.join(str(r) for r in unhide_rows)}")
+
+    # Build insert row requests
+    if insert_rows is not None:
+        if not isinstance(insert_rows, int) or insert_rows < 1:
+            raise UserInputError("insert_rows must be a positive integer.")
+        if insert_rows_at is not None:
+            if not isinstance(insert_rows_at, int) or insert_rows_at < 1:
+                raise UserInputError(
+                    "insert_rows_at must be a positive integer (1-based)."
+                )
+            start_idx = insert_rows_at - 1
+        else:
+            start_idx = None
+
+        if start_idx is not None:
+            requests.append(
+                {
+                    "insertDimension": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "dimension": "ROWS",
+                            "startIndex": start_idx,
+                            "endIndex": start_idx + insert_rows,
+                        },
+                        "inheritFromBefore": start_idx > 0,
+                    }
+                }
+            )
+            applied_parts.append(
+                f"inserted {insert_rows} row(s) at row {insert_rows_at}"
+            )
+        else:
+            requests.append(
+                {
+                    "appendDimension": {
+                        "sheetId": sheet_id,
+                        "dimension": "ROWS",
+                        "length": insert_rows,
+                    }
+                }
+            )
+            applied_parts.append(f"appended {insert_rows} row(s)")
+
+    # Build insert column requests
+    if insert_columns is not None:
+        if not isinstance(insert_columns, int) or insert_columns < 1:
+            raise UserInputError("insert_columns must be a positive integer.")
+        if insert_columns_at is not None:
+            col_idx = _column_to_index(str(insert_columns_at).upper())
+            if col_idx is None:
+                raise UserInputError(
+                    f"Invalid column letter for insert_columns_at: '{insert_columns_at}'."
+                )
+            requests.append(
+                {
+                    "insertDimension": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "dimension": "COLUMNS",
+                            "startIndex": col_idx,
+                            "endIndex": col_idx + insert_columns,
+                        },
+                        "inheritFromBefore": col_idx > 0,
+                    }
+                }
+            )
+            applied_parts.append(
+                f"inserted {insert_columns} column(s) at column {insert_columns_at}"
+            )
+        else:
+            requests.append(
+                {
+                    "appendDimension": {
+                        "sheetId": sheet_id,
+                        "dimension": "COLUMNS",
+                        "length": insert_columns,
+                    }
+                }
+            )
+            applied_parts.append(f"appended {insert_columns} column(s)")
+
+    # Reject mixing delete_rows and delete_row_range — their interleaved
+    # deleteDimension requests shift indices unpredictably.
+    if delete_rows and delete_row_range:
+        raise UserInputError(
+            "delete_rows and delete_row_range cannot be used together. "
+            "Specify one or the other."
+        )
+
+    # Build delete row requests (process in reverse to keep indices stable)
+    if delete_rows:
+        if not isinstance(delete_rows, list):
+            raise UserInputError("delete_rows must be a list of row numbers.")
+        parsed_delete_rows = []
+        for row_num in delete_rows:
+            try:
+                parsed_delete_rows.append(int(row_num))
+            except ValueError as exc:
+                raise UserInputError(
+                    f"Row number must be an integer >= 1 in delete_rows, got {row_num}."
+                ) from exc
+        sorted_rows = sorted(parsed_delete_rows, reverse=True)
+        for row_num in sorted_rows:
+            if row_num < 1:
+                raise UserInputError(
+                    f"Row number must be >= 1 in delete_rows, got {row_num}."
+                )
+            requests.append(
+                {
+                    "deleteDimension": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "dimension": "ROWS",
+                            "startIndex": row_num - 1,
+                            "endIndex": row_num,
+                        }
+                    }
+                }
+            )
+        applied_parts.append(f"deleted rows: {', '.join(str(r) for r in delete_rows)}")
+
+    # Build delete row range request (contiguous range, single API call)
+    if delete_row_range:
+        if isinstance(delete_row_range, str) and ":" in delete_row_range:
+            parts = delete_row_range.split(":", 1)
+            try:
+                range_start = int(parts[0])
+                range_end = int(parts[1])
+            except ValueError as exc:
+                raise UserInputError(
+                    f"Invalid delete_row_range format: '{delete_row_range}'. "
+                    f"Expected 'start:end' with integer row numbers."
+                ) from exc
+        else:
+            raise UserInputError(
+                f"delete_row_range must be a 'start:end' string (e.g. '5:10'), "
+                f"got: '{delete_row_range}'."
+            )
+        if range_start < 1 or range_end < range_start:
+            raise UserInputError(
+                f"Invalid row range: start={range_start}, end={range_end}. "
+                f"Rows are 1-based and end must be >= start."
+            )
+        requests.append(
+            {
+                "deleteDimension": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "dimension": "ROWS",
+                        "startIndex": range_start - 1,
+                        "endIndex": range_end,
+                    }
+                }
+            }
+        )
+        num_range_deleted = range_end - range_start + 1
+        applied_parts.append(
+            f"deleted row range {range_start}-{range_end} ({num_range_deleted} row(s))"
+        )
+
+    # Build delete column requests (process in reverse to keep indices stable)
+    if delete_columns:
+        if not isinstance(delete_columns, list):
+            raise UserInputError("delete_columns must be a list of column letters.")
+        col_indices = []
+        for col_letter in delete_columns:
+            col_idx = _column_to_index(str(col_letter).upper())
+            if col_idx is None:
+                raise UserInputError(
+                    f"Invalid column letter in delete_columns: '{col_letter}'."
+                )
+            col_indices.append((col_letter, col_idx))
+        # Sort by index descending to keep indices stable during deletion
+        col_indices.sort(key=lambda x: x[1], reverse=True)
+        for _, col_idx in col_indices:
+            requests.append(
+                {
+                    "deleteDimension": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "dimension": "COLUMNS",
+                            "startIndex": col_idx,
+                            "endIndex": col_idx + 1,
+                        }
+                    }
+                }
+            )
+        applied_parts.append(
+            f"deleted columns: {', '.join(str(c) for c in delete_columns)}"
+        )
+
+    # Execute batch update
+    await asyncio.to_thread(
+        service.spreadsheets()
+        .batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests})
+        .execute
+    )
+
+    return {
+        "spreadsheet_id": spreadsheet_id,
+        "summary": "; ".join(applied_parts),
+    }
+
+
+@server.tool(
+    title="Resize Sheet Dimensions",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("resize_sheet_dimensions", service_type="sheets")
+@require_google_service("sheets", "sheets_write")
+async def resize_sheet_dimensions(
+    service,
+    user_google_email: str,
+    spreadsheet_id: str,
+    sheet_name: Optional[str] = None,
+    column_sizes: Optional[Union[str, dict]] = None,
+    row_sizes: Optional[Union[str, dict]] = None,
+    auto_resize_columns: Optional[Union[str, List[str]]] = None,
+    auto_resize_rows: Optional[Union[str, List[int]]] = None,
+    frozen_row_count: Optional[int] = None,
+    frozen_column_count: Optional[int] = None,
+    hide_columns: Optional[Union[str, List[str]]] = None,
+    unhide_columns: Optional[Union[str, List[str]]] = None,
+    hide_rows: Optional[Union[str, List[int]]] = None,
+    unhide_rows: Optional[Union[str, List[int]]] = None,
+    insert_rows: Optional[int] = None,
+    insert_rows_at: Optional[int] = None,
+    insert_columns: Optional[int] = None,
+    insert_columns_at: Optional[str] = None,
+    delete_rows: Optional[Union[str, List[int]]] = None,
+    delete_row_range: Optional[str] = None,
+    delete_columns: Optional[Union[str, List[str]]] = None,
+) -> str:
+    """
+    Manages sheet-level dimension properties: resize columns/rows, auto-resize
+    to fit content, freeze rows/columns, hide/unhide rows/columns, and
+    insert/delete rows/columns.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        spreadsheet_id (str): The ID of the spreadsheet. Required.
+        sheet_name (Optional[str]): Sheet name to target. Defaults to the
+            first sheet if not provided.
+        column_sizes (Optional[Union[str, dict]]): Dict mapping column letters
+            to pixel widths. Example: {"A": 200, "C": 300}. Can be a JSON
+            string or Python dict.
+        row_sizes (Optional[Union[str, dict]]): Dict mapping 1-based row
+            numbers to pixel heights. Example: {"1": 40, "3": 60}. Can be
+            a JSON string or Python dict.
+        auto_resize_columns (Optional[Union[str, List[str]]]): List of column
+            letters to auto-resize to fit content. Example: ["A", "B"].
+        auto_resize_rows (Optional[Union[str, List[int]]]): List of 1-based
+            row numbers to auto-resize to fit content. Example: [1, 2].
+        frozen_row_count (Optional[int]): Number of rows to freeze from the
+            top. Use 0 to unfreeze all rows.
+        frozen_column_count (Optional[int]): Number of columns to freeze from
+            the left. Use 0 to unfreeze all columns.
+        hide_columns (Optional[Union[str, List[str]]]): List of column letters
+            to hide. Example: ["C", "D"].
+        unhide_columns (Optional[Union[str, List[str]]]): List of column
+            letters to unhide. Example: ["C", "D"].
+        hide_rows (Optional[Union[str, List[int]]]): List of 1-based row
+            numbers to hide. Example: [3, 4].
+        unhide_rows (Optional[Union[str, List[int]]]): List of 1-based row
+            numbers to unhide. Example: [3, 4].
+        insert_rows (Optional[int]): Number of rows to insert.
+        insert_rows_at (Optional[int]): 1-based row number to insert before.
+            Appends to the end of the sheet if omitted.
+        insert_columns (Optional[int]): Number of columns to insert.
+        insert_columns_at (Optional[str]): Column letter to insert before
+            (e.g. "C"). Appends to the end if omitted.
+        delete_rows (Optional[Union[str, List[int]]]): List of 1-based row
+            numbers to delete. Example: [5, 6]. Best for non-contiguous rows.
+        delete_row_range (Optional[str]): Contiguous range of rows to delete,
+            as "start:end" (1-based, inclusive). Example: "5:10" deletes rows
+            5 through 10. More efficient than delete_rows for large contiguous
+            ranges.
+        delete_columns (Optional[Union[str, List[str]]]): List of column
+            letters to delete. Example: ["E", "F"].
+
+    Returns:
+        str: Confirmation of the applied dimension changes.
+    """
+    logger.info(
+        "[resize_sheet_dimensions] Invoked. Email: '%s', Spreadsheet: %s",
+        user_google_email,
+        spreadsheet_id,
+    )
+
+    result = await _resize_sheet_dimensions_impl(
+        service=service,
+        spreadsheet_id=spreadsheet_id,
+        sheet_name=sheet_name,
+        column_sizes=column_sizes,
+        row_sizes=row_sizes,
+        auto_resize_columns=auto_resize_columns,
+        auto_resize_rows=auto_resize_rows,
+        frozen_row_count=frozen_row_count,
+        frozen_column_count=frozen_column_count,
+        hide_columns=hide_columns,
+        unhide_columns=unhide_columns,
+        hide_rows=hide_rows,
+        unhide_rows=unhide_rows,
+        insert_rows=insert_rows,
+        insert_rows_at=insert_rows_at,
+        insert_columns=insert_columns,
+        insert_columns_at=insert_columns_at,
+        delete_rows=delete_rows,
+        delete_row_range=delete_row_range,
+        delete_columns=delete_columns,
+    )
+
+    return (
+        f"Applied dimension changes in spreadsheet {result['spreadsheet_id']} "
+        f"for {user_google_email}: {result['summary']}."
+    )
+
+
+@server.tool(
+    title="Move Sheet Rows",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("move_sheet_rows", service_type="sheets")
+@require_google_service("sheets", "sheets_write")
+async def move_sheet_rows(
+    service,
+    user_google_email: str,
+    spreadsheet_id: str,
+    source_sheet: str,
+    start_row: int,
+    end_row: int,
+    destination_sheet: str,
+) -> str:
+    """
+    Moves rows from one sheet to another within the same spreadsheet. The move
+    is performed in a single batchUpdate (copyPaste followed by
+    deleteDimension). Note: batchUpdate executes requests sequentially but does
+    not roll back on partial failure — if the copy succeeds but the delete
+    fails, rows may be duplicated. Formulas, data types, and formatting are
+    preserved (unlike a values.get/append round-trip).
+    Row numbers are 1-based (matching the spreadsheet UI).
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        spreadsheet_id (str): The ID of the spreadsheet. Required.
+        source_sheet (str): Name of the sheet to move rows from. Required.
+        start_row (int): First row to move (1-based, inclusive). Required.
+        end_row (int): Last row to move (1-based, inclusive). Required.
+        destination_sheet (str): Name of the sheet to move rows to. Required.
+
+    Returns:
+        str: Confirmation message with the number of rows moved.
+    """
+    logger.info(
+        f"[move_sheet_rows] Invoked. Email: '{user_google_email}', "
+        f"Spreadsheet: {spreadsheet_id}, "
+        f"From: {source_sheet}!{start_row}-{end_row}, To: {destination_sheet}"
+    )
+
+    if start_row < 1 or end_row < start_row:
+        raise UserInputError(
+            f"Invalid row range: start_row={start_row}, end_row={end_row}. "
+            f"Rows are 1-based and end_row must be >= start_row."
+        )
+
+    if source_sheet == destination_sheet:
+        raise UserInputError("source_sheet and destination_sheet must be different.")
+
+    spreadsheet = await asyncio.to_thread(
+        service.spreadsheets()
+        .get(
+            spreadsheetId=spreadsheet_id,
+            fields="sheets(properties(sheetId,title,gridProperties))",
+        )
+        .execute
+    )
+    sheets = spreadsheet.get("sheets", [])
+    src = _select_sheet(sheets, source_sheet)
+    dst = _select_sheet(sheets, destination_sheet)
+    src_id = src["properties"]["sheetId"]
+    dst_id = dst["properties"]["sheetId"]
+    dst_grid_rows = dst["properties"].get("gridProperties", {}).get("rowCount", 0)
+
+    # Validate that the source row block actually contains data.
+    safe_source = source_sheet.replace("'", "''")
+    src_range = f"'{safe_source}'!{start_row}:{end_row}"
+    src_values = await asyncio.to_thread(
+        service.spreadsheets()
+        .values()
+        .get(spreadsheetId=spreadsheet_id, range=src_range)
+        .execute
+    )
+    if not src_values.get("values"):
+        raise UserInputError(
+            f"Source range '{source_sheet}' rows {start_row}-{end_row} "
+            f"contains no data. Nothing to move."
+        )
+
+    # Find the last row with actual data in the destination sheet.
+    # gridProperties.rowCount is the allocated grid size (e.g. 1000 for a new
+    # sheet), not the count of rows containing data.  Fetch all columns so the
+    # append position reflects any non-empty cell, not just column A.
+    safe_destination = destination_sheet.replace("'", "''")
+    dst_values = await asyncio.to_thread(
+        service.spreadsheets()
+        .values()
+        .get(
+            spreadsheetId=spreadsheet_id,
+            range=f"'{safe_destination}'",
+            majorDimension="ROWS",
+        )
+        .execute
+    )
+    dst_data_rows = len(dst_values.get("values", []))
+
+    num_rows = end_row - start_row + 1
+    paste_start = dst_data_rows
+
+    # If pasting beyond the current grid, expand the destination sheet first.
+    requests = []
+    if paste_start + num_rows > dst_grid_rows:
+        requests.append(
+            {
+                "appendDimension": {
+                    "sheetId": dst_id,
+                    "dimension": "ROWS",
+                    "length": (paste_start + num_rows) - dst_grid_rows,
+                }
+            }
+        )
+
+    requests.extend(
+        [
+            {
+                "copyPaste": {
+                    "source": {
+                        "sheetId": src_id,
+                        "startRowIndex": start_row - 1,
+                        "endRowIndex": end_row,
+                    },
+                    "destination": {
+                        "sheetId": dst_id,
+                        "startRowIndex": paste_start,
+                        "endRowIndex": paste_start + num_rows,
+                    },
+                    "pasteType": "PASTE_NORMAL",
+                }
+            },
+            {
+                "deleteDimension": {
+                    "range": {
+                        "sheetId": src_id,
+                        "dimension": "ROWS",
+                        "startIndex": start_row - 1,
+                        "endIndex": end_row,
+                    }
+                }
+            },
+        ]
+    )
+
+    await asyncio.to_thread(
+        service.spreadsheets()
+        .batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests})
+        .execute
+    )
+
+    text_output = (
+        f"Successfully moved {num_rows} row(s) from '{source_sheet}' "
+        f"(rows {start_row}-{end_row}) to '{destination_sheet}' "
+        f"in spreadsheet {spreadsheet_id} for {user_google_email}."
+    )
+
+    logger.info(f"[move_sheet_rows] Moved {num_rows} rows for {user_google_email}")
+    return text_output
+
+
 # Create comment management tools for sheets
 _comment_tools = create_comment_tools("spreadsheet", "spreadsheet_id")
 
 # Extract and register the functions
-read_sheet_comments = _comment_tools["read_comments"]
-create_sheet_comment = _comment_tools["create_comment"]
-reply_to_sheet_comment = _comment_tools["reply_to_comment"]
-resolve_sheet_comment = _comment_tools["resolve_comment"]
+list_spreadsheet_comments = _comment_tools["list_comments"]
+manage_spreadsheet_comment = _comment_tools["manage_comment"]

@@ -1,15 +1,18 @@
 """
 Temporary attachment storage for Gmail attachments.
 
-Stores attachments in ./tmp directory and provides HTTP URLs for access.
+Stores attachments to local disk and returns file paths for direct access.
 Files are automatically cleaned up after expiration (default 1 hour).
 """
 
 import base64
 import logging
+import os
+import re
+import unicodedata
 import uuid
 from pathlib import Path
-from typing import Optional, Dict
+from typing import NamedTuple, Optional, Dict
 from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
@@ -17,9 +20,55 @@ logger = logging.getLogger(__name__)
 # Default expiration: 1 hour
 DEFAULT_EXPIRATION_SECONDS = 3600
 
-# Storage directory
-STORAGE_DIR = Path("./tmp/attachments")
-STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+# Storage directory - configurable via WORKSPACE_ATTACHMENT_DIR env var
+# Uses absolute path to avoid creating tmp/ in arbitrary working directories (see #327)
+_default_dir = str(Path.home() / ".workspace-mcp" / "attachments")
+STORAGE_DIR = (
+    Path(os.getenv("WORKSPACE_ATTACHMENT_DIR", _default_dir)).expanduser().resolve()
+)
+
+_WINDOWS_RESERVED_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+_WINDOWS_RESERVED_NAMES = {
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    *(f"COM{i}" for i in range(1, 10)),
+    *(f"LPT{i}" for i in range(1, 10)),
+}
+
+
+def _ensure_storage_dir() -> None:
+    """Create the storage directory on first use, not at import time."""
+    STORAGE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+
+
+def sanitize_attachment_filename(filename: Optional[str]) -> str:
+    """Return a filesystem-safe attachment filename."""
+    if not filename:
+        return "attachment"
+
+    # Normalize Unicode space separators (category "Zs") to a plain ASCII space.
+    filename = "".join(
+        " " if unicodedata.category(ch) == "Zs" else ch for ch in filename
+    )
+
+    sanitized = _WINDOWS_RESERVED_FILENAME_CHARS.sub("_", filename).rstrip(" .")
+    if not sanitized:
+        return "attachment"
+
+    stem = sanitized.split(".", 1)[0]
+    if stem.upper() in _WINDOWS_RESERVED_NAMES:
+        sanitized = f"_{sanitized}"
+
+    return sanitized
+
+
+class SavedAttachment(NamedTuple):
+    """Result of saving an attachment: provides both the UUID and the absolute file path."""
+
+    file_id: str
+    path: str
 
 
 class AttachmentStorage:
@@ -34,9 +83,9 @@ class AttachmentStorage:
         base64_data: str,
         filename: Optional[str] = None,
         mime_type: Optional[str] = None,
-    ) -> str:
+    ) -> SavedAttachment:
         """
-        Save an attachment and return a unique file ID.
+        Save an attachment to local disk.
 
         Args:
             base64_data: Base64-encoded attachment data
@@ -44,9 +93,11 @@ class AttachmentStorage:
             mime_type: MIME type (optional)
 
         Returns:
-            Unique file ID (UUID string)
+            SavedAttachment with file_id (UUID) and path (absolute file path)
         """
-        # Generate unique file ID
+        _ensure_storage_dir()
+
+        # Generate unique file ID for metadata tracking
         file_id = str(uuid.uuid4())
 
         # Decode base64 data
@@ -58,8 +109,10 @@ class AttachmentStorage:
 
         # Determine file extension from filename or mime type
         extension = ""
+        safe_filename = sanitize_attachment_filename(filename)
+
         if filename:
-            extension = Path(filename).suffix
+            extension = Path(safe_filename).suffix
         elif mime_type:
             # Basic mime type to extension mapping
             mime_to_ext = {
@@ -73,29 +126,58 @@ class AttachmentStorage:
             }
             extension = mime_to_ext.get(mime_type, "")
 
-        # Save file
-        file_path = STORAGE_DIR / f"{file_id}{extension}"
+        # Use original filename if available, with UUID suffix for uniqueness
+        if filename:
+            stem = Path(safe_filename).stem
+            ext = Path(safe_filename).suffix
+            save_name = f"{stem}_{file_id[:8]}{ext}"
+        else:
+            save_name = f"{file_id}{extension}"
+
+        # Save file with restrictive permissions (sensitive email/drive content)
+        file_path = STORAGE_DIR / save_name
         try:
-            file_path.write_bytes(file_bytes)
+            fd = os.open(
+                file_path,
+                os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0),
+                0o600,
+            )
+            try:
+                total_written = 0
+                data_len = len(file_bytes)
+                while total_written < data_len:
+                    written = os.write(fd, file_bytes[total_written:])
+                    if written == 0:
+                        raise OSError(
+                            "os.write returned 0 bytes; could not write attachment data"
+                        )
+                    total_written += written
+            finally:
+                os.close(fd)
             logger.info(
-                f"Saved attachment {file_id} ({len(file_bytes)} bytes) to {file_path}"
+                f"Saved attachment file_id={file_id} filename={filename or save_name} "
+                f"({len(file_bytes)} bytes) to {file_path}"
             )
         except Exception as e:
-            logger.error(f"Failed to save attachment to {file_path}: {e}")
+            logger.error(
+                f"Failed to save attachment file_id={file_id} "
+                f"filename={filename or save_name} to {file_path}: {e}"
+            )
             raise
 
         # Store metadata
         expires_at = datetime.now() + timedelta(seconds=self.expiration_seconds)
         self._metadata[file_id] = {
             "file_path": str(file_path),
-            "filename": filename or f"attachment{extension}",
+            "filename": save_name,
+            "original_filename": filename,
             "mime_type": mime_type or "application/octet-stream",
             "size": len(file_bytes),
             "created_at": datetime.now(),
             "expires_at": expires_at,
         }
 
-        return file_id
+        return SavedAttachment(file_id=file_id, path=str(file_path))
 
     def get_attachment_path(self, file_id: str) -> Optional[Path]:
         """
@@ -204,8 +286,21 @@ def get_attachment_url(file_id: str) -> str:
     Returns:
         Full URL to access the attachment
     """
-    import os
     from core.config import WORKSPACE_MCP_PORT, WORKSPACE_MCP_BASE_URI
+
+    # In stdio mode the attachment route is served by the lazily-started callback
+    # server; bring it up now so the URL we hand out is actually reachable. The
+    # import is local to avoid pulling the FastAPI/uvicorn auth stack into this
+    # lightweight, widely-imported module (matches every other call site, #832).
+    from auth.oauth_callback_server import ensure_stdio_oauth_callback_available
+
+    success, error_msg = ensure_stdio_oauth_callback_available()
+    if not success:
+        logger.warning(
+            "Failed to start stdio attachment server; attachment URL may be "
+            "unreachable: %s",
+            error_msg,
+        )
 
     # Use external URL if set (for reverse proxy scenarios)
     external_url = os.getenv("WORKSPACE_EXTERNAL_URL")

@@ -41,6 +41,7 @@ GMAIL_SETTINGS_BASIC_SCOPE = "https://www.googleapis.com/auth/gmail.settings.bas
 CHAT_READONLY_SCOPE = "https://www.googleapis.com/auth/chat.messages.readonly"
 CHAT_WRITE_SCOPE = "https://www.googleapis.com/auth/chat.messages"
 CHAT_SPACES_SCOPE = "https://www.googleapis.com/auth/chat.spaces"
+CHAT_SPACES_READONLY_SCOPE = "https://www.googleapis.com/auth/chat.spaces.readonly"
 
 # Google Sheets API scopes
 SHEETS_READONLY_SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly"
@@ -79,12 +80,71 @@ SCRIPT_DEPLOYMENTS_READONLY_SCOPE = (
 )
 SCRIPT_PROCESSES_READONLY_SCOPE = "https://www.googleapis.com/auth/script.processes"
 SCRIPT_METRICS_SCOPE = "https://www.googleapis.com/auth/script.metrics"
+SCRIPT_EXTERNAL_REQUEST_SCOPE = (
+    "https://www.googleapis.com/auth/script.external_request"
+)
+SCRIPT_SCRIPTAPP_SCOPE = "https://www.googleapis.com/auth/script.scriptapp"
+
+# Google scope hierarchy: broader scopes that implicitly cover narrower ones.
+# See https://developers.google.com/gmail/api/auth/scopes,
+# https://developers.google.com/drive/api/guides/api-specific-auth, etc.
+SCOPE_HIERARCHY = {
+    GMAIL_MODIFY_SCOPE: {
+        GMAIL_READONLY_SCOPE,
+        GMAIL_SEND_SCOPE,
+        GMAIL_COMPOSE_SCOPE,
+        GMAIL_LABELS_SCOPE,
+    },
+    DRIVE_SCOPE: {DRIVE_READONLY_SCOPE, DRIVE_FILE_SCOPE},
+    CALENDAR_SCOPE: {CALENDAR_READONLY_SCOPE, CALENDAR_EVENTS_SCOPE},
+    DOCS_WRITE_SCOPE: {DOCS_READONLY_SCOPE},
+    SHEETS_WRITE_SCOPE: {SHEETS_READONLY_SCOPE},
+    SLIDES_SCOPE: {SLIDES_READONLY_SCOPE},
+    TASKS_SCOPE: {TASKS_READONLY_SCOPE},
+    CONTACTS_SCOPE: {CONTACTS_READONLY_SCOPE},
+    CHAT_WRITE_SCOPE: {CHAT_READONLY_SCOPE},
+    CHAT_SPACES_SCOPE: {CHAT_SPACES_READONLY_SCOPE},
+    FORMS_BODY_SCOPE: {FORMS_BODY_READONLY_SCOPE},
+    SCRIPT_PROJECTS_SCOPE: {SCRIPT_PROJECTS_READONLY_SCOPE},
+    SCRIPT_DEPLOYMENTS_SCOPE: {SCRIPT_DEPLOYMENTS_READONLY_SCOPE},
+}
+
+
+def has_required_scopes(available_scopes, required_scopes):
+    """
+    Check if available scopes satisfy all required scopes, accounting for
+    Google's scope hierarchy (e.g., gmail.modify covers gmail.readonly).
+
+    Args:
+        available_scopes: Scopes the credentials have (set, list, or frozenset).
+        required_scopes: Scopes that are required (set, list, or frozenset).
+
+    Returns:
+        True if all required scopes are satisfied.
+    """
+    available = set(available_scopes or [])
+    required = set(required_scopes or [])
+    # Expand available scopes with implied narrower scopes
+    expanded = set(available)
+    for broad_scope, covered in SCOPE_HIERARCHY.items():
+        if broad_scope in available:
+            expanded.update(covered)
+    return all(scope in expanded for scope in required)
+
 
 # Base OAuth scopes required for user identification
 BASE_SCOPES = [USERINFO_EMAIL_SCOPE, USERINFO_PROFILE_SCOPE, OPENID_SCOPE]
 
+# Minimal scopes required to accept an MCP bearer token at the protocol layer.
+PROTOCOL_AUTH_SCOPES = [USERINFO_EMAIL_SCOPE, OPENID_SCOPE]
+
 # Service-specific scope groups
-DOCS_SCOPES = [DOCS_READONLY_SCOPE, DOCS_WRITE_SCOPE]
+DOCS_SCOPES = [
+    DOCS_READONLY_SCOPE,
+    DOCS_WRITE_SCOPE,
+    DRIVE_READONLY_SCOPE,
+    DRIVE_FILE_SCOPE,
+]
 
 CALENDAR_SCOPES = [CALENDAR_SCOPE, CALENDAR_READONLY_SCOPE, CALENDAR_EVENTS_SCOPE]
 
@@ -99,9 +159,14 @@ GMAIL_SCOPES = [
     GMAIL_SETTINGS_BASIC_SCOPE,
 ]
 
-CHAT_SCOPES = [CHAT_READONLY_SCOPE, CHAT_WRITE_SCOPE, CHAT_SPACES_SCOPE]
+CHAT_SCOPES = [
+    CHAT_READONLY_SCOPE,
+    CHAT_WRITE_SCOPE,
+    CHAT_SPACES_SCOPE,
+    CHAT_SPACES_READONLY_SCOPE,
+]
 
-SHEETS_SCOPES = [SHEETS_READONLY_SCOPE, SHEETS_WRITE_SCOPE]
+SHEETS_SCOPES = [SHEETS_READONLY_SCOPE, SHEETS_WRITE_SCOPE, DRIVE_READONLY_SCOPE]
 
 FORMS_SCOPES = [
     FORMS_BODY_SCOPE,
@@ -124,6 +189,8 @@ SCRIPT_SCOPES = [
     SCRIPT_DEPLOYMENTS_READONLY_SCOPE,
     SCRIPT_PROCESSES_READONLY_SCOPE,  # Required for list_script_processes
     SCRIPT_METRICS_SCOPE,  # Required for get_script_metrics
+    SCRIPT_EXTERNAL_REQUEST_SCOPE,  # Required for scripts.run (execution API)
+    SCRIPT_SCRIPTAPP_SCOPE,  # Required for scripts.run (execution API)
     DRIVE_FILE_SCOPE,  # Required for list/delete script projects (uses Drive API)
 ]
 
@@ -148,9 +215,9 @@ TOOL_READONLY_SCOPES_MAP = {
     "gmail": [GMAIL_READONLY_SCOPE],
     "drive": [DRIVE_READONLY_SCOPE],
     "calendar": [CALENDAR_READONLY_SCOPE],
-    "docs": [DOCS_READONLY_SCOPE],
-    "sheets": [SHEETS_READONLY_SCOPE],
-    "chat": [CHAT_READONLY_SCOPE],
+    "docs": [DOCS_READONLY_SCOPE, DRIVE_READONLY_SCOPE],
+    "sheets": [SHEETS_READONLY_SCOPE, DRIVE_READONLY_SCOPE],
+    "chat": [CHAT_READONLY_SCOPE, CHAT_SPACES_READONLY_SCOPE],
     "forms": [FORMS_BODY_READONLY_SCOPE, FORMS_RESPONSES_READONLY_SCOPE],
     "slides": [SLIDES_READONLY_SCOPE],
     "tasks": [TASKS_READONLY_SCOPE],
@@ -175,7 +242,7 @@ def set_enabled_tools(enabled_tools):
     """
     global _ENABLED_TOOLS
     _ENABLED_TOOLS = enabled_tools
-    logger.info(f"Enabled tools set for scope management: {enabled_tools}")
+    logger.info(f"Scope management active for {len(enabled_tools)} services")
 
 
 # Global variable to store read-only mode (set by main.py)
@@ -233,6 +300,24 @@ def get_scopes_for_tools(enabled_tools=None):
     Returns:
         List of unique scopes for the enabled tools plus base scopes.
     """
+    # Granular permissions mode overrides both full and read-only scope maps.
+    # Lazy import with guard to avoid circular dependency during module init
+    # (SCOPES = get_scopes_for_tools() runs at import time before auth.permissions
+    # is fully loaded, but permissions mode is never active at that point).
+    try:
+        from auth.permissions import is_permissions_mode, get_all_permission_scopes
+
+        if is_permissions_mode():
+            scopes = BASE_SCOPES.copy()
+            scopes.extend(get_all_permission_scopes())
+            logger.debug(
+                "Generated scopes from granular permissions: %d unique scopes",
+                len(set(scopes)),
+            )
+            return list(set(scopes))
+    except ImportError:
+        pass
+
     if enabled_tools is None:
         # Default behavior - return all scopes
         enabled_tools = TOOL_SCOPES_MAP.keys()
