@@ -1072,9 +1072,7 @@ def get_credentials(
                 )
                 return None
         else:
-            credentials, found_user_email = _find_any_credentials(
-                credentials_base_dir, preferred_user_email=user_google_email
-            )
+            credentials, found_user_email = _find_any_credentials(credentials_base_dir)
         if not credentials:
             logger.info(
                 f"[get_credentials] Single-user mode: No credentials found in {credentials_base_dir}"
