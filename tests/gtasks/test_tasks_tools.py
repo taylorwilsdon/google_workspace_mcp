@@ -7,6 +7,7 @@ edge cases in task serialization and structuring.
 
 from contextlib import contextmanager
 from unittest.mock import Mock, patch
+from core.utils import UserInputError
 
 import pytest
 
@@ -82,18 +83,18 @@ class TestValidateRfc3339Date:
         _validate_rfc3339_date("2026-05-20T00:00:00Z")
 
     def test_rejects_date_only(self):
-        # Date-only strings are rejected because the Tasks API requires full datetimes
-        with pytest.raises(Exception, match="Invalid due date format"):
+    # Date-only strings are rejected because the Tasks API requires full datetimes
+        with pytest.raises(UserInputError, match="Invalid due date format"):
             _validate_rfc3339_date("2026-05-20")
 
     def test_rejects_invalid_string(self):
         # Completely malformed strings must raise
-        with pytest.raises(Exception, match="Invalid due date format"):
+        with pytest.raises(UserInputError, match="Invalid due date format"):
             _validate_rfc3339_date("garbage")
 
     def test_rejects_naive_datetime(self):
         # Datetimes without timezone info are rejected by the Tasks API
-        with pytest.raises(Exception, match="Invalid due date format"):
+        with pytest.raises(UserInputError, match="Invalid due date format"):
             _validate_rfc3339_date("2026-05-20T00:00:00")
 
     def test_valid_with_offset(self):
@@ -268,6 +269,7 @@ class TestSerializeTasks:
         result = serialize_tasks([parent], 0)
         assert "Parent" in result
         assert "Sub" in result
+        assert "\n    * Sub" in result or "\n  * Sub" in result
 
     def test_placeholder_note(self):
         # Placeholder parents should trigger the explanatory footer message
