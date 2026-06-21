@@ -14,7 +14,7 @@ import mimetypes
 import html
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Annotated, Optional, List, Dict, Literal, Any
+from typing import Annotated, Optional, List, Dict, Literal, Any, Tuple
 from urllib.parse import unquote, urlparse, urlunsplit
 
 from email.message import EmailMessage
@@ -26,6 +26,7 @@ from mcp.types import ToolAnnotations
 
 from pydantic import Field
 from googleapiclient.errors import HttpError
+from googleapiclient.discovery import build
 
 from auth.service_decorator import require_google_service
 from core.attachment_storage import get_attachment_storage, STORAGE_DIR
@@ -33,6 +34,7 @@ from core.config import (
     WORKSPACE_EXTERNAL_URL,
     WORKSPACE_MCP_BASE_URI,
     WORKSPACE_MCP_PORT,
+    get_transport_mode,
 )
 from core.http_utils import ssrf_safe_stream
 from core.utils import (
@@ -1019,6 +1021,132 @@ async def _resolve_url_attachments(
         resolved.append(entry)
 
     return resolved
+
+
+async def _resolve_drive_attachments(
+    service,
+    attachments: Optional[List[Dict[str, Any]]],
+) -> Tuple[Optional[List[Dict[str, Any]]], List[Dict[str, str]]]:
+    """Resolve Drive-sourced attachments and guard local-path attachments.
+
+    Gmail has no per-attachment upload resource, so the bytes must be part of the
+    MIME message. Rather than rely on a server-local ``path`` (which is meaningless
+    when the server runs remotely), this lets the caller reference a Drive file the
+    server can already read on their behalf. Each attachment dict may carry:
+
+    * ``drive_file_id``: the server downloads the file from Drive (binary files via
+      ``get_media``; native Docs/Sheets/Slides are exported to PDF) and attaches it as
+      binary. With ``as_link: true`` the file is **not** attached — its share link is
+      returned to be appended to the body instead.
+    * ``path`` (local file): rejected in remote (streamable-http) mode — it resolves on
+      the server, not the caller.
+
+    Returns ``(resolved_attachments, link_lines)`` where ``link_lines`` are
+    ``"name: url"`` strings for any ``as_link`` Drive references.
+    """
+    if not attachments:
+        return attachments, []
+
+    remote = get_transport_mode() == "streamable-http"
+    drive_service = None
+    resolved: List[Dict[str, Any]] = []
+    link_lines: List[Dict[str, str]] = []
+
+    for att in attachments:
+        drive_file_id = att.get("drive_file_id")
+
+        if not drive_file_id:
+            if att.get("path") and remote:
+                resolved.append(
+                    _build_attachment_error_entry(
+                        att,
+                        ValueError(
+                            "Local file attachments ('path') are unavailable in remote "
+                            "(streamable-http) mode. Use 'drive_file_id' to attach a "
+                            "Drive file, 'content' (base64), or 'url'."
+                        ),
+                    )
+                )
+                continue
+            resolved.append(att)
+            continue
+
+        if drive_service is None:
+            drive_service = build("drive", "v3", http=service._http)
+
+        try:
+            meta = await asyncio.to_thread(
+                drive_service.files()
+                .get(
+                    fileId=drive_file_id,
+                    fields="name, mimeType, webViewLink",
+                    supportsAllDrives=True,
+                )
+                .execute
+            )
+        except Exception as exc:
+            logger.exception("Failed to read Drive file %s", drive_file_id)
+            resolved.append(_build_attachment_error_entry(att, exc))
+            continue
+
+        name = att.get("filename") or meta.get("name") or "attachment"
+        source_mime = meta.get("mimeType", "")
+
+        if att.get("as_link"):
+            link = meta.get("webViewLink") or (
+                f"https://drive.google.com/open?id={drive_file_id}"
+            )
+            link_lines.append({"name": name, "url": link})
+            continue
+
+        try:
+            if source_mime.startswith("application/vnd.google-apps."):
+                # Native Google files can't be downloaded directly; export to PDF.
+                data = await asyncio.to_thread(
+                    drive_service.files()
+                    .export(fileId=drive_file_id, mimeType="application/pdf")
+                    .execute
+                )
+                resolved_mime = "application/pdf"
+                if not name.lower().endswith(".pdf"):
+                    name = f"{name}.pdf"
+            else:
+                data = await asyncio.to_thread(
+                    drive_service.files()
+                    .get_media(fileId=drive_file_id, supportsAllDrives=True)
+                    .execute
+                )
+                resolved_mime = att.get("mime_type") or source_mime or "application/octet-stream"
+        except Exception as exc:
+            logger.exception("Failed to download Drive file %s", drive_file_id)
+            resolved.append(_build_attachment_error_entry(att, exc))
+            continue
+
+        entry = {
+            "_resolved_bytes": data,
+            "filename": name,
+            "mime_type": resolved_mime,
+        }
+        if "content_id" in att:
+            entry["content_id"] = att["content_id"]
+        resolved.append(entry)
+
+    return resolved, link_lines
+
+
+def _append_drive_links_to_body(
+    body: str, link_lines: List[Dict[str, str]], body_format: str
+) -> str:
+    """Append Drive share links to the message body (format-aware)."""
+    if not link_lines:
+        return body
+    if body_format == "html":
+        items = "".join(
+            f'<li><a href="{ln["url"]}">{ln["name"]}</a></li>' for ln in link_lines
+        )
+        return f"{body}<p>Attached Drive files:</p><ul>{items}</ul>"
+    lines = "\n".join(f"- {ln['name']}: {ln['url']}" for ln in link_lines)
+    return f"{body}\n\nAttached Drive files:\n{lines}"
 
 
 def _prepare_gmail_message(
@@ -2022,8 +2150,8 @@ async def send_gmail_message(
         body_format (Literal['plain', 'html']): Body format (and prepended note format when forwarding). Defaults to 'plain'.
         forward_message_id (Optional[str]): Gmail message ID to forward. When set, the tool forwards that message.
         include_forwarded_attachments (bool): Whether to carry over the original attachments when forwarding. Defaults to True.
-        attachments (Optional[List[Dict[str, str]]]): Optional list of attachments. Each dict can contain:
-            Option 1 - File path (auto-encodes):
+        attachments (Optional[List[Dict[str, Any]]]): Optional list of attachments. Each dict can contain:
+            Option 1 - Local file path (auto-encodes; local/stdio mode only — rejected when the server runs remotely):
               - 'path' (required): File path to attach
               - 'filename' (optional): Override filename
               - 'mime_type' (optional): Override MIME type (auto-detected if not provided)
@@ -2031,6 +2159,13 @@ async def send_gmail_message(
               - 'content' (required): Standard base64-encoded file content (not urlsafe)
               - 'filename' (required): Name of the file
               - 'mime_type' (optional): MIME type (defaults to 'application/octet-stream')
+            Option 3 - Google Drive file (works remotely; the server reads Drive on your behalf):
+              - 'drive_file_id' (required): ID of a Drive file to attach
+              - 'as_link' (optional, default false): if true, the file's share link is added to
+                the message body instead of attaching the bytes; if false/omitted, the server
+                downloads the file (native Docs/Sheets/Slides are exported to PDF) and attaches
+                it as a binary attachment
+              - 'filename'/'mime_type' (optional): overrides for the binary case
         cc (Optional[str]): Optional CC email address.
         bcc (Optional[str]): Optional BCC email address.
         from_name (Optional[str]): Optional sender display name. If provided, the From header will be formatted as 'Name <email>'.
@@ -2174,7 +2309,14 @@ async def send_gmail_message(
             send_body_content, body_format, signature_html
         )
 
-    resolved_attachments = await _resolve_url_attachments(attachments)
+    resolved_attachments, drive_link_lines = await _resolve_drive_attachments(
+        service, attachments
+    )
+    resolved_attachments = await _resolve_url_attachments(resolved_attachments)
+    if drive_link_lines:
+        send_body_content = _append_drive_links_to_body(
+            send_body_content, drive_link_lines, body_format
+        )
     raw_message, thread_id_final, attached_count, attachment_errors = (
         _prepare_gmail_message(
             subject=subject,
@@ -2192,7 +2334,8 @@ async def send_gmail_message(
         )
     )
 
-    requested_attachment_count = len(attachments or [])
+    # Drive links are delivered in the body, not as MIME parts, so don't count them.
+    requested_attachment_count = len(attachments or []) - len(drive_link_lines)
     if requested_attachment_count > 0 and attached_count == 0:
         details = (
             f" Details: {'; '.join(attachment_errors)}" if attachment_errors else ""
@@ -2449,8 +2592,8 @@ async def draft_gmail_message(
         thread_id (Optional[str]): Optional Gmail thread ID to reply within. When provided, creates a reply draft.
         in_reply_to (Optional[str]): Optional RFC Message-ID of the message being replied to (e.g., '<message123@gmail.com>').
         references (Optional[str]): Optional chain of RFC Message-IDs for proper threading (e.g., '<msg1@gmail.com> <msg2@gmail.com>').
-        attachments (List[Dict[str, str]]): Optional list of attachments. Each dict can contain:
-            Option 1 - File path (auto-encodes):
+        attachments (List[Dict[str, Any]]): Optional list of attachments. Each dict can contain:
+            Option 1 - Local file path (auto-encodes; local/stdio mode only — rejected when the server runs remotely):
               - 'path' (required): File path to attach
               - 'filename' (optional): Override filename
               - 'mime_type' (optional): Override MIME type (auto-detected if not provided)
@@ -2458,6 +2601,13 @@ async def draft_gmail_message(
               - 'content' (required): Standard base64-encoded file content (not urlsafe)
               - 'filename' (required): Name of the file
               - 'mime_type' (optional): MIME type (defaults to 'application/octet-stream')
+            Option 3 - Google Drive file (works remotely; the server reads Drive on your behalf):
+              - 'drive_file_id' (required): ID of a Drive file to attach
+              - 'as_link' (optional, default false): if true, the file's share link is added to
+                the message body instead of attaching the bytes; if false/omitted, the server
+                downloads the file (native Docs/Sheets/Slides are exported to PDF) and attaches
+                it as a binary attachment
+              - 'filename'/'mime_type' (optional): overrides for the binary case
         include_signature (bool): Whether to append Gmail signature HTML from send-as settings.
             When include_signature is true and Gmail signature retrieval fails for benign reasons
             (e.g., missing gmail.settings.basic scope), the draft proceeds without a signature.
@@ -2574,7 +2724,14 @@ async def draft_gmail_message(
     else:
         draft_body = _append_signature_to_body(draft_body, body_format, signature_html)
 
-    resolved_attachments = await _resolve_url_attachments(attachments)
+    resolved_attachments, drive_link_lines = await _resolve_drive_attachments(
+        service, attachments
+    )
+    resolved_attachments = await _resolve_url_attachments(resolved_attachments)
+    if drive_link_lines:
+        draft_body = _append_drive_links_to_body(
+            draft_body, drive_link_lines, body_format
+        )
     raw_message, _thread_id_final, attached_count, attachment_errors = (
         _prepare_gmail_message(
             subject=subject,
@@ -2592,7 +2749,8 @@ async def draft_gmail_message(
         )
     )
 
-    requested_attachment_count = len(attachments or [])
+    # Drive links are delivered in the body, not as MIME parts, so don't count them.
+    requested_attachment_count = len(attachments or []) - len(drive_link_lines)
     if requested_attachment_count > 0 and attached_count == 0:
         details = (
             f" Details: {'; '.join(attachment_errors)}" if attachment_errors else ""
