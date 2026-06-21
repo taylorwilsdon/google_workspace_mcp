@@ -1254,6 +1254,8 @@ async def _import_with_conversion(
     file_url: Optional[str],
     source_format: Optional[str],
     folder_id: str,
+    return_upload_url: bool = False,
+    content_length: Optional[int] = None,
 ) -> str:
     """
     Shared implementation for the import_to_google_* tools.
@@ -1273,6 +1275,54 @@ async def _import_with_conversion(
         f"[{tool_name}] Invoked. Email: '{user_google_email}', "
         f"File Name: '{file_name}', Source Format: '{source_format}', Folder ID: '{folder_id}'"
     )
+
+    # Remote-safe path: in streamable-http mode, server-side file ingestion
+    # (file_path/file_url) is misleading. Instead, return a resumable upload URL the
+    # caller PUTs the source bytes to; Drive still converts them into target_mime_type.
+    if return_upload_url:
+        if any(x is not None for x in (content, file_path, file_url)):
+            raise ValueError(
+                "return_upload_url uploads the source via a resumable PUT; do not also "
+                "pass 'content', 'file_path', or 'file_url'."
+            )
+        supported = ", ".join(ext.lstrip(".") for ext in sorted(format_map))
+        if not source_format:
+            raise ValueError(
+                "source_format is required with return_upload_url so the upload's "
+                f"Content-Type is known (one of: {supported})."
+            )
+        source_mime_type = format_map.get(f".{source_format.lower().lstrip('.')}")
+        if source_mime_type is None:
+            raise ValueError(
+                f"Unsupported source_format: '{source_format}'. Supported: {supported}."
+            )
+        doc_name = Path(file_name).stem if Path(file_name).suffix else file_name
+        resolved_folder_id = await resolve_folder_id(service, folder_id)
+        upload_url = await _initiate_resumable_upload_session(
+            service,
+            mime_type=source_mime_type,
+            file_metadata={
+                "name": doc_name,
+                "parents": [resolved_folder_id],
+                "mimeType": target_mime_type,
+            },
+            content_length=content_length,
+        )
+        logger.info(f"[{tool_name}] Returned resumable upload URL for '{doc_name}'.")
+        return (
+            f"Resumable upload session created to import '{doc_name}' as {target_label} "
+            f"({source_mime_type} → {target_mime_type}, folder '{folder_id}', "
+            f"for {user_google_email}).\n\n"
+            + _format_resumable_upload_instructions(upload_url, source_mime_type)
+        )
+
+    if (file_path is not None or file_url is not None) and _is_remote_transport():
+        raise ValueError(
+            "'file_path'/'file_url' are unavailable in remote (streamable-http) mode "
+            "because they resolve on the server, not the caller. Pass "
+            "return_upload_url=True (with source_format) to get a resumable upload URL "
+            "to PUT the source bytes to, or send text via 'content'."
+        )
 
     media, source_mime_type, remote_file_data = await _resolve_import_media(
         tool_name=tool_name,
@@ -1360,40 +1410,45 @@ async def import_to_google_doc(
     file_url: Optional[str] = None,
     source_format: Optional[str] = None,
     folder_id: str = "root",
+    return_upload_url: bool = False,
+    content_length: Optional[int] = None,
 ) -> str:
     """
     Imports a file (Markdown, DOCX, TXT, HTML, RTF, ODT) into Google Docs format with automatic conversion.
 
     Google Drive automatically converts the source file to native Google Docs format,
     preserving formatting like headings, lists, bold, italic, etc.
-    For batch operations, prefer file_path for files on disk so callers do not need
-    to load full file contents into their context.
+
+    Content sources behave like create_drive_file: ``content`` (inline text) works in
+    every mode; ``file_path``/``file_url`` ingest on the server and are rejected in
+    remote (streamable-http) mode; ``return_upload_url=True`` (with ``source_format``)
+    returns a resumable upload URL the caller PUTs the source bytes to (Drive still
+    converts them) — preferred for binary/large sources on a remote server.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
         file_name (str): The name for the new Google Doc (extension will be ignored).
         content (Optional[str]): Text content for text-based formats. Use only for short snippets or content already in memory.
-        file_path (Optional[str]): Local file path or file:// URL for any supported format (MD, TXT, HTML, DOCX, ODT, RTF). Appropriate for larger files than content, but file_path may still load the file into memory or perform non-streaming reads. Avoid very large files that could exceed memory or time limits; use streaming/chunked uploads or an alternative API for huge files.
-        file_url (Optional[str]): Remote URL to fetch the file from (http/https).
+        file_path (Optional[str]): Local file path or file:// URL for any supported format (MD, TXT, HTML, DOCX, ODT, RTF). Unavailable in remote (streamable-http) mode.
+        file_url (Optional[str]): Remote URL to fetch the file from (http/https). Unavailable in remote (streamable-http) mode.
         source_format (Optional[str]): Source format hint ('md', 'markdown', 'docx', 'txt', 'html', 'rtf', 'odt').
-                                       Auto-detected from file_name extension if not provided.
+                                       Auto-detected from file_name extension if not provided. Required with return_upload_url.
         folder_id (str): The ID of the parent folder. Defaults to 'root'.
+        return_upload_url (bool): If True, return a resumable upload URL for the source bytes instead of ingesting them server-side.
+        content_length (Optional[int]): Exact byte length for the resumable upload, if known.
 
     Returns:
-        str: Confirmation message with the new Google Doc link.
+        str: Confirmation message with the new Google Doc link, or the resumable upload URL.
 
     Examples:
-        # Import a markdown file from disk (preferred for batch operations)
-        import_to_google_doc(file_name="My Doc.md", file_path="/path/to/my-doc.md", source_format="md")
-
         # Import markdown content directly
         import_to_google_doc(file_name="My Doc.md", content="# Title\\n\\nHello **world**")
 
-        # Import a local DOCX file
+        # Import a local DOCX file (local/stdio mode only)
         import_to_google_doc(file_name="Report", file_path="/path/to/report.docx")
 
-        # Import from URL
-        import_to_google_doc(file_name="Remote Doc", file_url="https://example.com/doc.md")
+        # Remote mode: get an upload URL and PUT the docx bytes to it
+        import_to_google_doc(file_name="Report", source_format="docx", return_upload_url=True)
     """
     return await _import_with_conversion(
         service,
@@ -1409,6 +1464,8 @@ async def import_to_google_doc(
         file_url=file_url,
         source_format=source_format,
         folder_id=folder_id,
+        return_upload_url=return_upload_url,
+        content_length=content_length,
     )
 
 
@@ -1431,33 +1488,40 @@ async def import_to_google_slides(
     file_url: Optional[str] = None,
     source_format: Optional[str] = None,
     folder_id: str = "root",
+    return_upload_url: bool = False,
+    content_length: Optional[int] = None,
 ) -> str:
     """
     Imports a presentation (PPTX, PPT, ODP) into Google Slides format with automatic conversion.
 
     Google Drive automatically converts the source presentation to native Google Slides format,
     preserving slides, layouts, text, and images.
-    For batch operations, prefer file_path for files on disk so callers do not need
-    to load full file contents into their context.
+
+    ``file_path``/``file_url`` ingest on the server and are rejected in remote
+    (streamable-http) mode; pass ``return_upload_url=True`` (with ``source_format``) to
+    get a resumable upload URL the caller PUTs the source bytes to (Drive still
+    converts them) — preferred for binary/large sources on a remote server.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
         file_name (str): The name for the new Google Slides presentation (extension will be ignored).
-        file_path (Optional[str]): Local file path or file:// URL for any supported format (PPTX, PPT, ODP). Appropriate for larger files than content, but file_path may still load the file into memory or perform non-streaming reads. Avoid very large files that could exceed memory or time limits; use streaming/chunked uploads or an alternative API for huge files.
-        file_url (Optional[str]): Remote URL to fetch the presentation from (http/https).
+        file_path (Optional[str]): Local file path or file:// URL for any supported format (PPTX, PPT, ODP). Unavailable in remote (streamable-http) mode.
+        file_url (Optional[str]): Remote URL to fetch the presentation from (http/https). Unavailable in remote (streamable-http) mode.
         source_format (Optional[str]): Source format hint ('pptx', 'ppt', 'odp').
-                                       Auto-detected from file_name extension if not provided.
+                                       Auto-detected from file_name extension if not provided. Required with return_upload_url.
         folder_id (str): The ID of the parent folder. Defaults to 'root'.
+        return_upload_url (bool): If True, return a resumable upload URL for the source bytes instead of ingesting them server-side.
+        content_length (Optional[int]): Exact byte length for the resumable upload, if known.
 
     Returns:
-        str: Confirmation message with the new Google Slides link.
+        str: Confirmation message with the new Google Slides link, or the resumable upload URL.
 
     Examples:
-        # Import a local PowerPoint file (preferred for batch operations)
+        # Import a local PowerPoint file (local/stdio mode only)
         import_to_google_slides(file_name="Deck", file_path="/path/to/deck.pptx")
 
-        # Import from URL
-        import_to_google_slides(file_name="Remote Deck", file_url="https://example.com/deck.pptx")
+        # Remote mode: get an upload URL and PUT the pptx bytes to it
+        import_to_google_slides(file_name="Deck", source_format="pptx", return_upload_url=True)
     """
     return await _import_with_conversion(
         service,
@@ -1473,6 +1537,8 @@ async def import_to_google_slides(
         file_url=file_url,
         source_format=source_format,
         folder_id=folder_id,
+        return_upload_url=return_upload_url,
+        content_length=content_length,
     )
 
 
@@ -1496,37 +1562,45 @@ async def import_to_google_sheets(
     file_url: Optional[str] = None,
     source_format: Optional[str] = None,
     folder_id: str = "root",
+    return_upload_url: bool = False,
+    content_length: Optional[int] = None,
 ) -> str:
     """
     Imports a spreadsheet (XLSX, XLS, ODS, CSV, TSV) into Google Sheets format with automatic conversion.
 
     Google Drive automatically converts the source spreadsheet to native Google Sheets format,
     preserving rows, columns, sheets, and values.
-    For batch operations, prefer file_path for files on disk so callers do not need
-    to load full file contents into their context.
+
+    Content sources behave like create_drive_file: ``content`` (inline text) works in
+    every mode; ``file_path``/``file_url`` ingest on the server and are rejected in
+    remote (streamable-http) mode; ``return_upload_url=True`` (with ``source_format``)
+    returns a resumable upload URL the caller PUTs the source bytes to (Drive still
+    converts them) — preferred for binary/large sources on a remote server.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
         file_name (str): The name for the new Google Sheets spreadsheet (extension will be ignored).
         content (Optional[str]): Text content for text-based formats (CSV, TSV). Use only for short snippets or content already in memory.
-        file_path (Optional[str]): Local file path or file:// URL for any supported format (XLSX, XLS, ODS, CSV, TSV). Appropriate for larger files than content, but file_path may still load the file into memory or perform non-streaming reads. Avoid very large files that could exceed memory or time limits; use streaming/chunked uploads or an alternative API for huge files.
-        file_url (Optional[str]): Remote URL to fetch the spreadsheet from (http/https).
+        file_path (Optional[str]): Local file path or file:// URL for any supported format (XLSX, XLS, ODS, CSV, TSV). Unavailable in remote (streamable-http) mode.
+        file_url (Optional[str]): Remote URL to fetch the spreadsheet from (http/https). Unavailable in remote (streamable-http) mode.
         source_format (Optional[str]): Source format hint ('xlsx', 'xls', 'ods', 'csv', 'tsv').
-                                       Auto-detected from file_name extension if not provided.
+                                       Auto-detected from file_name extension if not provided. Required with return_upload_url.
         folder_id (str): The ID of the parent folder. Defaults to 'root'.
+        return_upload_url (bool): If True, return a resumable upload URL for the source bytes instead of ingesting them server-side.
+        content_length (Optional[int]): Exact byte length for the resumable upload, if known.
 
     Returns:
-        str: Confirmation message with the new Google Sheets link.
+        str: Confirmation message with the new Google Sheets link, or the resumable upload URL.
 
     Examples:
-        # Import a local Excel file (preferred for batch operations)
-        import_to_google_sheets(file_name="Budget", file_path="/path/to/budget.xlsx")
-
         # Import CSV content directly
         import_to_google_sheets(file_name="Data.csv", content="a,b,c\\n1,2,3", source_format="csv")
 
-        # Import from URL
-        import_to_google_sheets(file_name="Remote Sheet", file_url="https://example.com/data.xlsx")
+        # Import a local Excel file (local/stdio mode only)
+        import_to_google_sheets(file_name="Budget", file_path="/path/to/budget.xlsx")
+
+        # Remote mode: get an upload URL and PUT the xlsx bytes to it
+        import_to_google_sheets(file_name="Budget", source_format="xlsx", return_upload_url=True)
     """
     return await _import_with_conversion(
         service,
@@ -1542,6 +1616,8 @@ async def import_to_google_sheets(
         file_url=file_url,
         source_format=source_format,
         folder_id=folder_id,
+        return_upload_url=return_upload_url,
+        content_length=content_length,
     )
 
 
