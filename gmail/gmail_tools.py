@@ -2426,9 +2426,9 @@ async def draft_gmail_message(
     quote_original: Annotated[
         bool,
         Field(
-            description="Whether to include the original message as a quoted reply. Requires thread_id. Defaults to false.",
+            description="Whether to include the original message as a quoted reply (only applies when thread_id is set). Defaults to true, matching the Gmail UI which quotes the conversation when you reply. Set false for a bare reply with no quoted history.",
         ),
-    ] = False,
+    ] = True,
 ) -> str:
     """
     Creates a draft email in the user's Gmail account. Supports both new drafts and reply drafts with optional attachments.
@@ -2464,8 +2464,9 @@ async def draft_gmail_message(
             Non-benign failures such as quota/rate-limit or API errors raise ToolError and abort
             the draft.
         quote_original (bool): Whether to include the original message as a quoted reply.
-            Requires thread_id to be provided. When enabled, fetches the original message
-            and appends it below the signature. Defaults to False.
+            Only applies when thread_id is provided. When enabled, fetches the original
+            message and appends it below the signature. Defaults to True, matching the
+            Gmail UI (which quotes the conversation on reply). Set False for a bare reply.
 
     Returns:
         str: Confirmation message with the created draft's ID.
@@ -2602,9 +2603,16 @@ async def draft_gmail_message(
             f"{details}"
         )
 
-    # Create a draft instead of sending. Keep reply threading in the raw
-    # headers; setting message.threadId here can create Gmail UI-hidden drafts.
-    draft_body = {"message": {"raw": raw_message}}
+    # Create a draft instead of sending. For a reply, the draft must carry the
+    # thread's threadId (like send_gmail_message does) or Gmail starts a brand-new
+    # thread and the draft shows up detached from the conversation. Threading by raw
+    # In-Reply-To/References headers alone is not enough for drafts. Per the Gmail API
+    # threading rules, the threadId is honored because the derived Subject (Re: ...)
+    # and References headers already match the target thread.
+    draft_message = {"raw": raw_message}
+    if thread_id:
+        draft_message["threadId"] = thread_id
+    draft_body = {"message": draft_message}
 
     # Create the draft
     created_draft = await asyncio.to_thread(
