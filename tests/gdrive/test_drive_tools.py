@@ -9,6 +9,7 @@ and `file_type` filtering behaviors.
 import pytest
 from unittest.mock import Mock, AsyncMock, patch
 import io
+import json
 import sys
 import os
 
@@ -16,6 +17,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 
 from gdrive.drive_helpers import build_drive_list_params
 from gdrive.drive_tools import (
+    create_drive_file,
     get_drive_file_permissions,
     import_to_google_doc,
     import_to_google_sheets,
@@ -1943,3 +1945,189 @@ async def test_update_drive_file_metadata_only_uploads_no_media(mock_resolve_ite
     update_kwargs = mock_service.files.return_value.update.call_args.kwargs
     assert "media_body" not in update_kwargs
     assert "Successfully updated file" in result
+
+
+# ---------------------------------------------------------------------------
+# Resumable upload URLs + remote-mode guards (create_drive_file / update_drive_file)
+# ---------------------------------------------------------------------------
+
+
+def _resumable_response(status, location=None):
+    """Build a minimal httplib2-style (response, content) pair."""
+    response = Mock()
+    response.status = status
+    response.get = Mock(return_value=location)
+    return response, b""
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_tools.resolve_folder_id", new_callable=AsyncMock)
+async def test_create_drive_file_returns_resumable_upload_url(mock_resolve_folder):
+    """return_upload_url initiates a POST resumable session and returns the URL."""
+    upload_url = "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&upload_id=ABC"
+    mock_resolve_folder.return_value = "folder123"
+    mock_service = Mock()
+    mock_service._http.request.return_value = _resumable_response(200, upload_url)
+
+    result = await _unwrap(create_drive_file)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        file_name="report.pdf",
+        folder_id="target",
+        mime_type="application/pdf",
+        return_upload_url=True,
+        content_length=2048,
+    )
+
+    args, kwargs = mock_service._http.request.call_args
+    assert args[0].startswith("https://www.googleapis.com/upload/drive/v3/files?")
+    assert "uploadType=resumable" in args[0] and "supportsAllDrives=true" in args[0]
+    assert kwargs["method"] == "POST"
+    assert kwargs["headers"]["X-Upload-Content-Type"] == "application/pdf"
+    assert kwargs["headers"]["X-Upload-Content-Length"] == "2048"
+    assert json.loads(kwargs["body"]) == {
+        "name": "report.pdf",
+        "parents": ["folder123"],
+        "mimeType": "application/pdf",
+    }
+    assert upload_url in result
+
+
+@pytest.mark.asyncio
+async def test_create_drive_file_rejects_return_upload_url_with_content():
+    """return_upload_url is mutually exclusive with inline content/fileUrl."""
+    mock_service = Mock()
+    with pytest.raises(ValueError, match="cannot be combined"):
+        await _unwrap(create_drive_file)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            file_name="report.pdf",
+            content="hi",
+            return_upload_url=True,
+        )
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_tools.get_transport_mode", return_value="streamable-http")
+async def test_create_drive_file_rejects_fileurl_in_remote_mode(mock_mode):
+    """fileUrl is refused when the server runs remotely (streamable-http)."""
+    mock_service = Mock()
+    with pytest.raises(ValueError, match="remote"):
+        await _unwrap(create_drive_file)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            file_name="report.pdf",
+            fileUrl="https://example.com/report.pdf",
+        )
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_tools.resolve_drive_item", new_callable=AsyncMock)
+async def test_update_drive_file_returns_resumable_patch_url(mock_resolve_item):
+    """return_upload_url applies metadata then returns a PATCH resumable URL."""
+    upload_url = "https://www.googleapis.com/upload/drive/v3/files/file123?uploadType=resumable&upload_id=XYZ"
+    mock_resolve_item.return_value = (
+        "file123",
+        {"name": "Doc", "mimeType": "application/vnd.google-apps.document"},
+    )
+    mock_service = Mock()
+    mock_service._http.request.return_value = _resumable_response(200, upload_url)
+
+    result = await _unwrap(update_drive_file)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        file_id="file123",
+        name="Renamed",  # forces a metadata update call
+        return_upload_url=True,
+    )
+
+    # metadata-only update was applied (no media_body)
+    update_kwargs = mock_service.files.return_value.update.call_args.kwargs
+    assert "media_body" not in update_kwargs
+    # resumable session is a PATCH against the file id
+    args, kwargs = mock_service._http.request.call_args
+    assert args[0].startswith(
+        "https://www.googleapis.com/upload/drive/v3/files/file123?"
+    )
+    assert kwargs["method"] == "PATCH"
+    assert upload_url in result
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_tools.resolve_drive_item", new_callable=AsyncMock)
+@patch("gdrive.drive_tools.get_transport_mode", return_value="streamable-http")
+async def test_update_drive_file_rejects_file_url_in_remote_mode(
+    mock_mode, mock_resolve_item
+):
+    """file_path/file_url content replacement is refused in remote mode."""
+    mock_resolve_item.return_value = (
+        "file123",
+        {"name": "Doc", "mimeType": "application/vnd.google-apps.document"},
+    )
+    mock_service = Mock()
+    with pytest.raises(ValueError, match="remote"):
+        await _unwrap(update_drive_file)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            file_id="file123",
+            file_url="https://example.com/new.docx",
+        )
+
+
+# ---------------------------------------------------------------------------
+# import_to_google_* — remote-safe resumable upload + remote-mode guard
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_tools.resolve_folder_id", new_callable=AsyncMock)
+async def test_import_to_google_doc_returns_resumable_upload_url(mock_resolve_folder):
+    """return_upload_url initiates a POST session converting source -> Google Doc."""
+    upload_url = "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&upload_id=IMP"
+    mock_resolve_folder.return_value = "folder123"
+    mock_service = Mock()
+    mock_service._http.request.return_value = _resumable_response(200, upload_url)
+
+    result = await _unwrap(import_to_google_doc)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        file_name="Report.docx",
+        source_format="docx",
+        return_upload_url=True,
+    )
+
+    args, kwargs = mock_service._http.request.call_args
+    assert kwargs["method"] == "POST"
+    assert "uploadType=resumable" in args[0]
+    body = json.loads(kwargs["body"])
+    # destination is the Google Apps type; the PUT carries the source (docx) type
+    assert body["mimeType"] == "application/vnd.google-apps.document"
+    assert "wordprocessingml" in kwargs["headers"]["X-Upload-Content-Type"]
+    assert upload_url in result
+
+
+@pytest.mark.asyncio
+async def test_import_to_google_doc_requires_source_format_for_upload_url():
+    """return_upload_url needs source_format to set the upload Content-Type."""
+    mock_service = Mock()
+    with pytest.raises(ValueError, match="source_format is required"):
+        await _unwrap(import_to_google_doc)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            file_name="Report",
+            return_upload_url=True,
+        )
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_tools.get_transport_mode", return_value="streamable-http")
+async def test_import_to_google_sheets_rejects_file_path_in_remote_mode(mock_mode):
+    """file_path/file_url import is refused when the server runs remotely."""
+    mock_service = Mock()
+    with pytest.raises(ValueError, match="remote"):
+        await _unwrap(import_to_google_sheets)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            file_name="Budget.xlsx",
+            file_path="/tmp/budget.xlsx",
+        )
