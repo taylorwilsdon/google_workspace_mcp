@@ -151,6 +151,12 @@ def _open_browser_incognito(url: str) -> bool:
     Tries Chrome first, then Firefox, then falls back to regular browser.
     Returns True if successful, False otherwise.
     """
+    # Defense-in-depth: only allow http/https URLs (the OAuth flow always
+    # generates https, but guard against any future untrusted callers).
+    if not url.startswith(("https://", "http://")):
+        logger.debug(f"Refusing to open non-http(s) URL: {url[:50]}")
+        return False
+
     try:
         if sys.platform == "darwin":
             # Try Chrome incognito first
@@ -664,7 +670,9 @@ async def start_auth_flow(
             browser_type = os.getenv("AUTH_BROWSER_TYPE", "normal").lower()
             if browser_type == "incognito":
                 # Incognito/private window helps when the user has multiple Google accounts
-                incognito_opened = _open_browser_incognito(auth_url)
+                incognito_opened = await asyncio.to_thread(
+                    _open_browser_incognito, auth_url
+                )
                 if incognito_opened:
                     browser_opened = True
                     logger.info("Opened auth URL in incognito browser window")
