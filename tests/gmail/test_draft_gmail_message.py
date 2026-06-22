@@ -387,6 +387,7 @@ async def test_draft_gmail_message_builds_threaded_html_reply_as_multipart_alter
         body_format="html",
         thread_id="thread123",
         include_signature=False,
+        quote_original=False,
     )
 
     create_kwargs = (
@@ -524,6 +525,45 @@ async def test_draft_gmail_message_fetches_thread_once_when_quoting_reply():
 
 
 @pytest.mark.asyncio
+async def test_draft_reply_threads_and_quotes_by_default():
+    """A reply draft must (1) carry the threadId so Gmail nests it in the
+    conversation and (2) quote the original by default, mirroring the Gmail UI."""
+    mock_service = Mock()
+    mock_service.users().drafts().create().execute.return_value = {"id": "draft_thr"}
+    mock_service.users().threads().get().execute.return_value = {
+        "messages": [
+            _thread_message(
+                "<msg1@example.com>",
+                from_value="Alice Example <alice@example.com>",
+                text="Original plain text",
+                html="<p>Original html</p>",
+            )
+        ]
+    }
+
+    await _unwrap(draft_gmail_message)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        to="recipient@example.com",
+        subject="Meeting tomorrow",
+        body="Thanks!",
+        thread_id="thread123",
+        include_signature=False,
+        # quote_original omitted -> should default to True
+    )
+
+    create_kwargs = (
+        mock_service.users.return_value.drafts.return_value.create.call_args.kwargs
+    )
+    # (1) the draft is attached to the thread
+    assert create_kwargs["body"]["message"]["threadId"] == "thread123"
+    # (2) the original message is quoted in the body by default
+    raw_message = create_kwargs["body"]["message"]["raw"]
+    raw_text = base64.urlsafe_b64decode(raw_message).decode("utf-8", errors="ignore")
+    assert "Original plain text" in raw_text
+
+
+@pytest.mark.asyncio
 async def test_draft_gmail_message_autofills_reply_headers_from_thread():
     mock_service = Mock()
     mock_service.users().drafts().create().execute.return_value = {"id": "draft_reply"}
@@ -541,6 +581,7 @@ async def test_draft_gmail_message_autofills_reply_headers_from_thread():
         body="Thanks for the update.",
         thread_id="thread123",
         include_signature=False,
+        quote_original=False,
     )
 
     # Verify threads().get() was called with correct parameters
@@ -565,7 +606,9 @@ async def test_draft_gmail_message_autofills_reply_headers_from_thread():
         "References: <msg1@example.com> <msg2@example.com> <msg3@example.com>"
         in raw_text
     )
-    assert "threadId" not in create_kwargs["body"]["message"]
+    # The draft must carry the threadId so Gmail nests it in the conversation
+    # instead of starting a new thread.
+    assert create_kwargs["body"]["message"]["threadId"] == "thread123"
 
 
 @pytest.mark.asyncio
