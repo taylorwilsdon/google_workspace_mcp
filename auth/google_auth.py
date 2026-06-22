@@ -692,7 +692,7 @@ async def start_auth_flow(
 
             if not browser_opened:
                 # Clipboard fallback so the user can paste the URL manually
-                clipboard_copied = _copy_to_clipboard(auth_url)
+                clipboard_copied = await asyncio.to_thread(_copy_to_clipboard, auth_url)
                 if clipboard_copied:
                     logger.info("Copied auth URL to clipboard")
 
@@ -748,9 +748,14 @@ async def start_auth_flow(
                 "\nAfter successful authorization, **retry your original command**."
             )
 
-        message_lines.append(
-            f"\nThe application will use the new credentials. If '{user_google_email}' was provided, it must match the authenticated account."
-        )
+        if initial_email_provided:
+            message_lines.append(
+                f"\nThe application will use the new credentials. The authenticated account must match '{user_google_email}'."
+            )
+        else:
+            message_lines.append(
+                "\nThe application will use the new credentials once authentication is complete."
+            )
         return "\n".join(message_lines)
 
     except FileNotFoundError as e:
