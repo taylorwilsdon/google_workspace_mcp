@@ -71,8 +71,8 @@ Update the publish settings of a form.
 |-----------|------|----------|---------|-------|
 | form_id | string | yes | | |
 | user_google_email | string | yes | | |
-| publish_as_template | boolean | no | false | |
-| require_authentication | boolean | no | false | |
+| is_published | boolean | no | true | Whether the form is published and visible to responders |
+| is_accepting_responses | boolean | no | true | Whether the form accepts responses; only takes effect when published |
 
 ---
 

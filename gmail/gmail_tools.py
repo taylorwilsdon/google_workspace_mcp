@@ -11,6 +11,7 @@ import binascii
 import re
 import ssl
 import mimetypes
+import html
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Annotated, Optional, List, Dict, Literal, Any
@@ -54,6 +55,7 @@ from gmail.gmail_helpers import (
     GMAIL_METADATA_HEADERS,
     RAW_BODY_TRUNCATE_LIMIT,
     _analyze_thread_ownership_impl,
+    _build_forward_content,
     _is_benign_signature_http_error,
     _signature_fetch_tool_error,
 )
@@ -451,8 +453,6 @@ def _build_quoted_reply_body(
         On {date}, {sender} wrote:
         > quoted original
     """
-    import html as _html_mod
-
     if original.get("date"):
         attribution = f"On {original['date']}, {original['sender']} wrote:"
     else:
@@ -468,11 +468,11 @@ def _build_quoted_reply_body(
         orig_html = original.get("html_body") or ""
         if not orig_html:
             orig_text = original.get("text_body", "")
-            orig_html = f"<pre>{_html_mod.escape(orig_text)}</pre>"
+            orig_html = f"<pre>{html.escape(orig_text)}</pre>"
 
         quote_block = (
             '<br><br><div class="gmail_quote">'
-            f"<span>{_html_mod.escape(attribution)}</span><br>"
+            f"<span>{html.escape(attribution)}</span><br>"
             '<blockquote style="margin:0 0 0 .8ex;border-left:1px solid #ccc;padding-left:1ex">'
             f"{orig_html}"
             "</blockquote></div>"
@@ -1921,19 +1921,41 @@ async def get_gmail_attachment_content(
     ),
 )
 @handle_http_errors("send_gmail_message", service_type="gmail")
-@require_google_service("gmail", GMAIL_SEND_SCOPE)
+@require_google_service("gmail", ["gmail_read", GMAIL_SEND_SCOPE])
 async def send_gmail_message(
     service,
     user_google_email: str,
     to: Annotated[str, Field(description="Recipient email address.")],
-    subject: Annotated[str, Field(description="Email subject.")],
-    body: Annotated[str, Field(description="Email body content (plain text or HTML).")],
+    subject: Annotated[
+        Optional[str],
+        Field(
+            description="Email subject. Required when sending; optional when forwarding (defaults to 'Fwd: <original subject>').",
+        ),
+    ] = None,
+    body: Annotated[
+        Optional[str],
+        Field(
+            description="Email body content (plain text or HTML). Required when sending. When forwarding, this is an optional note prepended above the quoted original.",
+        ),
+    ] = None,
     body_format: Annotated[
         Literal["plain", "html"],
         Field(
-            description="Email body format. Use 'plain' for plaintext or 'html' for HTML content.",
+            description="Format of the body content (and of the prepended note when forwarding). Use 'plain' for plaintext or 'html' for HTML content.",
         ),
     ] = "plain",
+    forward_message_id: Annotated[
+        Optional[str],
+        Field(
+            description="Set to a Gmail message ID to forward that message instead of composing a new one. The original subject, body, and (optionally) attachments are carried over; 'body' becomes an optional note prepended to the forward.",
+        ),
+    ] = None,
+    include_forwarded_attachments: Annotated[
+        bool,
+        Field(
+            description="When forwarding, whether to include the original message's attachments. Ignored unless forward_message_id is set.",
+        ),
+    ] = True,
     cc: Annotated[
         Optional[str], Field(description="Optional CC email address.")
     ] = None,
@@ -1984,14 +2006,22 @@ async def send_gmail_message(
     ] = True,
 ) -> str:
     """
-    Sends an email using the user's Gmail account. Supports both new emails and replies with optional attachments.
-    Supports Gmail's "Send As" feature to send from configured alias addresses.
+    Sends an email using the user's Gmail account. Supports new emails, replies, and
+    forwards, with optional attachments. Supports Gmail's "Send As" feature to send
+    from configured alias addresses.
+
+    To forward an existing message, pass forward_message_id. The original subject,
+    body (quoted with a "Forwarded message" header), and attachments are carried over.
+    In forward mode, body (if any) is prepended as a note and subject is optional.
+    Threading, reply, and signature options do not apply when forwarding.
 
     Args:
         to (str): Recipient email address.
-        subject (str): Email subject.
-        body (str): Email body content.
-        body_format (Literal['plain', 'html']): Email body format. Defaults to 'plain'.
+        subject (str): Email subject. Required unless forwarding (then defaults to 'Fwd: <original subject>').
+        body (str): Email body content. Required unless forwarding (then an optional prepended note).
+        body_format (Literal['plain', 'html']): Body format (and prepended note format when forwarding). Defaults to 'plain'.
+        forward_message_id (Optional[str]): Gmail message ID to forward. When set, the tool forwards that message.
+        include_forwarded_attachments (bool): Whether to carry over the original attachments when forwarding. Defaults to True.
         attachments (Optional[List[Dict[str, str]]]): Optional list of attachments. Each dict can contain:
             Option 1 - File path (auto-encodes):
               - 'path' (required): File path to attach
@@ -2083,7 +2113,48 @@ async def send_gmail_message(
             in_reply_to="<message123@gmail.com>",
             references="<original@gmail.com> <message123@gmail.com>"
         )
+
+        # Forward a message with a note
+        send_gmail_message(
+            to="user@example.com",
+            forward_message_id="abc123",
+            body="FYI - see below."
+        )
+
+        # Forward without the original attachments
+        send_gmail_message(
+            to="user@example.com",
+            forward_message_id="abc123",
+            include_forwarded_attachments=False
+        )
     """
+    # Forwarding reuses the original message's content, so it follows a dedicated
+    # path that fetches and quotes the source message.
+    if forward_message_id:
+        logger.info(
+            f"[send_gmail_message] Forwarding message '{forward_message_id}' to '{to}' for '{user_google_email}'"
+        )
+        return await _forward_gmail_message_impl(
+            service=service,
+            message_id=forward_message_id,
+            to=to,
+            subject=subject,
+            forward_message=body,
+            forward_message_format=body_format,
+            include_attachments=include_forwarded_attachments,
+            cc=cc,
+            bcc=bcc,
+            from_name=from_name,
+            from_email=from_email,
+            user_google_email=user_google_email,
+        )
+
+    if subject is None or body is None:
+        raise UserInputError(
+            "Both 'subject' and 'body' are required when sending a message "
+            "(they are optional only when forwarding via 'forward_message_id')."
+        )
+
     logger.info(
         f"[send_gmail_message] Invoked. Email: '{user_google_email}', Subject: '{subject}', Attachments: {len(attachments) if attachments else 0}"
     )
@@ -2150,6 +2221,130 @@ async def send_gmail_message(
         )
         return f"Email sent{attachment_info}! Message ID: {message_id}"
     return f"Email sent! Message ID: {message_id}"
+
+
+# Internal implementation function for testing
+async def _forward_gmail_message_impl(
+    service,
+    message_id: str,
+    to: str,
+    subject: Optional[str] = None,
+    forward_message: Optional[str] = None,
+    forward_message_format: Literal["plain", "html"] = "plain",
+    include_attachments: bool = True,
+    cc: Optional[str] = None,
+    bcc: Optional[str] = None,
+    from_name: Optional[str] = None,
+    from_email: Optional[str] = None,
+    user_google_email: str = "",
+) -> str:
+    """Build and send a forward of an existing Gmail message.
+
+    Shared by send_gmail_message's forward path. An explicit ``subject`` overrides
+    the auto-derived 'Fwd: <original subject>'.
+    """
+    # Fetch the original message with full payload
+    original_message = await asyncio.to_thread(
+        service.users()
+        .messages()
+        .get(userId="me", id=message_id, format="full")
+        .execute
+    )
+
+    payload = original_message.get("payload", {})
+
+    forward_subject, forward_body, body_format = _build_forward_content(
+        headers=_extract_headers(payload, ["Subject", "From", "Date", "To"]),
+        bodies=_extract_message_bodies(payload),
+        forward_message=forward_message,
+        forward_message_format=forward_message_format,
+        subject_override=subject,
+    )
+
+    # Handle attachments
+    attachments_to_send = []
+    if include_attachments:
+        attachment_metadata = _extract_attachments(payload)
+        failed_attachments = []
+        for att in attachment_metadata:
+            try:
+                # Download attachment content
+                attachment_data = await asyncio.to_thread(
+                    service.users()
+                    .messages()
+                    .attachments()
+                    .get(userId="me", messageId=message_id, id=att["attachmentId"])
+                    .execute
+                )
+                # Gmail returns URL-safe base64 (often unpadded). Decode it
+                # tolerantly and re-encode as standard, padded base64 so the
+                # downstream base64.b64decode() in _prepare_gmail_message succeeds.
+                urlsafe_data = attachment_data.get("data", "")
+                padded = urlsafe_data + "=" * (-len(urlsafe_data) % 4)
+                standard_b64 = base64.b64encode(
+                    base64.urlsafe_b64decode(padded)
+                ).decode()
+                attachments_to_send.append(
+                    {
+                        "content": standard_b64,
+                        "filename": att["filename"],
+                        "mime_type": att["mimeType"],
+                    }
+                )
+                logger.info(
+                    f"[forward_gmail_message] Downloaded attachment: {att['filename']}"
+                )
+            except Exception as e:
+                logger.warning(
+                    f"[forward_gmail_message] Failed to download attachment {att['filename']}: {e}"
+                )
+                failed_attachments.append(att["filename"])
+
+        # Fail loudly rather than silently delivering an incomplete forward when
+        # the caller asked for the original attachments to be preserved.
+        if failed_attachments:
+            raise Exception(
+                "Failed to include requested attachment(s): "
+                + ", ".join(failed_attachments)
+            )
+
+    # Prepare and send the message
+    sender_email = from_email or user_google_email
+    raw_message, _, attached_count, attachment_errors = _prepare_gmail_message(
+        subject=forward_subject,
+        body=forward_body,
+        to=to,
+        cc=cc,
+        bcc=bcc,
+        body_format=body_format,
+        from_email=sender_email,
+        from_name=from_name,
+        attachments=attachments_to_send if attachments_to_send else None,
+    )
+    if attachments_to_send and attached_count != len(attachments_to_send):
+        details = (
+            f" Details: {'; '.join(attachment_errors)}" if attachment_errors else ""
+        )
+        raise UserInputError(
+            "Failed to include requested attachment(s): "
+            f"{attached_count}/{len(attachments_to_send)} attached.{details}"
+        )
+
+    send_body = {"raw": raw_message}
+
+    # Send the message
+    sent_message = await asyncio.to_thread(
+        service.users().messages().send(userId="me", body=send_body).execute,
+        num_retries=GOOGLE_API_WRITE_RETRIES,
+    )
+    sent_message_id = sent_message.get("id")
+
+    attachment_info = (
+        _format_attachment_result(attached_count, len(attachments_to_send))
+        if attachments_to_send
+        else ""
+    )
+    return f"Email forwarded{attachment_info}! Message ID: {sent_message_id}"
 
 
 @server.tool(

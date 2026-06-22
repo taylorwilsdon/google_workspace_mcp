@@ -8,6 +8,7 @@ import asyncio
 import logging
 import io
 import base64
+import binascii
 
 from typing import Optional, List, Dict, Any
 from tempfile import NamedTemporaryFile, SpooledTemporaryFile
@@ -895,10 +896,12 @@ async def create_drive_file(
     folder_id: str = "root",
     mime_type: str = "text/plain",
     fileUrl: Optional[str] = None,  # Now explicitly Optional
+    base64_content: Optional[str] = None,
+    content_mime_type: Optional[str] = None,
 ) -> str:
     """
     Creates a new file in Google Drive, supporting creation within shared drives.
-    Accepts either direct content or a fileUrl to fetch the content from.
+    Accepts direct text content, inline base64 bytes, or a fileUrl to fetch content from.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
@@ -907,6 +910,8 @@ async def create_drive_file(
         folder_id (str): The ID of the parent folder. Defaults to 'root'. For shared drives, this must be a folder ID within the shared drive.
         mime_type (str): The MIME type of the file. Defaults to 'text/plain'.
         fileUrl (Optional[str]): If provided, fetches the file content from this URL. Supports file://, http://, and https:// protocols.
+        base64_content (Optional[str]): Standard base64-encoded file bytes.
+        content_mime_type (Optional[str]): MIME type for base64_content uploads.
 
     Returns:
         str: Confirmation message of the successful file creation with file link.
@@ -915,8 +920,28 @@ async def create_drive_file(
         f"[create_drive_file] Invoked. Email: '{user_google_email}', File Name: {file_name}, Folder ID: {folder_id}, fileUrl: {fileUrl}"
     )
 
-    if content is None and fileUrl is None and mime_type != FOLDER_MIME_TYPE:
-        raise Exception("You must provide either 'content' or 'fileUrl'.")
+    has_existing_content_source = content is not None or bool(fileUrl)
+    if (
+        not has_existing_content_source
+        and base64_content is None
+        and mime_type != FOLDER_MIME_TYPE
+    ):
+        raise ValueError(
+            "You must provide one of 'content', 'fileUrl', or 'base64_content'."
+        )
+    if base64_content is not None and has_existing_content_source:
+        raise ValueError("'base64_content' cannot be used with 'content' or 'fileUrl'.")
+    if content_mime_type is not None and base64_content is None:
+        raise ValueError("'content_mime_type' can only be used with 'base64_content'.")
+    if base64_content is not None and not content_mime_type:
+        raise ValueError("'content_mime_type' is required when using 'base64_content'.")
+
+    file_data = None
+    if base64_content is not None:
+        try:
+            file_data = base64.b64decode(base64_content, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError("'base64_content' must be valid standard base64.") from exc
 
     # Create folder (no content or media_body). Prefer create_drive_folder for new code.
     if mime_type == FOLDER_MIME_TYPE:
@@ -924,7 +949,6 @@ async def create_drive_file(
             service, user_google_email, file_name, folder_id
         )
 
-    file_data = None
     resolved_folder_id = await resolve_folder_id(service, folder_id)
 
     file_metadata = {
@@ -933,8 +957,28 @@ async def create_drive_file(
         "mimeType": mime_type,
     }
 
-    # Prefer fileUrl if both are provided
-    if fileUrl:
+    if base64_content is not None:
+        file_metadata["mimeType"] = content_mime_type
+        media = MediaIoBaseUpload(
+            io.BytesIO(file_data),
+            mimetype=content_mime_type,
+            resumable=True,
+            chunksize=UPLOAD_CHUNK_SIZE_BYTES,
+        )
+
+        created_file = await asyncio.to_thread(
+            service.files()
+            .create(
+                body=file_metadata,
+                media_body=media,
+                fields="id, name, webViewLink",
+                supportsAllDrives=True,
+            )
+            .execute,
+            num_retries=GOOGLE_API_WRITE_RETRIES,
+        )
+    # Prefer fileUrl if both legacy sources are provided.
+    elif fileUrl:
         logger.info(f"[create_drive_file] Fetching file from URL: {fileUrl}")
 
         # Check if this is a file:// URL

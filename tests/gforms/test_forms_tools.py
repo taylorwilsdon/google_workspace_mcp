@@ -12,7 +12,12 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 # Import internal implementation functions (not decorated tool wrappers)
-from gforms.forms_tools import _batch_update_form_impl, _serialize_form_item, get_form
+from gforms.forms_tools import (
+    _batch_update_form_impl,
+    _serialize_form_item,
+    get_form,
+    set_publish_settings,
+)
 
 
 @pytest.mark.asyncio
@@ -342,3 +347,50 @@ async def test_get_form_returns_structured_item_metadata():
     assert '"type": "GRID"' in result
     assert '"columns": [' in result
     assert '"rows": [' in result
+
+
+@pytest.mark.asyncio
+async def test_set_publish_settings_builds_publish_state_body():
+    """set_publish_settings should send publishSettings.publishState with an updateMask."""
+    mock_service = Mock()
+    mock_service.forms().setPublishSettings().execute.return_value = {}
+
+    result = await set_publish_settings.__wrapped__.__wrapped__(
+        mock_service,
+        "user@example.com",
+        "form_123",
+        is_published=True,
+        is_accepting_responses=False,
+    )
+
+    _, kwargs = mock_service.forms().setPublishSettings.call_args
+    assert kwargs["formId"] == "form_123"
+    assert kwargs["body"] == {
+        "publishSettings": {
+            "publishState": {
+                "isPublished": True,
+                "isAcceptingResponses": False,
+            }
+        },
+        "updateMask": "publishState.isPublished,publishState.isAcceptingResponses",
+    }
+    assert "Published: True" in result
+    assert "Accepting responses: False" in result
+    assert "form_123" in result
+
+
+@pytest.mark.asyncio
+async def test_set_publish_settings_defaults_publish_and_accept():
+    """Defaults should publish the form and accept responses."""
+    mock_service = Mock()
+    mock_service.forms().setPublishSettings().execute.return_value = {}
+
+    await set_publish_settings.__wrapped__.__wrapped__(
+        mock_service, "user@example.com", "form_abc"
+    )
+
+    _, kwargs = mock_service.forms().setPublishSettings.call_args
+    assert kwargs["body"]["publishSettings"]["publishState"] == {
+        "isPublished": True,
+        "isAcceptingResponses": True,
+    }

@@ -39,6 +39,13 @@ class OAuthConfig:
         self.client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID")
         self.client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET")
 
+        # Branding for the OAuth consent page. FastMCP's OAuth proxy renders the
+        # server's name / icon / website on the consent screen; these env vars feed
+        # those server fields. All optional — unset leaves the upstream defaults.
+        self.brand_name = os.getenv("WORKSPACE_MCP_BRAND_NAME")
+        self.brand_icon_url = os.getenv("WORKSPACE_MCP_BRAND_ICON_URL")
+        self.brand_website_url = os.getenv("WORKSPACE_MCP_BRAND_WEBSITE_URL")
+
         # OAuth 2.1 configuration
         self.oauth21_enabled = (
             os.getenv("MCP_ENABLE_OAUTH21", "false").lower() == "true"

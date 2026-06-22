@@ -603,6 +603,92 @@ async def get_events(
 # ---------------------------------------------------------------------------
 
 
+# Friendly provider name -> conferenceSolution display name for the addOn block.
+_CONFERENCE_SOLUTION_NAMES = {
+    "zoom": "Zoom Meeting",
+    "webex": "Webex",
+    "teams": "Microsoft Teams",
+    "microsoft teams": "Microsoft Teams",
+}
+
+
+def _build_addon_conference_data(
+    provider: str,
+    uri: str,
+    passcode: Optional[str] = None,
+    conference_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build a Google Calendar ``conferenceData`` block for a third-party add-on.
+
+    Used for providers (Zoom, Webex, Teams, ...) attached via the
+    ``conferenceSolution.key.type = "addOn"`` mechanism rather than the native
+    ``hangoutsMeet`` create request.
+    """
+    provider = provider.strip()
+    uri = uri.strip()
+    name = _CONFERENCE_SOLUTION_NAMES.get(provider.lower(), provider)
+    entry_point: Dict[str, Any] = {
+        "entryPointType": "video",
+        "uri": uri,
+        "label": name,
+    }
+    if passcode:
+        entry_point["passcode"] = passcode
+    conference_data: Dict[str, Any] = {
+        "conferenceSolution": {"key": {"type": "addOn"}, "name": name},
+        "entryPoints": [entry_point],
+    }
+    if conference_id:
+        conference_data["conferenceId"] = conference_id
+    return conference_data
+
+
+def _resolve_conference_data(
+    conference_data: Optional[Dict[str, Any]],
+    conference_provider: Optional[str],
+    conference_uri: Optional[str],
+    conference_passcode: Optional[str],
+    conference_id: Optional[str],
+    add_google_meet: Optional[bool],
+) -> Optional[Dict[str, Any]]:
+    """Resolve the conferencing inputs into a single ``conferenceData`` dict.
+
+    Accepts either a raw ``conference_data`` pass-through payload or the
+    higher-level ``conference_provider``/``conference_uri`` helper params, and
+    validates that they are not combined with each other or with
+    ``add_google_meet``. Returns the resolved payload, or ``None`` if no
+    third-party conference was requested.
+    """
+    helper_used = any(
+        [conference_provider, conference_uri, conference_passcode, conference_id]
+    )
+    if conference_data is not None and helper_used:
+        raise ValueError(
+            "Provide either conference_data (raw payload) or the "
+            "conference_provider/conference_uri helper params, not both."
+        )
+
+    resolved = conference_data
+    if helper_used:
+        provider = (conference_provider or "").strip()
+        uri = (conference_uri or "").strip()
+        if not (provider and uri):
+            raise ValueError(
+                "conference_provider and conference_uri are both required to "
+                "attach a third-party conference."
+            )
+        resolved = _build_addon_conference_data(
+            provider, uri, conference_passcode, conference_id
+        )
+
+    if resolved is not None and add_google_meet:
+        raise ValueError(
+            "Cannot attach a third-party conference and add_google_meet on the "
+            "same event; choose one."
+        )
+    return resolved
+
+
 async def _create_event_impl(
     service,
     user_google_email: str,
@@ -616,6 +702,7 @@ async def _create_event_impl(
     timezone: Optional[str] = None,
     attachments: Optional[List[str]] = None,
     add_google_meet: bool = False,
+    conference_data: Optional[Dict[str, Any]] = None,
     reminders: Optional[Union[str, List[Dict[str, Any]]]] = None,
     use_default_reminders: bool = True,
     transparency: Optional[str] = None,
@@ -722,6 +809,15 @@ async def _create_event_impl(
         logger.info(
             f"[create_event] Adding Google Meet conference with request ID: {request_id}"
         )
+    elif conference_data is not None:
+        event_body["conferenceData"] = conference_data
+        logger.info("[create_event] Attaching pre-generated conference data")
+
+    # conferenceDataVersion=1 is required whenever conferenceData is present,
+    # whether it's a native Meet create request or a pre-generated add-on payload.
+    conference_data_version = (
+        1 if (add_google_meet or conference_data is not None) else 0
+    )
 
     if attachments:
         # Accept both file URLs and file IDs. If a URL, extract the fileId.
@@ -800,7 +896,7 @@ async def _create_event_impl(
                     calendarId=calendar_id,
                     body=event_body,
                     supportsAttachments=True,
-                    conferenceDataVersion=1 if add_google_meet else 0,
+                    conferenceDataVersion=conference_data_version,
                     sendUpdates=send_updates,
                 )
                 .execute()
@@ -813,7 +909,7 @@ async def _create_event_impl(
                 .insert(
                     calendarId=calendar_id,
                     body=event_body,
-                    conferenceDataVersion=1 if add_google_meet else 0,
+                    conferenceDataVersion=conference_data_version,
                     sendUpdates=send_updates,
                 )
                 .execute()
@@ -822,16 +918,12 @@ async def _create_event_impl(
     link = created_event.get("htmlLink", "No link available")
     confirmation_message = f"Successfully created event '{created_event.get('summary', summary)}' for {user_google_email}. Link: {link}"
 
-    # Add Google Meet information if conference was created
-    if add_google_meet and "conferenceData" in created_event:
-        conference_data = created_event["conferenceData"]
-        if "entryPoints" in conference_data:
-            for entry_point in conference_data["entryPoints"]:
-                if entry_point.get("entryPointType") == "video":
-                    meet_link = entry_point.get("uri", "")
-                    if meet_link:
-                        confirmation_message += f" Google Meet: {meet_link}"
-                        break
+    # Surface the conferencing link (native Meet or third-party add-on) if present
+    if add_google_meet or conference_data is not None:
+        meeting_link = _get_meeting_link(created_event)
+        if meeting_link:
+            label = "Google Meet" if add_google_meet else "Conference"
+            confirmation_message += f" {label}: {meeting_link}"
 
     logger.info(
         f"Event created successfully for {user_google_email}. ID: {created_event.get('id')}, Link: {link}"
@@ -881,6 +973,7 @@ async def _modify_event_impl(
     attendees: Optional[Union[List[str], List[Dict[str, Any]]]] = None,
     timezone: Optional[str] = None,
     add_google_meet: Optional[bool] = None,
+    conference_data: Optional[Dict[str, Any]] = None,
     reminders: Optional[Union[str, List[Dict[str, Any]]]] = None,
     use_default_reminders: Optional[bool] = None,
     transparency: Optional[str] = None,
@@ -1002,8 +1095,12 @@ async def _modify_event_impl(
             f"[modify_event] Set guestsCanSeeOtherGuests to {guests_can_see_other_guests}"
         )
 
-    # Handle Google Meet conference data
-    if add_google_meet is not None:
+    # Handle conference data
+    if conference_data is not None:
+        # Attach a pre-generated third-party conference (Zoom/Webex/Teams add-on)
+        event_body["conferenceData"] = conference_data
+        logger.info("[modify_event] Attaching pre-generated conference data")
+    elif add_google_meet is not None:
         if add_google_meet:
             request_id = str(uuid.uuid4())
             event_body["conferenceData"] = {
@@ -1099,16 +1196,15 @@ async def _modify_event_impl(
     link = updated_event.get("htmlLink", "No link available")
     confirmation_message = f"Successfully modified event '{updated_event.get('summary', summary)}' (ID: {event_id}) for {user_google_email}. Link: {link}"
 
-    # Add Google Meet information if conference was added
-    if add_google_meet is True and "conferenceData" in updated_event:
-        conference_data = updated_event["conferenceData"]
-        if "entryPoints" in conference_data:
-            for entry_point in conference_data["entryPoints"]:
-                if entry_point.get("entryPointType") == "video":
-                    meet_link = entry_point.get("uri", "")
-                    if meet_link:
-                        confirmation_message += f" Google Meet: {meet_link}"
-                        break
+    # Surface the conferencing link (native Meet or third-party add-on) if present
+    if conference_data is not None:
+        meeting_link = _get_meeting_link(updated_event)
+        if meeting_link:
+            confirmation_message += f" Conference: {meeting_link}"
+    elif add_google_meet is True:
+        meeting_link = _get_meeting_link(updated_event)
+        if meeting_link:
+            confirmation_message += f" Google Meet: {meeting_link}"
     elif add_google_meet is False:
         confirmation_message += " (Google Meet removed)"
 
@@ -1264,6 +1360,11 @@ async def manage_event(
     timezone: Optional[str] = None,
     attachments: Optional[StringList] = None,
     add_google_meet: Optional[bool] = None,
+    conference_data: Optional[Dict[str, Any]] = None,
+    conference_provider: Optional[str] = None,
+    conference_uri: Optional[str] = None,
+    conference_passcode: Optional[str] = None,
+    conference_id: Optional[str] = None,
     reminders: Optional[Union[str, List[Dict[str, Any]]]] = None,
     use_default_reminders: Optional[bool] = None,
     transparency: Optional[str] = None,
@@ -1293,7 +1394,18 @@ async def manage_event(
         attendees (Optional[Union[List[str], List[Dict[str, Any]]]]): Attendee email addresses or objects.
         timezone (Optional[str]): Timezone (e.g., "America/New_York").
         attachments (Optional[List[str]]): List of Google Drive file URLs or IDs to attach.
-        add_google_meet (Optional[bool]): Whether to add/remove Google Meet.
+        add_google_meet (Optional[bool]): Whether to add/remove native Google Meet.
+        conference_data (Optional[Dict[str, Any]]): Raw Google Calendar `conferenceData`
+            payload to attach a third-party conference (Zoom/Webex/Teams add-on). Use this
+            for full control; mutually exclusive with the conference_provider helper params
+            and with add_google_meet. (create/update only)
+        conference_provider (Optional[str]): Higher-level helper: third-party provider name
+            (e.g. "zoom", "webex", "teams"). Requires conference_uri. The MCP builds the
+            addOn `conferenceData` block internally. (create/update only)
+        conference_uri (Optional[str]): Join URL for the third-party conference (e.g.
+            "https://zoom.us/j/123456789"). Required when conference_provider is set.
+        conference_passcode (Optional[str]): Optional passcode for the third-party conference.
+        conference_id (Optional[str]): Optional provider-side conference/meeting ID.
         reminders (Optional[Union[str, List[Dict[str, Any]]]]): Custom reminder objects.
         use_default_reminders (Optional[bool]): Whether to use default reminders.
         transparency (Optional[str]): "opaque" (busy) or "transparent" (free).
@@ -1319,6 +1431,19 @@ async def manage_event(
                 f"Invalid send_updates '{send_updates}'. Must be one of: {sorted(valid_send_updates)}"
             )
 
+    # Resolve the conferencing inputs (raw payload or helper params) once for the
+    # actions that build an event body.
+    resolved_conference_data = None
+    if action_lower in ("create", "update"):
+        resolved_conference_data = _resolve_conference_data(
+            conference_data,
+            conference_provider,
+            conference_uri,
+            conference_passcode,
+            conference_id,
+            add_google_meet,
+        )
+
     if action_lower == "create":
         if not summary or not start_time or not end_time:
             raise ValueError(
@@ -1337,6 +1462,7 @@ async def manage_event(
             timezone=timezone,
             attachments=attachments,
             add_google_meet=add_google_meet or False,
+            conference_data=resolved_conference_data,
             reminders=reminders,
             use_default_reminders=use_default_reminders
             if use_default_reminders is not None
@@ -1365,6 +1491,7 @@ async def manage_event(
             attendees=attendees,
             timezone=timezone,
             add_google_meet=add_google_meet,
+            conference_data=resolved_conference_data,
             reminders=reminders,
             use_default_reminders=use_default_reminders,
             transparency=transparency,

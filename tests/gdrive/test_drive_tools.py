@@ -6,6 +6,7 @@ Tests create_drive_folder with mocked API responses, plus coverage for
 and `file_type` filtering behaviors.
 """
 
+import base64
 import pytest
 from unittest.mock import Mock, AsyncMock, patch
 import io
@@ -16,6 +17,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 
 from gdrive.drive_helpers import build_drive_list_params
 from gdrive.drive_tools import (
+    create_drive_file,
     get_drive_file_permissions,
     import_to_google_doc,
     import_to_google_sheets,
@@ -36,6 +38,133 @@ def _unwrap(tool):
     while hasattr(fn, "__wrapped__"):
         fn = fn.__wrapped__
     return fn
+
+
+# ---------------------------------------------------------------------------
+# create_drive_file — inline base64 upload
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_tools.resolve_folder_id", new_callable=AsyncMock)
+async def test_create_drive_file_uploads_base64_content(mock_resolve_folder):
+    """Inline base64 bytes are decoded and uploaded with the provided MIME type."""
+    payload = b"%PDF-1.7\nbinary\x00data"
+    mock_resolve_folder.return_value = "folder123"
+    mock_service = Mock()
+    mock_service.files().create().execute.return_value = {
+        "id": "pdf123",
+        "name": "report.pdf",
+        "webViewLink": "https://drive.google.com/file/d/pdf123",
+    }
+
+    result = await _unwrap(create_drive_file)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        file_name="report.pdf",
+        folder_id="target-folder",
+        base64_content=base64.b64encode(payload).decode("ascii"),
+        content_mime_type="application/pdf",
+    )
+
+    create_kwargs = mock_service.files.return_value.create.call_args.kwargs
+    assert create_kwargs["body"] == {
+        "name": "report.pdf",
+        "parents": ["folder123"],
+        "mimeType": "application/pdf",
+    }
+    assert create_kwargs["supportsAllDrives"] is True
+    media = create_kwargs["media_body"]
+    assert media.mimetype() == "application/pdf"
+    assert media.getbytes(0, len(payload)) == payload
+    assert "Successfully created file 'report.pdf'" in result
+
+
+@pytest.mark.asyncio
+async def test_create_drive_file_rejects_mixed_base64_and_text_content():
+    """create_drive_file accepts exactly one content source."""
+    mock_service = Mock()
+
+    with pytest.raises(ValueError, match="base64_content"):
+        await _unwrap(create_drive_file)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            file_name="report.pdf",
+            content="text",
+            base64_content=base64.b64encode(b"pdf").decode("ascii"),
+            content_mime_type="application/pdf",
+        )
+
+    mock_service.files.return_value.create.return_value.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_drive_file_requires_mime_type_for_base64_content():
+    """Inline base64 uploads require an explicit source MIME type."""
+    mock_service = Mock()
+
+    with pytest.raises(ValueError, match="content_mime_type"):
+        await _unwrap(create_drive_file)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            file_name="report.pdf",
+            base64_content=base64.b64encode(b"pdf").decode("ascii"),
+        )
+
+    mock_service.files.return_value.create.return_value.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_tools.resolve_folder_id", new_callable=AsyncMock)
+async def test_create_drive_file_rejects_invalid_base64_content(mock_resolve_folder):
+    """Invalid inline base64 fails before calling Drive create."""
+    mock_resolve_folder.return_value = "folder123"
+    mock_service = Mock()
+
+    with pytest.raises(ValueError, match="base64_content"):
+        await _unwrap(create_drive_file)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            file_name="report.pdf",
+            base64_content="not valid base64 !!!",
+            content_mime_type="application/pdf",
+        )
+
+    mock_resolve_folder.assert_not_called()
+    mock_service.files.return_value.create.return_value.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_drive_file_rejects_content_mime_type_without_base64():
+    """content_mime_type only applies to base64_content uploads."""
+    mock_service = Mock()
+
+    with pytest.raises(ValueError, match="content_mime_type"):
+        await _unwrap(create_drive_file)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            file_name="report.pdf",
+            content="text",
+            content_mime_type="application/pdf",
+        )
+
+    mock_service.files.return_value.create.return_value.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_drive_file_rejects_empty_file_url():
+    """An empty fileUrl is treated as no content source and rejected early."""
+    mock_service = Mock()
+
+    with pytest.raises(ValueError, match="content"):
+        await _unwrap(create_drive_file)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            file_name="report.pdf",
+            fileUrl="",
+        )
+
+    mock_service.files.return_value.create.return_value.execute.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

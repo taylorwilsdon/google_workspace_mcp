@@ -71,6 +71,25 @@ tolerations: []
 
 affinity: {}
 
+# Deployment update strategy. Leave empty for the default RollingUpdate.
+# Set type: Recreate when persistence uses a ReadWriteOnce volume — a rolling
+# update would deadlock with the new pod waiting on the PVC the old pod holds.
+strategy: {}
+  # type: Recreate
+
+# Persistent storage, e.g. for the OAuth proxy disk backend so tokens survive
+# a restart. When disabled the pod runs fully on emptyDir (ephemeral).
+persistence:
+  enabled: false
+  # Mount an existing PVC instead of creating one from this chart.
+  existingClaim: ""
+  storageClass: ""
+  accessMode: ReadWriteOnce
+  size: 1Gi
+  mountPath: /data
+  # subPath: ""
+  annotations: {}
+
 # Environment variables for the application
 env:
   # Server configuration

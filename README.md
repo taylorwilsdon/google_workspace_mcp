@@ -251,6 +251,9 @@ uv run main.py --transport streamable-http --tools gmail drive calendar
 | `WORKSPACE_MCP_TRANSPORT` | | `stdio` or `streamable-http`; used when `--transport` is not passed |
 | `WORKSPACE_MCP_HTTP_PORT` | | Advanced legacy-stdio sidecar `/mcp` port for local `workspace-cli` access. Disabled when empty. Binds to `127.0.0.1` only and is accessible to local processes. |
 | `WORKSPACE_EXTERNAL_URL` | | External URL for reverse proxy setups |
+| `WORKSPACE_MCP_BRAND_NAME` | | OAuth 2.1 consent-page server name — default FastMCP's name |
+| `WORKSPACE_MCP_BRAND_ICON_URL` | | OAuth 2.1 consent-page logo (hosted URL or `data:` URI), shown at 64px wide — default FastMCP's logo |
+| `WORKSPACE_MCP_BRAND_WEBSITE_URL` | | OAuth 2.1 consent-page website link |
 | `WORKSPACE_ATTACHMENT_DIR` | | Downloaded attachments dir and default trusted local attachment directory — default `~/.workspace-mcp/attachments/` |
 | `WORKSPACE_MCP_URL` | | Remote MCP endpoint URL for CLI |
 | `ALLOWED_FILE_DIRS` | | Colon-separated allowlist for local file reads |
@@ -330,6 +333,8 @@ pip install "workspace-mcp[gcs]"
    | [Calendar](https://console.cloud.google.com/flows/enableapi?apiid=calendar-json.googleapis.com) | [Drive](https://console.cloud.google.com/flows/enableapi?apiid=drive.googleapis.com) | [Gmail](https://console.cloud.google.com/flows/enableapi?apiid=gmail.googleapis.com) | [Docs](https://console.cloud.google.com/flows/enableapi?apiid=docs.googleapis.com) |
    | [Sheets](https://console.cloud.google.com/flows/enableapi?apiid=sheets.googleapis.com) | [Slides](https://console.cloud.google.com/flows/enableapi?apiid=slides.googleapis.com) | [Forms](https://console.cloud.google.com/flows/enableapi?apiid=forms.googleapis.com) | [Tasks](https://console.cloud.google.com/flows/enableapi?apiid=tasks.googleapis.com) |
    | [Chat](https://console.cloud.google.com/flows/enableapi?apiid=chat.googleapis.com) | [People](https://console.cloud.google.com/flows/enableapi?apiid=people.googleapis.com) | [Custom Search](https://console.cloud.google.com/flows/enableapi?apiid=customsearch.googleapis.com) | [Apps Script](https://console.cloud.google.com/flows/enableapi?apiid=script.googleapis.com) |
+
+   > **Google Chat needs extra setup.** Enabling the API is not enough — you must also configure a Chat app and use a Workspace account. See [Chat setup](#-google-chat) under the tool list.
 
 4. **Set Credentials** — see [Environment Variable Reference](#quick-start) above, or:
    ```bash
@@ -946,6 +951,40 @@ Saved files expire after 1 hour and are cleaned up automatically.
 | <sub>`create_reaction`</sub> | <sub>Core</sub> | <sub>Add emoji reaction to a message</sub> |
 | <sub>`download_chat_attachment`</sub> | <sub>Extended</sub> | <sub>Download attachment from a chat message</sub> |
 
+<details>
+<summary>💬 <b>Chat setup — required before any Chat tool works</b></summary>
+
+Unlike other Workspace services, **enabling the Chat API is not enough** — the Chat API refuses every request until you configure a Chat app, and it only works with Google Workspace accounts. Two extra steps are required:
+
+**1. Configure the Chat app**
+
+Enabling `chat.googleapis.com` alone causes every Chat tool to fail. You must also complete the **Configuration** tab so the API has an app identity to attach requests to:
+
+- Open [Chat API → Configuration](https://console.cloud.google.com/apis/api/chat.googleapis.com/hangouts-chat) (APIs & Services → Enabled APIs → Google Chat API → **Configuration**)
+- Fill in the three required fields under **Application info**:
+  - **App name** — e.g. `Workspace MCP` (up to 25 characters)
+  - **Avatar URL** — any HTTPS URL to a square PNG/JPEG (e.g. `https://developers.google.com/chat/images/quickstart-app-avatar.png`)
+  - **Description** — e.g. `Workspace MCP` (up to 40 characters)
+- Click **Save**
+
+> This server authenticates **as the signed-in user** (user OAuth), not as a bot. You do **not** need to enable interactive features, create a service account, or publish the app — the Configuration form above is the only Chat-specific setup required.
+
+**2. Use a Google Workspace account**
+
+The Chat API is **not available to personal `@gmail.com` accounts**. Configuring it with one returns:
+
+```text
+Google Chat API is only available to Google Workspace users.
+```
+
+Sign in with a Business/Enterprise Google Workspace account (the same account you pass as `user_google_email`).
+
+The required scopes (`chat.spaces.readonly`, `chat.messages.readonly`, `chat.messages`, `chat.spaces`) are requested automatically during the OAuth flow — no manual scope configuration is needed.
+
+<sub>[Configure the Chat API →](https://developers.google.com/workspace/chat/configure-chat-api) · [User authentication →](https://developers.google.com/workspace/chat/authenticate-authorize-chat-user)</sub>
+
+</details>
+
 #### 🔍 Google Custom Search <sub>[`search_tools.py`](gsearch/search_tools.py)</sub>
 
 | <sub>Tool</sub> | <sub>Tier</sub> | <sub>Description</sub> |
@@ -1394,6 +1433,22 @@ You also have options for:
 - The redirect URI must exactly match what's configured in your Google Cloud Console
 - Your reverse proxy must forward OAuth-related requests (`/oauth2callback`, `/oauth2/*`, `/.well-known/*`) to the MCP server
 - Do **not** set `Referrer-Policy: no-referrer` on your proxy. It makes browsers send `Origin: null` on the same-origin consent `POST`, which origin validation rejects with `{"error": "Origin not allowed"}` (logged as `Rejected HTTP request from Origin: null`) even when `WORKSPACE_EXTERNAL_URL` is correct. Use `strict-origin-when-cross-origin` (the browser default) or `same-origin` instead.
+- Some clients send `Origin: null` on the consent `POST` even with correct headers — Chrome serializes the form origin as opaque after the cross-origin OAuth redirect chain (seen with the Claude Code CLI flow). If you hit this, strip **only** a literal `null` `Origin` for the `/consent` endpoint. The consent endpoint is CSRF-protected by its unguessable `txn_id`, and nginx sends the empty-valued `Origin` header as an empty value that ASGI decodes to `b""`; the middleware validates only when `raw_origin` is truthy, so empty bytes skip this request while real origins still pass through and get validated:
+
+  ```nginx
+  location ^~ /consent {
+      set $consent_origin $http_origin;
+      if ($http_origin = "null") { set $consent_origin ""; }
+      proxy_set_header Host $host;
+      proxy_set_header X-Real-IP $remote_addr;
+      proxy_set_header X-Forwarded-Proto https;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection $connection_upgrade;
+      proxy_set_header Origin $consent_origin;
+      proxy_pass http://127.0.0.1:<port>;
+  }
+  ```
 
 <details open>
 <summary>🚀 <b>Advanced uvx Commands</b> <sub><sup>← More startup options</sup></sub></summary>

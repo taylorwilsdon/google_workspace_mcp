@@ -1,3 +1,6 @@
+{{- if and .Values.persistence.enabled (eq .Values.persistence.accessMode "ReadWriteOnce") (or .Values.autoscaling.enabled (gt (int .Values.replicaCount) 1)) }}
+{{- fail "persistence.accessMode=ReadWriteOnce can only attach to one pod: set replicaCount=1 and autoscaling.enabled=false, or use a ReadWriteMany volume." }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -5,6 +8,10 @@ metadata:
   labels:
     {{- include "workspace-mcp.labels" . | nindent 4 }}
 spec:
+  {{- with .Values.strategy }}
+  strategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
   {{- end }}
@@ -111,6 +118,13 @@ spec:
             - name: tmp
               mountPath: /tmp
               readOnly: false
+            {{- if .Values.persistence.enabled }}
+            - name: data
+              mountPath: {{ .Values.persistence.mountPath }}
+              {{- with .Values.persistence.subPath }}
+              subPath: {{ . }}
+              {{- end }}
+            {{- end }}
       volumes:
         - name: credentials
           emptyDir:
@@ -118,6 +132,11 @@ spec:
         - name: tmp
           emptyDir:
             sizeLimit: 100Mi
+        {{- if .Values.persistence.enabled }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.existingClaim | default (include "workspace-mcp.fullname" .) }}
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

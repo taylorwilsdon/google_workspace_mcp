@@ -260,8 +260,8 @@ async def set_publish_settings(
     service,
     user_google_email: str,
     form_id: str,
-    publish_as_template: bool = False,
-    require_authentication: bool = False,
+    is_published: bool = True,
+    is_accepting_responses: bool = True,
 ) -> str:
     """
     Updates the publish settings of a form.
@@ -269,8 +269,8 @@ async def set_publish_settings(
     Args:
         user_google_email (str): The user's Google email address. Required.
         form_id (str): The ID of the form to update publish settings for.
-        publish_as_template (bool): Whether to publish as a template. Defaults to False.
-        require_authentication (bool): Whether to require authentication to view/submit. Defaults to False.
+        is_published (bool): Whether the form is published and visible to responders. Defaults to True.
+        is_accepting_responses (bool): Whether the form accepts responses. Only takes effect when the form is published. Defaults to True.
 
     Returns:
         str: Confirmation message of the successful publish settings update.
@@ -280,15 +280,20 @@ async def set_publish_settings(
     )
 
     settings_body = {
-        "publishAsTemplate": publish_as_template,
-        "requireAuthentication": require_authentication,
+        "publishSettings": {
+            "publishState": {
+                "isPublished": is_published,
+                "isAcceptingResponses": is_accepting_responses,
+            }
+        },
+        "updateMask": "publishState",
     }
 
     await asyncio.to_thread(
         service.forms().setPublishSettings(formId=form_id, body=settings_body).execute
     )
 
-    confirmation_message = f"Successfully updated publish settings for form {form_id} for {user_google_email}. Publish as template: {publish_as_template}, Require authentication: {require_authentication}"
+    confirmation_message = f"Successfully updated publish settings for form {form_id} for {user_google_email}. Published: {is_published}, Accepting responses: {is_accepting_responses}"
     logger.info(
         f"Publish settings updated successfully for {user_google_email}. Form ID: {form_id}"
     )

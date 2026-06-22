@@ -16,7 +16,11 @@ from auth.auth_info_middleware import AuthInfoMiddleware
 from auth.google_auth import handle_auth_callback, start_auth_flow, check_client_secrets
 from auth.mcp_session_middleware import MCPSessionMiddleware
 from auth.oauth21_session_store import set_auth_provider
-from auth.oauth_config import is_oauth21_enabled, is_external_oauth21_provider
+from auth.oauth_config import (
+    is_oauth21_enabled,
+    is_external_oauth21_provider,
+    get_oauth_config,
+)
 from auth.oauth_responses import (
     create_error_response,
     create_success_response,
@@ -32,7 +36,7 @@ from core.config import (
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastmcp import FastMCP
 from fastmcp.server.auth.providers.google import GoogleProvider
-from mcp.types import ToolAnnotations
+from mcp.types import ToolAnnotations, Icon
 from starlette.applications import Starlette
 from starlette.datastructures import MutableHeaders
 from starlette.middleware import Middleware
@@ -277,10 +281,19 @@ if USER_GOOGLE_EMAIL:
 When using Google Workspace tools, always use `{USER_GOOGLE_EMAIL}` as the `user_google_email` parameter. Do not ask the user for their email address."""
     logger.info(f"Server instructions configured for user: {USER_GOOGLE_EMAIL}")
 
+# Branding for the OAuth consent page: FastMCP's OAuth proxy renders the server's
+# name / icon / website on the consent screen (auth/oauth_config reads the env vars).
+_brand_config = get_oauth_config()
+_brand_icons = (
+    [Icon(src=_brand_config.brand_icon_url)] if _brand_config.brand_icon_url else None
+)
+
 server = SecureFastMCP(
-    name="google_workspace",
+    name=_brand_config.brand_name or "google_workspace",
     auth=None,
     instructions=_server_instructions,
+    website_url=_brand_config.brand_website_url,
+    icons=_brand_icons,
 )
 
 # Add the AuthInfo middleware to inject authentication into FastMCP context

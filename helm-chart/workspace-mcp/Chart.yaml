@@ -2,8 +2,9 @@ apiVersion: v2
 name: workspace-mcp
 description: A Helm chart for Google Workspace MCP Server - Comprehensive Google Workspace integration for AI assistants
 type: application
-version: 0.1.0
+version: 0.3.0
 appVersion: "1.2.0"
+kubeVersion: ">=1.25.0-0"
 keywords:
   - mcp
   - google

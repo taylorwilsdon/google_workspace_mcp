@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import html
 import logging
 from collections import Counter
 from datetime import datetime, timezone
 from email.utils import getaddresses, parseaddr, parsedate_to_datetime
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from fastmcp.exceptions import ToolError as ToolExecutionError
 from googleapiclient.errors import HttpError
@@ -251,3 +252,77 @@ def _analyze_thread_ownership_impl(
         "excluded_drafts": excluded_drafts,
         "message_count": len(messages),
     }
+
+
+def _build_forward_content(
+    headers: dict[str, str],
+    bodies: dict[str, str],
+    forward_message: Optional[str],
+    forward_message_format: Literal["plain", "html"],
+    subject_override: Optional[str],
+) -> tuple[str, str, Literal["plain", "html"]]:
+    """Build the (subject, body, body_format) for a forwarded message.
+
+    Pure formatting kept out of the @server.tool wrapper so it is independently
+    testable: quotes the original headers/body and prepends an optional note.
+    An explicit subject_override wins over the derived 'Fwd: <subject>'.
+    """
+    original_subject = headers.get("Subject", "(no subject)")
+    original_from = headers.get("From", "(unknown sender)")
+    original_date = headers.get("Date", "(unknown date)")
+    original_to = headers.get("To", "")
+    original_text = bodies.get("text", "")
+    original_html = bodies.get("html", "")
+    has_html = bool(original_html.strip())
+
+    forward_header_text = (
+        "---------- Forwarded message ---------\n"
+        f"From: {original_from}\n"
+        f"Date: {original_date}\n"
+        f"Subject: {original_subject}\n"
+        f"To: {original_to}"
+    )
+    # Header values are escaped; they render as text but may carry markup.
+    forward_header_html = (
+        '<div style="color: #777;">'
+        "---------- Forwarded message ---------<br/>"
+        f"From: {html.escape(original_from)}<br/>"
+        f"Date: {html.escape(original_date)}<br/>"
+        f"Subject: {html.escape(original_subject)}<br/>"
+        f"To: {html.escape(original_to)}"
+        "</div>"
+    )
+
+    # Render as HTML when the original is HTML or the note is explicitly HTML.
+    if has_html or (forward_message and forward_message_format == "html"):
+        note_html = ""
+        if forward_message:
+            if forward_message_format == "html":
+                note_html = f"<div>{forward_message}</div><br/>"
+            else:
+                escaped = html.escape(forward_message).replace("\n", "<br/>")
+                note_html = f"<div>{escaped}</div><br/>"
+        original_body_html = (
+            original_html
+            if has_html
+            else html.escape(original_text).replace("\n", "<br/>")
+        )
+        forward_body = (
+            f"{note_html}"
+            '<div style="border-left: 1px solid #ccc; padding-left: 10px; margin-left: 10px;">'
+            f"{forward_header_html}<br/>{original_body_html}</div>"
+        )
+        body_format: Literal["plain", "html"] = "html"
+    else:
+        note = f"{forward_message}\n\n" if forward_message else ""
+        forward_body = f"{note}{forward_header_text}\n\n{original_text}"
+        body_format = "plain"
+
+    # Derive the subject, avoiding a double prefix for existing "Fwd:"/"FW:".
+    subject = subject_override or original_subject
+    if not subject_override and not subject.lower().lstrip().startswith(
+        ("fwd:", "fw:")
+    ):
+        subject = f"Fwd: {original_subject}"
+
+    return subject, forward_body, body_format
