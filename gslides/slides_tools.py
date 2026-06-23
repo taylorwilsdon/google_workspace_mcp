@@ -12,7 +12,7 @@ from mcp.types import ToolAnnotations
 
 from auth.service_decorator import require_google_service
 from core.server import server
-from core.utils import handle_http_errors
+from core.utils import handle_http_errors, DictList
 from core.comments import create_comment_tools
 from gslides.slides_helpers import (
     validate_batch_update_requests,
@@ -249,7 +249,7 @@ async def batch_update_presentation(
     service,
     user_google_email: str,
     presentation_id: str,
-    requests: List[Dict[str, Any]],
+    requests: DictList,
 ) -> str:
     """
     Apply batch updates to a Google Slides presentation.
