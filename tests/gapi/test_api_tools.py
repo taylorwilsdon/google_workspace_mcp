@@ -14,11 +14,13 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
+import auth.scopes as scopes
 from core.utils import UserInputError
 from gapi.api_tools import (
     _api_call_impl,
     _format_response,
     _prepare_request,
+    _redact_url,
 )
 
 
@@ -83,6 +85,42 @@ def test_string_body_passed_through():
         "POST", "https://gmail.googleapis.com/x", None, "raw-string"
     )
     assert body == "raw-string"
+
+
+# --- read-only mode --------------------------------------------------------------
+
+
+@pytest.fixture
+def read_only_mode():
+    """Enable read-only mode for the duration of a test, then restore."""
+    previous = scopes.is_read_only_mode()
+    scopes.set_read_only(True)
+    try:
+        yield
+    finally:
+        scopes.set_read_only(previous)
+
+
+def test_read_only_blocks_mutating_methods(read_only_mode):
+    for method in ("POST", "PUT", "PATCH", "DELETE"):
+        with pytest.raises(UserInputError):
+            _prepare_request(method, "https://gmail.googleapis.com/x", None, None)
+
+
+def test_read_only_allows_get(read_only_mode):
+    method, _, _, _ = _prepare_request(
+        "GET", "https://gmail.googleapis.com/x", None, None
+    )
+    assert method == "GET"
+
+
+# --- URL redaction ---------------------------------------------------------------
+
+
+def test_redact_url_strips_query():
+    redacted = _redact_url("https://gmail.googleapis.com/v1/x?access_token=secret&q=1")
+    assert redacted == "https://gmail.googleapis.com/v1/x"
+    assert "secret" not in redacted
 
 
 # --- _format_response -------------------------------------------------------------

@@ -11,6 +11,7 @@ the same OAuth credentials the typed service clients use, so it cannot do anythi
 the user has not consented to.
 """
 
+import asyncio
 import json
 import logging
 from typing import Any, Dict, Optional
@@ -18,7 +19,7 @@ from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from mcp.types import ToolAnnotations
 
-from auth.scopes import USERINFO_EMAIL_SCOPE
+from auth.scopes import USERINFO_EMAIL_SCOPE, is_read_only_mode
 from auth.service_decorator import require_google_service
 from core.server import server
 from core.utils import UserInputError, handle_http_errors
@@ -29,6 +30,9 @@ logger = logging.getLogger(__name__)
 # Google's own API hosts would leak them, so api_call is restricted to the
 # *.googleapis.com surface.
 _ALLOWED_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE"})
+
+# Methods permitted when the server is started in --read-only mode.
+_READ_ONLY_METHODS = frozenset({"GET"})
 
 # Response bodies are returned inline to the model; cap to avoid flooding context.
 _MAX_RESPONSE_CHARS = 100_000
@@ -50,6 +54,12 @@ def _validate_url(url: str) -> str:
     return url
 
 
+def _redact_url(url: str) -> str:
+    """Return scheme://host/path, dropping the query string (may carry secrets)."""
+    parts = urlsplit(url)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+
+
 def _prepare_request(
     method: str, url: str, query: Optional[Dict[str, Any]], body: Optional[Any]
 ) -> tuple:
@@ -58,6 +68,12 @@ def _prepare_request(
     if method not in _ALLOWED_METHODS:
         raise UserInputError(
             f"method must be one of {sorted(_ALLOWED_METHODS)} (got '{method}')."
+        )
+
+    if is_read_only_mode() and method not in _READ_ONLY_METHODS:
+        raise UserInputError(
+            f"Server is in read-only mode; api_call only permits "
+            f"{sorted(_READ_ONLY_METHODS)} (got '{method}')."
         )
 
     _validate_url(url)
@@ -106,13 +122,16 @@ async def _api_call_impl(
     """Internal implementation for api_call (see the tool's docstring)."""
     method, url, request_body, headers = _prepare_request(method, url, query, body)
 
-    logger.info(f"[api_call] {user_google_email} -> {method} {url}")
+    # Log only scheme/host/path — the query string may carry tokens or secrets.
+    logger.info(f"[api_call] {user_google_email} -> {method} {_redact_url(url)}")
 
     # Borrow the authorized transport from the injected service. It carries the
     # user's OAuth credentials and handles token refresh; we just point it at an
     # arbitrary endpoint. The decorator closes `service` (and thus this http) on exit.
+    # httplib2's request() is synchronous, so run it off the event loop.
     authorized_http = service._http
-    response, content = authorized_http.request(
+    response, content = await asyncio.to_thread(
+        authorized_http.request,
         url, method=method, body=request_body, headers=headers
     )
 
