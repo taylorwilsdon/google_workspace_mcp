@@ -131,11 +131,18 @@ class TestSelectionBranch:
     and the enabled-tool registry.
     """
 
-    def setup_method(self):
+    def _reset(self):
         tool_registry.set_enabled_tools(None)
+        set_explicit_scopes(None)
+        set_enabled_scope_tools(None)
+        set_read_only(False)
+        permissions.set_permissions(None)
+
+    def setup_method(self):
+        self._reset()
 
     def teardown_method(self):
-        tool_registry.set_enabled_tools(None)
+        self._reset()
 
     def test_selection_resolves_services_and_allowlist(self):
         """--only-tools send_gmail_message manage_drive_access resolves to the
@@ -220,3 +227,36 @@ class TestSelectionBranch:
 
         assert exc.value.code == 1
         assert "--only-tools cannot be combined" in capsys.readouterr().err
+
+    def test_only_tools_override_does_not_leak_across_runs(self, monkeypatch):
+        """A prior --only-tools run leaves an explicit-scope override on the module
+        global; a later non---only-tools run in the same process must clear it
+        (main() resets it), so get_scopes_for_tools() stops short-circuiting on the
+        stale exact-scope grant."""
+        # Simulate the leftover override from an earlier --only-tools invocation.
+        set_explicit_scopes({GMAIL_SEND_SCOPE})
+        assert set(get_scopes_for_tools(["drive"])) == set(BASE_SCOPES) | {
+            GMAIL_SEND_SCOPE
+        }
+
+        class _StopBeforeServer(Exception):
+            pass
+
+        def _stop(*_a, **_k):
+            raise _StopBeforeServer()
+
+        monkeypatch.setattr(main, "configure_safe_logging", lambda: None)
+        monkeypatch.setattr(main, "resolve_callback_port_for_transport", lambda t: None)
+        monkeypatch.setattr(main, "validate_streamable_http_auth", lambda t: None)
+        # Stop main() right after the scope-setup, before it launches a server.
+        monkeypatch.setattr(main, "filter_server_tools", _stop)
+        monkeypatch.setattr(sys, "argv", ["main.py", "--tools", "gmail"])
+
+        with pytest.raises(_StopBeforeServer):
+            main.main()
+
+        # The override is gone: the normal service-scope path runs instead of the
+        # stale explicit grant.
+        assert set(get_scopes_for_tools(["drive"])) != set(BASE_SCOPES) | {
+            GMAIL_SEND_SCOPE
+        }

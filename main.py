@@ -741,6 +741,11 @@ def main():
     from auth.scopes import set_enabled_tools, set_read_only, set_explicit_scopes
 
     set_enabled_tools(list(tools_to_import))
+    # Clear any explicit-scope override left from a prior in-process run; only the
+    # --only-tools branch below sets it. Without this reset, a second main() call
+    # in the same process (tests, or an embedded re-init) that does NOT use
+    # --only-tools would reuse the stale exact-scope grant and request wrong scopes.
+    set_explicit_scopes(None)
     if args.read_only:
         set_read_only(True)
 
