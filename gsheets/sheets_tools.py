@@ -2438,3 +2438,157 @@ _comment_tools = create_comment_tools("spreadsheet", "spreadsheet_id")
 # Extract and register the functions
 list_spreadsheet_comments = _comment_tools["list_comments"]
 manage_spreadsheet_comment = _comment_tools["manage_comment"]
+
+
+async def _manage_data_validation_impl(
+    service,
+    spreadsheet_id: str,
+    range_name: str,
+    action: str = "set",
+    values: Optional[List[str]] = None,
+    source_range: Optional[str] = None,
+    strict: bool = True,
+    show_dropdown: bool = True,
+    input_message: Optional[str] = None,
+) -> dict:
+    """Internal implementation for manage_data_validation (decorator-free for tests)."""
+    action_normalized = (action or "").strip().lower()
+    if action_normalized not in ("set", "clear"):
+        raise UserInputError("action must be 'set' or 'clear'.")
+
+    if action_normalized == "set" and bool(values) == bool(source_range):
+        raise UserInputError(
+            "For action='set', provide exactly one of 'values' (a list of dropdown "
+            "options) or 'source_range' (an A1 range to source the options from)."
+        )
+
+    metadata = await asyncio.to_thread(
+        service.spreadsheets()
+        .get(
+            spreadsheetId=spreadsheet_id,
+            fields="sheets(properties(sheetId,title))",
+        )
+        .execute
+    )
+    sheets = metadata.get("sheets", [])
+    grid_range = _parse_a1_range(range_name, sheets)
+
+    if action_normalized == "clear":
+        # Omitting 'rule' from setDataValidation clears validation on the range.
+        dv_request = {"range": grid_range}
+        summary = "cleared data validation"
+    else:
+        if values:
+            condition = {
+                "type": "ONE_OF_LIST",
+                "values": [{"userEnteredValue": str(v)} for v in values],
+            }
+            summary = f"set a dropdown with {len(values)} option(s)"
+        else:
+            ref = source_range.strip()
+            if not ref.startswith("="):
+                ref = "=" + ref
+            condition = {
+                "type": "ONE_OF_RANGE",
+                "values": [{"userEnteredValue": ref}],
+            }
+            summary = f"set a dropdown sourced from {source_range}"
+
+        rule = {
+            "condition": condition,
+            "showCustomUi": show_dropdown,
+            "strict": strict,
+        }
+        if input_message:
+            rule["inputMessage"] = input_message
+        dv_request = {"range": grid_range, "rule": rule}
+
+    request_body = {"requests": [{"setDataValidation": dv_request}]}
+    await asyncio.to_thread(
+        service.spreadsheets()
+        .batchUpdate(spreadsheetId=spreadsheet_id, body=request_body)
+        .execute
+    )
+
+    return {
+        "range_name": range_name,
+        "spreadsheet_id": spreadsheet_id,
+        "summary": summary,
+    }
+
+
+@server.tool(
+    title="Manage Data Validation",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("manage_data_validation", service_type="sheets")
+@require_google_service("sheets", "sheets_write")
+async def manage_data_validation(
+    service,
+    user_google_email: str,
+    spreadsheet_id: str,
+    range_name: str,
+    action: str = "set",
+    values: Optional[StringList] = None,
+    source_range: Optional[str] = None,
+    strict: bool = True,
+    show_dropdown: bool = True,
+    input_message: Optional[str] = None,
+) -> str:
+    """
+    Sets or clears data validation (dropdowns) on a Google Sheets range.
+
+    Use this to add a dropdown to cells, either from a fixed list of options or
+    sourced from another range, or to remove validation. To run the dropdown,
+    pick action="set" with exactly one of `values` or `source_range`.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        spreadsheet_id (str): The ID of the spreadsheet. Required.
+        range_name (str): A1-style range to apply validation to, optionally with a
+            sheet name (e.g., "Sheet1!C2:C100"). If no sheet name, the first sheet
+            is used. Required.
+        action (str): "set" to apply a dropdown, "clear" to remove validation.
+            Defaults to "set".
+        values (Optional[List[str]]): The list of allowed dropdown options
+            (action="set" with a fixed list). Mutually exclusive with source_range.
+        source_range (Optional[str]): An A1 range whose cell values populate the
+            dropdown, e.g. "Lists!A1:A20" (the leading "=" is added if omitted).
+            Mutually exclusive with values.
+        strict (bool): If True, reject entries not in the list. If False, warn but
+            allow. Defaults to True.
+        show_dropdown (bool): Show the dropdown arrow chip in the cell. Defaults to True.
+        input_message (Optional[str]): Optional help tooltip shown on the cell.
+
+    Returns:
+        str: Confirmation of the applied or cleared validation.
+    """
+    logger.info(
+        "[manage_data_validation] Action: '%s', Email: '%s', Spreadsheet: %s, Range: %s",
+        action,
+        user_google_email,
+        spreadsheet_id,
+        range_name,
+    )
+
+    result = await _manage_data_validation_impl(
+        service=service,
+        spreadsheet_id=spreadsheet_id,
+        range_name=range_name,
+        action=action,
+        values=values,
+        source_range=source_range,
+        strict=strict,
+        show_dropdown=show_dropdown,
+        input_message=input_message,
+    )
+
+    return (
+        f"Applied data validation to '{result['range_name']}' in spreadsheet "
+        f"{result['spreadsheet_id']} for {user_google_email}: {result['summary']}."
+    )
