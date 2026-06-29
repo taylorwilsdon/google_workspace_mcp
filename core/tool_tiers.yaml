@@ -96,6 +96,7 @@ sheets:
     - manage_spreadsheet_comment
     - manage_conditional_formatting
     - manage_data_validation
+    - read_data_validation
 
 chat:
   core:
