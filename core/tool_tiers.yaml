@@ -95,6 +95,8 @@ sheets:
     - list_spreadsheet_comments
     - manage_spreadsheet_comment
     - manage_conditional_formatting
+    - list_named_ranges
+    - manage_named_range
 
 chat:
   core:
