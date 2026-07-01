@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 import logging
 import os
-from typing import List, Optional, TYPE_CHECKING
+from typing import Any, List, Optional, Protocol, TYPE_CHECKING
 from importlib import metadata
 from urllib.parse import urlparse, ParseResult
 
@@ -54,10 +54,20 @@ else:
     # `monkeypatch.setattr(server_module, "GoogleProvider", Fake)` target.
     GoogleProvider = None
 
+
+class _AuthProvider(Protocol):
+    """Structural type for the cached provider — GoogleProvider and its
+    ExternalOAuthProvider subclass (see auth/external_oauth_provider.py) are
+    both stored in `_auth_provider`; this covers the shared interface
+    `AuthInfoMiddleware` actually calls without over-narrowing to one type."""
+
+    async def verify_token(self, token: str) -> Any: ...
+
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-_auth_provider: Optional["GoogleProvider"] = None
+_auth_provider: Optional[_AuthProvider] = None
 _legacy_callback_registered = False
 
 session_middleware = Middleware(MCPSessionMiddleware)
@@ -716,7 +726,7 @@ def configure_server_for_http():
         _ensure_legacy_callback_route()
 
 
-def get_auth_provider() -> Optional["GoogleProvider"]:
+def get_auth_provider() -> Optional[_AuthProvider]:
     """Gets the global authentication provider instance."""
     return _auth_provider
 
