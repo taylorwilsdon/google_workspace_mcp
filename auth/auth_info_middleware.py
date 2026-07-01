@@ -9,7 +9,6 @@ from fastmcp.server.middleware import Middleware, MiddlewareContext
 from fastmcp.server.dependencies import get_access_token
 from fastmcp.server.dependencies import get_http_headers
 
-from auth.external_oauth_provider import get_session_time
 from auth.oauth21_session_store import ensure_session_from_access_token
 from auth.oauth_types import WorkspaceAccessToken
 
@@ -126,7 +125,17 @@ class AuthInfoMiddleware(Middleware):
                                             access_token = verified_auth
                                         else:
                                             # Standard GoogleProvider returns a base AccessToken;
-                                            # wrap it in WorkspaceAccessToken for identical downstream handling
+                                            # wrap it in WorkspaceAccessToken for identical downstream handling.
+                                            # Imported here (not at module top) so importing this
+                                            # middleware doesn't drag in `auth.external_oauth_provider`
+                                            # (and transitively GoogleProvider's whole FastMCP
+                                            # OAuth-proxy stack) unless a token actually needs
+                                            # wrapping — mirrors the existing lazy
+                                            # `from core.server import get_auth_provider` import above.
+                                            from auth.external_oauth_provider import (
+                                                get_session_time,
+                                            )
+
                                             verified_expires = getattr(
                                                 verified_auth, "expires_at", None
                                             )

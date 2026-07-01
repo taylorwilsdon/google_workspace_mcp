@@ -8,11 +8,10 @@ import logging
 import os
 import webbrowser
 
-from typing import List, Optional, Tuple, Dict, Any
+from typing import List, Optional, Tuple, Dict, Any, TYPE_CHECKING
 from urllib.parse import parse_qs, urlparse
 
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import Flow
 from google.auth.transport.requests import Request
 from google.auth.exceptions import RefreshError
 from googleapiclient.discovery import build
@@ -34,6 +33,18 @@ try:
     from fastmcp.server.dependencies import get_context as get_fastmcp_context
 except ImportError:
     get_fastmcp_context = None
+
+if TYPE_CHECKING:
+    from google_auth_oauthlib.flow import Flow
+else:
+    # Deferred at runtime (see the lazy import in create_oauth_flow below): this
+    # single import pulls in the whole google_auth_oauthlib package (including
+    # the `.interactive` submodule), which costs ~700ms of import time and is
+    # only needed when actually *starting* a new OAuth flow — never when
+    # serving tool calls off already-cached, refreshed credentials. Kept as a
+    # real (if `None`) module attribute so it stays a valid
+    # `monkeypatch`/`patch` target for anything that patches the whole name.
+    Flow = None
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -326,8 +337,17 @@ def create_oauth_flow(
     state: Optional[str] = None,
     code_verifier: Optional[str] = None,
     autogenerate_code_verifier: bool = True,
-) -> Flow:
+) -> "Flow":
     """Creates an OAuth flow using environment variables or client secrets file."""
+    # Imported lazily (module-global-cached) so importing this module — which
+    # every code path does, including a plain `--help` — doesn't pay the
+    # ~700ms google_auth_oauthlib import cost unless a NEW auth flow is
+    # actually being started. `global` + the NameError guard keep `Flow`
+    # patchable at the module level (existing tests do
+    # `patch("auth.google_auth.Flow.from_client_config", ...)`).
+    global Flow
+    if Flow is None:
+        from google_auth_oauthlib.flow import Flow
     flow_kwargs = {
         "scopes": scopes,
         "redirect_uri": redirect_uri,

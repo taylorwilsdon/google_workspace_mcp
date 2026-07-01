@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 import logging
 import os
-from typing import List, Optional
+from typing import List, Optional, TYPE_CHECKING
 from importlib import metadata
 from urllib.parse import urlparse, ParseResult
 
@@ -35,7 +35,6 @@ from core.config import (
 )
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastmcp import FastMCP
-from fastmcp.server.auth.providers.google import GoogleProvider
 from mcp.types import ToolAnnotations, Icon
 from starlette.applications import Starlette
 from starlette.datastructures import MutableHeaders
@@ -43,10 +42,22 @@ from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.types import ASGIApp, Scope, Receive, Send
 
+if TYPE_CHECKING:
+    from fastmcp.server.auth.providers.google import GoogleProvider
+else:
+    # Deferred at runtime (see the lazy import in configure_server_for_http's
+    # "Standard OAuth 2.1 mode" branch below): this class pulls in FastMCP's
+    # OAuth-proxy stack, which costs ~650ms of import time and is only ever
+    # needed when protocol-level OAuth 2.1 auth is actually configured. Legacy
+    # OAuth 2.0 mode (the default) never touches it. Kept as a real (if `None`)
+    # module attribute — not omitted — so it stays a valid
+    # `monkeypatch.setattr(server_module, "GoogleProvider", Fake)` target.
+    GoogleProvider = None
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-_auth_provider: Optional[GoogleProvider] = None
+_auth_provider: Optional["GoogleProvider"] = None
 _legacy_callback_registered = False
 
 session_middleware = Middleware(MCPSessionMiddleware)
@@ -635,7 +646,18 @@ def configure_server_for_http():
                     "Protected resource metadata points to Google's authorization server"
                 )
             else:
-                # Standard OAuth 2.1 mode: use FastMCP's GoogleProvider
+                # Standard OAuth 2.1 mode: use FastMCP's GoogleProvider. Imported
+                # lazily (module-global-cached) so a `--transport stdio` process
+                # using legacy OAuth 2.0 (this branch never runs) doesn't pay the
+                # ~650ms FastMCP OAuth-proxy import cost on every cold start.
+                # `global` + the NameError guard keep `GoogleProvider` patchable
+                # at the module level (tests do
+                # `monkeypatch.setattr(server_module, "GoogleProvider", Fake)`).
+                global GoogleProvider
+                if GoogleProvider is None:
+                    from fastmcp.server.auth.providers.google import (
+                        GoogleProvider,
+                    )
                 allowed_client_redirect_uris = _parse_allowed_redirect_uris(
                     os.getenv("WORKSPACE_MCP_ALLOWED_CLIENT_REDIRECT_URIS")
                 )
@@ -694,7 +716,7 @@ def configure_server_for_http():
         _ensure_legacy_callback_route()
 
 
-def get_auth_provider() -> Optional[GoogleProvider]:
+def get_auth_provider() -> Optional["GoogleProvider"]:
     """Gets the global authentication provider instance."""
     return _auth_provider
 
