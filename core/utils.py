@@ -3,6 +3,7 @@ import io
 import json
 import logging
 import os
+import tempfile
 import zipfile
 import ssl
 import asyncio
@@ -244,6 +245,40 @@ def validate_file_path(file_path: str) -> Path:
     )
 
 
+def _probe_credentials_directory_writable(credentials_dir: str) -> None:
+    """
+    Probe write access to ``credentials_dir`` using a uniquely-named
+    temporary file.
+
+    Uses ``tempfile.mkstemp`` so each call gets a random unique suffix —
+    concurrent callers (multiple processes sharing the same credentials
+    directory via ``WORKSPACE_MCP_CREDENTIALS_DIR``) never race on the
+    same probe filename. ``mkstemp`` is preferred over
+    ``NamedTemporaryFile`` here because the latter holds the file open
+    with ``O_TEMPORARY`` on Windows (Python ≤3.11), which can fail to
+    delete cleanly when antivirus or indexing services have a transient
+    handle on the file.
+
+    Lets ``PermissionError`` / ``OSError`` propagate from ``mkstemp`` /
+    ``os.write``. Best-effort cleanup of the probe file; unlink errors
+    are swallowed since the unique path means no peer can race the
+    unlink (and the function's contract is "can write", not "can
+    delete").
+    """
+    fd, path = tempfile.mkstemp(prefix=".permission_test_", dir=credentials_dir)
+    try:
+        os.write(fd, b"test")
+    finally:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
 def check_credentials_directory_permissions(credentials_dir: str = None) -> None:
     """
     Check if the service has appropriate permissions to create and write to the .credentials directory.
@@ -264,11 +299,8 @@ def check_credentials_directory_permissions(credentials_dir: str = None) -> None
         # Check if directory exists
         if os.path.exists(credentials_dir):
             # Directory exists, check if we can write to it
-            test_file = os.path.join(credentials_dir, ".permission_test")
             try:
-                with open(test_file, "w") as f:
-                    f.write("test")
-                os.remove(test_file)
+                _probe_credentials_directory_writable(credentials_dir)
                 logger.info(
                     f"Credentials directory permissions check passed: {os.path.abspath(credentials_dir)}"
                 )
@@ -281,10 +313,7 @@ def check_credentials_directory_permissions(credentials_dir: str = None) -> None
             try:
                 os.makedirs(credentials_dir, exist_ok=True)
                 # Test writing to the new directory
-                test_file = os.path.join(credentials_dir, ".permission_test")
-                with open(test_file, "w") as f:
-                    f.write("test")
-                os.remove(test_file)
+                _probe_credentials_directory_writable(credentials_dir)
                 logger.info(
                     f"Created credentials directory with proper permissions: {os.path.abspath(credentials_dir)}"
                 )
