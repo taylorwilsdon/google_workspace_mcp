@@ -153,6 +153,68 @@ def _find_any_credentials(
     return None, None
 
 
+def _find_single_user_credentials_for_request(
+    user_google_email: str,
+) -> tuple[Optional[Credentials], Optional[str]]:
+    """
+    Find credentials in single-user mode when the caller supplied an email.
+
+    A single-user deployment may receive a stale or client-profile email from
+    the MCP client. If the credential store contains exactly one account, trust
+    the local credential file over the caller-provided value. When multiple
+    users exist, keep the strict behavior to avoid selecting the wrong account.
+    """
+    credential_store = get_credential_store()
+    credentials = credential_store.get_credential(user_google_email)
+    if credentials:
+        logger.info(
+            f"[get_credentials] Single-user mode: found credentials for requested user {user_google_email}"
+        )
+        return credentials, user_google_email
+
+    try:
+        users = credential_store.list_users()
+    except Exception as e:
+        logger.info(
+            "[get_credentials] Single-user mode: no credentials for requested "
+            f"user {user_google_email}; cannot inspect local credential users: {e}"
+        )
+        return None, None
+
+    requested_lower = user_google_email.lower()
+    case_matches = [user for user in users if user.lower() == requested_lower]
+
+    if len(case_matches) == 1:
+        selected_user = case_matches[0]
+        logger.info(
+            "[get_credentials] Single-user mode: using credential store email "
+            f"{selected_user} for requested user {user_google_email}"
+        )
+    elif len(users) == 1:
+        selected_user = users[0]
+        logger.info(
+            "[get_credentials] Single-user mode: overriding requested user "
+            f"{user_google_email} with sole credential user {selected_user}"
+        )
+    else:
+        logger.info(
+            "[get_credentials] Single-user mode: no credentials for requested "
+            f"user {user_google_email}; not falling back because {len(users)} "
+            "credential users are available"
+        )
+        return None, None
+
+    credentials = credential_store.get_credential(selected_user)
+    if not credentials:
+        logger.info(
+            "[get_credentials] Single-user mode: selected credential user "
+            f"{selected_user} could not be loaded"
+        )
+        return None, None
+
+    return credentials, selected_user
+
+
 def save_credentials_to_session(session_id: str, credentials: Credentials):
     """Saves user credentials using OAuth21SessionStore."""
     # Get user email from credentials if possible
@@ -891,9 +953,10 @@ def get_credentials(
     """
     Retrieves stored credentials, prioritizing OAuth 2.1 store, then session, then file. Refreshes if necessary.
     If credentials are loaded from file and a session_id is present, they are cached in the session.
-    In single-user mode, bypasses session mapping. If user_google_email is provided, only credentials
-    for that email are used and the function returns None instead of falling back to any available
-    credentials. If user_google_email is not provided, any available credentials may be used.
+    In single-user mode, bypasses session mapping. If user_google_email is provided,
+    credentials for that email are preferred. If the credential store contains exactly
+    one user, that stored user is trusted over a caller-provided mismatch. If multiple
+    users exist, no fallback is used.
 
     Args:
         user_google_email: Optional user's Google email.
@@ -1004,22 +1067,10 @@ def get_credentials(
         logger.info(
             "[get_credentials] Single-user mode: bypassing session mapping, finding any credentials"
         )
-        # If a specific email was requested, try to load that user's credentials first
-        # to avoid session binding conflicts when multiple credential files exist
         if user_google_email:
-            credential_store = get_credential_store()
-            credentials = credential_store.get_credential(user_google_email)
-            if credentials:
-                logger.info(
-                    f"[get_credentials] Single-user mode: found credentials for requested user {user_google_email}"
-                )
-                found_user_email = user_google_email
-            else:
-                logger.info(
-                    "[get_credentials] Single-user mode: no credentials for requested "
-                    f"user {user_google_email}; not falling back to another user"
-                )
-                return None
+            credentials, found_user_email = _find_single_user_credentials_for_request(
+                user_google_email
+            )
         else:
             credentials, found_user_email = _find_any_credentials(credentials_base_dir)
         if not credentials:
@@ -1028,9 +1079,9 @@ def get_credentials(
             )
             return None
 
-        # Use the email from the credential file if not provided
-        # This ensures we can save refreshed credentials even when the token is expired
-        if not user_google_email and found_user_email:
+        # Use the email from the credential file so refreshed credentials are
+        # persisted back to the canonical account for this single-user instance.
+        if found_user_email and user_google_email != found_user_email:
             user_google_email = found_user_email
             logger.debug(
                 f"[get_credentials] Single-user mode: using email {user_google_email} from credential file"
