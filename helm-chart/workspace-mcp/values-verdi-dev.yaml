@@ -11,6 +11,12 @@ image:
   repository: ghcr.io/verdilabs/google_workspace_mcp
   # tag pinned by the ArgoCD Application (or set here to a released tag).
 
+# The GHCR package is private; pull with the `ghcr-pull` dockerconfigjson secret
+# that a platform CronJob keeps fresh (minted hourly from the verdi-argocd GitHub
+# App key — the same key ArgoCD uses for git). See infra gitops/clusters/dev.
+imagePullSecrets:
+  - name: ghcr-pull
+
 # Pin the ServiceAccount name so it matches the federated-credential subject
 # (system:serviceaccount:gws-mcp:workspace-mcp) and annotate it for Workload
 # Identity.
