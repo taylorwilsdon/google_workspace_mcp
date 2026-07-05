@@ -96,13 +96,43 @@ env:
 
 # Secret configuration for sensitive data
 secrets:
-  # Google OAuth credentials (required)
+  # Google OAuth credentials.
   googleOAuth:
-    # Set these values or create secret manually
+    # create: render the inline K8s Secret from the values below. DISABLE on the
+    # Verdi platform (verdi.secretProviderClass provides the secret from Key Vault
+    # instead — no secret material in git). Default true for upstream/local use.
+    create: true
     clientId: ""
     clientSecret: ""
     # Optional: default user email for single-user setups
     userEmail: ""
+
+# --- Verdi platform conventions (ADR-0023/0026/0027). Off by default so the
+# upstream chart is unchanged for other users; the Verdi values overlay turns
+# these on. See helm-chart/workspace-mcp/values-verdi-dev.yaml. ---
+verdi:
+  # Azure Workload Identity: the pod federates to Azure with no static creds.
+  workloadIdentity:
+    enabled: false
+    clientId: "" # user-assigned MI client ID (Terraform output gws_mcp_identity_client_id)
+    tenantId: ""
+  # Secrets from Key Vault via the Secret Store CSI driver (replaces the inline
+  # Secret). Projects the named KV secrets into <fullname>-oauth (client-id /
+  # client-secret / user-email keys the Deployment reads).
+  secretProviderClass:
+    enabled: false
+    keyvaultName: "" # e.g. kv-verdi-dev-tools
+    secrets:
+      clientId: "gws-mcp-google-oauth-client-id"
+      clientSecret: "gws-mcp-google-oauth-client-secret"
+      userEmail: "" # optional KV secret name; empty = not projected
+  # Ingress via the platform Gateway (AGC + WAF) HTTPRoute, not a per-app Ingress.
+  httpRoute:
+    enabled: false
+    hostname: ""
+    gateway:
+      name: platform-gateway
+      namespace: ingress
 
 # Tool selection - specify which Google Workspace tools to enable
 tools:

@@ -1,0 +1,38 @@
+{{- /*
+HTTPRoute — Verdi platform ingress (ADR-0026).
+
+Public traffic on Verdi enters via the platform Gateway (Application Gateway for
+Containers + WAF, ns ingress), NOT a per-app Ingress/LoadBalancer. This route
+attaches to that Gateway (cross-namespace parentRef) and routes its hostname to
+this app's Service. The platform owns the Gateway + WAF; the app owns only this
+route.
+
+Enabled via verdi.httpRoute.enabled (mutually exclusive with the upstream
+ingress.enabled, which stays false on Verdi).
+*/ -}}
+{{- if .Values.verdi.httpRoute.enabled }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "workspace-mcp.fullname" . }}
+  labels:
+    {{- include "workspace-mcp.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: {{ .Values.verdi.httpRoute.gateway.name }}
+      namespace: {{ .Values.verdi.httpRoute.gateway.namespace }}
+  hostnames:
+    - {{ .Values.verdi.httpRoute.hostname | quote }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: {{ include "workspace-mcp.fullname" . }}
+          port: {{ .Values.service.port }}
+{{- end }}

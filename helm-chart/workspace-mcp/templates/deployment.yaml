@@ -19,6 +19,10 @@ spec:
       {{- end }}
       labels:
         {{- include "workspace-mcp.selectorLabels" . | nindent 8 }}
+        {{- if .Values.verdi.workloadIdentity.enabled }}
+        # Opt this pod into Azure Workload Identity token projection (Verdi).
+        azure.workload.identity/use: "true"
+        {{- end }}
     spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
@@ -111,6 +115,13 @@ spec:
             - name: tmp
               mountPath: /tmp
               readOnly: false
+            {{- if .Values.verdi.secretProviderClass.enabled }}
+            # Mounting the CSI volume is what triggers the driver to fetch the
+            # Key Vault secrets and materialize the <fullname>-oauth K8s Secret.
+            - name: kv-secrets
+              mountPath: /mnt/kv-secrets
+              readOnly: true
+            {{- end }}
       volumes:
         - name: credentials
           emptyDir:
@@ -118,6 +129,14 @@ spec:
         - name: tmp
           emptyDir:
             sizeLimit: 100Mi
+        {{- if .Values.verdi.secretProviderClass.enabled }}
+        - name: kv-secrets
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: {{ include "workspace-mcp.fullname" . }}-kv
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

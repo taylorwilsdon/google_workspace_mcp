@@ -1,0 +1,52 @@
+# Verdi dev overlay for the workspace-mcp chart.
+#
+# Turns on the Verdi platform conventions (Workload Identity + Key Vault CSI
+# secrets + platform-Gateway HTTPRoute) and pins the values that must match the
+# infra side (landing-zones/dev/gws-mcp.tf: the MI federated to
+# system:serviceaccount:gws-mcp:workspace-mcp). Referenced by the ArgoCD
+# Application in infra's gitops/clusters/dev.
+
+# GHCR image published by the app repo's docker-publish.yml.
+image:
+  repository: ghcr.io/verdilabs/google_workspace_mcp
+  # tag pinned by the ArgoCD Application (or set here to a released tag).
+
+# Pin the ServiceAccount name so it matches the federated-credential subject
+# (system:serviceaccount:gws-mcp:workspace-mcp) and annotate it for Workload
+# Identity.
+serviceAccount:
+  create: true
+  name: workspace-mcp
+  annotations:
+    azure.workload.identity/client-id: c7cda932-72a7-46d5-92f1-227f0048ec31
+
+# Secrets come from Key Vault, NOT an inline Secret.
+secrets:
+  googleOAuth:
+    create: false
+
+# Upstream per-app Ingress stays off (we use the platform Gateway HTTPRoute).
+ingress:
+  enabled: false
+
+verdi:
+  workloadIdentity:
+    enabled: true
+    clientId: c7cda932-72a7-46d5-92f1-227f0048ec31
+    tenantId: 231ca2bb-24c6-425e-9c9a-f30c96d202fe
+  secretProviderClass:
+    enabled: true
+    keyvaultName: kv-verdi-dev-tools
+    secrets:
+      clientId: gws-mcp-google-oauth-client-id
+      clientSecret: gws-mcp-google-oauth-client-secret
+      # userEmail left unset (multi-user); set a KV secret name to project it.
+  httpRoute:
+    enabled: true
+    hostname: gws-mcp.dev.verdilabs.io
+
+# The app's own external URL (for OAuth redirect/base URI). HTTP for now — the
+# platform Gateway listener is HTTP-only until the HTTPS listener lands.
+env:
+  WORKSPACE_MCP_PORT: "8000"
+  WORKSPACE_EXTERNAL_URL: "http://gws-mcp.dev.verdilabs.io"
