@@ -46,6 +46,18 @@ secrets:
 ingress:
   enabled: false
 
+# App workloads run on the Spot workload pool (ADR-0022), not the tainted system
+# pool. Tolerate the Spot taint so the pod can land there (and so the cluster
+# autoscaler scales the scale-to-zero Spot pool up for it), and select the
+# workload pool by its label.
+tolerations:
+  - key: kubernetes.azure.com/scalesetpriority
+    operator: Equal
+    value: spot
+    effect: NoSchedule
+nodeSelector:
+  verdi.io/pool: workload-spot
+
 verdi:
   workloadIdentity:
     enabled: true
