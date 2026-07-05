@@ -35,7 +35,12 @@ mcp_server_debug.log
 
 # ---- Local development files -------------------------------------------
 /.credentials
-/.claude
+# Ignore local .claude session state, but TRACK the VerdiLabs shared-skills
+# symlink so agents (and CI clones) get the skills. (Can't un-ignore a child if
+# the parent dir is ignored, so ignore the CONTENTS of /.claude, then re-include
+# the skills symlink.)
+/.claude/*
+!/.claude/skills
 .serena/
 Caddyfile
 ecosystem.config.cjs
