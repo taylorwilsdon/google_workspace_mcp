@@ -6,16 +6,14 @@
 # system:serviceaccount:gws-mcp:workspace-mcp). Referenced by the ArgoCD
 # Application in infra's gitops/clusters/dev.
 
-# GHCR image published by the app repo's docker-publish.yml.
+# Image lives in the shared dev ACR (infra landing-zones/dev/acr.tf). AKS pulls it
+# NATIVELY via the kubelet managed identity (AcrPull) — no imagePullSecret, no
+# token, no cron. (GHCR was dropped: kubelet can't mint tokens from the App key
+# like ArgoCD does, and GitHub App tokens are second-class for private-package
+# pulls.)
 image:
-  repository: ghcr.io/verdilabs/google_workspace_mcp
+  repository: acrverdideveus2.azurecr.io/google_workspace_mcp
   # tag pinned by the ArgoCD Application (or set here to a released tag).
-
-# The GHCR package is private; pull with the `ghcr-pull` dockerconfigjson secret
-# that a platform CronJob keeps fresh (minted hourly from the verdi-argocd GitHub
-# App key — the same key ArgoCD uses for git). See infra gitops/clusters/dev.
-imagePullSecrets:
-  - name: ghcr-pull
 
 # Pin the ServiceAccount name so it matches the federated-credential subject
 # (system:serviceaccount:gws-mcp:workspace-mcp) and annotate it for Workload
