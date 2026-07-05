@@ -20,6 +20,23 @@ serviceAccount:
   annotations:
     azure.workload.identity/client-id: c7cda932-72a7-46d5-92f1-227f0048ec31
 
+# Satisfy the namespace's Pod Security "restricted" enforcement. The upstream
+# securityContext drops caps + runs non-root but omits two fields "restricted"
+# requires; add them here (the deployment templates these from values).
+securityContext:
+  allowPrivilegeEscalation: false
+  runAsNonRoot: true
+  runAsUser: 1000
+  capabilities:
+    drop:
+      - ALL
+  seccompProfile:
+    type: RuntimeDefault
+podSecurityContext:
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
 # Secrets come from Key Vault, NOT an inline Secret.
 secrets:
   googleOAuth:
