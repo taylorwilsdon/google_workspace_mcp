@@ -78,8 +78,24 @@ verdi:
     enabled: true
     hostname: gws-mcp.dev.verdilabs.io
 
-# The app's own external URL (for OAuth redirect/base URI). HTTP for now — the
-# platform Gateway listener is HTTP-only until the HTTPS listener lands.
+# Server-side OAuth 2.1 (multi-user), served over HTTPS by the platform Gateway.
+#
+# This is a HOSTED MCP server that agents (Claude Code / Codex, via the
+# verdi-google plugin) connect to over HTTP — there is no localhost callback like
+# the standalone/stdio mode has. So the server MUST run the OAuth 2.1 flow:
+#   - MCP_ENABLE_OAUTH21=true       → advertise protected-resource metadata +
+#     drive the FastMCP GoogleProvider browser flow (per-user auth).
+#   - WORKSPACE_MCP_STATELESS_MODE  → the pod has no persistent creds volume;
+#     tokens live per-session, not on disk (requires OAuth21; enforced in config).
+#   - WORKSPACE_EXTERNAL_URL / GOOGLE_OAUTH_REDIRECT_URI → https, since the
+#     platform Gateway now serves this host over TLS (wildcard cert landed). The
+#     https redirect URI must ALSO be registered on the Google OAuth Web client
+#     (GCP console → Authorized redirect URIs) or Google rejects the callback.
+# The Google client SECRET comes from Key Vault (secretProviderClass above), so
+# this runs as a CONFIDENTIAL OAuth 2.1 client — no extra signing key needed.
 env:
   WORKSPACE_MCP_PORT: "8000"
-  WORKSPACE_EXTERNAL_URL: "http://gws-mcp.dev.verdilabs.io"
+  WORKSPACE_EXTERNAL_URL: "https://gws-mcp.dev.verdilabs.io"
+  MCP_ENABLE_OAUTH21: "true"
+  WORKSPACE_MCP_STATELESS_MODE: "true"
+  GOOGLE_OAUTH_REDIRECT_URI: "https://gws-mcp.dev.verdilabs.io/oauth2callback"
