@@ -37,6 +37,23 @@ def _decode_bodies(raw: str) -> str:
     return f"{headers}\r\n\r\n{decoded}"
 
 
+def _html_part(raw: str) -> str:
+    """Return the decoded text/html part, regardless of CTE (QP or base64).
+
+    Heavily non-ASCII bodies (Hebrew, Arabic) are base64-encoded by choose_cte,
+    which the QP-only ``_decode_bodies`` cannot decode; let the stdlib parser
+    handle either encoding.
+    """
+    from email import message_from_string
+
+    parsed = message_from_string(raw)
+    return "".join(
+        part.get_payload(decode=True).decode("utf-8")
+        for part in parsed.walk()
+        if part.get_content_type() == "text/html"
+    )
+
+
 def _gmail_service():
     service = Mock()
     service.users().messages().send().execute.return_value = {"id": "sent123"}
@@ -65,6 +82,69 @@ def _people_service_empty():
     service = Mock()
     service.people().searchContacts().execute.return_value = {"results": []}
     return service
+
+
+@pytest.mark.asyncio
+async def test_send_hebrew_body_renders_rtl():
+    """A Hebrew body auto-detects as RTL so Gmail right-aligns it."""
+    gmail = _gmail_service()
+    people = _people_service_empty()
+
+    await _unwrap(send_gmail_message)(
+        service=gmail,
+        people_service=people,
+        user_google_email="grace@example.org",
+        to="ada@example.com",
+        subject="Project sync",
+        body="שלום עולם\n\nזה גוף ההודעה",
+        include_signature=False,
+    )
+
+    html = _html_part(_raw_sent(gmail))
+    assert '<div dir="rtl">' in html
+    assert '<div dir="ltr">' not in html
+
+
+@pytest.mark.asyncio
+async def test_send_english_body_stays_ltr():
+    """An English body stays LTR (byte-identical to historical output)."""
+    gmail = _gmail_service()
+    people = _people_service_empty()
+
+    await _unwrap(send_gmail_message)(
+        service=gmail,
+        people_service=people,
+        user_google_email="grace@example.org",
+        to="ada@example.com",
+        subject="Project sync",
+        body="Hello there",
+        include_signature=False,
+    )
+
+    html = _html_part(_raw_sent(gmail))
+    assert '<div dir="ltr">' in html
+    assert '<div dir="rtl">' not in html
+
+
+@pytest.mark.asyncio
+async def test_send_direction_override_forces_rtl():
+    """Explicit direction='rtl' wins even when the first strong char is LTR."""
+    gmail = _gmail_service()
+    people = _people_service_empty()
+
+    await _unwrap(send_gmail_message)(
+        service=gmail,
+        people_service=people,
+        user_google_email="grace@example.org",
+        to="ada@example.com",
+        subject="Project sync",
+        body="OK שלום עולם",
+        direction="rtl",
+        include_signature=False,
+    )
+
+    html = _html_part(_raw_sent(gmail))
+    assert '<div dir="rtl">' in html
 
 
 @pytest.mark.asyncio

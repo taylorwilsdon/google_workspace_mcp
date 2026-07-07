@@ -72,6 +72,7 @@ from gmail.gmail_web_mime import (
     assemble_web_message,
     build_forwarded_container_html,
     build_forwarded_plain,
+    base_text_direction,
     build_quote_container_html,
     build_quote_plain,
     encode_raw,
@@ -917,6 +918,7 @@ async def _build_web_compose_raw(
     thread_names: Optional[Dict[str, str]] = None,
     attachments: Optional[List[Dict[str, Any]]] = None,
     include_bcc_header: bool = True,
+    direction: str = "auto",
 ) -> tuple[str, bool, set, int, List[str]]:
     """Assemble a Gmail-web faithful raw message for the send/draft tools.
 
@@ -996,14 +998,24 @@ async def _build_web_compose_raw(
     )
 
     # Build the new-message bodies (typed Gmail-web structure, no fingerprints).
+    # Resolve the base paragraph direction: auto-detect from the body text
+    # (first-strong-char per Unicode bidi) unless the caller forced ltr/rtl.
     if body_format == "html":
+        resolved_dir = (
+            base_text_direction(_html_to_text(body))
+            if direction == "auto"
+            else direction
+        )
         new_html = (
-            body if body.lstrip().startswith("<div dir=") else new_message_html(body)
+            body
+            if body.lstrip().startswith("<div dir=")
+            else new_message_html(body, resolved_dir)
         )
         new_plain = _html_to_text(body).strip()
     else:
         new_plain = body
-        new_html = new_message_html(plain_body_to_html(body))
+        resolved_dir = base_text_direction(body) if direction == "auto" else direction
+        new_html = new_message_html(plain_body_to_html(body), resolved_dir)
 
     # Append the reply quote trail when this is a reply within a thread.
     if quote_reply:
@@ -1724,6 +1736,7 @@ def _prepare_gmail_message(
     html_body: Optional[str] = None,
     date_header: Optional[str] = None,
     include_bcc_header: bool = True,
+    direction: str = "auto",
 ) -> tuple[str, Optional[str], int, List[str]]:
     """
     Prepare a Gmail message with threading and attachment support.
@@ -1776,15 +1789,23 @@ def _prepare_gmail_message(
             plain_part = body
             html_part = html_body
         elif normalized_format == "html":
+            resolved_dir = (
+                base_text_direction(_html_to_text(body))
+                if direction == "auto"
+                else direction
+            )
             html_part = (
                 body
                 if body.lstrip().startswith("<div dir=")
-                else new_message_html(body)
+                else new_message_html(body, resolved_dir)
             )
             plain_part = _html_to_text(body).strip()
         else:
             plain_part = body
-            html_part = new_message_html(plain_body_to_html(body))
+            resolved_dir = (
+                base_text_direction(body) if direction == "auto" else direction
+            )
+            html_part = new_message_html(plain_body_to_html(body), resolved_dir)
 
         raw_message, _web_count, _web_errors = _prepare_gmail_message_web(
             subject=reply_subject,
@@ -2686,6 +2707,12 @@ async def send_gmail_message(
             description="Whether to append the Gmail signature from Settings > Signature when available. Defaults to true.",
         ),
     ] = True,
+    direction: Annotated[
+        Literal["auto", "ltr", "rtl"],
+        Field(
+            description="Base text direction for the composed body. 'auto' (default) detects it from the body via the Unicode bidi first-strong-character rule (Hebrew/Arabic → right-to-left, otherwise left-to-right); 'ltr'/'rtl' force it. Embedded opposite-direction runs (English words, $/₪ amounts) always render correctly via the browser's bidi algorithm.",
+        ),
+    ] = "auto",
 ) -> str:
     """
     Sends an email using the user's Gmail account. Supports new emails, replies, and
@@ -2829,6 +2856,7 @@ async def send_gmail_message(
             from_name=from_name,
             from_email=from_email,
             user_google_email=user_google_email,
+            direction=direction,
         )
 
     if subject is None or body is None:
@@ -2900,6 +2928,7 @@ async def send_gmail_message(
         references=references,
         attachments=resolved_attachments or None,
         include_bcc_header=(effective == "api"),
+        direction=direction,
     )
     thread_id_final = thread_id
     # Note only when a recipient actually went unresolved AND more scope would
@@ -2959,11 +2988,13 @@ async def _forward_gmail_message_impl(
     from_name: Optional[str] = None,
     from_email: Optional[str] = None,
     user_google_email: str = "",
+    direction: str = "auto",
 ) -> str:
     """Build and send a forward of an existing Gmail message.
 
     Shared by send_gmail_message's forward path. An explicit ``subject`` overrides
-    the auto-derived 'Fwd: <original subject>'.
+    the auto-derived 'Fwd: <original subject>'. ``direction`` sets the base text
+    direction of the prepended note ('auto' detects it from the note text).
     """
     # Fetch the original message with full payload
     original_message = await asyncio.to_thread(
@@ -3082,8 +3113,14 @@ async def _forward_gmail_message_impl(
         orig_html=orig_html,
     )
     if note_html:
-        forward_html = new_message_html(f"{note_html}<br><br>{fwd_html_container}")
+        # Base direction follows the user's note; the forwarded original keeps
+        # its own dir markup inside the container.
+        note_dir = base_text_direction(note_plain) if direction == "auto" else direction
+        forward_html = new_message_html(
+            f"{note_html}<br><br>{fwd_html_container}", note_dir
+        )
     else:
+        # No note: nothing user-authored to orient, stay ltr (byte-identical).
         forward_html = new_message_html(f"<br>{fwd_html_container}")
 
     # --- Prepare and send the message ---
@@ -3233,6 +3270,12 @@ async def draft_gmail_message(
             description="Whether to include the original message as a quoted reply. Requires thread_id. Defaults to false.",
         ),
     ] = False,
+    direction: Annotated[
+        Literal["auto", "ltr", "rtl"],
+        Field(
+            description="Base text direction for the composed body. 'auto' (default) detects it from the body via the Unicode bidi first-strong-character rule (Hebrew/Arabic → right-to-left, otherwise left-to-right); 'ltr'/'rtl' force it. Embedded opposite-direction runs (English words, $/₪ amounts) always render correctly via the browser's bidi algorithm.",
+        ),
+    ] = "auto",
 ) -> str:
     """
     Creates a draft email in the user's Gmail account. Supports both new drafts and reply drafts with optional attachments.
@@ -3412,6 +3455,7 @@ async def draft_gmail_message(
         auto_thread=False,
         thread_names=draft_thread_names,
         attachments=resolved_attachments or None,
+        direction=direction,
     )
     name_note = (
         _build_name_fallback_note(people_service is None, missing_scopes)

@@ -15,6 +15,7 @@ import base64
 import html as _html
 import quopri
 import secrets
+import unicodedata
 from datetime import datetime
 from email.header import Header
 from email.utils import formataddr
@@ -100,9 +101,36 @@ def plain_body_to_html(text: str) -> str:
     return "".join(parts)
 
 
-def new_message_html(body_html: str) -> str:
-    """Wrap body HTML in Gmail's ``<div dir="ltr">`` container."""
-    return f'<div dir="ltr">{body_html}</div>'
+def base_text_direction(text: str) -> str:
+    """Return ``"rtl"`` or ``"ltr"`` for *text*'s base paragraph direction.
+
+    Follows the Unicode Bidirectional Algorithm's first-strong-character rule:
+    the direction is decided by the first character with a strong directional
+    type -- ``R``/``AL`` (Hebrew, Arabic, ...) yield ``"rtl"``, ``L`` yields
+    ``"ltr"``. Leading bidi-neutral characters (whitespace, digits, punctuation,
+    currency signs) are skipped. Text with no strong character defaults to
+    ``"ltr"`` -- matching Gmail's own compose default and keeping ASCII/Latin
+    output byte-identical.
+    """
+    for ch in text:
+        bidi = unicodedata.bidirectional(ch)
+        if bidi == "L":
+            return "ltr"
+        if bidi in ("R", "AL"):
+            return "rtl"
+    return "ltr"
+
+
+def new_message_html(body_html: str, direction: str = "ltr") -> str:
+    """Wrap body HTML in Gmail's ``<div dir="...">`` container.
+
+    ``direction`` is ``"ltr"`` (default, byte-identical to historical output) or
+    ``"rtl"``. Callers resolve the value from :func:`base_text_direction` (or an
+    explicit user choice) before wrapping. Embedded opposite-direction runs
+    (e.g. English words or ``$``/``₪`` amounts inside a Hebrew body) render
+    correctly via the browser's Unicode bidi algorithm regardless of the base.
+    """
+    return f'<div dir="{direction}">{body_html}</div>'
 
 
 def _format_attribution_when(dt: datetime) -> str:
