@@ -286,7 +286,7 @@ async def set_publish_settings(
                 "isAcceptingResponses": is_accepting_responses,
             }
         },
-        "updateMask": "publishState",
+        "updateMask": "publishState.isPublished,publishState.isAcceptingResponses",
     }
 
     await asyncio.to_thread(

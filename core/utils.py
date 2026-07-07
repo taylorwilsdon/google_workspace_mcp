@@ -3,6 +3,7 @@ import io
 import json
 import logging
 import os
+import tempfile
 import zipfile
 import ssl
 import asyncio
@@ -260,51 +261,25 @@ def check_credentials_directory_permissions(credentials_dir: str = None) -> None
 
         credentials_dir = get_default_credentials_dir()
 
+    # Multiple server processes may initialize the same credentials directory at
+    # once. Keep the check idempotent: create the directory if needed, probe with
+    # a unique temporary file, and never remove the shared directory on failure.
     try:
-        # Check if directory exists
-        if os.path.exists(credentials_dir):
-            # Directory exists, check if we can write to it
-            test_file = os.path.join(credentials_dir, ".permission_test")
-            try:
-                with open(test_file, "w") as f:
-                    f.write("test")
-                os.remove(test_file)
-                logger.info(
-                    f"Credentials directory permissions check passed: {os.path.abspath(credentials_dir)}"
-                )
-            except (PermissionError, OSError) as e:
-                raise PermissionError(
-                    f"Cannot write to existing credentials directory '{os.path.abspath(credentials_dir)}': {e}"
-                )
-        else:
-            # Directory doesn't exist, try to create it and its parent directories
-            try:
-                os.makedirs(credentials_dir, exist_ok=True)
-                # Test writing to the new directory
-                test_file = os.path.join(credentials_dir, ".permission_test")
-                with open(test_file, "w") as f:
-                    f.write("test")
-                os.remove(test_file)
-                logger.info(
-                    f"Created credentials directory with proper permissions: {os.path.abspath(credentials_dir)}"
-                )
-            except (PermissionError, OSError) as e:
-                # Clean up if we created the directory but can't write to it
-                try:
-                    if os.path.exists(credentials_dir):
-                        os.rmdir(credentials_dir)
-                except (PermissionError, OSError):
-                    pass
-                raise PermissionError(
-                    f"Cannot create or write to credentials directory '{os.path.abspath(credentials_dir)}': {e}"
-                )
-
-    except PermissionError:
-        raise
-    except Exception as e:
-        raise OSError(
-            f"Unexpected error checking credentials directory permissions: {e}"
+        os.makedirs(credentials_dir, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            dir=credentials_dir, prefix=".permission_test_"
+        ) as probe:
+            probe.write(b"test")
+            probe.flush()
+    except (PermissionError, OSError) as e:
+        raise PermissionError(
+            f"Cannot create or write to credentials directory "
+            f"'{os.path.abspath(credentials_dir)}': {e}"
         )
+
+    logger.info(
+        f"Credentials directory permissions check passed: {os.path.abspath(credentials_dir)}"
+    )
 
 
 def extract_office_xml_text(file_bytes: bytes, mime_type: str) -> Optional[str]:

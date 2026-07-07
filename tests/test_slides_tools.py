@@ -371,12 +371,57 @@ def test_describe_elements_labels_non_text_element_types():
     elements = [
         {"objectId": "t1", "table": {"rows": 3, "columns": 2}},
         {"objectId": "l1", "line": {"lineType": "STRAIGHT"}},
-        {"objectId": "x1", "image": {}},
+        {"objectId": "x1", "speakerSpotlight": {}},
     ]
     assert _describe_elements(elements) == [
         "  Table: ID t1, Size: 3x2",
         "  Line: ID l1, Type: STRAIGHT",
         "  Element: ID x1, Type: Unknown",
+    ]
+
+
+def test_describe_elements_surfaces_sheets_chart_source():
+    """A linked Sheets chart must expose its source spreadsheetId/chartId so a
+    caller can edit the source data and refresh the chart with refreshSheetsChart.
+    """
+    elements = [
+        {
+            "objectId": "c1",
+            "sheetsChart": {
+                "spreadsheetId": "sheet-123",
+                "chartId": 456,
+                "contentUrl": "https://example.com/chart.png",
+            },
+        }
+    ]
+    assert _describe_elements(elements) == [
+        "  SheetsChart: ID c1, SpreadsheetID sheet-123, ChartID 456"
+    ]
+
+
+def test_describe_elements_surfaces_sheets_chart_with_missing_fields():
+    elements = [{"objectId": "c1", "sheetsChart": {}}]
+    assert _describe_elements(elements) == [
+        "  SheetsChart: ID c1, SpreadsheetID Unknown, ChartID Unknown"
+    ]
+
+
+def test_describe_elements_labels_image_video_and_wordart():
+    elements = [
+        {"objectId": "i1", "image": {"sourceUrl": "https://example.com/img.png"}},
+        {"objectId": "i2", "image": {"contentUrl": "https://example.com/rendered.png"}},
+        {"objectId": "i3", "image": {}},
+        {"objectId": "v1", "video": {"source": "YOUTUBE", "id": "abc123"}},
+        {"objectId": "w1", "wordArt": {"renderedText": "Hello"}},
+        {"objectId": "w2", "wordArt": {}},
+    ]
+    assert _describe_elements(elements) == [
+        "  Image: ID i1, Source: https://example.com/img.png",
+        "  Image: ID i2, ContentURL: https://example.com/rendered.png",
+        "  Image: ID i3, Source: Unknown",
+        "  Video: ID v1, Source: YOUTUBE, VideoID: abc123",
+        '  WordArt: ID w1, Text: "Hello"',
+        "  WordArt: ID w2",
     ]
 
 

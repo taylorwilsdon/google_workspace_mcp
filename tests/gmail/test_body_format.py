@@ -10,6 +10,7 @@ from core.utils import UserInputError
 from gmail.gmail_tools import (
     _extract_message_bodies,
     _format_body_content,
+    _html_to_text,
     get_gmail_message_content,
     get_gmail_messages_content_batch,
     get_gmail_thread_content,
@@ -154,6 +155,12 @@ class TestFormatBodyContentTextMode:
         long_html = "<p>" + "x" * 25000 + "</p>"
         result = _format_body_content("", long_html)
         assert "[Content truncated...]" in result
+
+    def test_html_to_text_separates_br_text(self):
+        assert _html_to_text("<div>Best,<br>Alice</div>") == "Best, Alice"
+
+    def test_html_to_text_ignores_br_inside_skipped_tags(self):
+        assert _html_to_text("<script>x<br>y</script><p>Visible</p>") == "Visible"
 
 
 class TestFormatBodyContentHtmlMode:

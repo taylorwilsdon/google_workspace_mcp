@@ -70,6 +70,12 @@ def _describe_elements(
     Recurses into elementGroup.children with deeper indentation so grouped shapes
     and their text are visible. Multi-line shape text is rendered as indented
     blockquote-style lines preserving paragraph structure.
+
+    Non-shape elements surface the identifying metadata a caller needs to act on
+    them in a follow-up batch_update: a linked ``sheetsChart`` exposes its source
+    ``spreadsheetId``/``chartId`` (so the source data can be edited and the chart
+    refreshed via ``refreshSheetsChart``), and images/videos expose their source
+    or rendered content URL when available.
     """
     info: List[str] = []
     for element in elements or []:
@@ -100,6 +106,38 @@ def _describe_elements(
         elif "line" in element:
             line_type = element["line"].get("lineType", "Unknown")
             info.append(f"{indent}Line: ID {element_id}, Type: {line_type}")
+        elif "sheetsChart" in element:
+            chart = element["sheetsChart"]
+            info.append(
+                f"{indent}SheetsChart: ID {element_id}, "
+                f"SpreadsheetID {chart.get('spreadsheetId', 'Unknown')}, "
+                f"ChartID {chart.get('chartId', 'Unknown')}"
+            )
+        elif "image" in element:
+            image = element["image"]
+            source = image.get("sourceUrl")
+            if source:
+                info.append(f"{indent}Image: ID {element_id}, Source: {source}")
+            else:
+                content_url = image.get("contentUrl")
+                if content_url:
+                    info.append(
+                        f"{indent}Image: ID {element_id}, ContentURL: {content_url}"
+                    )
+                else:
+                    info.append(f"{indent}Image: ID {element_id}, Source: Unknown")
+        elif "video" in element:
+            video = element["video"]
+            info.append(
+                f"{indent}Video: ID {element_id}, "
+                f"Source: {video.get('source', 'Unknown')}, VideoID: {video.get('id', 'Unknown')}"
+            )
+        elif "wordArt" in element:
+            rendered = element["wordArt"].get("renderedText", "")
+            if rendered:
+                info.append(f'{indent}WordArt: ID {element_id}, Text: "{rendered}"')
+            else:
+                info.append(f"{indent}WordArt: ID {element_id}")
         elif "elementGroup" in element:
             children = element["elementGroup"].get("children", [])
             info.append(f"{indent}Group: ID {element_id}, Children: {len(children)}")
