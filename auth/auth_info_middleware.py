@@ -12,6 +12,7 @@ from fastmcp.server.dependencies import get_http_headers
 from auth.external_oauth_provider import get_session_time
 from auth.oauth21_session_store import ensure_session_from_access_token
 from auth.oauth_types import WorkspaceAccessToken
+from auth import trusted_upstream
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -42,6 +43,56 @@ class AuthInfoMiddleware(Middleware):
 
         authenticated_user = None
         auth_via = None
+
+        # Trusted-Upstream Mode — a multi-tenant gateway (e.g. Abra)
+        # has already validated the end-user's Google token upstream
+        # and signed the resulting identity with a shared HMAC secret.
+        # Verify the signature and short-circuit the entire OAuth
+        # provider path so the sidecar can serve many tenants without
+        # holding any per-tenant client_id/client_secret at boot.
+        #
+        # See auth/trusted_upstream.py for the full rationale + threat
+        # model. ``is_enabled()`` is False when the env is off or the
+        # secret is missing — we silently fall through to the normal
+        # paths in both cases.
+        if trusted_upstream.is_enabled():
+            try:
+                upstream_headers = get_http_headers()
+                if upstream_headers:
+                    upstream_email = trusted_upstream.extract_and_verify(
+                        upstream_headers
+                    )
+                    if upstream_email:
+                        logger.info(
+                            "✓ Using trusted-upstream identity for user: %s",
+                            upstream_email,
+                        )
+                        await context.fastmcp_context.set_state(
+                            "authenticated_user_email", upstream_email
+                        )
+                        await context.fastmcp_context.set_state(
+                            "authenticated_via", "trusted_upstream"
+                        )
+                        await context.fastmcp_context.set_state(
+                            "user_email", upstream_email
+                        )
+                        await context.fastmcp_context.set_state(
+                            "username", upstream_email
+                        )
+                        # Nothing else to populate — the sidecar will
+                        # forward the incoming Bearer to googleapis
+                        # unchanged. No local access_token wrapping
+                        # needed because we never call verify_token().
+                        return
+            except Exception as e:
+                # Fail closed on unexpected errors : log + fall
+                # through to the normal path rather than pretending
+                # the request was authenticated.
+                logger.warning(
+                    "[trusted-upstream] middleware check failed, "
+                    "falling back to normal auth: %s",
+                    e,
+                )
 
         # First check if FastMCP has already validated an access token
         try:

@@ -744,6 +744,60 @@ cp .env.oauth21 .env
 
 </details>
 
+<details>
+<summary>🔐 <b>Trusted-Upstream Mode</b> <sub><sup>← Multi-tenant gateway deployments</sup></sub></summary>
+
+Alternative authentication path for deployments where an **upstream gateway** (e.g. a multi-tenant SaaS platform) has already authenticated the end-user with Google. Instead of the sidecar holding a single Google OAuth `client_id/client_secret` pair — which is a hard cap of one tenant per container — the gateway forwards a Google Bearer plus an HMAC-signed identity.
+
+**When to use:**
+
+- You run a platform (Abra, another AI orchestrator...) that serves multiple end-user organizations, each with their own Google Cloud OAuth app.
+- Your platform already validates the user's Google token server-side.
+- You want a single `google-workspace-mcp` sidecar to serve all tenants.
+
+**How it works:**
+
+1. The gateway extracts the user's Google email from the validated token.
+2. The gateway signs `f"{email}\n{timestamp_ms}"` with an HMAC-SHA256 shared secret.
+3. It forwards the request to the sidecar with three extra headers:
+   - `X-Abra-User-Email: user@example.com`
+   - `X-Abra-Timestamp: 1720441234567`  (Unix ms)
+   - `X-Abra-Signature: <hex-hmac-sha256>`
+4. The sidecar verifies the signature + timestamp window, sets the authenticated user, and skips its own Google userinfo lookup.
+5. The unmodified Bearer forwarded to `googleapis.com` remains the final source of truth for the data returned.
+
+**Config:**
+
+```bash
+export TRUSTED_UPSTREAM_MODE="true"
+export MCP_UPSTREAM_SECRET="$(openssl rand -hex 32)"   # 64 hex chars
+# Optional : replay window in seconds (default 60)
+export TRUSTED_UPSTREAM_WINDOW_SECS="60"
+```
+
+When enabled, you can **omit** `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` — the sidecar never calls `userinfo` on the incoming Bearer.
+
+**Signing (Python reference):**
+
+```python
+import hashlib, hmac, time
+email = "user@example.com"
+timestamp_ms = int(time.time() * 1000)
+message = f"{email}\n{timestamp_ms}".encode()
+signature = hmac.new(secret.encode(), message, hashlib.sha256).hexdigest()
+```
+
+**Security notes:**
+
+- HMAC signature binds `(email, timestamp)` — swapping either breaks verification.
+- Timestamp window (default ±60 s) protects against replay ; widen with `TRUSTED_UPSTREAM_WINDOW_SECS` if your clocks drift.
+- The shared secret leak lets an attacker forge any identity but they still need a valid Google Bearer to actually retrieve data — rotate the secret + restart both sides.
+- Enable `TRUSTED_UPSTREAM_MODE=true` without setting `MCP_UPSTREAM_SECRET` → `is_enabled()` returns False (with a critical log line) rather than accepting unsigned identity.
+
+See `auth/trusted_upstream.py` for the full implementation and `tests/auth/test_trusted_upstream.py` for the contract test suite.
+
+</details>
+
 ---
 
 ## 🧰 Available Tools
