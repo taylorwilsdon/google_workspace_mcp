@@ -295,6 +295,15 @@ def main():
     """
     _restore_stdout()
 
+    # Bound blocking client sockets so a stalled OAuth token refresh can't hang
+    # the server. googleapiclient's _auth.refresh_credentials() builds a bare
+    # httplib2.Http() with no timeout; with no process-wide default, that refresh
+    # POST runs on an unbounded socket and can block indefinitely on a stalled
+    # connection (surfaces as intermittent "Session terminated"). A raw socket
+    # inherits socket.getdefaulttimeout() at creation, so this gives the refresh
+    # path a ceiling; asyncio/uvicorn sockets are non-blocking and unaffected.
+    socket.setdefaulttimeout(30)
+
     # Configure safe logging for Windows Unicode handling
     configure_safe_logging()
 
