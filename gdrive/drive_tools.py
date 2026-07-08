@@ -461,6 +461,7 @@ async def get_drive_file_download_url(
         signed_attachment_urls_enabled,
         build_download_url,
         clamp_ttl_to_expiry,
+        format_ttl,
     )
 
     if signed_attachment_urls_enabled():
@@ -517,7 +518,7 @@ async def get_drive_file_download_url(
                     f"MIME Type: {output_mime_type}",
                     f"\n📎 Download URL: {download_url}",
                     "\nThe server streams the bytes directly from Drive when this URL is "
-                    "fetched; the link is signed to you and expires in ~15 minutes.",
+                    f"fetched; the link is signed to you and expires in {format_ttl(eff_ttl)}.",
                 ]
             )
         logger.info(

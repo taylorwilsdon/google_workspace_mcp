@@ -82,6 +82,18 @@ class TestHandleStore:
         assert await dh.load_download_ref(handle) is None
 
     @pytest.mark.asyncio
+    async def test_missing_or_malformed_exp_fails_closed(self):
+        # /dl/{handle} trusts loaded claims, so a record with no usable exp
+        # must be rejected, not served indefinitely.
+        no_exp = {k: v for k, v in _CLAIMS.items() if k != "exp"}
+        handle = await dh.store_download_ref(no_exp, ttl_seconds=600)
+        assert await dh.load_download_ref(handle) is None
+
+        bad_exp = dict(_CLAIMS, exp="not-a-number")
+        handle = await dh.store_download_ref(bad_exp, ttl_seconds=600)
+        assert await dh.load_download_ref(handle) is None
+
+    @pytest.mark.asyncio
     async def test_returns_none_when_store_unavailable(self, monkeypatch):
         monkeypatch.setattr(dh, "_store", None)
         monkeypatch.setattr(dh, "_store_built", True)

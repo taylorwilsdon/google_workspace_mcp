@@ -220,3 +220,16 @@ class TestClampTtlToExpiry:
             expiry = (self._now() + timedelta(seconds=secs)).replace(tzinfo=None)
             ttl = sign.clamp_ttl_to_expiry(expiry, default_ttl=900, now=self._now())
             assert ttl <= secs
+
+
+class TestFormatTtl:
+    """The tool response must state the real (clamped) link lifetime."""
+
+    def test_short_lifetimes_reported_in_seconds(self):
+        assert sign.format_ttl(45) == "45 seconds"
+        assert sign.format_ttl(119) == "119 seconds"
+
+    def test_longer_lifetimes_reported_in_minutes(self):
+        assert sign.format_ttl(120) == "~2 minutes"
+        assert sign.format_ttl(270) == "~4 minutes"
+        assert sign.format_ttl(900) == "~15 minutes"

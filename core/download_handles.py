@@ -101,7 +101,8 @@ async def load_download_ref(handle: str) -> Optional[dict]:
         return None
     # The store's TTL is the primary expiry; the exp claim (same value a signed
     # JWT would carry) is a backstop against a backend whose TTL semantics slip.
+    # Fail closed: a record with a missing or malformed exp is rejected too.
     exp = record.get("exp")
-    if isinstance(exp, (int, float)) and exp < time.time():
+    if not isinstance(exp, (int, float)) or exp < time.time():
         return None
     return record

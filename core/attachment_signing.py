@@ -221,6 +221,18 @@ def verify_attachment_token(token: str) -> Optional[dict]:
         return None
 
 
+def format_ttl(ttl_seconds: float) -> str:
+    """Human label for a link lifetime (e.g. ``"45 seconds"``, ``"~14 minutes"``).
+
+    The effective TTL is clamped to the credential's remaining life, so near the
+    token's expiry a link may live far less than the default 15 minutes — the
+    tool response must state the real lifetime, not the default.
+    """
+    if ttl_seconds < 120:
+        return f"{int(ttl_seconds)} seconds"
+    return f"~{int(ttl_seconds // 60)} minutes"
+
+
 def _external_base_url() -> str:
     """Resolve the externally reachable base URL (reverse-proxy aware).
 
