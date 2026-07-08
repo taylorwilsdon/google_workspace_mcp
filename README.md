@@ -1224,17 +1224,20 @@ export WORKSPACE_MCP_SIGNED_ATTACHMENT_URLS=true
 uv run main.py --transport streamable-http
 ```
 
-With this enabled, the download tools return a short-lived **signed URL** instead of base64. The `/attachments/signed/{token}` route verifies the signature, recovers the owner's Google credentials, fetches the bytes from Google on demand, and **streams them straight to the client** — nothing base64-encoded through the model, nothing written to disk.
+With this enabled, the download tools return a short-lived **signed URL** instead of base64. The download route recovers the owner's Google credentials, fetches the bytes from Google on demand, and **streams them straight to the client** — nothing base64-encoded through the model, nothing written to disk.
 
 **How it works:**
-- The token is a signed (HS256) capability referencing the resource, its owner, and a short expiry. The signature *is* the per-user authorization, so the GET needs no bearer token and any HTTP client can fetch it.
+- The URL is a capability: possessing it *is* the per-user authorization, so the GET needs no bearer token and any HTTP client can fetch it. It comes in two forms:
+  - **Short form (default):** `/dl/{handle}` — a random 128-bit handle (~60 chars total) referencing claims stored server-side in the shared KV store with the same TTL. ~10x fewer characters (and LLM tokens) than the JWT form — a Gmail signed-JWT URL runs ~700 chars because Google's `attachmentId` alone is ~300. Falls back to the JWT form automatically when no store is usable; disable with `WORKSPACE_MCP_SHORT_SIGNED_URLS=false`.
+  - **JWT form (fallback):** `/attachments/signed/{token}` — a signed (HS256) self-contained token referencing the resource, its owner, and a short expiry. Needs no storage; always works.
 - **Sources:** Gmail attachments and Google Drive — binary files via `get_media`, plus native Google files via `export_media` (Docs→PDF, Sheets→XLSX, Slides→PPTX).
 - **Credential recovery is two-tier**, so a URL works even when the fetch lands on a different replica than the tool call: (1) the in-process OAuth 2.1 session store, then (2) a short-TTL, Fernet-encrypted Valkey cache keyed by email, stashed at mint time (reusing the OAuth-proxy Valkey config).
 - **Drive downloads stream in bounded chunks** so a large file never buffers whole in memory; tune the per-download memory/throughput trade-off with `WORKSPACE_MCP_DRIVE_STREAM_CHUNK_BYTES` (default 16 MiB). Gmail attachments arrive whole in one API response, so they are buffered (bounded by Gmail's attachment-size limit).
 
 **Configuration:**
 - `WORKSPACE_MCP_SIGNED_ATTACHMENT_URLS=true` — enable the feature (requires `WORKSPACE_MCP_STATELESS_MODE=true` and OAuth 2.1).
-- `WORKSPACE_MCP_ATTACHMENT_SIGNING_KEY` — HMAC signing key; falls back to `GOOGLE_OAUTH_CLIENT_SECRET` when unset.
+- `WORKSPACE_MCP_SHORT_SIGNED_URLS` — default `true`; set `false` to always emit the self-contained JWT form (e.g. multi-replica deployments deliberately running without a shared storage backend).
+- `WORKSPACE_MCP_ATTACHMENT_SIGNING_KEY` — HMAC signing key for the JWT form; falls back to `GOOGLE_OAUTH_CLIENT_SECRET` when unset.
 - `WORKSPACE_MCP_DRIVE_STREAM_CHUNK_BYTES` — Drive stream chunk size in bytes (default `16777216`).
 
 > **Limitation (OAuth 2.1 proxy mode):** the credential the route recovers carries no refresh token, so once the underlying Google access token expires the route cannot renew it. The URL's TTL is therefore clamped to the token's remaining life, and an already-expired credential returns a retryable `401 {"error": "credentials expired - re-authenticate"}` (re-running the tool mints a fresh URL) instead of a generic failure.

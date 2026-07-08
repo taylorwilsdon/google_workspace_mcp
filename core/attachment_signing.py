@@ -22,12 +22,15 @@ extra configuration in the single-profile PoC, but a dedicated
 ``WORKSPACE_MCP_ATTACHMENT_SIGNING_KEY`` should be set for any real deployment.
 """
 
+import logging
 import os
 import time
 from datetime import datetime, timezone
 from typing import Optional
 
 import jwt
+
+logger = logging.getLogger(__name__)
 
 _ALG = "HS256"
 # Lifetime of a signed URL. The cached credential record (attachment_cred_cache)
@@ -46,6 +49,18 @@ _RESERVED_CLAIMS = frozenset({"src", "sub", "iat", "exp", "fn", "mt"})
 def signed_attachment_urls_enabled() -> bool:
     """True when the tool should return signed streaming URLs instead of base64/disk."""
     return os.getenv("WORKSPACE_MCP_SIGNED_ATTACHMENT_URLS", "false").lower() == "true"
+
+
+def short_signed_urls_enabled() -> bool:
+    """True (default) when signed URLs should use short claim-check handles.
+
+    Short URLs store the claims server-side (``core.download_handles``) and put
+    only a 22-char random handle in the URL — ~10x fewer characters/LLM tokens
+    than the self-contained JWT form. Set WORKSPACE_MCP_SHORT_SIGNED_URLS=false
+    to force the JWT form (e.g. multi-replica deployments that deliberately run
+    without a shared storage backend).
+    """
+    return os.getenv("WORKSPACE_MCP_SHORT_SIGNED_URLS", "true").lower() == "true"
 
 
 def clamp_ttl_to_expiry(
@@ -132,6 +147,27 @@ def mint_download_token(
         ValueError: if ``ref`` contains a key that collides with a reserved claim,
             which would otherwise let the locator override ``src``/``sub``/``exp``.
     """
+    payload = _build_claims(
+        source=source,
+        user_email=user_email,
+        ref=ref,
+        filename=filename,
+        mime_type=mime_type,
+        ttl_seconds=ttl_seconds,
+    )
+    return jwt.encode(payload, _signing_key(), algorithm=_ALG)
+
+
+def _build_claims(
+    *,
+    source: str,
+    user_email: str,
+    ref: dict,
+    filename: Optional[str],
+    mime_type: Optional[str],
+    ttl_seconds: int,
+) -> dict:
+    """Assemble the claims for one downloadable resource (shared by JWT + handle forms)."""
     collisions = _RESERVED_CLAIMS & ref.keys()
     if collisions:
         raise ValueError(
@@ -149,7 +185,7 @@ def mint_download_token(
         payload["fn"] = filename
     if mime_type:
         payload["mt"] = mime_type
-    return jwt.encode(payload, _signing_key(), algorithm=_ALG)
+    return payload
 
 
 def mint_attachment_token(
@@ -185,18 +221,56 @@ def verify_attachment_token(token: str) -> Optional[dict]:
         return None
 
 
-def get_signed_attachment_url(token: str) -> str:
-    """Build the absolute ``/attachments/signed/{token}`` URL for a minted token.
+def _external_base_url() -> str:
+    """Resolve the externally reachable base URL (reverse-proxy aware).
 
-    Mirrors ``attachment_storage.get_attachment_url`` so both routes resolve the
-    same externally reachable base (reverse-proxy aware).
+    Mirrors ``attachment_storage.get_attachment_url`` so every download route
+    resolves the same base.
     """
     from core.config import WORKSPACE_MCP_PORT, WORKSPACE_MCP_BASE_URI
 
     external_url = os.getenv("WORKSPACE_EXTERNAL_URL")
     if external_url:
-        base_url = external_url.rstrip("/")
-    else:
-        base_url = f"{WORKSPACE_MCP_BASE_URI}:{WORKSPACE_MCP_PORT}"
+        return external_url.rstrip("/")
+    return f"{WORKSPACE_MCP_BASE_URI}:{WORKSPACE_MCP_PORT}"
 
-    return f"{base_url}/attachments/signed/{token}"
+
+def get_signed_attachment_url(token: str) -> str:
+    """Build the absolute ``/attachments/signed/{token}`` URL for a minted token."""
+    return f"{_external_base_url()}/attachments/signed/{token}"
+
+
+async def build_download_url(
+    *,
+    source: str,
+    user_email: str,
+    ref: dict,
+    filename: Optional[str] = None,
+    mime_type: Optional[str] = None,
+    ttl_seconds: int = _DEFAULT_TTL_SECONDS,
+) -> str:
+    """Best URL for a downloadable resource: short claim-check form, else JWT.
+
+    The short form (``/dl/{handle}``, ~60 chars total) stores the claims in the
+    shared KV store via ``core.download_handles``; it needs a store write, so
+    when that is unavailable or fails — or short URLs are disabled — this falls
+    back to the self-contained signed-JWT form (``/attachments/signed/{token}``,
+    up to ~700 chars for Gmail), which always works.
+    """
+    claims = _build_claims(
+        source=source,
+        user_email=user_email,
+        ref=ref,
+        filename=filename,
+        mime_type=mime_type,
+        ttl_seconds=ttl_seconds,
+    )
+    if short_signed_urls_enabled():
+        from core.download_handles import store_download_ref
+
+        handle = await store_download_ref(claims, ttl_seconds)
+        if handle:
+            return f"{_external_base_url()}/dl/{handle}"
+        logger.debug("Short signed URL unavailable (no handle store); using JWT form.")
+    token = jwt.encode(claims, _signing_key(), algorithm=_ALG)
+    return f"{_external_base_url()}/attachments/signed/{token}"

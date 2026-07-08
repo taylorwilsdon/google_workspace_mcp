@@ -1765,8 +1765,7 @@ async def get_gmail_attachment_content(
     # token-hungry, and we never even fetch the attachment in this process.
     from core.attachment_signing import (
         signed_attachment_urls_enabled,
-        mint_attachment_token,
-        get_signed_attachment_url,
+        build_download_url,
         clamp_ttl_to_expiry,
     )
 
@@ -1800,14 +1799,12 @@ async def get_gmail_attachment_content(
         # returning a URL that is guaranteed to 401.
         eff_ttl = clamp_ttl_to_expiry(creds.expiry) if creds else 0
         if creds and eff_ttl > 0:
-            token = mint_attachment_token(
+            download_url = await build_download_url(
                 source="gmail",
-                message_id=message_id,
-                attachment_id=attachment_id,
                 user_email=user_google_email,
+                ref={"mid": message_id, "aid": attachment_id},
                 ttl_seconds=eff_ttl,
             )
-            download_url = get_signed_attachment_url(token)
 
             try:
                 from core.attachment_cred_cache import stash_credentials

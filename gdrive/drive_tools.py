@@ -459,8 +459,7 @@ async def get_drive_file_download_url(
     # needs. We early-return before downloading anything in this process.
     from core.attachment_signing import (
         signed_attachment_urls_enabled,
-        mint_download_token,
-        get_signed_attachment_url,
+        build_download_url,
         clamp_ttl_to_expiry,
     )
 
@@ -489,7 +488,7 @@ async def get_drive_file_download_url(
         # normal download path rather than returning a URL guaranteed to 401.
         eff_ttl = clamp_ttl_to_expiry(creds.expiry) if creds else 0
         if creds and eff_ttl > 0:
-            token = mint_download_token(
+            download_url = await build_download_url(
                 source="drive",
                 user_email=user_google_email,
                 ref=ref,
@@ -497,7 +496,6 @@ async def get_drive_file_download_url(
                 mime_type=output_mime_type,
                 ttl_seconds=eff_ttl,
             )
-            download_url = get_signed_attachment_url(token)
 
             try:
                 from core.attachment_cred_cache import stash_credentials

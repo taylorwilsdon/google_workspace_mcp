@@ -770,8 +770,6 @@ async def serve_signed_attachment(request: Request):
     lands on a replica that never ran the originating tool call.
     """
     from core.attachment_signing import verify_attachment_token
-    from auth.oauth21_session_store import get_oauth21_session_store
-    from core.signed_download import get_fetcher, SignedDownloadError
 
     token = request.path_params["token"]
     claims = verify_attachment_token(token)
@@ -779,6 +777,32 @@ async def serve_signed_attachment(request: Request):
         return JSONResponse(
             {"error": "Invalid or expired download link"}, status_code=403
         )
+    return await _stream_download_for_claims(claims)
+
+
+@server.custom_route("/dl/{handle}", methods=["GET"])
+async def serve_short_download(request: Request):
+    """Short claim-check variant of ``/attachments/signed/{token}``.
+
+    The handle is a random 128-bit capability; the claims it references live in
+    the shared KV store with the same TTL a signed token would carry (see
+    ``core.download_handles``). Everything after claim recovery is identical to
+    the JWT route.
+    """
+    from core.download_handles import load_download_ref
+
+    claims = await load_download_ref(request.path_params["handle"])
+    if not claims:
+        return JSONResponse(
+            {"error": "Invalid or expired download link"}, status_code=403
+        )
+    return await _stream_download_for_claims(claims)
+
+
+async def _stream_download_for_claims(claims: dict):
+    """Recover the owner's credentials for verified claims and stream the bytes."""
+    from auth.oauth21_session_store import get_oauth21_session_store
+    from core.signed_download import get_fetcher, SignedDownloadError
 
     user_email = claims.get("sub")
     fetcher = get_fetcher(claims.get("src", ""))

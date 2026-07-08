@@ -37,35 +37,16 @@ _store_built = False
 
 
 def _derive_storage_key() -> bytes:
-    """Derive a Fernet key, mirroring the OAuth proxy's storage encryption.
+    """Derive this cache's Fernet key (distinct salt = distinct crypto context).
 
-    Same inputs (JWT signing key override → else client secret) but a *distinct*
-    salt, so this cache is a separate cryptographic context from the proxy's
-    client storage even though both live in the same Valkey.
+    Same inputs as the OAuth proxy's storage encryption (JWT signing key
+    override → else client secret) but a *distinct* salt, so this cache is a
+    separate cryptographic context from the proxy's client storage even though
+    both live in the same shared store.
     """
-    from fastmcp.server.auth.jwt_issuer import derive_jwt_key
+    from core.storage import derive_shared_fernet_key
 
-    override = os.getenv("FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY", "").strip()
-    client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "").strip()
-
-    if override:
-        jwt_key = derive_jwt_key(
-            low_entropy_material=override, salt="fastmcp-jwt-signing-key"
-        )
-    elif client_secret:
-        jwt_key = derive_jwt_key(
-            high_entropy_material=client_secret, salt="fastmcp-jwt-signing-key"
-        )
-    else:
-        raise ValueError(
-            "Attachment credential cache requires GOOGLE_OAUTH_CLIENT_SECRET or "
-            "FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY for encryption."
-        )
-
-    return derive_jwt_key(
-        high_entropy_material=jwt_key.decode(),
-        salt="workspace-attachment-cred-cache",
-    )
+    return derive_shared_fernet_key("workspace-attachment-cred-cache")
 
 
 def _build_store():
