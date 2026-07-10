@@ -1380,6 +1380,20 @@ export DWD_ALLOWED_DOMAINS="corp.com,subsidiary.io"
 > **Origin validation**: VS Code webview clients send a `vscode-webview://<extension-id>` origin, which is rejected by default. Add the specific origin to `OAUTH_ALLOWED_ORIGINS` (e.g. `OAUTH_ALLOWED_ORIGINS=vscode-webview://your.extension-id`) to permit it. Connections to a `localhost`/`127.0.0.1` URL are allowed without extra configuration.
 </details>
 
+### Autohand Code MCP Client Support
+
+Autohand Code can launch the local stdio server after you configure your Google OAuth credentials. On macOS, Linux, WSL, or Git Bash, add it with:
+
+```bash
+autohand mcp add google-workspace env \
+  GOOGLE_OAUTH_CLIENT_ID=your-client-id \
+  GOOGLE_OAUTH_CLIENT_SECRET=your-secret \
+  OAUTHLIB_INSECURE_TRANSPORT=1 \
+  uvx workspace-mcp
+```
+
+Add `--scope project` before `google-workspace` to save the server in the current project's `.autohand` configuration instead of your user configuration. See the [Autohand Code CLI](https://github.com/autohandai/code-cli/) for current installation details.
+
 ### Claude Code MCP Client Support
 
 > **✅ Recommended**: Claude Code is a modern MCP client that properly supports the full MCP specification. **Always use HTTP transport mode** with Claude Code for proper OAuth 2.1 authentication and multi-user support.
