@@ -1,22 +1,15 @@
-"""Tests for the update_gmail_draft tool (draft rascunho family, F1-owned implementation).
+"""Tests for the update_gmail_draft tool.
 
-NOTE: gmail.gmail_tools.update_gmail_draft does not exist yet in this worktree --
-family F1 is implementing it in parallel on gmail/gmail_tools.py. These tests are
-written against the agreed contract and will fail to import/collect until that
-implementation lands and this worktree is merged with it. That failure mode is
-expected at authoring time.
-
-Assumptions made about behavior not pinned down by the contract (flagged so the
-orchestrator/reviewer can confirm against the real implementation after merge):
+Behavior notes (confirmed against the implementation in gmail/gmail_tools.py):
   * `attach_to_thread` defaults to False, and when False the update body's
     "message" dict does NOT get a "threadId" key even if thread_id is passed
-    (only attach_to_thread=True adds it, per the contract).
-  * in_reply_to/references are asserted as direct passthrough into the raw MIME
-    headers (mirroring the explicit-header assertions in
-    test_draft_gmail_message_uses_explicit_in_reply_to_when_filling_references);
-    we do NOT assert anything about automatic derivation from a thread fetch
-    (e.g. a threads().get() call), since the contract does not specify that
-    update_gmail_draft performs one.
+    (only attach_to_thread=True adds it).
+  * When thread_id is given and in_reply_to/references/to are not all explicit,
+    update_gmail_draft fetches the thread via threads().get() to derive reply
+    headers/recipient (same reply-context logic as draft_gmail_message), so
+    those tests must mock a realistic thread response.
+  * When to, in_reply_to and references are all explicit, no thread fetch
+    happens and the headers pass straight through into the raw MIME message.
 """
 
 import base64
@@ -50,6 +43,24 @@ def _parse_raw_message(raw_message: str):
 
 def _mock_update_response(draft_id: str, message_id: str) -> dict:
     return {"id": draft_id, "message": {"id": message_id}}
+
+
+def _thread_response(*message_ids):
+    """Realistic threads().get() payload, mirroring test_draft_gmail_message.py."""
+    return {
+        "messages": [
+            {
+                "payload": {
+                    "headers": [
+                        {"name": "Message-ID", "value": message_id},
+                        {"name": "From", "value": "sender@example.com"},
+                        {"name": "Subject", "value": "Meeting tomorrow"},
+                    ],
+                }
+            }
+            for message_id in message_ids
+        ]
+    }
 
 
 @pytest.mark.asyncio
@@ -137,6 +148,12 @@ async def test_update_gmail_draft_attach_to_thread_includes_thread_id_in_body():
     mock_service.users().drafts().update().execute.return_value = _mock_update_response(
         "draft1", "newmsg1"
     )
+    # thread_id without explicit in_reply_to/references/to triggers a thread
+    # fetch to derive the reply headers, so the mock must return real messages.
+    mock_service.users().threads().get().execute.return_value = _thread_response(
+        "<msg1@example.com>",
+        "<msg2@example.com>",
+    )
 
     await _unwrap(update_gmail_draft)(
         service=mock_service,
@@ -153,6 +170,12 @@ async def test_update_gmail_draft_attach_to_thread_includes_thread_id_in_body():
         mock_service.users.return_value.drafts.return_value.update.call_args.kwargs
     )
     assert update_kwargs["body"]["message"]["threadId"] == "thread123"
+
+    # Reply headers derived from the fetched thread should land in the raw MIME.
+    raw_message = update_kwargs["body"]["message"]["raw"]
+    raw_text = base64.urlsafe_b64decode(raw_message).decode("utf-8", errors="ignore")
+    assert "In-Reply-To: <msg2@example.com>" in raw_text
+    assert "References: <msg1@example.com> <msg2@example.com>" in raw_text
 
 
 @pytest.mark.asyncio
@@ -178,6 +201,11 @@ async def test_update_gmail_draft_without_attach_to_thread_omits_thread_id():
     mock_service = Mock()
     mock_service.users().drafts().update().execute.return_value = _mock_update_response(
         "draft1", "newmsg1"
+    )
+    # thread_id without explicit in_reply_to/references/to triggers a thread
+    # fetch to derive the reply headers, so the mock must return real messages.
+    mock_service.users().threads().get().execute.return_value = _thread_response(
+        "<msg1@example.com>",
     )
 
     await _unwrap(update_gmail_draft)(
