@@ -52,6 +52,11 @@ SUGGEST_MODE_UNSUPPORTED_OPERATIONS = {
     "update_doc_tab",
     "update_table_column_properties",
 }
+SUGGEST_MODE_UNSUPPORTED_DOCUMENT_STYLE_FIELDS = {
+    "document_mode",
+    "use_even_page_header_footer",
+    "use_first_page_header_footer",
+}
 
 
 class BatchOperationManager:
@@ -130,6 +135,22 @@ class BatchOperationManager:
                     False,
                     "The following operations are not supported by the Google Docs "
                     f"API in SUGGEST mode: {', '.join(unsupported)}.",
+                    {},
+                )
+            unsupported_style_fields = sorted(
+                {
+                    field
+                    for op in operations
+                    if op.get("type") == "update_document_style"
+                    for field in SUGGEST_MODE_UNSUPPORTED_DOCUMENT_STYLE_FIELDS
+                    if op.get(field) is not None
+                }
+            )
+            if unsupported_style_fields:
+                return (
+                    False,
+                    "The Google Docs API does not support suggesting these document "
+                    f"style fields: {', '.join(unsupported_style_fields)}.",
                     {},
                 )
 

@@ -106,6 +106,28 @@ async def test_manager_rejects_operations_unsupported_in_suggest_mode():
 
 
 @pytest.mark.asyncio
+async def test_manager_rejects_document_style_fields_unsupported_in_suggest_mode():
+    service = Mock()
+
+    success, message, _ = await BatchOperationManager(
+        service
+    ).execute_batch_operations(
+        "doc-1",
+        [
+            {
+                "type": "update_document_style",
+                "use_first_page_header_footer": True,
+            }
+        ],
+        write_mode="SUGGEST",
+    )
+
+    assert not success
+    assert "use_first_page_header_footer" in message
+    service.documents.return_value.batchUpdate.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_manager_reports_comment_thread_partial_failure_without_hiding_edit():
     service = Mock()
     service.documents.return_value.batchUpdate.return_value.execute.return_value = {

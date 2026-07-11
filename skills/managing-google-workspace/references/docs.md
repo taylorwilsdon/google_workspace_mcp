@@ -348,7 +348,10 @@ Use `list_type='NONE'` in `create_bullet_list` to remove existing list formattin
 
 In `SUGGEST` mode, Google does not support tab creation/deletion/renaming, named
 range creation/deletion, or table column property updates. The tool rejects these
-operations before sending the batch. Always inspect `comment_update_state` in the
+operations before sending the batch. Suggest mode also excludes the
+`document_mode`, `use_even_page_header_footer`, and
+`use_first_page_header_footer` document-style fields. Always inspect
+`comment_update_state` in the
 result: Google can commit document changes while failing to save their associated
 comment or suggestion threads.
 
