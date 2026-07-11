@@ -2626,6 +2626,452 @@ async def draft_gmail_message(
     return f"Draft created{attachment_info}! Draft ID: {draft_id}"
 
 
+@server.tool(
+    title="List Gmail Drafts",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("list_gmail_drafts", is_read_only=True, service_type="gmail")
+@require_google_service("gmail", GMAIL_COMPOSE_SCOPE)
+async def list_gmail_drafts(
+    service,
+    user_google_email: str,
+    page_size: Annotated[
+        int,
+        Field(
+            description="Maximum number of drafts to return per page (capped at 50). Defaults to 20.",
+        ),
+    ] = 20,
+    page_token: Annotated[
+        Optional[str],
+        Field(
+            description="Token for retrieving the next page of results. Use the next page token from a previous response.",
+        ),
+    ] = None,
+    query: Annotated[
+        Optional[str],
+        Field(
+            description="Optional Gmail search query to filter drafts (same syntax as Gmail search, e.g. 'subject:invoice' or 'to:someone@example.com').",
+        ),
+    ] = None,
+) -> str:
+    """
+    Lists draft emails in the user's Gmail account, showing each draft's subject
+    and snippet for quick identification. Supports pagination and Gmail search
+    query filtering.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        page_size (int): Maximum number of drafts to return per page (capped at 50). Defaults to 20.
+        page_token (Optional[str]): Token for retrieving the next page of results. Use the
+            next page token from a previous response.
+        query (Optional[str]): Optional Gmail search query to filter drafts.
+
+    Returns:
+        str: The total number of drafts found, followed by one line per draft with
+        the Draft ID, Message ID, Thread ID, Subject, and a short snippet. Includes
+        a pagination token if more results are available.
+
+    Examples:
+        # List the 20 most recent drafts
+        list_gmail_drafts()
+
+        # List drafts matching a search query
+        list_gmail_drafts(query="subject:invoice")
+
+        # Get the next page of results
+        list_gmail_drafts(page_token="EAAY...")
+    """
+    logger.info(
+        f"[list_gmail_drafts] Email: '{user_google_email}', Query: '{query}'"
+    )
+
+    request_params: Dict[str, Any] = {"userId": "me", "maxResults": min(page_size, 50)}
+    if page_token:
+        request_params["pageToken"] = page_token
+    if query:
+        request_params["q"] = query
+
+    response = await asyncio.to_thread(
+        service.users().drafts().list(**request_params).execute
+    )
+
+    drafts = response.get("drafts") or []
+    if not drafts:
+        if query:
+            return f"No drafts found for query: '{query}'."
+        return "No drafts found."
+
+    lines = [f"Found {len(drafts)} draft(s):", ""]
+    for draft in drafts:
+        draft_id = draft.get("id", "unknown")
+        message = draft.get("message") or {}
+        message_id = message.get("id")
+        thread_id = message.get("threadId", "unknown")
+
+        subject = "(no subject)"
+        snippet = ""
+        if message_id:
+            message_metadata = await asyncio.to_thread(
+                service.users()
+                .messages()
+                .get(
+                    userId="me",
+                    id=message_id,
+                    format="metadata",
+                    metadataHeaders=["Subject"],
+                )
+                .execute
+            )
+            headers = _extract_headers(
+                message_metadata.get("payload", {}), ["Subject"]
+            )
+            subject = headers.get("Subject") or subject
+            snippet = message_metadata.get("snippet", "") or ""
+
+        lines.append(
+            f"{draft_id} | {message_id or 'unknown'} | {thread_id} | {subject} | {snippet}"
+        )
+
+    next_page_token = response.get("nextPageToken")
+    if next_page_token:
+        lines.append("")
+        lines.append(f"Next page token: {next_page_token}")
+
+    return "\n".join(lines)
+
+
+@server.tool(
+    title="Update Gmail Draft",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("update_gmail_draft", service_type="gmail")
+@require_google_service("gmail", GMAIL_COMPOSE_SCOPE)
+async def update_gmail_draft(
+    service,
+    user_google_email: str,
+    draft_id: Annotated[
+        str, Field(description="The ID of the draft to update. Use list_gmail_drafts to find draft IDs.")
+    ],
+    subject: Annotated[str, Field(description="Email subject.")],
+    body: Annotated[str, Field(description="Email body (plain text).")],
+    body_format: Annotated[
+        Literal["plain", "html"],
+        Field(
+            description="Email body format. Use 'plain' for plaintext or 'html' for HTML content.",
+        ),
+    ] = "plain",
+    to: Annotated[
+        Optional[str],
+        Field(
+            description="Optional recipient email address.",
+        ),
+    ] = None,
+    cc: Annotated[
+        Optional[str], Field(description="Optional CC email address.")
+    ] = None,
+    bcc: Annotated[
+        Optional[str], Field(description="Optional BCC email address.")
+    ] = None,
+    from_name: Annotated[
+        Optional[str],
+        Field(
+            description="Optional sender display name (e.g., 'Peter Hartree'). If provided, the From header will be formatted as 'Name <email>'.",
+        ),
+    ] = None,
+    from_email: Annotated[
+        Optional[str],
+        Field(
+            description="Optional 'Send As' alias email address. Must be configured in Gmail settings (Settings > Accounts > Send mail as). If not provided, uses the authenticated user's email.",
+        ),
+    ] = None,
+    thread_id: Annotated[
+        Optional[str],
+        Field(
+            description="Optional Gmail thread ID to reply within.",
+        ),
+    ] = None,
+    in_reply_to: Annotated[
+        Optional[str],
+        Field(
+            description="Optional RFC Message-ID of the message being replied to (e.g., '<message123@gmail.com>').",
+        ),
+    ] = None,
+    references: Annotated[
+        Optional[str],
+        Field(
+            description="Optional chain of Message-IDs for proper threading.",
+        ),
+    ] = None,
+    attachments: Annotated[
+        Optional[DictList],
+        Field(
+            description="Optional list of attachments. Each can have: 'url' (fetch from URL — works with MCP attachment URLs from get_drive_file_download_url / get_gmail_attachment_content), OR 'path' (file path, auto-encodes), OR 'content' (standard base64, not urlsafe) + 'filename'. Optional 'mime_type'. Optional 'content_id' (string) makes the attachment inline-rendered: it lands in a multipart/related part with `Content-ID: <content_id>` and `Content-Disposition: inline`, and the HTML body can reference it via `<img src=\"cid:<content_id>\">` (RFC 2392). Without `content_id` the attachment is a regular multipart/mixed attachment.",
+        ),
+    ] = None,
+    include_signature: Annotated[
+        bool,
+        Field(
+            description="Whether to append the Gmail signature from Settings > Signature when available. Defaults to true.",
+        ),
+    ] = True,
+    quote_original: Annotated[
+        bool,
+        Field(
+            description="Whether to include the original message as a quoted reply. Requires thread_id. Defaults to false.",
+        ),
+    ] = False,
+    attach_to_thread: Annotated[
+        bool,
+        Field(
+            description="Whether the updated draft's message should carry the Gmail threadId, making it appear inside the conversation in the Gmail UI. Requires thread_id. Defaults to false.",
+        ),
+    ] = False,
+) -> str:
+    """
+    Updates an existing draft in the user's Gmail account.
+
+    IMPORTANT: drafts().update REPLACES the draft's entire message -- this is not
+    a partial/merge update. Any field not passed to this call (e.g. an existing
+    attachment, or a previous body) is not preserved; re-send everything the
+    draft should contain, exactly like draft_gmail_message.
+
+    Threading note: when creating a draft, Gmail intentionally avoids setting
+    threadId unless full reply headers (In-Reply-To/References) were derived,
+    so ad-hoc drafts don't get silently attached to the wrong conversation and
+    become hidden from the Gmail UI ("UI-hidden drafts"). On update, that safety
+    net does not apply the same way: set attach_to_thread=True to make Gmail
+    display the updated draft inside the thread_id conversation in the Gmail UI.
+    This is a deliberate opt-in (behavior validated empirically against the live
+    Gmail API on 2026-07-11) -- attach_to_thread=False (the default) never sets
+    threadId on the update, even if thread_id/in_reply_to/references were used
+    to derive the reply body/headers.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required for authentication.
+        draft_id (str): The ID of the draft to update. Use list_gmail_drafts to find draft IDs.
+        subject (str): Email subject.
+        body (str): Email body (plain text).
+        body_format (Literal['plain', 'html']): Email body format. Defaults to 'plain'.
+        to (Optional[str]): Optional recipient email address. Can be left empty for drafts.
+        cc (Optional[str]): Optional CC email address.
+        bcc (Optional[str]): Optional BCC email address.
+        from_name (Optional[str]): Optional sender display name. If provided, the From header will be formatted as 'Name <email>'.
+        from_email (Optional[str]): Optional 'Send As' alias email address. The alias must be
+            configured in Gmail settings (Settings > Accounts > Send mail as). If not provided,
+            the draft will be from the authenticated user's primary email address.
+        thread_id (Optional[str]): Optional Gmail thread ID to reply within. When provided, updates the draft as a reply.
+        in_reply_to (Optional[str]): Optional RFC Message-ID of the message being replied to (e.g., '<message123@gmail.com>').
+        references (Optional[str]): Optional chain of RFC Message-IDs for proper threading (e.g., '<msg1@gmail.com> <msg2@gmail.com>').
+        attachments (List[Dict[str, str]]): Optional list of attachments. Each dict can contain:
+            Option 1 - File path (auto-encodes):
+              - 'path' (required): File path to attach
+              - 'filename' (optional): Override filename
+              - 'mime_type' (optional): Override MIME type (auto-detected if not provided)
+            Option 2 - Base64 content:
+              - 'content' (required): Standard base64-encoded file content (not urlsafe)
+              - 'filename' (required): Name of the file
+              - 'mime_type' (optional): MIME type (defaults to 'application/octet-stream')
+        include_signature (bool): Whether to append Gmail signature HTML from send-as settings.
+            When include_signature is true and Gmail signature retrieval fails for benign reasons
+            (e.g., missing gmail.settings.basic scope), the draft proceeds without a signature.
+            Non-benign failures such as quota/rate-limit or API errors raise ToolError and abort
+            the update.
+        quote_original (bool): Whether to include the original message as a quoted reply.
+            Requires thread_id to be provided. When enabled, fetches the original message
+            and appends it below the signature. Defaults to False.
+        attach_to_thread (bool): Whether to set threadId on the updated draft's message so it
+            appears inside the thread_id conversation in the Gmail UI. Requires thread_id.
+            Defaults to False.
+
+    Returns:
+        str: Confirmation message with the updated draft's ID and message ID. Note that Gmail
+        may assign a new draft ID and always assigns a new message ID on update -- prefer
+        locating drafts via list_gmail_drafts rather than caching IDs across updates.
+
+    Examples:
+        # Replace a draft's subject and body
+        update_gmail_draft(draft_id="r-123", subject="Updated subject", body="New content")
+
+        # Replace a draft and attach it to its thread's conversation view
+        update_gmail_draft(
+            draft_id="r-123",
+            subject="Re: Meeting tomorrow",
+            body="Thanks for the update!",
+            thread_id="thread_123",
+            attach_to_thread=True,
+        )
+    """
+    logger.info(
+        f"[update_gmail_draft] Invoked. Email: '{user_google_email}', Draft ID: '{draft_id}'"
+    )
+
+    if attach_to_thread and not thread_id:
+        raise UserInputError("attach_to_thread=True requires thread_id.")
+
+    # Prepare the email message
+    # Use from_email (Send As alias) if provided, otherwise default to authenticated user
+    sender_email = from_email or user_google_email
+    draft_body = body
+    signature_html = ""
+    if include_signature:
+        signature_html = await _get_send_as_signature_html_for_tool(
+            service, from_email=sender_email
+        )
+
+    reply_context = None
+    if thread_id and (quote_original or not in_reply_to or not references or not to):
+        reply_context = await _fetch_thread_reply_context(
+            service,
+            thread_id,
+            in_reply_to=in_reply_to,
+            include_bodies=quote_original,
+        )
+
+    if thread_id and (not in_reply_to or not references):
+        thread_message_ids = (
+            reply_context.get("message_ids", []) if reply_context else []
+        )
+        in_reply_to, references = _derive_reply_headers(
+            thread_message_ids, in_reply_to, references
+        )
+
+    target_reply = reply_context.get("target") if reply_context else None
+    if thread_id and not to and target_reply:
+        to = target_reply.get("reply_to") or target_reply.get("from") or to
+    if thread_id and not subject.strip() and target_reply:
+        subject = target_reply.get("subject") or subject
+
+    if quote_original and target_reply:
+        draft_body = _build_quoted_reply_body(
+            draft_body,
+            body_format,
+            signature_html,
+            {
+                "sender": target_reply.get("from") or "unknown",
+                "date": target_reply.get("date", ""),
+                "text_body": target_reply.get("text_body", ""),
+                "html_body": target_reply.get("html_body", ""),
+            },
+        )
+    else:
+        draft_body = _append_signature_to_body(draft_body, body_format, signature_html)
+
+    resolved_attachments = await _resolve_url_attachments(attachments)
+    raw_message, _thread_id_final, attached_count, attachment_errors = (
+        _prepare_gmail_message(
+            subject=subject,
+            body=draft_body,
+            body_format=body_format,
+            to=to,
+            cc=cc,
+            bcc=bcc,
+            thread_id=thread_id,
+            in_reply_to=in_reply_to,
+            references=references,
+            from_email=sender_email,
+            from_name=from_name,
+            attachments=resolved_attachments,
+        )
+    )
+
+    requested_attachment_count = len(attachments or [])
+    if requested_attachment_count > 0 and attached_count == 0:
+        details = (
+            f" Details: {'; '.join(attachment_errors)}" if attachment_errors else ""
+        )
+        raise UserInputError(
+            "No valid attachments were added. Verify each attachment path/content and retry."
+            f"{details}"
+        )
+
+    # drafts().update() replaces the draft's message wholesale. Only set threadId
+    # when the caller explicitly opts in via attach_to_thread -- see the docstring
+    # for why this differs from draft_gmail_message's create-time heuristic.
+    update_request_body = {"message": {"raw": raw_message}}
+    if attach_to_thread:
+        update_request_body["message"]["threadId"] = thread_id
+
+    updated_draft = await asyncio.to_thread(
+        service.users()
+        .drafts()
+        .update(userId="me", id=draft_id, body=update_request_body)
+        .execute,
+        num_retries=GOOGLE_API_WRITE_RETRIES,
+    )
+    new_draft_id = updated_draft.get("id", draft_id)
+    new_message_id = updated_draft.get("message", {}).get("id")
+    attachment_info = _format_attachment_result(
+        attached_count, requested_attachment_count
+    )
+    return (
+        f"Draft updated{attachment_info}! Draft ID: {new_draft_id}, "
+        f"Message ID: {new_message_id}. Note: draft/message IDs may change after "
+        "update; prefer locating drafts via list_gmail_drafts."
+    )
+
+
+@server.tool(
+    title="Delete Gmail Draft",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("delete_gmail_draft", service_type="gmail")
+@require_google_service("gmail", GMAIL_COMPOSE_SCOPE)
+async def delete_gmail_draft(
+    service,
+    user_google_email: str,
+    draft_id: Annotated[
+        str,
+        Field(
+            description="The ID of the draft to permanently delete. Use list_gmail_drafts to find draft IDs.",
+        ),
+    ],
+) -> str:
+    """
+    Permanently deletes a draft from the user's Gmail account.
+
+    WARNING: This is permanent. Unlike deleting a regular email message, deleting
+    a draft does NOT move it to Trash -- it is removed immediately and cannot be
+    recovered.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required for authentication.
+        draft_id (str): The ID of the draft to permanently delete. Use list_gmail_drafts to
+            find draft IDs.
+
+    Returns:
+        str: Confirmation message of the permanent deletion.
+
+    Examples:
+        # Permanently delete a draft
+        delete_gmail_draft(draft_id="r-1234567890")
+    """
+    logger.info(
+        f"[delete_gmail_draft] Invoked. Email: '{user_google_email}', Draft ID: '{draft_id}'"
+    )
+
+    await asyncio.to_thread(
+        service.users().drafts().delete(userId="me", id=draft_id).execute,
+        num_retries=GOOGLE_API_WRITE_RETRIES,
+    )
+
+    return f"Draft permanently deleted! Draft ID: {draft_id}"
+
+
 def _format_thread_content(
     thread_data: dict,
     thread_id: str,
