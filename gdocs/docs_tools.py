@@ -1076,6 +1076,9 @@ async def batch_update_doc(
     user_google_email: str,
     document_id: str,
     operations: BatchDocOperations,
+    write_mode: Literal["EDIT", "SUGGEST"] = "EDIT",
+    required_revision_id: Optional[str] = None,
+    target_revision_id: Optional[str] = None,
 ) -> str:
     """
     Executes multiple low-level document operations in a single atomic batch update.
@@ -1140,6 +1143,13 @@ async def batch_update_doc(
         document_id: ID of the document to update
         operations: List of operation dicts. Each operation MUST have a 'type' field.
                     All operations accept an optional 'tab_id' to target a specific tab.
+        write_mode: EDIT applies normal document edits. SUGGEST applies every
+                    supported operation in the batch as a suggestion and requires
+                    Google Workspace Developer Preview access.
+        required_revision_id: Optional revision guard. The request fails if the
+                              document is no longer at this exact revision.
+        target_revision_id: Optional recent revision to rebase the changes against.
+                            Cannot be combined with required_revision_id.
 
     Supported operation types and their parameters:
 
@@ -1307,7 +1317,11 @@ async def batch_update_doc(
     batch_manager = BatchOperationManager(service)
 
     success, message, metadata = await batch_manager.execute_batch_operations(
-        document_id, normalized_operations
+        document_id,
+        normalized_operations,
+        write_mode=write_mode,
+        required_revision_id=required_revision_id,
+        target_revision_id=target_revision_id,
     )
 
     if success:
@@ -1315,9 +1329,16 @@ async def batch_update_doc(
         replies_count = metadata.get("replies_count", 0)
         doc_length = metadata.get("document_length")
         length_info = f" Document length: {doc_length}." if doc_length else ""
+        suggestion_ids = metadata.get("created_suggestion_ids", [])
+        suggestion_info = (
+            f" Created suggestion IDs: {', '.join(suggestion_ids)}."
+            if suggestion_ids
+            else ""
+        )
         return (
             f"{message} on document {document_id}. "
-            f"API replies: {replies_count}.{length_info} "
+            f"Write mode: {write_mode}. API replies: {replies_count}."
+            f"{length_info}{suggestion_info} "
             f"To apply formatting, call inspect_doc_structure to get exact text positions. "
             f"Link: {link}"
         )
