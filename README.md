@@ -865,13 +865,16 @@ Saved files expire after 1 hour and are cleaned up automatically.
 | <sub>`get_doc_as_markdown`</sub> | <sub>Extended</sub> | <sub>Export document as formatted Markdown with optional comments</sub> |
 | <sub>`insert_doc_image`</sub> | <sub>Complete</sub> | <sub>Insert images from Drive/URLs</sub> |
 | <sub>`update_doc_headers_footers`</sub> | <sub>Complete</sub> | <sub>Create or update headers and footers with correct segment-aware writes</sub> |
-| <sub>`batch_update_doc`</sub> | <sub>Complete</sub> | <sub>Execute atomic multi-step Docs API operations including named ranges, section breaks, document/section layout, header/footer creation, segment-aware inserts, images, tables, and rich formatting</sub> |
+| <sub>`batch_update_doc`</sub> | <sub>Complete</sub> | <sub>Execute atomic multi-step Docs API operations, optionally as Google Docs suggestions through Developer Preview</sub> |
 | <sub>`inspect_doc_structure`</sub> | <sub>Complete</sub> | <sub>Analyze document structure, including safe insertion points, tables, section breaks, headers/footers, and named ranges</sub> |
 | <sub>`export_doc_to_pdf`</sub> | <sub>Extended</sub> | <sub>Export document to PDF</sub> |
 | <sub>`create_table_with_data`</sub> | <sub>Complete</sub> | <sub>Create data tables</sub> |
 | <sub>`debug_table_structure`</sub> | <sub>Complete</sub> | <sub>Debug table issues</sub> |
 | <sub>`list_document_comments`</sub> | <sub>Complete</sub> | <sub>List all document comments</sub> |
 | <sub>`manage_document_comment`</sub> | <sub>Complete</sub> | <sub>Create, reply to, or resolve comments</sub> |
+| <sub>`get_doc_review_threads`</sub> | <sub>Extended</sub> | <sub>Read Docs-native anchored comments and suggestion threads (Developer Preview)</sub> |
+| <sub>`manage_doc_review_thread`</sub> | <sub>Complete</sub> | <sub>Create anchored comments and reply, update, resolve, reopen, or delete review posts (Developer Preview)</sub> |
+| <sub>`manage_doc_suggestion`</sub> | <sub>Complete</sub> | <sub>Accept, reject, or delete Docs suggestions (Developer Preview)</sub> |
 | <sub>`manage_doc_tab`</sub> | <sub>Complete</sub> | <sub>Create, rename, delete, or populate tabs from markdown</sub> |
 
 #### 📊 Google Sheets <sub>[`sheets_tools.py`](gsheets/sheets_tools.py)</sub>

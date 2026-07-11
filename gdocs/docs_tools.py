@@ -61,6 +61,13 @@ from gdocs.docs_markdown import (
 )
 from gdocs.docs_markdown_writer import markdown_to_docs_requests
 from gdocs.operation_schemas import BatchDocOperations
+from gdocs.review import (
+    build_review_thread_request,
+    build_suggestion_request,
+    execute_review_request,
+    extract_tab_comment_anchors,
+    fetch_review_document,
+)
 
 # Import operation managers for complex business logic
 from gdocs.managers import (
@@ -1344,6 +1351,205 @@ async def batch_update_doc(
         )
     else:
         return f"Error: {message}"
+
+
+@server.tool(
+    title="Get Doc Review Threads",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("get_doc_review_threads", is_read_only=True, service_type="docs")
+@require_google_service("docs", "docs_read")
+async def get_doc_review_threads(
+    service: Any,
+    user_google_email: str,
+    document_id: str,
+) -> str:
+    """Returns Docs-native comment and suggestion threads with anchor locations.
+
+    This tool uses Google Workspace Developer Preview fields. The caller must be
+    enrolled in the Preview Program and have permission to view document comments.
+    The returned revision_id can be passed to write tools as a revision guard.
+    """
+    validator = ValidationManager()
+    is_valid, error_msg = validator.validate_document_id(document_id)
+    if not is_valid:
+        return f"Error: {error_msg}"
+
+    document = await fetch_review_document(service, document_id)
+    result = {
+        "document_id": document.get("documentId", document_id),
+        "title": document.get("title"),
+        "revision_id": document.get("revisionId"),
+        "comments": document.get("comments", []),
+        "suggestions": document.get("suggestions", []),
+        "tabs": extract_tab_comment_anchors(document.get("tabs", [])),
+    }
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@server.tool(
+    title="Manage Doc Review Thread",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("manage_doc_review_thread", service_type="docs")
+@require_google_service("docs", "docs_write")
+async def manage_doc_review_thread(
+    service: Any,
+    user_google_email: str,
+    document_id: str,
+    action: Literal[
+        "create_comment",
+        "reply",
+        "resolve",
+        "reopen",
+        "update_post",
+        "delete_comment",
+        "delete_reply",
+    ],
+    content: Optional[str] = None,
+    comment_id: Optional[str] = None,
+    suggestion_id: Optional[str] = None,
+    post_id: Optional[str] = None,
+    start_index: Optional[int] = None,
+    end_index: Optional[int] = None,
+    tab_id: Optional[str] = None,
+    segment_id: Optional[str] = None,
+    assignee_email: Optional[str] = None,
+    required_revision_id: Optional[str] = None,
+    target_revision_id: Optional[str] = None,
+) -> str:
+    """Creates and manages Docs-native anchored review threads.
+
+    Requires Google Workspace Developer Preview access.
+
+    Actions:
+      create_comment: requires content, start_index, and end_index. Optional
+                      tab_id, segment_id, and assignee_email anchor the comment.
+      reply: requires content and exactly one comment_id or suggestion_id.
+      resolve/reopen: requires comment_id; optionally includes content.
+      update_post: requires post_id, content, and exactly one thread ID. Google
+                   only permits authors to update their own posts and does not
+                   permit updating a suggestion thread's head post.
+      delete_comment: requires comment_id and author ownership of the head post.
+      delete_reply: requires post_id and exactly one thread ID; only the author
+                    can delete eligible replies.
+
+    Use get_doc_review_threads to retrieve IDs, anchors, and a fresh revision ID.
+    """
+    validator = ValidationManager()
+    is_valid, error_msg = validator.validate_document_id(document_id)
+    if not is_valid:
+        return f"Error: {error_msg}"
+
+    try:
+        request = build_review_thread_request(
+            action,
+            content=content,
+            comment_id=comment_id,
+            suggestion_id=suggestion_id,
+            post_id=post_id,
+            start_index=start_index,
+            end_index=end_index,
+            tab_id=tab_id,
+            segment_id=segment_id,
+            assignee_email=assignee_email,
+        )
+        result = await execute_review_request(
+            service,
+            document_id,
+            request,
+            required_revision_id=required_revision_id,
+            target_revision_id=target_revision_id,
+        )
+    except ValueError as exc:
+        return f"Error: {exc}"
+
+    comment_state = result.get("commentUpdateState", "NOT_REPORTED")
+    if comment_state == "ALL_FAILED_UNKNOWN_REASON":
+        return (
+            "Error: Google accepted the batch but failed to save the comment or "
+            "suggestion thread update for an unknown reason. Read the document "
+            "again before retrying."
+        )
+    return json.dumps(
+        {
+            "success": True,
+            "action": action,
+            "document_id": document_id,
+            "comment_update_state": comment_state,
+            "replies": result.get("replies", []),
+            "write_control": result.get("writeControl"),
+        },
+        indent=2,
+    )
+
+
+@server.tool(
+    title="Manage Doc Suggestion",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("manage_doc_suggestion", service_type="docs")
+@require_google_service("docs", "docs_write")
+async def manage_doc_suggestion(
+    service: Any,
+    user_google_email: str,
+    document_id: str,
+    action: Literal["accept", "reject", "delete"],
+    suggestion_id: str,
+    required_revision_id: Optional[str] = None,
+    target_revision_id: Optional[str] = None,
+) -> str:
+    """Accepts, rejects, or deletes a Docs suggestion by ID.
+
+    Requires Google Workspace Developer Preview access. Accept requires document
+    edit access. Reject requires edit access or suggestion authorship. Delete is
+    restricted to the suggestion author. Use get_doc_review_threads first to get
+    suggestion IDs and a fresh revision ID.
+    """
+    validator = ValidationManager()
+    is_valid, error_msg = validator.validate_document_id(document_id)
+    if not is_valid:
+        return f"Error: {error_msg}"
+
+    try:
+        request = build_suggestion_request(action, suggestion_id)
+        result = await execute_review_request(
+            service,
+            document_id,
+            request,
+            required_revision_id=required_revision_id,
+            target_revision_id=target_revision_id,
+        )
+    except ValueError as exc:
+        return f"Error: {exc}"
+
+    return json.dumps(
+        {
+            "success": True,
+            "action": action,
+            "document_id": document_id,
+            "suggestion_id": suggestion_id,
+            "suggestion_responses": result.get("suggestionResponses", []),
+            "comment_update_state": result.get("commentUpdateState"),
+            "write_control": result.get("writeControl"),
+        },
+        indent=2,
+    )
 
 
 @server.tool(

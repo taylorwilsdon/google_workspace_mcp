@@ -68,10 +68,13 @@ docs:
     - get_doc_as_markdown
     - list_document_comments
     - manage_document_comment
+    - get_doc_review_threads
   complete:
     - insert_doc_image
     - update_doc_headers_footers
     - batch_update_doc
+    - manage_doc_review_thread
+    - manage_doc_suggestion
     - inspect_doc_structure
     - create_table_with_data
     - debug_table_structure
