@@ -12,12 +12,15 @@ gmail:
     - list_gmail_labels
     - manage_gmail_label
     - draft_gmail_message
+    - list_gmail_drafts
+    - update_gmail_draft
     - list_gmail_filters
     - manage_gmail_filter
 
   complete:
     - get_gmail_threads_content_batch
     - batch_modify_gmail_message_labels
+    - delete_gmail_draft
     - start_google_auth
 
 drive:
