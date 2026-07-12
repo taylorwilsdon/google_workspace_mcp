@@ -369,6 +369,41 @@ async def test_update_deployment_with_version_number():
 
 
 @pytest.mark.asyncio
+async def test_update_deployment_preserves_description_when_blank():
+    """Blank descriptions leave the existing deployment description intact."""
+    mock_service = Mock()
+    mock_service.projects().deployments().get().execute.return_value = {
+        "deploymentConfig": {
+            "scriptId": "test123",
+            "versionNumber": 1,
+            "manifestFileName": "appsscript",
+            "description": "Production",
+        }
+    }
+    mock_service.projects().deployments().update().execute.return_value = {
+        "deploymentId": "deploy123",
+        "deploymentConfig": {
+            "scriptId": "test123",
+            "versionNumber": 2,
+            "manifestFileName": "appsscript",
+            "description": "Production",
+        },
+    }
+
+    await _update_deployment_impl(
+        service=mock_service,
+        user_google_email="test@example.com",
+        script_id="test123",
+        deployment_id="deploy123",
+        description="   ",
+        version_number=2,
+    )
+
+    _, update_kwargs = mock_service.projects().deployments().update.call_args
+    assert update_kwargs["body"]["deploymentConfig"]["description"] == "Production"
+
+
+@pytest.mark.asyncio
 async def test_manage_deployment_update_allows_version_number_without_description():
     """The public update branch allows roll-forward updates without a description."""
     mock_service = Mock()

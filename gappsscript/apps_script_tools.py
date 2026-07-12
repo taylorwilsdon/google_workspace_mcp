@@ -685,7 +685,7 @@ async def _update_deployment_impl(
     deployment_config.setdefault("manifestFileName", "appsscript")
     if version_number is not None:
         deployment_config["versionNumber"] = version_number
-    if description is not None:
+    if description is not None and description.strip() != "":
         deployment_config["description"] = description
 
     request_body = {"deploymentConfig": deployment_config}
