@@ -220,8 +220,11 @@ async def test_list_deployments():
         "deployments": [
             {
                 "deploymentId": "deploy123",
-                "description": "Production",
                 "updateTime": "2026-01-12T15:30:00Z",
+                "deploymentConfig": {
+                    "versionNumber": 7,
+                    "description": "Production",
+                },
             }
         ]
     }
@@ -234,6 +237,47 @@ async def test_list_deployments():
 
     assert "Production" in result
     assert "deploy123" in result
+    assert "Version: 7" in result
+
+
+@pytest.mark.asyncio
+async def test_update_deployment_preserves_unspecified_config_fields():
+    mock_service = Mock()
+    mock_service.projects().deployments().get().execute.return_value = {
+        "deploymentConfig": {
+            "scriptId": "test123",
+            "versionNumber": 6,
+            "manifestFileName": "appsscript",
+            "description": "Old description",
+        }
+    }
+    mock_service.projects().deployments().update().execute.return_value = {
+        "deploymentId": "deploy123",
+        "deploymentConfig": {
+            "scriptId": "test123",
+            "versionNumber": 6,
+            "manifestFileName": "appsscript",
+            "description": "New description",
+        },
+    }
+
+    await _update_deployment_impl(
+        service=mock_service,
+        user_google_email="test@example.com",
+        script_id="test123",
+        deployment_id="deploy123",
+        description="New description",
+    )
+
+    _, update_kwargs = mock_service.projects().deployments().update.call_args
+    assert update_kwargs["body"] == {
+        "deploymentConfig": {
+            "scriptId": "test123",
+            "versionNumber": 6,
+            "manifestFileName": "appsscript",
+            "description": "New description",
+        }
+    }
 
 
 @pytest.mark.asyncio
@@ -248,6 +292,9 @@ async def test_update_deployment():
         },
     }
 
+    mock_service.projects().deployments().get().execute.return_value = {
+        "deploymentConfig": {"scriptId": "test123", "manifestFileName": "appsscript"}
+    }
     mock_service.projects().deployments().update().execute.return_value = mock_response
 
     result = await _update_deployment_impl(
@@ -266,6 +313,7 @@ async def test_update_deployment():
     assert update_kwargs["body"] == {
         "deploymentConfig": {
             "scriptId": "test123",
+            "manifestFileName": "appsscript",
             "description": "Updated description",
         }
     }
@@ -288,6 +336,13 @@ async def test_update_deployment_with_version_number():
         },
     }
 
+    mock_service.projects().deployments().get().execute.return_value = {
+        "deploymentConfig": {
+            "scriptId": "test123",
+            "versionNumber": 1,
+            "manifestFileName": "appsscript",
+        }
+    }
     mock_service.projects().deployments().update().execute.return_value = mock_response
 
     result = await _update_deployment_impl(
@@ -304,6 +359,7 @@ async def test_update_deployment_with_version_number():
         "deploymentConfig": {
             "scriptId": "test123",
             "versionNumber": 2,
+            "manifestFileName": "appsscript",
             "description": "v2 - updated layout",
         }
     }
@@ -323,6 +379,13 @@ async def test_manage_deployment_update_allows_version_number_without_descriptio
             "versionNumber": 2,
         },
     }
+    mock_service.projects().deployments().get().execute.return_value = {
+        "deploymentConfig": {
+            "scriptId": "test123",
+            "versionNumber": 1,
+            "manifestFileName": "appsscript",
+        }
+    }
     mock_service.projects().deployments().update().execute.return_value = mock_response
 
     undecorated_manage_deployment = manage_deployment.__wrapped__.__wrapped__
@@ -340,6 +403,7 @@ async def test_manage_deployment_update_allows_version_number_without_descriptio
         "deploymentConfig": {
             "scriptId": "test123",
             "versionNumber": 2,
+            "manifestFileName": "appsscript",
         }
     }
     assert "Version: 2" in result
