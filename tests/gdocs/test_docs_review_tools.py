@@ -17,13 +17,22 @@ def _unwrap(tool):
 
 def _docs_service(batch_result=None, document_result=None):
     service = Mock()
-    service.documents.return_value.batchUpdate.return_value.execute.return_value = (
-        batch_result or {"replies": [{}], "commentUpdateState": "ALL_SAVED"}
-    )
-    service.documents.return_value.get.return_value.execute.return_value = (
-        document_result or {}
-    )
+    batch_payload = batch_result or {
+        "replies": [{}],
+        "commentUpdateState": "ALL_SAVED",
+    }
+    document_payload = document_result or {}
+
+    def request(*, method, **_kwargs):
+        payload = document_payload if method == "GET" else batch_payload
+        return Mock(status=200), json.dumps(payload).encode("utf-8")
+
+    service._http.request.side_effect = request
     return service
+
+
+def _last_rest_body(service):
+    return json.loads(service._http.request.call_args.kwargs["body"])
 
 
 @pytest.mark.asyncio
@@ -42,7 +51,7 @@ async def test_create_anchored_comment_builds_docs_request():
     )
 
     assert "ALL_SAVED" in result
-    body = service.documents.return_value.batchUpdate.call_args.kwargs["body"]
+    body = _last_rest_body(service)
     assert body == {
         "requests": [
             {
@@ -72,7 +81,7 @@ async def test_reply_to_suggestion_thread_builds_docs_request():
         content="Agreed with this wording.",
     )
 
-    body = service.documents.return_value.batchUpdate.call_args.kwargs["body"]
+    body = _last_rest_body(service)
     assert body["requests"] == [
         {
             "addCommentReply": {
@@ -95,7 +104,7 @@ async def test_resolve_comment_creates_action_reply():
         comment_id="comment-1",
     )
 
-    body = service.documents.return_value.batchUpdate.call_args.kwargs["body"]
+    body = _last_rest_body(service)
     assert body["requests"] == [
         {
             "addCommentReply": {
@@ -119,9 +128,7 @@ async def test_update_and_delete_reply_require_exact_thread_and_post():
         post_id="post-1",
         content="Updated rationale",
     )
-    update_request = service.documents.return_value.batchUpdate.call_args.kwargs[
-        "body"
-    ]["requests"][0]
+    update_request = _last_rest_body(service)["requests"][0]
     assert update_request == {
         "updateCommentPost": {
             "commentId": "comment-1",
@@ -138,9 +145,7 @@ async def test_update_and_delete_reply_require_exact_thread_and_post():
         suggestion_id="suggestion-1",
         post_id="post-1",
     )
-    delete_request = service.documents.return_value.batchUpdate.call_args.kwargs[
-        "body"
-    ]["requests"][0]
+    delete_request = _last_rest_body(service)["requests"][0]
     assert delete_request == {
         "deleteCommentReply": {
             "suggestionId": "suggestion-1",
@@ -165,7 +170,7 @@ async def test_review_thread_rejects_ambiguous_thread_id():
 
     assert result.startswith("Error:")
     assert "exactly one" in result
-    service.documents.return_value.batchUpdate.assert_not_called()
+    service._http.request.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -194,7 +199,7 @@ async def test_manage_doc_suggestion_actions(action, request_name):
     )
 
     assert "suggestion-1" in result
-    body = service.documents.return_value.batchUpdate.call_args.kwargs["body"]
+    body = _last_rest_body(service)
     assert body == {
         "requests": [{request_name: {"suggestionId": "suggestion-1"}}],
         "writeControl": {"requiredRevisionId": "revision-1"},
@@ -239,13 +244,11 @@ async def test_get_doc_review_threads_includes_comments_suggestions_and_anchors(
     assert parsed["revision_id"] == "revision-1"
     assert parsed["comments"][0]["commentId"] == "comment-1"
     assert parsed["suggestions"][0]["suggestionId"] == "suggestion-1"
-    assert parsed["tabs"][0]["comment_anchors"]["anchor-1"]["range"][
-        "startIndex"
-    ] == 12
-    call = service.documents.return_value.get.call_args.kwargs
-    assert call["commentsViewMode"] == "COMMENTS_VIEW_MODE_INCLUDED"
-    assert call["suggestionsViewMode"] == "SUGGESTIONS_INLINE"
-    assert call["includeTabsContent"] is True
+    assert parsed["tabs"][0]["comment_anchors"]["anchor-1"]["range"]["startIndex"] == 12
+    call = service._http.request.call_args.kwargs
+    assert "commentsViewMode=COMMENTS_VIEW_MODE_INCLUDED" in call["uri"]
+    assert "suggestionsViewMode=SUGGESTIONS_INLINE" in call["uri"]
+    assert "includeTabsContent=true" in call["uri"]
 
 
 @pytest.mark.asyncio
@@ -254,9 +257,7 @@ async def test_get_review_threads_uses_authorized_http_when_discovery_lags():
     service._rootDesc = {
         "resources": {
             "documents": {
-                "methods": {
-                    "get": {"parameters": {"suggestionsViewMode": {}}}
-                }
+                "methods": {"get": {"parameters": {"suggestionsViewMode": {}}}}
             }
         }
     }

@@ -10,6 +10,40 @@ from urllib.parse import quote, urlencode
 from googleapiclient.errors import HttpError
 
 
+async def execute_preview_rest_request(
+    service: Any,
+    uri: str,
+    *,
+    method: str,
+    body: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Execute an authorized Docs Developer Preview REST request.
+
+    The stable Docs discovery document does not currently expose the preview
+    fields, so preview calls must bypass generated-client schema validation.
+    The service's HTTP transport supplies the OAuth credentials.
+    """
+    headers = {"Accept": "application/json"}
+    encoded_body = None
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+        encoded_body = json.dumps(body).encode("utf-8")
+
+    response, content = await asyncio.to_thread(
+        service._http.request,
+        uri=uri,
+        method=method,
+        body=encoded_body,
+        headers=headers,
+    )
+    status = int(getattr(response, "status", 0) or response.get("status", 0))
+    if status >= 400:
+        raise HttpError(response, content, uri=uri)
+    if isinstance(content, bytes):
+        content = content.decode("utf-8")
+    return json.loads(content) if content else {}
+
+
 def _thread_id_fields(
     comment_id: str | None, suggestion_id: str | None
 ) -> dict[str, str]:
@@ -145,10 +179,15 @@ async def execute_review_request(
     elif target_revision_id:
         body["writeControl"] = {"targetRevisionId": target_revision_id}
 
-    return await asyncio.to_thread(
-        service.documents()
-        .batchUpdate(documentId=document_id, body=body)
-        .execute
+    uri = (
+        "https://docs.googleapis.com/v1/documents/"
+        f"{quote(document_id, safe='')}:batchUpdate"
+    )
+    return await execute_preview_rest_request(
+        service,
+        uri,
+        method="POST",
+        body=body,
     )
 
 
@@ -171,51 +210,20 @@ def extract_tab_comment_anchors(tabs: list[dict[str, Any]]) -> list[dict[str, An
 
 
 async def fetch_review_document(service: Any, document_id: str) -> dict[str, Any]:
-    """Fetch preview review fields even when the bundled discovery doc lags.
-
-    Google publishes preview REST fields before they necessarily appear in the
-    discovery document bundled by google-api-python-client. Use the generated
-    client when it knows the parameter; otherwise make the same authorized
-    request through the service's HTTP transport.
-    """
-    root_description = getattr(service, "_rootDesc", None)
-    if isinstance(root_description, dict):
-        get_parameters = (
-            root_description.get("resources", {})
-            .get("documents", {})
-            .get("methods", {})
-            .get("get", {})
-            .get("parameters", {})
-        )
-        if "commentsViewMode" not in get_parameters:
-            query = urlencode(
-                {
-                    "includeTabsContent": "true",
-                    "suggestionsViewMode": "SUGGESTIONS_INLINE",
-                    "commentsViewMode": "COMMENTS_VIEW_MODE_INCLUDED",
-                }
-            )
-            uri = (
-                "https://docs.googleapis.com/v1/documents/"
-                f"{quote(document_id, safe='')}?{query}"
-            )
-            response, content = await asyncio.to_thread(
-                service._http.request, uri=uri, method="GET"
-            )
-            status = int(getattr(response, "status", 0) or response.get("status", 0))
-            if status >= 400:
-                raise HttpError(response, content, uri=uri)
-            if isinstance(content, bytes):
-                content = content.decode("utf-8")
-            return json.loads(content)
-
-    return await asyncio.to_thread(
-        service.documents()
-        .get(
-            documentId=document_id,
-            includeTabsContent=True,
-            suggestionsViewMode="SUGGESTIONS_INLINE",
-            commentsViewMode="COMMENTS_VIEW_MODE_INCLUDED",
-        )
-        .execute
+    """Fetch preview review fields through the authorized raw REST transport."""
+    query = urlencode(
+        {
+            "includeTabsContent": "true",
+            "suggestionsViewMode": "SUGGESTIONS_INLINE",
+            "commentsViewMode": "COMMENTS_VIEW_MODE_INCLUDED",
+        }
+    )
+    uri = (
+        "https://docs.googleapis.com/v1/documents/"
+        f"{quote(document_id, safe='')}?{query}"
+    )
+    return await execute_preview_rest_request(
+        service,
+        uri,
+        method="GET",
     )

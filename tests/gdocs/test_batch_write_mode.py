@@ -1,5 +1,7 @@
 """Tests for Developer Preview write controls in Google Docs batches."""
 
+import json
+
 from unittest.mock import Mock
 
 import pytest
@@ -15,17 +17,38 @@ def _unwrap(tool):
     return fn
 
 
-@pytest.mark.asyncio
-async def test_manager_sends_suggest_write_mode_and_required_revision():
+def _preview_service(batch_result):
     service = Mock()
-    service.documents.return_value.batchUpdate.return_value.execute.return_value = {
-        "replies": [{}],
-        "suggestionResponses": [{"createdSuggestionIds": ["suggestion-1"]}],
-        "commentUpdateState": "ALL_SAVED",
-    }
+
+    def request(*, method, **_kwargs):
+        payload = {} if method == "GET" else batch_result
+        return Mock(status=200), json.dumps(payload).encode("utf-8")
+
+    service._http.request.side_effect = request
     service.documents.return_value.get.return_value.execute.return_value = {
         "body": {"content": [{"endIndex": 8}]}
     }
+    return service
+
+
+def _last_preview_body(service):
+    post_calls = [
+        call
+        for call in service._http.request.call_args_list
+        if call.kwargs["method"] == "POST"
+    ]
+    return json.loads(post_calls[-1].kwargs["body"])
+
+
+@pytest.mark.asyncio
+async def test_manager_sends_suggest_write_mode_and_required_revision():
+    service = _preview_service(
+        {
+            "replies": [{}],
+            "suggestionResponses": [{"createdSuggestionIds": ["suggestion-1"]}],
+            "commentUpdateState": "ALL_SAVED",
+        }
+    )
 
     success, _, metadata = await BatchOperationManager(
         service
@@ -37,7 +60,7 @@ async def test_manager_sends_suggest_write_mode_and_required_revision():
     )
 
     assert success
-    body = service.documents.return_value.batchUpdate.call_args.kwargs["body"]
+    body = _last_preview_body(service)
     assert body["writeControl"] == {
         "writeMode": "SUGGEST",
         "requiredRevisionId": "revision-1",
@@ -72,9 +95,7 @@ async def test_manager_omits_write_control_for_default_edit_behavior():
 async def test_manager_rejects_both_revision_controls():
     service = Mock()
 
-    success, message, _ = await BatchOperationManager(
-        service
-    ).execute_batch_operations(
+    success, message, _ = await BatchOperationManager(service).execute_batch_operations(
         "doc-1",
         [{"type": "insert_text", "index": 1, "text": "Text"}],
         required_revision_id="required",
@@ -91,9 +112,7 @@ async def test_manager_rejects_both_revision_controls():
 async def test_manager_rejects_operations_unsupported_in_suggest_mode():
     service = Mock()
 
-    success, message, _ = await BatchOperationManager(
-        service
-    ).execute_batch_operations(
+    success, message, _ = await BatchOperationManager(service).execute_batch_operations(
         "doc-1",
         [{"type": "insert_doc_tab", "title": "New tab", "index": 0}],
         write_mode="SUGGEST",
@@ -109,9 +128,7 @@ async def test_manager_rejects_operations_unsupported_in_suggest_mode():
 async def test_manager_rejects_document_style_fields_unsupported_in_suggest_mode():
     service = Mock()
 
-    success, message, _ = await BatchOperationManager(
-        service
-    ).execute_batch_operations(
+    success, message, _ = await BatchOperationManager(service).execute_batch_operations(
         "doc-1",
         [
             {
@@ -129,15 +146,13 @@ async def test_manager_rejects_document_style_fields_unsupported_in_suggest_mode
 
 @pytest.mark.asyncio
 async def test_manager_reports_comment_thread_partial_failure_without_hiding_edit():
-    service = Mock()
-    service.documents.return_value.batchUpdate.return_value.execute.return_value = {
-        "replies": [{}],
-        "suggestionResponses": [{"createdSuggestionIds": ["suggestion-1"]}],
-        "commentUpdateState": "ALL_FAILED_UNKNOWN_REASON",
-    }
-    service.documents.return_value.get.return_value.execute.return_value = {
-        "body": {"content": [{"endIndex": 8}]}
-    }
+    service = _preview_service(
+        {
+            "replies": [{}],
+            "suggestionResponses": [{"createdSuggestionIds": ["suggestion-1"]}],
+            "commentUpdateState": "ALL_FAILED_UNKNOWN_REASON",
+        }
+    )
 
     success, message, metadata = await BatchOperationManager(
         service
@@ -170,9 +185,7 @@ async def test_manager_fails_closed_when_preview_read_is_unavailable():
         b'{"error":{"message":"Unknown name comments_view_mode"}}',
     )
 
-    success, message, _ = await BatchOperationManager(
-        service
-    ).execute_batch_operations(
+    success, message, _ = await BatchOperationManager(service).execute_batch_operations(
         "doc-1",
         [{"type": "insert_text", "index": 1, "text": "Suggested text"}],
         write_mode="SUGGEST",
@@ -185,13 +198,7 @@ async def test_manager_fails_closed_when_preview_read_is_unavailable():
 
 @pytest.mark.asyncio
 async def test_manager_warns_when_google_silently_downgrades_suggest_batch():
-    service = Mock()
-    service.documents.return_value.get.return_value.execute.return_value = {
-        "body": {"content": [{"endIndex": 8}]}
-    }
-    service.documents.return_value.batchUpdate.return_value.execute.return_value = {
-        "replies": [{}]
-    }
+    service = _preview_service({"replies": [{}]})
 
     success, message, metadata = await BatchOperationManager(
         service
@@ -209,14 +216,12 @@ async def test_manager_warns_when_google_silently_downgrades_suggest_batch():
 
 @pytest.mark.asyncio
 async def test_public_tool_exposes_write_mode_and_revision_control():
-    service = Mock()
-    service.documents.return_value.batchUpdate.return_value.execute.return_value = {
-        "replies": [{}],
-        "suggestionResponses": [{"createdSuggestionIds": ["suggestion-1"]}],
-    }
-    service.documents.return_value.get.return_value.execute.return_value = {
-        "body": {"content": [{"endIndex": 8}]}
-    }
+    service = _preview_service(
+        {
+            "replies": [{}],
+            "suggestionResponses": [{"createdSuggestionIds": ["suggestion-1"]}],
+        }
+    )
 
     result = await _unwrap(docs_tools.batch_update_doc)(
         service=service,
@@ -229,7 +234,7 @@ async def test_public_tool_exposes_write_mode_and_revision_control():
 
     assert "SUGGEST" in result
     assert "suggestion-1" in result
-    body = service.documents.return_value.batchUpdate.call_args.kwargs["body"]
+    body = _last_preview_body(service)
     assert body["writeControl"] == {
         "writeMode": "SUGGEST",
         "targetRevisionId": "revision-1",

@@ -8,6 +8,7 @@ extracting complex validation and request building logic.
 import logging
 import asyncio
 from typing import Any, Union, Dict, List, Tuple
+from urllib.parse import quote
 
 from gdocs.docs_helpers import (
     create_insert_text_request,
@@ -41,7 +42,7 @@ from gdocs.docs_helpers import (
     validate_operation,
 )
 from gdocs.managers.validation_manager import ValidationManager
-from gdocs.review import fetch_review_document
+from gdocs.review import execute_preview_rest_request, fetch_review_document
 
 logger = logging.getLogger(__name__)
 
@@ -982,6 +983,18 @@ class BatchOperationManager:
             write_control["targetRevisionId"] = target_revision_id
         if write_control:
             body["writeControl"] = write_control
+
+        if write_mode == "SUGGEST":
+            uri = (
+                "https://docs.googleapis.com/v1/documents/"
+                f"{quote(document_id, safe='')}:batchUpdate"
+            )
+            return await execute_preview_rest_request(
+                self.service,
+                uri,
+                method="POST",
+                body=body,
+            )
 
         return await asyncio.to_thread(
             self.service.documents()
