@@ -355,6 +355,12 @@ operations before sending the batch. Suggest mode also excludes the
 result: Google can commit document changes while failing to save their associated
 comment or suggestion threads.
 
+Before sending a `SUGGEST` batch, the server verifies that the authenticated
+client and Cloud project can read the Developer Preview review fields. It refuses
+the write if that capability check fails, because generally available clients can
+silently ignore the preview-only write mode and apply direct edits. If Google does
+not return `suggestionResponses`, stop and verify the document before retrying.
+
 ---
 
 ## Tips

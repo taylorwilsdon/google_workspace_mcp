@@ -132,6 +132,7 @@ async def test_manager_reports_comment_thread_partial_failure_without_hiding_edi
     service = Mock()
     service.documents.return_value.batchUpdate.return_value.execute.return_value = {
         "replies": [{}],
+        "suggestionResponses": [{"createdSuggestionIds": ["suggestion-1"]}],
         "commentUpdateState": "ALL_FAILED_UNKNOWN_REASON",
     }
     service.documents.return_value.get.return_value.execute.return_value = {
@@ -150,6 +151,60 @@ async def test_manager_reports_comment_thread_partial_failure_without_hiding_edi
     assert "WARNING" in message
     assert metadata["partial_failure"] is True
     assert metadata["comment_update_state"] == "ALL_FAILED_UNKNOWN_REASON"
+
+
+@pytest.mark.asyncio
+async def test_manager_fails_closed_when_preview_read_is_unavailable():
+    service = Mock()
+    service._rootDesc = {
+        "resources": {
+            "documents": {
+                "methods": {"get": {"parameters": {"suggestionsViewMode": {}}}}
+            }
+        }
+    }
+    response = Mock(status=400, reason="Bad Request")
+    response.get.return_value = "400"
+    service._http.request.return_value = (
+        response,
+        b'{"error":{"message":"Unknown name comments_view_mode"}}',
+    )
+
+    success, message, _ = await BatchOperationManager(
+        service
+    ).execute_batch_operations(
+        "doc-1",
+        [{"type": "insert_text", "index": 1, "text": "Suggested text"}],
+        write_mode="SUGGEST",
+    )
+
+    assert not success
+    assert "comments_view_mode" in message
+    service.documents.return_value.batchUpdate.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_manager_warns_when_google_silently_downgrades_suggest_batch():
+    service = Mock()
+    service.documents.return_value.get.return_value.execute.return_value = {
+        "body": {"content": [{"endIndex": 8}]}
+    }
+    service.documents.return_value.batchUpdate.return_value.execute.return_value = {
+        "replies": [{}]
+    }
+
+    success, message, metadata = await BatchOperationManager(
+        service
+    ).execute_batch_operations(
+        "doc-1",
+        [{"type": "insert_text", "index": 1, "text": "Suggested text"}],
+        write_mode="SUGGEST",
+    )
+
+    assert not success
+    assert "may have been applied as direct edits" in message
+    assert "Do not retry" in message
+    assert metadata["preview_response_missing"] is True
 
 
 @pytest.mark.asyncio

@@ -41,6 +41,7 @@ from gdocs.docs_helpers import (
     validate_operation,
 )
 from gdocs.managers.validation_manager import ValidationManager
+from gdocs.review import fetch_review_document
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +156,13 @@ class BatchOperationManager:
                 )
 
         try:
+            if write_mode == "SUGGEST":
+                # Fail closed before any mutation. The generally available Docs
+                # client can silently ignore preview-only writeMode and apply a
+                # direct edit instead. A preview review read proves that this
+                # authenticated client/project can reach the preview surface.
+                await fetch_review_document(self.service, document_id)
+
             preflight_error = await self._preflight_create_header_footer_operations(
                 document_id, operations
             )
@@ -177,6 +185,15 @@ class BatchOperationManager:
                 required_revision_id=required_revision_id,
                 target_revision_id=target_revision_id,
             )
+
+            if write_mode == "SUGGEST" and not result.get("suggestionResponses"):
+                return (
+                    False,
+                    "Google did not return suggestionResponses for a SUGGEST batch. "
+                    "The document changes may have been applied as direct edits. "
+                    "Do not retry until you read the document and verify its state.",
+                    {"write_mode": write_mode, "preview_response_missing": True},
+                )
 
             # Process results
             metadata = {
