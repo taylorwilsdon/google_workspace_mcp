@@ -878,6 +878,61 @@ async def create_drive_folder(
 
 
 @server.tool(
+    title="Delete Drive File",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("delete_drive_file", service_type="drive")
+@require_google_service("drive", "drive_file")
+async def delete_drive_file(
+    service,
+    user_google_email: str,
+    file_id: str,
+    permanently: bool = False,
+) -> str:
+    """
+    Deletes a file or folder in Google Drive.
+
+    By default the item is moved to the Trash (recoverable). Set permanently=True to bypass the
+    Trash and delete it irreversibly. Works for items in My Drive and shared drives.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        file_id (str): The ID of the file or folder to delete.
+        permanently (bool): If True, permanently delete (skip Trash). Defaults to False (Trash).
+
+    Returns:
+        str: Confirmation of the deletion.
+    """
+    logger.info(
+        f"[delete_drive_file] Invoked. Email: '{user_google_email}', File: '{file_id}', Permanently: {permanently}"
+    )
+    if permanently:
+        await asyncio.to_thread(
+            service.files().delete(fileId=file_id, supportsAllDrives=True).execute
+        )
+        return f"Permanently deleted item '{file_id}' for {user_google_email}."
+    updated = await asyncio.to_thread(
+        service.files()
+        .update(
+            fileId=file_id,
+            body={"trashed": True},
+            supportsAllDrives=True,
+            fields="id, name, trashed",
+        )
+        .execute
+    )
+    return (
+        f"Moved '{updated.get('name', file_id)}' (ID: {updated.get('id', file_id)}) to Trash for "
+        f"{user_google_email}. Restore it from Trash, or pass permanently=True to delete for good."
+    )
+
+
+@server.tool(
     title="Create Drive File",
     annotations=ToolAnnotations(
         readOnlyHint=False,
