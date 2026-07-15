@@ -1,4 +1,3 @@
-import pytest
 
 from auth.oauth21_session_store import OAuth21SessionStore
 
@@ -135,7 +134,7 @@ def test_deserialize_oauth_state_entry_normalizes_invalid_and_naive_timestamps(
     assert deserialized["expires_at"] is None
 
 
-def test_store_session_rejects_mcp_session_rebind_by_default(tmp_path):
+def test_store_session_keeps_original_binding_on_cross_user_rebind(tmp_path):
     state_file = tmp_path / "oauth_states.json"
     store = OAuth21SessionStore(oauth_state_file=str(state_file))
 
@@ -145,12 +144,19 @@ def test_store_session_rejects_mcp_session_rebind_by_default(tmp_path):
         mcp_session_id="session-123",
     )
 
-    with pytest.raises(ValueError, match="already bound to a different user"):
-        store.store_session(
-            user_email="account-b@example.com",
-            access_token="token-b",
-            mcp_session_id="session-123",
-        )
+    # A second account reusing a session already bound to another user must not
+    # hijack the binding, but it also must not discard the second account's
+    # credentials. The session stays bound to the original user and the second
+    # account is persisted without an mcp_session_id (mirrors the read path and
+    # single-user mode), rather than raising and losing a valid refresh.
+    store.store_session(
+        user_email="account-b@example.com",
+        access_token="token-b",
+        mcp_session_id="session-123",
+    )
+
+    assert store.get_user_by_mcp_session("session-123") == "account-a@example.com"
+    assert store.get_credentials("account-b@example.com").token == "token-b"
 
 
 def test_store_session_skips_mcp_binding_in_single_user_mode(tmp_path, monkeypatch):

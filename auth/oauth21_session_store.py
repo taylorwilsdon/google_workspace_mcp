@@ -607,6 +607,15 @@ class OAuth21SessionStore:
         with self._lock:
             normalized_expiry = _normalize_expiry_to_naive_utc(expiry)
 
+            if mcp_session_id:
+                bound_user = self._session_auth_binding.get(mcp_session_id)
+                if bound_user and bound_user != user_email:
+                    logger.info(
+                        f"MCP session {mcp_session_id} is already bound to {bound_user}; "
+                        f"storing credentials for {user_email} without changing the session binding"
+                    )
+                    mcp_session_id = None
+
             # Clean up previous session mappings for this user before storing new one
             old_session = self._sessions.get(user_email)
             if old_session:
@@ -654,14 +663,6 @@ class OAuth21SessionStore:
                     self._session_auth_binding[mcp_session_id] = user_email
                     logger.info(
                         f"Created immutable session binding: {mcp_session_id} -> {user_email}"
-                    )
-                elif self._session_auth_binding[mcp_session_id] != user_email:
-                    # Security: Attempt to bind session to different user
-                    logger.error(
-                        f"SECURITY: Attempt to rebind session {mcp_session_id} from {self._session_auth_binding[mcp_session_id]} to {user_email}"
-                    )
-                    raise ValueError(
-                        f"Session {mcp_session_id} is already bound to a different user"
                     )
 
                 self._mcp_session_mapping[mcp_session_id] = user_email

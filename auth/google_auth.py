@@ -1141,19 +1141,27 @@ def get_credentials(
 
                 if persist_succeeded or is_stateless_mode():
                     # Also update OAuth21SessionStore
-                    store = get_oauth21_session_store()
-                    store.store_session(
-                        user_email=user_google_email,
-                        access_token=credentials.token,
-                        refresh_token=credentials.refresh_token,
-                        token_uri=credentials.token_uri,
-                        client_id=credentials.client_id,
-                        client_secret=credentials.client_secret,
-                        scopes=credentials.scopes,
-                        expiry=credentials.expiry,
-                        mcp_session_id=session_id,
-                        issuer="https://accounts.google.com",  # Add issuer for Google tokens
-                    )
+                    try:
+                        store = get_oauth21_session_store()
+                        store.store_session(
+                            user_email=user_google_email,
+                            access_token=credentials.token,
+                            refresh_token=credentials.refresh_token,
+                            token_uri=credentials.token_uri,
+                            client_id=credentials.client_id,
+                            client_secret=credentials.client_secret,
+                            scopes=credentials.scopes,
+                            expiry=credentials.expiry,
+                            mcp_session_id=session_id,
+                            issuer="https://accounts.google.com",  # Add issuer for Google tokens
+                        )
+                    except Exception as session_store_error:
+                        logger.warning(
+                            "[get_credentials] Failed to update OAuth 2.1 session store "
+                            "for refreshed credentials for user %s: %s",
+                            user_google_email,
+                            session_store_error,
+                        )
 
             if session_id and (persist_succeeded or is_stateless_mode()):
                 # Update session cache if it was the source or is active
