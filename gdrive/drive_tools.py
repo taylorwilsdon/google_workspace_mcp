@@ -1200,11 +1200,33 @@ async def create_drive_file(
         file_data = content.encode("utf-8")
         media = io.BytesIO(file_data)
 
+        # A native Google type is not an uploadable media format — uploading media AS
+        # 'application/vnd.google-apps.*' 400s (live 2026-07-16). Upload the text as a
+        # convertible SOURCE format and keep the native target in the metadata; Drive
+        # converts on create (the same mechanics as the import_to_google_* tools).
+        media_mime_type = mime_type
+        if mime_type.startswith("application/vnd.google-apps."):
+            if mime_type == GOOGLE_SHEETS_MIME_TYPE:
+                media_mime_type = "text/csv"
+            elif mime_type == GOOGLE_DOCS_MIME_TYPE:
+                media_mime_type = "text/plain"
+            else:
+                raise ValueError(
+                    f"Cannot create a '{mime_type}' file from text content — use the "
+                    f"matching import_to_google_* tool instead."
+                )
+            logger.info(
+                f"[create_drive_file] Native target {mime_type}: uploading content as "
+                f"{media_mime_type} for Drive conversion"
+            )
+
         created_file = await asyncio.to_thread(
             service.files()
             .create(
                 body=file_metadata,
-                media_body=MediaIoBaseUpload(media, mimetype=mime_type, resumable=True),
+                media_body=MediaIoBaseUpload(
+                    media, mimetype=media_mime_type, resumable=True
+                ),
                 fields="id, name, webViewLink",
                 supportsAllDrives=True,
             )

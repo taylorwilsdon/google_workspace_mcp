@@ -583,6 +583,30 @@ async def _resolve_import_media(
             detection_name = urlparse(file_url).path or file_url
         source_mime_type = _detect_source_format(detection_name, content, format_map)
 
+    # An inline `content` string with no explicit hint and no recognizable extension in the
+    # (sheet/doc) NAME detects as text/plain and would be refused by the allowlist below — even
+    # though the tool's own docstring shows content= as a primary path. The text formats a given
+    # import tool accepts are known, so pick the map's own text format instead of refusing (live
+    # 2026-07-16: every inline-CSV import_to_google_sheets call failed this way, because a sheet
+    # name like "DifferentDog Spend Summary" has no extension).
+    if (
+        content is not None
+        and not source_format
+        and source_mime_type not in format_map.values()
+    ):
+        supported = set(format_map.values())
+        first_line = content.splitlines()[0] if content.splitlines() else ""
+        if "\t" in first_line and "text/tab-separated-values" in supported:
+            source_mime_type = "text/tab-separated-values"
+        elif "text/csv" in supported:
+            source_mime_type = "text/csv"
+        elif "text/plain" in supported:
+            source_mime_type = "text/plain"
+        logger.info(
+            f"[{tool_name}] Inline content with no usable format hint — defaulting to "
+            f"'{source_mime_type}'"
+        )
+
     logger.info(f"[{tool_name}] Detected source MIME type: {source_mime_type}")
 
     file_data: bytes
@@ -632,6 +656,25 @@ async def _resolve_import_media(
             raise ValueError(f"file_url must be http:// or https://, got: {file_url}")
 
         remote_file_data, remote_content_type = await _download_url_to_bytes(file_url)
+
+        # A share/redirect URL commonly returns an HTML page — a sign-in or error page — instead
+        # of the file bytes. Importing that produces a garbage document (live 2026-07-16: Google's
+        # sign-in page became a 148x6362 cell "spreadsheet"). Unless this tool genuinely accepts
+        # HTML as a source format, reject HTML responses with a pointer to a working path.
+        if "text/html" not in format_map.values():
+            ct_base = (remote_content_type or "").split(";", 1)[0].strip().lower()
+            head = remote_file_data.read(512) or b""
+            remote_file_data.seek(0)
+            looks_html = ct_base == "text/html" or head.lstrip()[:15].lower().startswith(
+                (b"<!doctype", b"<html")
+            )
+            if looks_html:
+                remote_file_data.close()
+                raise ValueError(
+                    f"[{tool_name}] The URL returned an HTML page (a sign-in or error page), not "
+                    f"the file's bytes — Drive share links can't be fetched anonymously. Pass the "
+                    f"data inline via 'content' (with source_format) instead."
+                )
 
         # Prefer the response Content-Type, falling back to URL-based detection.
         if not source_format:
