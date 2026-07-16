@@ -37,6 +37,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD sh -c 'curl -f http://localhost:${PORT:-8000}/health || exit 1'
 
 # Run the environment installed at build time without a runtime dependency sync.
-# Configure service/tool selection through WORKSPACE_MCP_* environment variables.
+# CLI flags such as --tool-tier and --tools remain supported; container
+# deployments can use the equivalent WORKSPACE_MCP_* environment variables.
 ENTRYPOINT ["/app/.venv/bin/python", "main.py"]
 CMD ["--transport", "streamable-http"]
