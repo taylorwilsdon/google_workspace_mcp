@@ -3022,9 +3022,7 @@ async def manage_doc_tab(
         if clear_requests:
             await asyncio.to_thread(
                 service.documents()
-                .batchUpdate(
-                    documentId=document_id, body={"requests": clear_requests}
-                )
+                .batchUpdate(documentId=document_id, body={"requests": clear_requests})
                 .execute
             )
 

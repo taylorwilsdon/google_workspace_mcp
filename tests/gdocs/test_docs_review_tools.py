@@ -74,9 +74,7 @@ async def test_create_comment_resolves_inserted_range_from_suggestion_id():
         document_result={
             "documentId": "document-id-1234567890",
             "revisionId": "revision-1",
-            "suggestions": [
-                {"suggestionId": "suggestion-1", "status": "OPEN"}
-            ],
+            "suggestions": [{"suggestionId": "suggestion-1", "status": "OPEN"}],
             "tabs": [
                 {
                     "tabProperties": {"tabId": "tab-1", "title": "Main"},
@@ -171,9 +169,7 @@ async def test_create_comment_fails_closed_for_discontiguous_suggestion_ranges()
         document_result={
             "documentId": "document-id-1234567890",
             "revisionId": "revision-1",
-            "suggestions": [
-                {"suggestionId": "suggestion-1", "status": "OPEN"}
-            ],
+            "suggestions": [{"suggestionId": "suggestion-1", "status": "OPEN"}],
             "tabs": [
                 {
                     "tabProperties": {"tabId": "tab-1", "title": "Main"},
@@ -234,9 +230,7 @@ async def test_create_comment_fails_closed_for_discontiguous_suggestion_ranges()
 async def test_create_comment_falls_back_to_deletion_range():
     service = _docs_service(
         document_result={
-            "suggestions": [
-                {"suggestionId": "suggestion-1", "status": "OPEN"}
-            ],
+            "suggestions": [{"suggestionId": "suggestion-1", "status": "OPEN"}],
             "body": {
                 "content": [
                     {
@@ -283,9 +277,7 @@ async def test_create_comment_falls_back_to_deletion_range():
 async def test_create_comment_falls_back_to_style_change_range():
     service = _docs_service(
         document_result={
-            "suggestions": [
-                {"suggestionId": "suggestion-1", "status": "OPEN"}
-            ],
+            "suggestions": [{"suggestionId": "suggestion-1", "status": "OPEN"}],
             "tabs": [
                 {
                     "tabProperties": {"tabId": "tab-1"},
@@ -302,9 +294,7 @@ async def test_create_comment_falls_back_to_style_change_range():
                                                     "content": "bold text",
                                                     "suggestedTextStyleChanges": {
                                                         "suggestion-1": {
-                                                            "textStyle": {
-                                                                "bold": True
-                                                            }
+                                                            "textStyle": {"bold": True}
                                                         }
                                                     },
                                                 }

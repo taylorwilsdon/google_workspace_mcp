@@ -250,11 +250,7 @@ def resolve_suggestion_comment_anchor(
     ordered = sorted(candidates, key=lambda item: (str(item[0]), str(item[1]), item[2]))
     tab_id, segment_id, start, end = ordered[0]
     for next_tab_id, next_segment_id, next_start, next_end in ordered[1:]:
-        if (
-            next_tab_id != tab_id
-            or next_segment_id != segment_id
-            or next_start > end
-        ):
+        if next_tab_id != tab_id or next_segment_id != segment_id or next_start > end:
             raise ValueError(
                 f"Suggestion '{suggestion_id}' spans multiple non-contiguous "
                 "ranges; provide an explicit verified range instead."

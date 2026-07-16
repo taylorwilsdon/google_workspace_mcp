@@ -206,9 +206,7 @@ async def test_populate_tab_renders_gfm_table_in_stages(monkeypatch):
         async def create_and_populate_table(
             self, document_id, table_data, index, bold_headers, tab_id
         ):
-            table_calls.append(
-                (document_id, table_data, index, bold_headers, tab_id)
-            )
+            table_calls.append((document_id, table_data, index, bold_headers, tab_id))
             return True, "created", {"populated_cells": 4}
 
     monkeypatch.setattr(docs_tools, "TableOperationManager", FakeTableManager)
