@@ -4,6 +4,7 @@ import json
 from unittest.mock import Mock
 
 import pytest
+from googleapiclient.errors import HttpError
 
 from gdocs import docs_tools
 from gdocs.review import execute_preview_rest_request
@@ -540,6 +541,27 @@ async def test_manage_doc_suggestion_refreshes_stale_revision_once():
     assert service._http.request.call_count == 3
     retry_body = json.loads(service._http.request.call_args_list[-1].kwargs["body"])
     assert retry_body["writeControl"] == {"requiredRevisionId": "revision-2"}
+
+
+@pytest.mark.asyncio
+async def test_manage_doc_suggestion_does_not_retry_unrelated_revision_error():
+    service = Mock()
+    response = Mock(status=400, reason="Bad Request")
+    service._http.request.return_value = (
+        response,
+        b'{"error":{"message":"The revisionId field is invalid"}}',
+    )
+
+    with pytest.raises(HttpError):
+        await _unwrap(docs_tools.manage_doc_suggestion)(
+            service=service,
+            user_google_email="user@example.com",
+            document_id="document-id-1234567890",
+            action="accept",
+            suggestion_id="suggestion-1",
+            required_revision_id="revision-1",
+        )
+    assert service._http.request.call_count == 1
 
 
 @pytest.mark.asyncio
