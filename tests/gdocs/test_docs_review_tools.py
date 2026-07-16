@@ -6,6 +6,7 @@ from unittest.mock import Mock
 import pytest
 
 from gdocs import docs_tools
+from gdocs.review import execute_preview_rest_request
 
 
 def _unwrap(tool):
@@ -33,6 +34,16 @@ def _docs_service(batch_result=None, document_result=None):
 
 def _last_rest_body(service):
     return json.loads(service._http.request.call_args.kwargs["body"])
+
+
+@pytest.mark.asyncio
+async def test_preview_request_fails_clearly_without_raw_http_transport():
+    with pytest.raises(ValueError, match="raw HTTP transport"):
+        await execute_preview_rest_request(
+            object(),
+            "https://docs.googleapis.com/v1/documents/document-id",
+            method="GET",
+        )
 
 
 @pytest.mark.asyncio

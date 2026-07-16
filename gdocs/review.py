@@ -23,6 +23,14 @@ async def execute_preview_rest_request(
     fields, so preview calls must bypass generated-client schema validation.
     The service's HTTP transport supplies the OAuth credentials.
     """
+    transport = getattr(service, "_http", None)
+    request = getattr(transport, "request", None)
+    if not callable(request):
+        raise ValueError(
+            "Google Docs Developer Preview requires an authorized service "
+            "with a raw HTTP transport."
+        )
+
     headers = {"Accept": "application/json"}
     encoded_body = None
     if body is not None:
@@ -30,7 +38,7 @@ async def execute_preview_rest_request(
         encoded_body = json.dumps(body).encode("utf-8")
 
     response, content = await asyncio.to_thread(
-        service._http.request,
+        request,
         uri=uri,
         method=method,
         body=encoded_body,

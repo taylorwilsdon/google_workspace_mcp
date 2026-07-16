@@ -131,3 +131,32 @@ async def test_modify_drive_file_labels_removes_label():
 def test_validate_label_modifications_rejects_unsafe_shapes(modifications):
     with pytest.raises(ValueError):
         drive_tools._validate_label_modifications(modifications)
+
+
+@pytest.mark.parametrize(
+    "modification",
+    [
+        {"labelId": "label-1", "removeLabel": "true"},
+        {
+            "labelId": "label-1",
+            "fieldModifications": [
+                {"fieldId": "field-1", "setSelectionValues": "choice"}
+            ],
+        },
+        {
+            "labelId": "label-1",
+            "fieldModifications": [{"fieldId": "field-1", "setSelectionValues": [1]}],
+        },
+        {
+            "labelId": "label-1",
+            "fieldModifications": [{"fieldId": "field-1", "unsetValues": "true"}],
+        },
+        {
+            "labelId": "label-1",
+            "fieldModifications": [{"fieldId": "field-1", "setIntegerValues": [True]}],
+        },
+    ],
+)
+def test_validate_label_modifications_rejects_invalid_value_types(modification):
+    with pytest.raises(ValueError):
+        drive_tools._validate_label_modifications([modification])

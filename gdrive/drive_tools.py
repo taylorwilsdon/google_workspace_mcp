@@ -79,6 +79,12 @@ _LABEL_FIELD_OPERATION_KEYS = {
     "setUserValues",
     "unsetValues",
 }
+_LABEL_SET_VALUE_OPERATIONS = {
+    "setDateValues",
+    "setSelectionValues",
+    "setTextValues",
+    "setUserValues",
+}
 
 
 def _validate_label_modifications(
@@ -100,6 +106,12 @@ def _validate_label_modifications(
         label_id = modification.get("labelId")
         if not isinstance(label_id, str) or not label_id.strip():
             raise ValueError(f"label_modifications[{index}].labelId is required.")
+        if "removeLabel" in modification and not isinstance(
+            modification["removeLabel"], bool
+        ):
+            raise ValueError(
+                f"label_modifications[{index}].removeLabel must be a boolean."
+            )
 
         field_modifications = modification.get("fieldModifications")
         if modification.get("removeLabel") and field_modifications:
@@ -142,6 +154,31 @@ def _validate_label_modifications(
                     f"[{field_index}] must contain exactly one set or unset "
                     "operation."
                 )
+            operation = next(iter(operations))
+            value = field_modification[operation]
+            if operation == "unsetValues":
+                if not isinstance(value, bool):
+                    raise ValueError(
+                        f"label_modifications[{index}].fieldModifications"
+                        f"[{field_index}].unsetValues must be a boolean."
+                    )
+            elif operation in _LABEL_SET_VALUE_OPERATIONS:
+                if not isinstance(value, list) or not all(
+                    isinstance(item, str) for item in value
+                ):
+                    raise ValueError(
+                        f"label_modifications[{index}].fieldModifications"
+                        f"[{field_index}].{operation} must be a list of strings."
+                    )
+            elif operation == "setIntegerValues":
+                if not isinstance(value, list) or not all(
+                    isinstance(item, int) and not isinstance(item, bool)
+                    for item in value
+                ):
+                    raise ValueError(
+                        f"label_modifications[{index}].fieldModifications"
+                        f"[{field_index}].setIntegerValues must be a list of integers."
+                    )
 
 
 @server.tool(
