@@ -86,6 +86,11 @@ logger = logging.getLogger(__name__)
 HEADER_FOOTER_RUNTIME_CANARY = "docs-hf-canary-20260328b"
 
 
+def _utf16_length(value: str) -> int:
+    """Return the number of UTF-16 code units used by Google Docs indices."""
+    return len(value.encode("utf-16-le")) // 2
+
+
 @server.tool(
     title="Search Docs",
     annotations=ToolAnnotations(
@@ -1476,6 +1481,8 @@ async def manage_doc_review_thread(
             end_index = resolved_anchor["end_index"]
             tab_id = resolved_anchor.get("tab_id")
             segment_id = resolved_anchor.get("segment_id")
+            if required_revision_id is None and target_revision_id is None:
+                required_revision_id = review_document.get("revisionId")
 
         request = build_review_thread_request(
             action,
@@ -3043,7 +3050,7 @@ async def manage_doc_tab(
                     .execute
                 )
                 insertion_index += sum(
-                    len(request["insertText"]["text"])
+                    _utf16_length(request["insertText"]["text"])
                     for request in requests
                     if "insertText" in request
                 )

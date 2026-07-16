@@ -36,6 +36,11 @@ def _last_rest_body(service):
     return json.loads(service._http.request.call_args.kwargs["body"])
 
 
+def test_docs_indices_count_utf16_code_units():
+    assert docs_tools._utf16_length("plain") == 5
+    assert docs_tools._utf16_length("ok 🛡️") == 6
+
+
 @pytest.mark.asyncio
 async def test_preview_request_fails_clearly_without_raw_http_transport():
     with pytest.raises(ValueError, match="raw HTTP transport"):
@@ -149,7 +154,8 @@ async def test_create_comment_resolves_inserted_range_from_suggestion_id():
                     },
                 }
             }
-        ]
+        ],
+        "writeControl": {"requiredRevisionId": "revision-1"},
     }
 
 
