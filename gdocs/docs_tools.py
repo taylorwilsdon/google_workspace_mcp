@@ -67,6 +67,7 @@ from gdocs.review import (
     execute_review_request,
     extract_tab_comment_anchors,
     fetch_review_document,
+    resolve_suggestion_comment_anchor,
 )
 
 # Import operation managers for complex business logic
@@ -1433,8 +1434,10 @@ async def manage_doc_review_thread(
     Requires Google Workspace Developer Preview access.
 
     Actions:
-      create_comment: requires content, start_index, and end_index. Optional
-                      tab_id, segment_id, and assignee_email anchor the comment.
+      create_comment: requires content and exactly one anchor mode: suggestion_id
+                      (resolved to its live proposed-text range), or start_index
+                      plus end_index. Optional tab_id, segment_id, and
+                      assignee_email refine an explicit range anchor.
       reply: requires content and exactly one comment_id or suggestion_id.
       resolve/reopen: requires comment_id; optionally includes content.
       update_post: requires post_id, content, and exactly one thread ID. Google
@@ -1452,11 +1455,30 @@ async def manage_doc_review_thread(
         return f"Error: {error_msg}"
 
     try:
+        resolved_anchor = None
+        if action == "create_comment" and suggestion_id:
+            if any(
+                value is not None
+                for value in (start_index, end_index, tab_id, segment_id)
+            ):
+                raise ValueError(
+                    "For create_comment, provide either suggestion_id or an "
+                    "explicit range, not both."
+                )
+            review_document = await fetch_review_document(service, document_id)
+            resolved_anchor = resolve_suggestion_comment_anchor(
+                review_document, suggestion_id
+            )
+            start_index = resolved_anchor["start_index"]
+            end_index = resolved_anchor["end_index"]
+            tab_id = resolved_anchor.get("tab_id")
+            segment_id = resolved_anchor.get("segment_id")
+
         request = build_review_thread_request(
             action,
             content=content,
             comment_id=comment_id,
-            suggestion_id=suggestion_id,
+            suggestion_id=None if action == "create_comment" else suggestion_id,
             post_id=post_id,
             start_index=start_index,
             end_index=end_index,
@@ -1487,6 +1509,7 @@ async def manage_doc_review_thread(
             "action": action,
             "document_id": document_id,
             "comment_update_state": comment_state,
+            "resolved_anchor": resolved_anchor,
             "replies": result.get("replies", []),
             "write_control": result.get("writeControl"),
         },

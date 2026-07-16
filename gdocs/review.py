@@ -77,6 +77,11 @@ def build_review_thread_request(
     """Build one Docs-native comment or suggestion-thread request."""
     if action == "create_comment":
         _validate_content(content)
+        if suggestion_id:
+            raise ValueError(
+                "suggestion_id must be resolved to a range before building "
+                "an anchored comment request."
+            )
         if start_index is None or end_index is None:
             raise ValueError(
                 "start_index and end_index are required for an anchored comment."
@@ -143,6 +148,126 @@ def build_review_thread_request(
         return {"deleteCommentReply": {**thread_id, "postId": post_id}}
 
     raise ValueError(f"Unsupported review-thread action: {action}.")
+
+
+def resolve_suggestion_comment_anchor(
+    document: dict[str, Any], suggestion_id: str
+) -> dict[str, Any]:
+    """Resolve one open suggestion to a safe, contiguous comment range.
+
+    Replacement suggestions expose both deleted and inserted text runs. Comments
+    should follow the proposed text, so inserted runs take precedence. Deletion-
+    only and style-only suggestions fall back to their affected ranges.
+    """
+    suggestion = next(
+        (
+            item
+            for item in document.get("suggestions", [])
+            if item.get("suggestionId") == suggestion_id
+        ),
+        None,
+    )
+    if suggestion is None:
+        raise ValueError(f"Suggestion '{suggestion_id}' was not found.")
+    if suggestion.get("status") not in {None, "OPEN"}:
+        raise ValueError(
+            f"Suggestion '{suggestion_id}' is not open "
+            f"(status={suggestion.get('status')})."
+        )
+
+    inserted: set[tuple[str | None, str | None, int, int]] = set()
+    affected: set[tuple[str | None, str | None, int, int]] = set()
+
+    def collect(
+        value: Any,
+        *,
+        tab_id: str | None,
+        segment_id: str | None = None,
+        inherited_start: int | None = None,
+        inherited_end: int | None = None,
+    ) -> None:
+        if isinstance(value, list):
+            for item in value:
+                collect(
+                    item,
+                    tab_id=tab_id,
+                    segment_id=segment_id,
+                    inherited_start=inherited_start,
+                    inherited_end=inherited_end,
+                )
+            return
+        if not isinstance(value, dict):
+            return
+
+        start = value.get("startIndex", inherited_start)
+        end = value.get("endIndex", inherited_end)
+        candidate = None
+        if isinstance(start, int) and isinstance(end, int) and end > start:
+            candidate = (tab_id, segment_id, start, end)
+
+        if candidate and suggestion_id in value.get("suggestedInsertionIds", []):
+            inserted.add(candidate)
+        if candidate and suggestion_id in value.get("suggestedDeletionIds", []):
+            affected.add(candidate)
+
+        for key, child in value.items():
+            if key.startswith("suggested") and key.endswith("Changes"):
+                if candidate and isinstance(child, dict) and suggestion_id in child:
+                    affected.add(candidate)
+                continue
+            if key in {"suggestions", "comments", "commentAnchors"}:
+                continue
+            collect(
+                child,
+                tab_id=tab_id,
+                segment_id=segment_id,
+                inherited_start=start,
+                inherited_end=end,
+            )
+
+    def collect_tabs(tabs: list[dict[str, Any]]) -> None:
+        for tab in tabs:
+            tab_id = tab.get("tabProperties", {}).get("tabId")
+            document_tab = tab.get("documentTab", {})
+            collect(document_tab.get("body", {}), tab_id=tab_id)
+            for collection_name in ("headers", "footers", "footnotes"):
+                for segment_id, segment in document_tab.get(
+                    collection_name, {}
+                ).items():
+                    collect(segment, tab_id=tab_id, segment_id=segment_id)
+            collect_tabs(tab.get("childTabs", []))
+
+    collect_tabs(document.get("tabs", []))
+    if not document.get("tabs"):
+        collect(document.get("body", {}), tab_id=None)
+
+    candidates = inserted or affected
+    if not candidates:
+        raise ValueError(
+            f"Could not resolve a document range for suggestion '{suggestion_id}'."
+        )
+
+    ordered = sorted(candidates, key=lambda item: (str(item[0]), str(item[1]), item[2]))
+    tab_id, segment_id, start, end = ordered[0]
+    for next_tab_id, next_segment_id, next_start, next_end in ordered[1:]:
+        if (
+            next_tab_id != tab_id
+            or next_segment_id != segment_id
+            or next_start > end
+        ):
+            raise ValueError(
+                f"Suggestion '{suggestion_id}' spans multiple non-contiguous "
+                "ranges; provide an explicit verified range instead."
+            )
+        end = max(end, next_end)
+
+    anchor: dict[str, Any] = {"start_index": start, "end_index": end}
+    if tab_id:
+        anchor["tab_id"] = tab_id
+    if segment_id:
+        anchor["segment_id"] = segment_id
+    anchor["source"] = "suggested_insertion" if inserted else "suggested_change"
+    return anchor
 
 
 def build_suggestion_request(action: str, suggestion_id: str) -> dict[str, Any]:

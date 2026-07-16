@@ -69,6 +69,308 @@ async def test_create_anchored_comment_builds_docs_request():
 
 
 @pytest.mark.asyncio
+async def test_create_comment_resolves_inserted_range_from_suggestion_id():
+    service = _docs_service(
+        document_result={
+            "documentId": "document-id-1234567890",
+            "revisionId": "revision-1",
+            "suggestions": [
+                {"suggestionId": "suggestion-1", "status": "OPEN"}
+            ],
+            "tabs": [
+                {
+                    "tabProperties": {"tabId": "tab-1", "title": "Main"},
+                    "documentTab": {
+                        "body": {
+                            "content": [
+                                {
+                                    "paragraph": {
+                                        "elements": [
+                                            {
+                                                "startIndex": 12,
+                                                "endIndex": 20,
+                                                "textRun": {
+                                                    "content": "old text",
+                                                    "suggestedDeletionIds": [
+                                                        "suggestion-1"
+                                                    ],
+                                                },
+                                            },
+                                            {
+                                                "startIndex": 20,
+                                                "endIndex": 36,
+                                                "textRun": {
+                                                    "content": "replacement text",
+                                                    "suggestedInsertionIds": [
+                                                        "suggestion-1"
+                                                    ],
+                                                },
+                                            },
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                }
+            ],
+        }
+    )
+
+    result = await _unwrap(docs_tools.manage_doc_review_thread)(
+        service=service,
+        user_google_email="user@example.com",
+        document_id="document-id-1234567890",
+        action="create_comment",
+        content="Why should this clause change?",
+        suggestion_id="suggestion-1",
+    )
+
+    assert "ALL_SAVED" in result
+    body = _last_rest_body(service)
+    assert body == {
+        "requests": [
+            {
+                "insertComment": {
+                    "content": "Why should this clause change?",
+                    "range": {
+                        "startIndex": 20,
+                        "endIndex": 36,
+                        "tabId": "tab-1",
+                    },
+                }
+            }
+        ]
+    }
+
+
+@pytest.mark.asyncio
+async def test_create_comment_rejects_suggestion_id_with_explicit_range():
+    service = _docs_service()
+
+    result = await _unwrap(docs_tools.manage_doc_review_thread)(
+        service=service,
+        user_google_email="user@example.com",
+        document_id="document-id-1234567890",
+        action="create_comment",
+        content="Ambiguous anchor",
+        suggestion_id="suggestion-1",
+        start_index=12,
+        end_index=28,
+        tab_id="tab-1",
+    )
+
+    assert result.startswith("Error:")
+    assert "either suggestion_id or an explicit range" in result
+    service._http.request.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_comment_fails_closed_for_discontiguous_suggestion_ranges():
+    service = _docs_service(
+        document_result={
+            "documentId": "document-id-1234567890",
+            "revisionId": "revision-1",
+            "suggestions": [
+                {"suggestionId": "suggestion-1", "status": "OPEN"}
+            ],
+            "tabs": [
+                {
+                    "tabProperties": {"tabId": "tab-1", "title": "Main"},
+                    "documentTab": {
+                        "body": {
+                            "content": [
+                                {
+                                    "paragraph": {
+                                        "elements": [
+                                            {
+                                                "startIndex": 12,
+                                                "endIndex": 20,
+                                                "textRun": {
+                                                    "content": "first",
+                                                    "suggestedInsertionIds": [
+                                                        "suggestion-1"
+                                                    ],
+                                                },
+                                            },
+                                            {
+                                                "startIndex": 30,
+                                                "endIndex": 40,
+                                                "textRun": {
+                                                    "content": "second",
+                                                    "suggestedInsertionIds": [
+                                                        "suggestion-1"
+                                                    ],
+                                                },
+                                            },
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                }
+            ],
+        }
+    )
+
+    result = await _unwrap(docs_tools.manage_doc_review_thread)(
+        service=service,
+        user_google_email="user@example.com",
+        document_id="document-id-1234567890",
+        action="create_comment",
+        content="Do not guess",
+        suggestion_id="suggestion-1",
+    )
+
+    assert result.startswith("Error:")
+    assert "multiple non-contiguous ranges" in result
+    assert [call.kwargs["method"] for call in service._http.request.call_args_list] == [
+        "GET"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_create_comment_falls_back_to_deletion_range():
+    service = _docs_service(
+        document_result={
+            "suggestions": [
+                {"suggestionId": "suggestion-1", "status": "OPEN"}
+            ],
+            "body": {
+                "content": [
+                    {
+                        "startIndex": 8,
+                        "endIndex": 18,
+                        "paragraph": {
+                            "elements": [
+                                {
+                                    "textRun": {
+                                        "content": "remove me",
+                                        "suggestedDeletionIds": ["suggestion-1"],
+                                    }
+                                }
+                            ]
+                        },
+                    }
+                ]
+            },
+        }
+    )
+
+    result = await _unwrap(docs_tools.manage_doc_review_thread)(
+        service=service,
+        user_google_email="user@example.com",
+        document_id="document-id-1234567890",
+        action="create_comment",
+        content="Why remove this clause?",
+        suggestion_id="suggestion-1",
+    )
+
+    payload = json.loads(result)
+    assert payload["resolved_anchor"] == {
+        "start_index": 8,
+        "end_index": 18,
+        "source": "suggested_change",
+    }
+    assert _last_rest_body(service)["requests"][0]["insertComment"]["range"] == {
+        "startIndex": 8,
+        "endIndex": 18,
+    }
+
+
+@pytest.mark.asyncio
+async def test_create_comment_falls_back_to_style_change_range():
+    service = _docs_service(
+        document_result={
+            "suggestions": [
+                {"suggestionId": "suggestion-1", "status": "OPEN"}
+            ],
+            "tabs": [
+                {
+                    "tabProperties": {"tabId": "tab-1"},
+                    "documentTab": {
+                        "body": {
+                            "content": [
+                                {
+                                    "startIndex": 4,
+                                    "endIndex": 14,
+                                    "paragraph": {
+                                        "elements": [
+                                            {
+                                                "textRun": {
+                                                    "content": "bold text",
+                                                    "suggestedTextStyleChanges": {
+                                                        "suggestion-1": {
+                                                            "textStyle": {
+                                                                "bold": True
+                                                            }
+                                                        }
+                                                    },
+                                                }
+                                            }
+                                        ]
+                                    },
+                                }
+                            ]
+                        }
+                    },
+                }
+            ],
+        }
+    )
+
+    result = await _unwrap(docs_tools.manage_doc_review_thread)(
+        service=service,
+        user_google_email="user@example.com",
+        document_id="document-id-1234567890",
+        action="create_comment",
+        content="Review this emphasis.",
+        suggestion_id="suggestion-1",
+    )
+
+    payload = json.loads(result)
+    assert payload["resolved_anchor"] == {
+        "start_index": 4,
+        "end_index": 14,
+        "tab_id": "tab-1",
+        "source": "suggested_change",
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("suggestions", "expected_error"),
+    [
+        ([], "was not found"),
+        (
+            [{"suggestionId": "suggestion-1", "status": "ACCEPTED"}],
+            "is not open",
+        ),
+    ],
+)
+async def test_create_comment_rejects_missing_or_closed_suggestion(
+    suggestions, expected_error
+):
+    service = _docs_service(document_result={"suggestions": suggestions})
+
+    result = await _unwrap(docs_tools.manage_doc_review_thread)(
+        service=service,
+        user_google_email="user@example.com",
+        document_id="document-id-1234567890",
+        action="create_comment",
+        content="Unsafe anchor",
+        suggestion_id="suggestion-1",
+    )
+
+    assert result.startswith("Error:")
+    assert expected_error in result
+    assert [call.kwargs["method"] for call in service._http.request.call_args_list] == [
+        "GET"
+    ]
+
+
+@pytest.mark.asyncio
 async def test_reply_to_suggestion_thread_builds_docs_request():
     service = _docs_service()
 
