@@ -1639,7 +1639,9 @@ async def inspect_doc_structure(
         user_google_email: User's Google email address
         document_id: ID of the document to inspect
         detailed: Whether to return detailed structure information
-        tab_id: Optional ID of the tab to inspect. If not provided, inspects main document.
+        tab_id: Optional ID of the tab to inspect. If omitted, a single document
+                tab is selected automatically. Documents with multiple document
+                tabs require an explicit ID.
 
     Returns:
         str: JSON string containing document structure and safe insertion indices
@@ -1653,7 +1655,10 @@ async def inspect_doc_structure(
         service.documents().get(documentId=document_id, includeTabsContent=True).execute
     )
 
-    # If tab_id is specified, find the tab and use its content
+    requested_tab_id = tab_id
+    auto_selected_tab = False
+
+    # Resolve which document body to inspect before calculating any indices.
     target_content = doc.get("body", {})
 
     def find_tab(tabs, target_id):
@@ -1666,6 +1671,14 @@ async def inspect_doc_structure(
                     return found
         return None
 
+    def document_tabs(tabs):
+        found = []
+        for candidate in tabs:
+            if "documentTab" in candidate:
+                found.append(candidate)
+            found.extend(document_tabs(candidate.get("childTabs", [])))
+        return found
+
     if tab_id:
         tab = find_tab(doc.get("tabs", []), tab_id)
         if tab and "documentTab" in tab:
@@ -1677,33 +1690,36 @@ async def inspect_doc_structure(
         else:
             return f"Error: Tab {tab_id} not found in document."
     else:
-        analysis_named_ranges = doc.get("namedRanges", {})
-        document_tab = None
+        available_document_tabs = document_tabs(doc.get("tabs", []))
+        if len(available_document_tabs) > 1:
+            choices = ", ".join(
+                f"{item.get('tabProperties', {}).get('tabId')} "
+                f"({item.get('tabProperties', {}).get('title') or 'Untitled'})"
+                for item in available_document_tabs
+            )
+            return (
+                "Error: This document has multiple document tabs. Provide an "
+                f"explicit tab_id before using its indices. Available tabs: {choices}."
+            )
+        if len(available_document_tabs) == 1:
+            tab = available_document_tabs[0]
+            tab_id = tab.get("tabProperties", {}).get("tabId")
+            document_tab = tab["documentTab"]
+            target_content = document_tab.get("body", {})
+            analysis_named_ranges = document_tab.get("namedRanges", {})
+            auto_selected_tab = True
+        else:
+            analysis_named_ranges = doc.get("namedRanges", {})
+            document_tab = None
 
     # Create a dummy doc object for analysis tools that expect a full doc
     analysis_doc = doc.copy()
     analysis_doc["body"] = target_content
     analysis_doc["namedRanges"] = analysis_named_ranges
-    if tab_id and document_tab:
+    if document_tab:
         analysis_doc["headers"] = document_tab.get("headers", {})
         analysis_doc["footers"] = document_tab.get("footers", {})
         analysis_doc["documentStyle"] = document_tab.get("documentStyle", {})
-    elif not tab_id and doc.get("tabs"):
-        # Default to the first document tab for tab-aware header/footer inspection.
-        def first_document_tab(tabs):
-            for candidate in tabs:
-                if "documentTab" in candidate:
-                    return candidate["documentTab"]
-                child = first_document_tab(candidate.get("childTabs", []))
-                if child:
-                    return child
-            return None
-
-        first_tab_doc = first_document_tab(doc.get("tabs", []))
-        if first_tab_doc:
-            analysis_doc["headers"] = first_tab_doc.get("headers", {})
-            analysis_doc["footers"] = first_tab_doc.get("footers", {})
-            analysis_doc["documentStyle"] = first_tab_doc.get("documentStyle", {})
 
     structure = parse_document_structure(analysis_doc)
 
@@ -1812,7 +1828,7 @@ async def inspect_doc_structure(
             result["footers"] = footer_entries
 
     # Always include available tabs if no tab_id was specified
-    if not tab_id:
+    if requested_tab_id is None:
 
         def get_tabs_summary(tabs):
             summary = []
@@ -1831,6 +1847,8 @@ async def inspect_doc_structure(
 
     if tab_id:
         result["inspected_tab_id"] = tab_id
+    if auto_selected_tab:
+        result["tab_selection"] = "automatic_single_document_tab"
 
     link = f"https://docs.google.com/document/d/{document_id}/edit"
     return f"Document structure analysis for {document_id}:\n\n{json.dumps(result, indent=2)}\n\nLink: {link}"
