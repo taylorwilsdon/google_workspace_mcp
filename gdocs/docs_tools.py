@@ -1554,13 +1554,31 @@ async def manage_doc_suggestion(
 
     try:
         request = build_suggestion_request(action, suggestion_id)
-        result = await execute_review_request(
-            service,
-            document_id,
-            request,
-            required_revision_id=required_revision_id,
-            target_revision_id=target_revision_id,
-        )
+        try:
+            result = await execute_review_request(
+                service,
+                document_id,
+                request,
+                required_revision_id=required_revision_id,
+                target_revision_id=target_revision_id,
+            )
+        except HttpError as exc:
+            # Comment/reply/resolve operations advance the document revision.
+            # Refresh once when a caller's optimistic revision is stale, then
+            # retry the same lifecycle action against the latest revision.
+            message = str(exc).lower()
+            if not required_revision_id or "revision" not in message:
+                raise
+            latest = await fetch_review_document(service, document_id)
+            latest_revision_id = latest.get("revisionId")
+            if not latest_revision_id or latest_revision_id == required_revision_id:
+                raise
+            result = await execute_review_request(
+                service,
+                document_id,
+                request,
+                required_revision_id=latest_revision_id,
+            )
     except ValueError as exc:
         return f"Error: {exc}"
 
