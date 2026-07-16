@@ -9,8 +9,9 @@ import logging
 import io
 import base64
 import binascii
+import json
 
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Literal
 from tempfile import NamedTemporaryFile, SpooledTemporaryFile
 from urllib.parse import urlparse
 from urllib.request import url2pathname
@@ -68,6 +69,190 @@ IMPORT_FORMATS_BY_GOOGLE_MIME_TYPE = {
     GOOGLE_SHEETS_MIME_TYPE: GOOGLE_SHEETS_IMPORT_FORMATS,
     GOOGLE_SLIDES_MIME_TYPE: GOOGLE_SLIDES_IMPORT_FORMATS,
 }
+
+_LABEL_MODIFICATION_KEYS = {"labelId", "removeLabel", "fieldModifications"}
+_LABEL_FIELD_OPERATION_KEYS = {
+    "setDateValues",
+    "setIntegerValues",
+    "setSelectionValues",
+    "setTextValues",
+    "setUserValues",
+    "unsetValues",
+}
+
+
+def _validate_label_modifications(
+    label_modifications: List[Dict[str, Any]],
+) -> None:
+    """Validate the safe Drive ``files.modifyLabels`` request subset."""
+    if not isinstance(label_modifications, list) or not label_modifications:
+        raise ValueError("label_modifications must be a non-empty list.")
+
+    for index, modification in enumerate(label_modifications):
+        if not isinstance(modification, dict):
+            raise ValueError(f"label_modifications[{index}] must be an object.")
+        unknown = set(modification) - _LABEL_MODIFICATION_KEYS
+        if unknown:
+            raise ValueError(
+                f"label_modifications[{index}] contains unsupported fields: "
+                f"{', '.join(sorted(unknown))}."
+            )
+        label_id = modification.get("labelId")
+        if not isinstance(label_id, str) or not label_id.strip():
+            raise ValueError(f"label_modifications[{index}].labelId is required.")
+
+        field_modifications = modification.get("fieldModifications")
+        if modification.get("removeLabel") and field_modifications:
+            raise ValueError(
+                f"label_modifications[{index}] cannot remove a label and "
+                "modify its fields in the same operation."
+            )
+        if field_modifications is None:
+            continue
+        if not isinstance(field_modifications, list) or not field_modifications:
+            raise ValueError(
+                f"label_modifications[{index}].fieldModifications must be "
+                "a non-empty list when provided."
+            )
+        for field_index, field_modification in enumerate(field_modifications):
+            if not isinstance(field_modification, dict):
+                raise ValueError(
+                    f"label_modifications[{index}].fieldModifications"
+                    f"[{field_index}] must be an object."
+                )
+            field_id = field_modification.get("fieldId")
+            if not isinstance(field_id, str) or not field_id.strip():
+                raise ValueError(
+                    f"label_modifications[{index}].fieldModifications"
+                    f"[{field_index}].fieldId is required."
+                )
+            unknown_field_keys = set(field_modification) - (
+                {"fieldId"} | _LABEL_FIELD_OPERATION_KEYS
+            )
+            if unknown_field_keys:
+                raise ValueError(
+                    f"label_modifications[{index}].fieldModifications"
+                    f"[{field_index}] contains unsupported fields: "
+                    f"{', '.join(sorted(unknown_field_keys))}."
+                )
+            operations = _LABEL_FIELD_OPERATION_KEYS & set(field_modification)
+            if len(operations) != 1:
+                raise ValueError(
+                    f"label_modifications[{index}].fieldModifications"
+                    f"[{field_index}] must contain exactly one set or unset "
+                    "operation."
+                )
+
+
+@server.tool(
+    title="List Drive Labels",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("list_drive_labels", is_read_only=True, service_type="drive")
+@require_google_service("drive_labels", "drive_labels_read")
+async def list_drive_labels(
+    service,
+    user_google_email: str,
+    minimum_role: Literal["READER", "APPLIER"] = "APPLIER",
+    page_size: int = 100,
+    page_token: Optional[str] = None,
+) -> str:
+    """List published Drive labels available to the authenticated user.
+
+    ``APPLIER`` returns labels the user can apply to writable Drive items.
+    Use ``READER`` to include labels the user may only inspect. The response
+    preserves label, field, and choice IDs required by ``modify_drive_file_labels``.
+    This tool never uses administrator access.
+    """
+    if not 1 <= page_size <= 100:
+        raise ValueError("page_size must be between 1 and 100.")
+    params: Dict[str, Any] = {
+        "view": "LABEL_VIEW_FULL",
+        "publishedOnly": True,
+        "minimumRole": minimum_role,
+        "pageSize": page_size,
+    }
+    if page_token:
+        params["pageToken"] = page_token
+    result = await asyncio.to_thread(service.labels().list(**params).execute)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@server.tool(
+    title="List Drive File Labels",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("list_drive_file_labels", is_read_only=True, service_type="drive")
+@require_google_service("drive", "drive_read")
+async def list_drive_file_labels(
+    service,
+    user_google_email: str,
+    file_id: str,
+    max_results: int = 100,
+    page_token: Optional[str] = None,
+) -> str:
+    """List label values currently applied to one Drive file or folder."""
+    if not file_id or not file_id.strip():
+        raise ValueError("file_id is required.")
+    if not 1 <= max_results <= 100:
+        raise ValueError("max_results must be between 1 and 100.")
+    params: Dict[str, Any] = {
+        "fileId": file_id,
+        "maxResults": max_results,
+    }
+    if page_token:
+        params["pageToken"] = page_token
+    result = await asyncio.to_thread(service.files().listLabels(**params).execute)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@server.tool(
+    title="Modify Drive File Labels",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("modify_drive_file_labels", service_type="drive")
+@require_google_service("drive", "drive")
+async def modify_drive_file_labels(
+    service,
+    user_google_email: str,
+    file_id: str,
+    label_modifications: List[Dict[str, Any]],
+) -> str:
+    """Apply, update, or remove labels on one Drive file atomically.
+
+    Each modification requires ``labelId``. To set a selection field, provide
+    ``fieldModifications`` with ``fieldId`` and ``setSelectionValues`` containing
+    choice IDs returned by ``list_drive_labels``. Set ``removeLabel`` to true to
+    remove an applied label. This operation uses only the authenticated user's
+    file and label permissions; it cannot administer label definitions.
+    """
+    if not file_id or not file_id.strip():
+        raise ValueError("file_id is required.")
+    _validate_label_modifications(label_modifications)
+    result = await asyncio.to_thread(
+        service.files()
+        .modifyLabels(
+            fileId=file_id,
+            body={"labelModifications": label_modifications},
+        )
+        .execute
+    )
+    return json.dumps(result, indent=2, ensure_ascii=False)
 
 
 @server.tool(

@@ -25,6 +25,7 @@ from auth.scopes import (
     GMAIL_MODIFY_SCOPE,
     GMAIL_COMPOSE_SCOPE,
     DRIVE_READONLY_SCOPE,
+    DRIVE_LABELS_READONLY_SCOPE,
     DRIVE_SCOPE,
     TASKS_READONLY_SCOPE,
     TASKS_SCOPE,
@@ -108,6 +109,7 @@ class TestGetScopesForPermission:
         scopes = get_scopes_for_permission("drive", "full")
         assert DRIVE_READONLY_SCOPE in scopes
         assert DRIVE_SCOPE in scopes
+        assert DRIVE_LABELS_READONLY_SCOPE in scopes
 
     def test_unknown_service_raises(self):
         with pytest.raises(ValueError, match="Unknown service"):

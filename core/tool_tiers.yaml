@@ -33,11 +33,14 @@ drive:
     - get_drive_shareable_link
   extended:
     - list_drive_items
+    - list_drive_labels
+    - list_drive_file_labels
     - copy_drive_file
     - update_drive_file
     - manage_drive_access
     - set_drive_file_permissions
   complete:
+    - modify_drive_file_labels
     - get_drive_file_permissions
     - check_drive_file_public_access
 
