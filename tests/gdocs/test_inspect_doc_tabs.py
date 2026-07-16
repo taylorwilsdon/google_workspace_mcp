@@ -152,3 +152,77 @@ async def test_explicit_tab_id_remains_supported_for_multiple_tabs():
     assert "tab_selection" not in parsed
     assert parsed["total_length"] == 10
 
+
+@pytest.mark.asyncio
+async def test_detailed_inspection_exposes_text_run_styles():
+    service = _service_with_document(
+        {
+            "title": "Formatting",
+            "body": {
+                "content": [
+                    {
+                        "startIndex": 1,
+                        "endIndex": 16,
+                        "paragraph": {
+                            "elements": [
+                                {
+                                    "startIndex": 1,
+                                    "endIndex": 6,
+                                    "textRun": {
+                                        "content": "Bold ",
+                                        "textStyle": {"bold": True},
+                                    },
+                                },
+                                {
+                                    "startIndex": 6,
+                                    "endIndex": 15,
+                                    "textRun": {
+                                        "content": "and blue",
+                                        "textStyle": {
+                                            "italic": True,
+                                            "foregroundColor": {
+                                                "color": {
+                                                    "rgbColor": {
+                                                        "red": 0.1,
+                                                        "green": 0.2,
+                                                        "blue": 0.9,
+                                                    }
+                                                }
+                                            },
+                                        },
+                                    },
+                                },
+                                {
+                                    "startIndex": 15,
+                                    "endIndex": 16,
+                                    "textRun": {"content": "\n", "textStyle": {}},
+                                },
+                            ]
+                        },
+                    }
+                ]
+            },
+            "tabs": [],
+        }
+    )
+
+    result = await _unwrap(docs_tools.inspect_doc_structure)(
+        service=service,
+        user_google_email="user@example.com",
+        document_id="d" * 25,
+        detailed=True,
+    )
+
+    runs = _payload(result)["elements"][0]["text_runs"]
+    assert runs[0] == {
+        "start_index": 1,
+        "end_index": 6,
+        "text": "Bold ",
+        "text_style": {"bold": True},
+    }
+    assert runs[1]["text_style"]["italic"] is True
+    assert runs[1]["text_style"]["foregroundColor"]["color"]["rgbColor"] == {
+        "red": 0.1,
+        "green": 0.2,
+        "blue": 0.9,
+    }

@@ -93,6 +93,7 @@ def _parse_element(element: dict[str, Any]) -> Optional[dict[str, Any]]:
         paragraph = element["paragraph"]
         element_info["type"] = "paragraph"
         element_info["text"] = _extract_paragraph_text(paragraph)
+        element_info["text_runs"] = _parse_paragraph_text_runs(paragraph)
         element_info["style"] = paragraph.get("paragraphStyle", {})
 
     elif "table" in element:
@@ -169,6 +170,24 @@ def _extract_paragraph_text(paragraph: dict[str, Any]) -> str:
         if "textRun" in element:
             text_parts.append(element["textRun"].get("content", ""))
     return "".join(text_parts)
+
+
+def _parse_paragraph_text_runs(paragraph: dict[str, Any]) -> list[dict[str, Any]]:
+    """Preserve exact run ranges and effective styles for readback checks."""
+    runs = []
+    for element in paragraph.get("elements", []):
+        text_run = element.get("textRun")
+        if text_run is None:
+            continue
+        runs.append(
+            {
+                "start_index": element.get("startIndex", 0),
+                "end_index": element.get("endIndex", 0),
+                "text": text_run.get("content", ""),
+                "text_style": text_run.get("textStyle", {}),
+            }
+        )
+    return runs
 
 
 def _extract_cell_text(cell: dict[str, Any]) -> str:

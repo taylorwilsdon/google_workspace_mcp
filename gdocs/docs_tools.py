@@ -1757,6 +1757,7 @@ async def inspect_doc_structure(
                 elem_summary["cell_count"] = len(element.get("cells", []))
             elif element["type"] == "paragraph":
                 elem_summary["text_preview"] = element.get("text", "")[:100]
+                elem_summary["text_runs"] = element.get("text_runs", [])
 
             result["elements"].append(elem_summary)
 
