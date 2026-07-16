@@ -537,16 +537,23 @@ uv run main.py --tool-tier complete  # ○ All available tools
 
 **◆ Docker Deployment**
 ```bash
-docker build -t workspace-mcp .
-docker run -p 8000:8000 -v $(pwd):/app \
-  -e MCP_ENABLE_OAUTH21=true \
-  -e GOOGLE_OAUTH_CLIENT_ID="..." \
-  workspace-mcp --transport streamable-http
+# Copy the example, replace OAuth placeholders, and keep .env untracked.
+cp .env.oauth21 .env
 
-# With tool selection via environment variables
-docker run -e TOOL_TIER=core workspace-mcp
-docker run -e TOOLS="gmail drive calendar" workspace-mcp
+# Start the local loopback-only MCP server.
+docker compose up -d --build
+curl --fail http://127.0.0.1:8000/health
+
+# Register the custom local endpoint in Claude Code and complete OAuth.
+claude mcp add --transport http google-workspace-local http://127.0.0.1:8000/mcp
+claude mcp login google-workspace-local
 ```
+
+Google Docs suggestion and native review-thread tools require enrollment in the
+Google Workspace Developer Preview Program. Use `get_doc_review_threads` to
+obtain a current revision before writes; comment/reply/resolve operations can
+advance that revision, and suggestion lifecycle writes recover once from a
+stale-revision response.
 
 **Available Services**: `gmail` • `drive` • `calendar` • `docs` • `sheets` • `forms` • `tasks` • `contacts` • `chat` • `search`
 
