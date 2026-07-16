@@ -550,10 +550,18 @@ claude mcp login google-workspace-local
 ```
 
 Google Docs suggestion and native review-thread tools require enrollment in the
-Google Workspace Developer Preview Program. Use `get_doc_review_threads` to
-obtain a current revision before writes; comment/reply/resolve operations can
-advance that revision, and suggestion lifecycle writes recover once from a
-stale-revision response.
+The Docs suggestion and native review-thread tools require enrollment in the
+[Google Workspace Developer Preview Program](https://developers.google.com/workspace/preview)
+and the corresponding Google Cloud project configuration. See the official
+[Google Docs suggestions and comments documentation](https://developers.google.com/workspace/docs/api/how-tos/suggestions)
+for the underlying API surface. If Preview access is unavailable, these tools
+fail closed and do not fall back to direct edits. `batch_update_doc` performs a
+preview read before `SUGGEST` writes and rejects responses that do not contain
+`suggestionResponses`; review-thread and suggestion lifecycle tools return the
+Google API error directly. Use `get_doc_review_threads` to obtain a current
+revision before writes; comment/reply/resolve operations can advance that
+revision, and suggestion lifecycle writes recover once from a stale-revision
+response.
 
 **Available Services**: `gmail` • `drive` • `calendar` • `docs` • `sheets` • `forms` • `tasks` • `contacts` • `chat` • `search`
 
