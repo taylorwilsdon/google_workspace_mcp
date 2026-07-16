@@ -2,7 +2,10 @@
 
 import pathlib
 
-from gdocs.docs_markdown_writer import markdown_to_docs_requests
+from gdocs.docs_markdown_writer import (
+    markdown_to_docs_requests,
+    split_markdown_table_blocks,
+)
 
 FIXTURE_DIR = pathlib.Path(__file__).parent / "fixtures"
 
@@ -10,6 +13,35 @@ FIXTURE_DIR = pathlib.Path(__file__).parent / "fixtures"
 def test_empty_markdown_returns_empty_list():
     requests = markdown_to_docs_requests("")
     assert requests == []
+
+
+def test_split_markdown_table_blocks_preserves_order_and_native_table_data():
+    markdown = """Before **bold**.
+
+| Control | Owner |
+| --- | --- |
+| AC-1 | *Security* |
+
+After the table.
+"""
+
+    blocks = split_markdown_table_blocks(markdown)
+
+    assert [block["type"] for block in blocks] == ["markdown", "table", "markdown"]
+    assert blocks[0]["markdown"].strip() == "Before **bold**."
+    assert blocks[1]["rows"] == [
+        ["Control", "Owner"],
+        ["AC-1", "Security"],
+    ]
+    assert blocks[2]["markdown"].strip() == "After the table."
+
+
+def test_split_markdown_table_blocks_keeps_commonmark_only_input_as_one_block():
+    markdown = "# Heading\n\nRegular paragraph."
+
+    assert split_markdown_table_blocks(markdown) == [
+        {"type": "markdown", "markdown": markdown}
+    ]
 
 
 def test_returns_list_of_dicts():

@@ -170,6 +170,95 @@ async def test_populate_tab_accepts_empty_markdown_to_clear_existing_content():
 
 
 @pytest.mark.asyncio
+async def test_populate_tab_renders_gfm_table_in_stages(monkeypatch):
+    service = Mock()
+    docs = service.documents.return_value
+    docs.get.return_value.execute.side_effect = [
+        {
+            "tabs": [
+                {
+                    "tabProperties": {"tabId": "t.review"},
+                    "documentTab": {
+                        "body": {"content": [{"endIndex": 1}, {"endIndex": 12}]}
+                    },
+                }
+            ]
+        },
+        {
+            "tabs": [
+                {
+                    "tabProperties": {"tabId": "t.review"},
+                    "documentTab": {
+                        "body": {"content": [{"endIndex": 1}, {"endIndex": 25}]}
+                    },
+                }
+            ]
+        },
+    ]
+    docs.batchUpdate.return_value.execute.return_value = {"replies": []}
+
+    table_calls = []
+
+    class FakeTableManager:
+        def __init__(self, manager_service):
+            assert manager_service is service
+
+        async def create_and_populate_table(
+            self, document_id, table_data, index, bold_headers, tab_id
+        ):
+            table_calls.append(
+                (document_id, table_data, index, bold_headers, tab_id)
+            )
+            return True, "created", {"populated_cells": 4}
+
+    monkeypatch.setattr(docs_tools, "TableOperationManager", FakeTableManager)
+
+    result = await _unwrap(docs_tools.manage_doc_tab)(
+        service=service,
+        user_google_email="test@example.com",
+        document_id="doc-abc",
+        action="populate_from_markdown",
+        tab_id="t.review",
+        markdown_text=(
+            "Before.\n\n"
+            "| Control | Owner |\n"
+            "| --- | --- |\n"
+            "| AC-1 | Security |\n\n"
+            "After."
+        ),
+    )
+
+    assert result["success"] is True
+    assert table_calls == [
+        (
+            "doc-abc",
+            [["Control", "Owner"], ["AC-1", "Security"]],
+            10,
+            True,
+            "t.review",
+        )
+    ]
+    request_bodies = [
+        call.kwargs["body"]["requests"] for call in docs.batchUpdate.call_args_list
+    ]
+    assert request_bodies[0] == [
+        {
+            "deleteContentRange": {
+                "range": {"startIndex": 1, "endIndex": 11, "tabId": "t.review"}
+            }
+        }
+    ]
+    assert request_bodies[1][0]["insertText"]["location"] == {
+        "index": 1,
+        "tabId": "t.review",
+    }
+    assert request_bodies[2][0]["insertText"]["location"] == {
+        "index": 24,
+        "tabId": "t.review",
+    }
+
+
+@pytest.mark.asyncio
 async def test_populate_tab_rejects_missing_tab_before_batch_update():
     """Missing tabs should produce a user-facing error before request generation."""
     service = Mock()

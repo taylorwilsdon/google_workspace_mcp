@@ -59,7 +59,10 @@ from gdocs.docs_markdown import (
     format_comments_appendix,
     parse_drive_comments,
 )
-from gdocs.docs_markdown_writer import markdown_to_docs_requests
+from gdocs.docs_markdown_writer import (
+    markdown_to_docs_requests,
+    split_markdown_table_blocks,
+)
 from gdocs.operation_schemas import BatchDocOperations
 from gdocs.review import (
     build_review_thread_request,
@@ -2856,7 +2859,8 @@ async def manage_doc_tab(
         title: Tab title (required for create; used by rename)
         index: Position index for new tab, 0-based among siblings (required for create)
         parent_tab_id: Optional parent tab ID to nest under (create only)
-        markdown_text: Markdown source to render (populate_from_markdown only)
+        markdown_text: Markdown source to render (populate_from_markdown only).
+                       GFM tables are created as native Docs tables in stages.
         replace_existing: Clear tab body before inserting markdown (default True)
 
     Returns:
@@ -2964,6 +2968,9 @@ async def manage_doc_tab(
     if tab_end is None:
         raise UserInputError(f"'{tab_id}' not found in document")
 
+    markdown_blocks = split_markdown_table_blocks(markdown_text)
+    has_native_tables = any(block["type"] == "table" for block in markdown_blocks)
+
     if replace_existing:
         # tab_end includes the segment-terminating newline that Google Docs
         # refuses to delete, so we delete up to tab_end - 1. Empty tabs
@@ -2989,6 +2996,81 @@ async def manage_doc_tab(
                 markdown_text, tab_id=tab_id, start_index=insert_at
             )
         )
+
+    if has_native_tables:
+        # Tables require staged writes because Docs assigns cell indices only
+        # after insertTable has completed and the document is fetched again.
+        clear_requests = all_requests[:1] if replace_existing and tab_end > 2 else []
+        if clear_requests:
+            await asyncio.to_thread(
+                service.documents()
+                .batchUpdate(
+                    documentId=document_id, body={"requests": clear_requests}
+                )
+                .execute
+            )
+
+        insertion_index = 1 if replace_existing else (tab_end - 1 if tab_end > 2 else 1)
+        requests_applied = len(clear_requests)
+        table_manager = TableOperationManager(service)
+
+        for block in markdown_blocks:
+            if block["type"] == "markdown":
+                requests = markdown_to_docs_requests(
+                    block["markdown"], tab_id=tab_id, start_index=insertion_index
+                )
+                if not requests:
+                    continue
+                await asyncio.to_thread(
+                    service.documents()
+                    .batchUpdate(documentId=document_id, body={"requests": requests})
+                    .execute
+                )
+                insertion_index += sum(
+                    len(request["insertText"]["text"])
+                    for request in requests
+                    if "insertText" in request
+                )
+                requests_applied += len(requests)
+                continue
+
+            success, message, metadata = await table_manager.create_and_populate_table(
+                document_id,
+                block["rows"],
+                insertion_index,
+                bold_headers=True,
+                tab_id=tab_id,
+            )
+            if not success:
+                raise UserInputError(
+                    "Staged Markdown rendering stopped while creating a native "
+                    f"table at index {insertion_index}: {message}"
+                )
+            requests_applied += 1 + metadata.get("populated_cells", 0)
+
+            refreshed_doc = await asyncio.to_thread(
+                service.documents()
+                .get(documentId=document_id, includeTabsContent=True)
+                .execute
+            )
+            refreshed_end = _find_tab_end_index(refreshed_doc, tab_id)
+            if refreshed_end is None:
+                raise UserInputError(
+                    f"Tab '{tab_id}' disappeared during staged Markdown rendering."
+                )
+            insertion_index = refreshed_end - 1 if refreshed_end > 2 else 1
+
+        return {
+            "action": action,
+            "success": True,
+            "message": (
+                f"Populated tab '{tab_id}' in document {document_id} from "
+                f"{len(markdown_text)} characters of markdown, including native tables."
+            ),
+            "requests_applied": requests_applied,
+            "tab_id": tab_id,
+            "link": link,
+        }
 
     if not all_requests:
         return {
