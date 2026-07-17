@@ -14,6 +14,7 @@ from gdocs.docs_helpers import (
     build_table_cell_style,
     create_update_table_cell_style_request,
 )
+from gdocs.docs_tables import build_table_population_requests
 from gdocs.managers.validation_manager import ValidationManager
 
 
@@ -34,6 +35,31 @@ class TestBuildTableCellStyle:
             "blue": 211 / 255,
         }
         assert fields == ["backgroundColor"]
+
+
+def test_table_population_style_range_uses_utf16_length_for_emoji():
+    requests = build_table_population_requests(
+        {
+            "cells": [
+                [
+                    {
+                        "content": "\n",
+                        "insertion_index": 10,
+                        "start_index": 10,
+                        "end_index": 12,
+                    }
+                ]
+            ]
+        },
+        [["😀"]],
+    )
+
+    style = next(
+        request["updateTextStyle"]
+        for request in requests
+        if "updateTextStyle" in request
+    )
+    assert style["range"] == {"startIndex": 10, "endIndex": 12}
 
     def test_border_color_and_width_apply_to_all_sides(self):
         style, fields = build_table_cell_style(

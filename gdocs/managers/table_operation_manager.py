@@ -16,6 +16,11 @@ from gdocs.docs_tables import validate_table_data
 logger = logging.getLogger(__name__)
 
 
+def _utf16_length(value: str) -> int:
+    """Return the number of UTF-16 code units used by Google Docs indices."""
+    return len(value.encode("utf-16-le")) // 2
+
+
 class TableOperationManager:
     """
     High-level manager for Google Docs table operations.
@@ -279,7 +284,7 @@ class TableOperationManager:
                     "updateTextStyle": {
                         "range": {
                             "startIndex": insertion_index,
-                            "endIndex": insertion_index + len(cell_text),
+                            "endIndex": insertion_index + _utf16_length(cell_text),
                         },
                         "textStyle": {"bold": True},
                         "fields": "bold",
