@@ -53,6 +53,7 @@ from gdocs.docs_structure import (
     analyze_document_complexity,
 )
 from gdocs.docs_tables import extract_table_as_data
+from gdocs.docs_utils import utf16_length
 from gdocs.docs_markdown import (
     convert_doc_to_markdown,
     format_comments_inline,
@@ -84,11 +85,6 @@ import json
 
 logger = logging.getLogger(__name__)
 HEADER_FOOTER_RUNTIME_CANARY = "docs-hf-canary-20260328b"
-
-
-def _utf16_length(value: str) -> int:
-    """Return the number of UTF-16 code units used by Google Docs indices."""
-    return len(value.encode("utf-16-le")) // 2
 
 
 @server.tool(
@@ -3049,7 +3045,7 @@ async def manage_doc_tab(
                     .execute
                 )
                 insertion_index += sum(
-                    _utf16_length(request["insertText"]["text"])
+                    utf16_length(request["insertText"]["text"])
                     for request in requests
                     if "insertText" in request
                 )

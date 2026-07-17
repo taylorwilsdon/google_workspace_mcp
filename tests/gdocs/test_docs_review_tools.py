@@ -7,6 +7,7 @@ import pytest
 from googleapiclient.errors import HttpError
 
 from gdocs import docs_tools
+from gdocs.docs_utils import utf16_length
 from gdocs.review import execute_preview_rest_request
 
 
@@ -38,8 +39,8 @@ def _last_rest_body(service):
 
 
 def test_docs_indices_count_utf16_code_units():
-    assert docs_tools._utf16_length("plain") == 5
-    assert docs_tools._utf16_length("ok 🛡️") == 6
+    assert utf16_length("plain") == 5
+    assert utf16_length("ok 🛡️") == 6
 
 
 @pytest.mark.asyncio

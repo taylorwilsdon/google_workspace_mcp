@@ -12,13 +12,9 @@ from typing import List, Dict, Any, Tuple, Optional
 from gdocs.docs_helpers import create_insert_table_request, create_insert_text_request
 from gdocs.docs_structure import find_tables
 from gdocs.docs_tables import validate_table_data
+from gdocs.docs_utils import utf16_length
 
 logger = logging.getLogger(__name__)
-
-
-def _utf16_length(value: str) -> int:
-    """Return the number of UTF-16 code units used by Google Docs indices."""
-    return len(value.encode("utf-16-le")) // 2
 
 
 class TableOperationManager:
@@ -284,7 +280,7 @@ class TableOperationManager:
                     "updateTextStyle": {
                         "range": {
                             "startIndex": insertion_index,
-                            "endIndex": insertion_index + _utf16_length(cell_text),
+                            "endIndex": insertion_index + utf16_length(cell_text),
                         },
                         "textStyle": {"bold": True},
                         "fields": "bold",
