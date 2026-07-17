@@ -91,37 +91,6 @@ def _utf16_length(value: str) -> int:
     return len(value.encode("utf-16-le")) // 2
 
 
-def _is_stale_revision_error(error: HttpError) -> bool:
-    """Recognize Docs write-control conflicts without retrying other 400s."""
-    if getattr(getattr(error, "resp", None), "status", None) != 400:
-        return False
-    try:
-        payload = json.loads(error.content.decode("utf-8"))
-    except (AttributeError, UnicodeDecodeError, json.JSONDecodeError):
-        return bool(re.search(r"revision\s+mismatch", str(error), re.IGNORECASE))
-
-    details = payload.get("error", {}) if isinstance(payload, dict) else {}
-    if not isinstance(details, dict):
-        return False
-    if details.get("status") == "FAILED_PRECONDITION":
-        return True
-    reasons = {
-        item.get("reason")
-        for item in details.get("errors", [])
-        if isinstance(item, dict)
-    }
-    if reasons & {"failedPrecondition", "revisionMismatch"}:
-        return True
-    message = str(details.get("message", ""))
-    return bool(
-        re.search(
-            r"revision\s+mismatch|required\s+revision.*(?:match|latest)",
-            message,
-            re.IGNORECASE,
-        )
-    )
-
-
 @server.tool(
     title="Search Docs",
     annotations=ToolAnnotations(
@@ -1600,22 +1569,11 @@ async def manage_doc_suggestion(
                 required_revision_id=required_revision_id,
                 target_revision_id=target_revision_id,
             )
-        except HttpError as exc:
-            # Comment/reply/resolve operations advance the document revision.
-            # Refresh once when a caller's optimistic revision is stale, then
-            # retry the same lifecycle action against the latest revision.
-            if not required_revision_id or not _is_stale_revision_error(exc):
-                raise
-            latest = await fetch_review_document(service, document_id)
-            latest_revision_id = latest.get("revisionId")
-            if not latest_revision_id or latest_revision_id == required_revision_id:
-                raise
-            result = await execute_review_request(
-                service,
-                document_id,
-                request,
-                required_revision_id=latest_revision_id,
-            )
+        except HttpError:
+            # A caller-supplied required revision is an optimistic-concurrency
+            # guard. Never replace it with a newer revision and silently apply
+            # the lifecycle action to a document the caller did not approve.
+            raise
     except ValueError as exc:
         return f"Error: {exc}"
 

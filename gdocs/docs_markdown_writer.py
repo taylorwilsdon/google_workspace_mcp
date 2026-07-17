@@ -20,6 +20,11 @@ from typing import Optional
 from markdown_it import MarkdownIt
 
 
+def _utf16_length(value: str) -> int:
+    """Return the number of UTF-16 code units used by Google Docs indices."""
+    return len(value.encode("utf-16-le")) // 2
+
+
 def split_markdown_table_blocks(markdown_text: str) -> list[dict]:
     """Split Markdown into ordered prose and native-table blocks.
 
@@ -102,7 +107,7 @@ def _emit_requests(tokens, requests, tab_id, start_index):
     """Walk markdown-it tokens and append Docs API requests.
 
     Maintains a running `cursor` that represents the current insertion point
-    in the document. Each insertText advances cursor by len(text).
+    in the document. Each insertText advances cursor by its UTF-16 length.
     """
     cursor = [start_index]  # mutable via list so helpers can advance it
 
@@ -119,7 +124,7 @@ def _emit_requests(tokens, requests, tab_id, start_index):
             text += "\n"
             range_start = cursor[0]
             requests.append(_build_insert_text(cursor[0], text, tab_id))
-            cursor[0] += len(text)
+            cursor[0] += _utf16_length(text)
             requests.append(_build_heading_style(range_start, cursor[0], level, tab_id))
             requests.extend(inline_styles)
             # Blank spacer paragraph between top-level blocks for visual spacing
@@ -161,7 +166,7 @@ def _emit_requests(tokens, requests, tab_id, start_index):
                         )
                         text += "\n"
                         requests.append(_build_insert_text(cursor[0], text, tab_id))
-                        cursor[0] += len(text)
+                        cursor[0] += _utf16_length(text)
                         requests.extend(inline_styles)
                 k += 1
             list_end = cursor[0]
@@ -192,7 +197,7 @@ def _emit_requests(tokens, requests, tab_id, start_index):
             # more blank line than other top-level blocks.
             text = content if content.endswith("\n") else content + "\n"
             requests.append(_build_insert_text(cursor[0], text, tab_id))
-            cursor[0] += len(text)
+            cursor[0] += _utf16_length(text)
             # Style the code characters but not the paragraph-ending newline.
             code_end = cursor[0] - 1
             _append_text_style(
@@ -236,7 +241,7 @@ def _emit_requests(tokens, requests, tab_id, start_index):
                     )
                     text += "\n"
                     requests.append(_build_insert_text(cursor[0], text, tab_id))
-                    cursor[0] += len(text)
+                    cursor[0] += _utf16_length(text)
                     requests.extend(inline_styles)
                     k += 3
                     continue
@@ -278,7 +283,7 @@ def _emit_requests(tokens, requests, tab_id, start_index):
             )
             text += "\n"
             requests.append(_build_insert_text(cursor[0], text, tab_id))
-            cursor[0] += len(text)
+            cursor[0] += _utf16_length(text)
             requests.extend(inline_styles)
             # Blank spacer paragraph between top-level blocks for visual spacing.
             # Only top-level paragraphs receive spacers - list-item paragraphs
@@ -317,7 +322,7 @@ def _render_inline_with_styles(
     for tok in children:
         if tok.type == "text":
             text_parts.append(tok.content)
-            local_pos += len(tok.content)
+            local_pos += _utf16_length(tok.content)
         elif tok.type == "softbreak":
             text_parts.append(" ")
             local_pos += 1
@@ -328,7 +333,7 @@ def _render_inline_with_styles(
             # self-contained - emit style immediately
             start_local = local_pos
             text_parts.append(tok.content)
-            local_pos += len(tok.content)
+            local_pos += _utf16_length(tok.content)
             _append_text_style(
                 style_requests,
                 base_index + start_local,
@@ -379,7 +384,7 @@ def _render_inline_with_styles(
             if label:
                 start_local = local_pos
                 text_parts.append(label)
-                local_pos += len(label)
+                local_pos += _utf16_length(label)
                 if src:
                     _append_text_style(
                         style_requests,
@@ -391,7 +396,7 @@ def _render_inline_with_styles(
                     )
         elif tok.type in ("html_inline", "html_block"):
             text_parts.append(tok.content)
-            local_pos += len(tok.content)
+            local_pos += _utf16_length(tok.content)
 
     return "".join(text_parts), style_requests
 

@@ -495,7 +495,15 @@ async def test_review_thread_rejects_ambiguous_thread_id():
 async def test_manage_doc_suggestion_actions(action, request_name):
     service = _docs_service(
         batch_result={
-            "suggestionResponses": [{f"{action}edSuggestionIds": ["suggestion-1"]}]
+            "suggestionResponses": [
+                {
+                    {
+                        "accept": "acceptedSuggestionIds",
+                        "reject": "rejectedSuggestionIds",
+                        "delete": "deletedSuggestionIds",
+                    }[action]: ["suggestion-1"]
+                }
+            ]
         }
     )
 
@@ -517,30 +525,25 @@ async def test_manage_doc_suggestion_actions(action, request_name):
 
 
 @pytest.mark.asyncio
-async def test_manage_doc_suggestion_refreshes_stale_revision_once():
+async def test_manage_doc_suggestion_preserves_stale_revision_guard():
     service = Mock()
     stale_response = Mock(status=400, reason="Bad Request")
-    latest_document = {"revisionId": "revision-2"}
-    success = {"suggestionResponses": [{"acceptedSuggestionIds": ["suggestion-1"]}]}
-    service._http.request.side_effect = [
-        (stale_response, b'{"error":{"message":"Revision mismatch"}}'),
-        (Mock(status=200), json.dumps(latest_document).encode("utf-8")),
-        (Mock(status=200), json.dumps(success).encode("utf-8")),
-    ]
-
-    result = await _unwrap(docs_tools.manage_doc_suggestion)(
-        service=service,
-        user_google_email="user@example.com",
-        document_id="document-id-1234567890",
-        action="accept",
-        suggestion_id="suggestion-1",
-        required_revision_id="revision-1",
+    service._http.request.return_value = (
+        stale_response,
+        b'{"error":{"message":"Revision mismatch"}}',
     )
 
-    assert '"success": true' in result
-    assert service._http.request.call_count == 3
-    retry_body = json.loads(service._http.request.call_args_list[-1].kwargs["body"])
-    assert retry_body["writeControl"] == {"requiredRevisionId": "revision-2"}
+    with pytest.raises(HttpError):
+        await _unwrap(docs_tools.manage_doc_suggestion)(
+            service=service,
+            user_google_email="user@example.com",
+            document_id="document-id-1234567890",
+            action="accept",
+            suggestion_id="suggestion-1",
+            required_revision_id="revision-1",
+        )
+
+    assert service._http.request.call_count == 1
 
 
 @pytest.mark.asyncio

@@ -84,6 +84,18 @@ def test_two_paragraphs_emit_two_inserts_with_correct_indices():
     )
 
 
+def test_emoji_before_later_paragraph_uses_utf16_indices():
+    requests = markdown_to_docs_requests("😀 intro\n\nLater **text**")
+    inserts = [request for request in requests if "insertText" in request]
+    later_index = 1 + len("😀 intro\n".encode("utf-16-le")) // 2 + 1
+
+    assert inserts[2]["insertText"]["location"]["index"] == later_index
+    styles = [request for request in requests if "updateTextStyle" in request]
+    assert styles[0]["updateTextStyle"]["range"]["startIndex"] == (
+        later_index + len("Later ".encode("utf-16-le")) // 2
+    )
+
+
 def test_h1_emits_insert_and_heading_style():
     requests = markdown_to_docs_requests("# My Title")
     inserts = [r for r in requests if "insertText" in r]

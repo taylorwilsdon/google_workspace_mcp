@@ -550,7 +550,6 @@ claude mcp login google-workspace-local
 ```
 
 Google Docs suggestion and native review-thread tools require enrollment in the
-The Docs suggestion and native review-thread tools require enrollment in the
 [Google Workspace Developer Preview Program](https://developers.google.com/workspace/preview)
 and the corresponding Google Cloud project configuration. See the official
 [Google Docs suggestions and comments documentation](https://developers.google.com/workspace/docs/api/how-tos/suggestions)
@@ -560,8 +559,8 @@ preview read before `SUGGEST` writes and rejects responses that do not contain
 `suggestionResponses`; review-thread and suggestion lifecycle tools return the
 Google API error directly. Use `get_doc_review_threads` to obtain a current
 revision before writes; comment/reply/resolve operations can advance that
-revision, and suggestion lifecycle writes recover once from a stale-revision
-response.
+revision. Callers should retry a stale suggestion lifecycle write only after
+fetching a fresh revision and explicitly deciding to reapply the action.
 
 **Available Services**: `gmail` • `drive` • `calendar` • `docs` • `sheets` • `forms` • `tasks` • `contacts` • `chat` • `search`
 
