@@ -37,6 +37,8 @@ drive:
     - update_drive_file
     - manage_drive_access
     - set_drive_file_permissions
+    - list_file_revisions
+    - export_file_revision
   complete:
     - get_drive_file_permissions
     - check_drive_file_public_access
@@ -95,6 +97,8 @@ sheets:
     - list_spreadsheet_comments
     - manage_spreadsheet_comment
     - manage_conditional_formatting
+    - audit_spreadsheet_errors
+    - diff_spreadsheets
 
 chat:
   core:

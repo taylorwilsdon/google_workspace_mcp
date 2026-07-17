@@ -2674,3 +2674,252 @@ async def set_drive_file_permissions(
     output_parts.extend(["", f"View link: {file_metadata.get('webViewLink', 'N/A')}"])
 
     return "\n".join(output_parts)
+
+
+@server.tool(
+    title="List File Revisions",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("list_file_revisions", is_read_only=True, service_type="drive")
+@require_google_service("drive", "drive_read")
+async def list_file_revisions(
+    service,
+    user_google_email: str,
+    file_id: str,
+    max_results: int = 50,
+) -> str:
+    """
+    Lists the version history (Drive revisions) of a file: revision id, modified
+    time and last editor. Works for any Drive file, including Google Sheets, Docs
+    and Slides.
+
+    Use the returned revision ids with export_file_revision to inspect how a file
+    looked at an earlier point in time (e.g. to recover how a spreadsheet's
+    formulas were built before an error was introduced).
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        file_id (str): The Drive file ID (a spreadsheet/doc ID works). Required.
+        max_results (int): Maximum number of most recent revisions to return. Defaults to 50.
+
+    Returns:
+        str: A chronologically ordered list of revisions (oldest to newest).
+    """
+    logger.info(
+        f"[list_file_revisions] Invoked. File ID: '{file_id}', Email: '{user_google_email}'"
+    )
+
+    resolved_file_id, file_metadata = await resolve_drive_item(
+        service, file_id, extra_fields="name"
+    )
+    file_id = resolved_file_id
+    file_name = file_metadata.get("name", "Unknown File")
+
+    revisions: List[Dict[str, Any]] = []
+    page_token = None
+    while True:
+        response = await asyncio.to_thread(
+            service.revisions()
+            .list(
+                fileId=file_id,
+                pageSize=200,
+                pageToken=page_token,
+                fields="nextPageToken,revisions(id,modifiedTime,lastModifyingUser(displayName,emailAddress),size)",
+            )
+            .execute
+        )
+        revisions.extend(response.get("revisions", []))
+        page_token = response.get("nextPageToken")
+        if not page_token:
+            break
+
+    if not revisions:
+        return f'No revisions available for "{file_name}" (ID: {file_id}).'
+
+    total = len(revisions)
+    shown = revisions[-max_results:] if max_results and max_results > 0 else revisions
+
+    lines = [
+        f'Version history for "{file_name}" (ID: {file_id}) — '
+        f"{total} revision(s), showing {len(shown)} (oldest to newest):"
+    ]
+    for rev in shown:
+        editor = rev.get("lastModifyingUser") or {}
+        who = editor.get("displayName") or editor.get("emailAddress") or "unknown"
+        lines.append(
+            f'- revision {rev.get("id")} | {rev.get("modifiedTime", "?")} | by {who}'
+        )
+    lines.append(
+        "\nTip: use export_file_revision(file_id, revision_id=...) to download a "
+        "specific revision (e.g. as xlsx) and inspect its contents/formulas."
+    )
+    return "\n".join(lines)
+
+
+@server.tool(
+    title="Export File Revision",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("export_file_revision", is_read_only=True, service_type="drive")
+@require_google_service("drive", "drive_read")
+async def export_file_revision(
+    service,
+    user_google_email: str,
+    file_id: str,
+    revision_id: str,
+    export_format: Optional[str] = None,
+) -> str:
+    """
+    Downloads a specific historical revision of a Drive file and saves it.
+
+    In stdio mode returns the local file path; in HTTP mode returns a temporary
+    download URL (valid for 1 hour). For Google native files (Sheets/Docs/Slides)
+    the revision is exported (Sheets -> xlsx by default, or 'csv'/'pdf'); for other
+    files the original bytes of that revision are returned. Useful for recovering
+    how a spreadsheet's formulas looked at an earlier revision — pair it with
+    list_file_revisions.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        file_id (str): The Drive file ID. Required.
+        revision_id (str): The revision id (from list_file_revisions). Required.
+        export_format (str): Optional export format for Google native files.
+            Sheets: 'xlsx' (default), 'csv', 'pdf'. Docs/Slides: 'pdf' (default), 'docx'/'pptx'.
+
+    Returns:
+        str: Metadata with a local file path (stdio) or a download URL (HTTP).
+    """
+    logger.info(
+        f"[export_file_revision] Invoked. File: '{file_id}', Revision: '{revision_id}'"
+    )
+
+    resolved_file_id, file_metadata = await resolve_drive_item(
+        service, file_id, extra_fields="name, mimeType"
+    )
+    file_id = resolved_file_id
+    mime_type = file_metadata.get("mimeType", "")
+    file_name = file_metadata.get("name", "Unknown File")
+
+    native_defaults = {
+        "application/vnd.google-apps.spreadsheet": (
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "xlsx",
+        ),
+        "application/vnd.google-apps.document": ("application/pdf", "pdf"),
+        "application/vnd.google-apps.presentation": ("application/pdf", "pdf"),
+    }
+    fmt_map = {
+        "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "csv": "text/csv",
+        "tsv": "text/tab-separated-values",
+        "pdf": "application/pdf",
+        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "ods": "application/x-vnd.oasis.opendocument.spreadsheet",
+    }
+
+    revision = await asyncio.to_thread(
+        service.revisions()
+        .get(
+            fileId=file_id,
+            revisionId=revision_id,
+            fields="id,modifiedTime,mimeType,exportLinks",
+        )
+        .execute
+    )
+    export_links = revision.get("exportLinks", {}) or {}
+
+    if mime_type in native_defaults:
+        default_mime, default_ext = native_defaults[mime_type]
+        if export_format and export_format in fmt_map:
+            target_mime, ext = fmt_map[export_format], export_format
+        else:
+            target_mime, ext = default_mime, default_ext
+        output_filename = f"{Path(file_name).stem}_rev{revision_id}.{ext}"
+
+        url = export_links.get(target_mime)
+        if not url:
+            return (
+                f'Revision {revision_id} of "{file_name}" cannot be exported as '
+                f"'{ext}'. Available formats: "
+                f"{', '.join(sorted(export_links.keys())) or 'none'}."
+            )
+        # Download the per-revision export link via the service's authorized transport
+        resp, content = await asyncio.to_thread(service._http.request, url)
+        status = int(getattr(resp, "status", 0))
+        if status != 200:
+            return (
+                f"Error: failed to download revision {revision_id} of "
+                f'"{file_name}" (HTTP {status}).'
+            )
+        file_content_bytes = content
+        output_mime_type = target_mime
+    else:
+        # Binary / uploaded file: download that revision's media directly
+        request_obj = service.revisions().get_media(
+            fileId=file_id, revisionId=revision_id
+        )
+        fh = io.BytesIO()
+        downloader = MediaIoBaseDownload(fh, request_obj)
+        loop = asyncio.get_event_loop()
+        done = False
+        while not done:
+            _, done = await loop.run_in_executor(None, downloader.next_chunk)
+        file_content_bytes = fh.getvalue()
+        output_mime_type = mime_type
+        stem, suffix = Path(file_name).stem, Path(file_name).suffix
+        output_filename = f"{stem}_rev{revision_id}{suffix}"
+
+    size_bytes = len(file_content_bytes)
+    size_kb = size_bytes / 1024 if size_bytes else 0
+
+    if is_stateless_mode():
+        return "\n".join(
+            [
+                "Revision exported successfully!",
+                f"File: {file_name} (revision {revision_id}, {revision.get('modifiedTime', '?')})",
+                f"Size: {size_kb:.1f} KB ({size_bytes} bytes)",
+                f"MIME Type: {output_mime_type}",
+                "\n⚠️ Stateless mode: file storage disabled.",
+            ]
+        )
+
+    try:
+        storage = get_attachment_storage()
+        base64_data = base64.urlsafe_b64encode(file_content_bytes).decode("utf-8")
+        result = storage.save_attachment(
+            base64_data=base64_data,
+            filename=output_filename,
+            mime_type=output_mime_type,
+        )
+        result_lines = [
+            "Revision exported successfully!",
+            f"File: {file_name}",
+            f"Revision: {revision_id} ({revision.get('modifiedTime', '?')})",
+            f"Size: {size_kb:.1f} KB ({size_bytes} bytes)",
+            f"MIME Type: {output_mime_type}",
+        ]
+        if get_transport_mode() == "stdio":
+            result_lines.append(f"\n📎 Saved to: {result.path}")
+        else:
+            result_lines.append(
+                f"\n📎 Download URL: {get_attachment_url(result.file_id)}"
+            )
+            result_lines.append("\nThe file will expire after 1 hour.")
+        return "\n".join(result_lines)
+    except Exception as e:
+        logger.error(f"[export_file_revision] Failed to save file: {e}")
+        return (
+            f"Error: revision {revision_id} was downloaded ({size_kb:.1f} KB) but "
+            f"could not be saved.\n\nError details: {str(e)}"
+        )
