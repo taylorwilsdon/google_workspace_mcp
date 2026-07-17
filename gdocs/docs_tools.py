@@ -2984,6 +2984,17 @@ async def manage_doc_tab(
     markdown_blocks = split_markdown_table_blocks(markdown_text)
     has_native_tables = any(block["type"] == "table" for block in markdown_blocks)
 
+    if replace_existing and has_native_tables:
+        # Native tables require multiple dependent batchUpdate calls because
+        # Google assigns cell indices only after table creation. Reject the
+        # destructive replacement form until those calls can be transactional;
+        # otherwise a later failure could leave the existing tab partially lost.
+        raise UserInputError(
+            "replace_existing=true is not supported when Markdown contains "
+            "native tables. Use replace_existing=false to append safely, or "
+            "remove the tables from this replacement."
+        )
+
     if replace_existing:
         # tab_end includes the segment-terminating newline that Google Docs
         # refuses to delete, so we delete up to tab_end - 1. Empty tabs

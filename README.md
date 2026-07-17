@@ -562,6 +562,12 @@ revision before writes; comment/reply/resolve operations can advance that
 revision. Callers should retry a stale suggestion lifecycle write only after
 fetching a fresh revision and explicitly deciding to reapply the action.
 
+When Markdown contains native tables, `populate_from_markdown` rejects
+`replace_existing=true` before mutation. Native table rendering requires
+multiple dependent API calls, so destructive replacement is intentionally
+deferred until it can be made transactional. Use `replace_existing=false` to
+append the rendered content safely.
+
 **Available Services**: `gmail` • `drive` • `calendar` • `docs` • `sheets` • `forms` • `tasks` • `contacts` • `chat` • `search`
 
 </details>

@@ -224,6 +224,7 @@ async def test_populate_tab_renders_gfm_table_in_stages(monkeypatch):
             "| AC-1 | Security |\n\n"
             "After."
         ),
+        replace_existing=False,
     )
 
     assert result["success"] is True
@@ -231,7 +232,7 @@ async def test_populate_tab_renders_gfm_table_in_stages(monkeypatch):
         (
             "doc-abc",
             [["Control", "Owner"], ["AC-1", "Security"]],
-            10,
+            20,
             True,
             "t.review",
         )
@@ -239,21 +240,43 @@ async def test_populate_tab_renders_gfm_table_in_stages(monkeypatch):
     request_bodies = [
         call.kwargs["body"]["requests"] for call in docs.batchUpdate.call_args_list
     ]
-    assert request_bodies[0] == [
-        {
-            "deleteContentRange": {
-                "range": {"startIndex": 1, "endIndex": 11, "tabId": "t.review"}
-            }
-        }
-    ]
-    assert request_bodies[1][0]["insertText"]["location"] == {
-        "index": 1,
+    assert request_bodies[0][0]["insertText"]["location"] == {
+        "index": 11,
         "tabId": "t.review",
     }
-    assert request_bodies[2][0]["insertText"]["location"] == {
+    assert request_bodies[1][0]["insertText"]["location"] == {
         "index": 24,
         "tabId": "t.review",
     }
+
+
+@pytest.mark.asyncio
+async def test_populate_tab_rejects_destructive_native_table_replacement():
+    service = Mock()
+    docs = service.documents.return_value
+    docs.get.return_value.execute.return_value = {
+        "tabs": [
+            {
+                "tabProperties": {"tabId": "t.review"},
+                "documentTab": {
+                    "body": {"content": [{"endIndex": 1}, {"endIndex": 12}]}
+                },
+            }
+        ]
+    }
+
+    with pytest.raises(UserInputError, match="replace_existing=true is not supported"):
+        await _unwrap(docs_tools.manage_doc_tab)(
+            service=service,
+            user_google_email="test@example.com",
+            document_id="doc-abc",
+            action="populate_from_markdown",
+            tab_id="t.review",
+            markdown_text="| A | B |\n| --- | --- |\n| 1 | 2 |",
+            replace_existing=True,
+        )
+
+    docs.batchUpdate.assert_not_called()
 
 
 @pytest.mark.asyncio
