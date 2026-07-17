@@ -9,6 +9,7 @@ import logging
 from typing import Dict, Any, List, Optional, Union, Tuple
 
 from gdocs.docs_helpers import create_update_table_cell_style_request
+from gdocs.docs_utils import utf16_length
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +80,8 @@ def build_table_population_requests(
                                 "updateTextStyle": {
                                     "range": {
                                         "startIndex": insertion_index,
-                                        "endIndex": insertion_index + len(cell_text),
+                                        "endIndex": insertion_index
+                                        + utf16_length(cell_text),
                                     },
                                     "textStyle": {"bold": True},
                                     "fields": "bold",
@@ -106,7 +108,7 @@ def build_table_population_requests(
                                 "updateTextStyle": {
                                     "range": {
                                         "startIndex": cell_end,
-                                        "endIndex": cell_end + len(cell_text),
+                                        "endIndex": cell_end + utf16_length(cell_text),
                                     },
                                     "textStyle": {"bold": True},
                                     "fields": "bold",

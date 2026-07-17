@@ -18,6 +18,7 @@ from auth.scopes import (
     CONTACTS_READONLY_SCOPE,
     CONTACTS_SCOPE,
     DRIVE_FILE_SCOPE,
+    DRIVE_LABELS_READONLY_SCOPE,
     DRIVE_READONLY_SCOPE,
     DRIVE_SCOPE,
     GMAIL_COMPOSE_SCOPE,
@@ -175,6 +176,10 @@ class TestHasRequiredScopes:
     def test_drive_readonly_does_not_cover_full(self):
         """Narrower scope should not satisfy broader scope."""
         assert not has_required_scopes([DRIVE_READONLY_SCOPE], [DRIVE_SCOPE])
+
+    def test_drive_scope_does_not_cover_labels_taxonomy(self):
+        """Drive file access does not imply Drive Labels API access."""
+        assert not has_required_scopes([DRIVE_SCOPE], [DRIVE_LABELS_READONLY_SCOPE])
 
     # Other hierarchies
     def test_calendar_covers_readonly(self):

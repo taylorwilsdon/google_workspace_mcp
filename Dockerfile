@@ -22,7 +22,7 @@ RUN useradd --create-home --shell /bin/bash app \
 # Give read and write access to the store_creds volume
 RUN mkdir -p /app/store_creds \
     && chown -R app:app /app/store_creds \
-    && chmod 755 /app/store_creds
+    && chmod 700 /app/store_creds
 
 USER app
 
@@ -36,10 +36,8 @@ EXPOSE ${PORT:-8000}
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD sh -c 'curl -f http://localhost:${PORT:-8000}/health || exit 1'
 
-# Set environment variables for Python startup args
-ENV TOOL_TIER=""
-ENV TOOLS=""
-
-# Use entrypoint for the base command and CMD for args
-ENTRYPOINT ["/bin/sh", "-c"]
-CMD ["uv run main.py --transport streamable-http ${TOOL_TIER:+--tool-tier \"$TOOL_TIER\"} ${TOOLS:+--tools $TOOLS}"]
+# Run the environment installed at build time without a runtime dependency sync.
+# CLI flags such as --tool-tier and --tools remain supported; container
+# deployments can use the equivalent WORKSPACE_MCP_* environment variables.
+ENTRYPOINT ["/app/.venv/bin/python", "main.py"]
+CMD ["--transport", "streamable-http"]

@@ -90,12 +90,12 @@ spec:
             {{- end }}
             # Tool configuration
             {{- if .Values.toolTier }}
-            - name: TOOL_TIER
+            - name: WORKSPACE_MCP_TOOL_TIER
               value: {{ .Values.toolTier | quote }}
             {{- end }}
             {{- if .Values.tools.enabled }}
-            - name: TOOLS
-              value: {{ .Values.tools.enabled | join " " | quote }}
+            - name: WORKSPACE_MCP_TOOLS
+              value: {{ .Values.tools.enabled | join "," | quote }}
             {{- end }}
             # Environment variables from values
             {{- range $key, $value := .Values.env }}
@@ -107,7 +107,11 @@ spec:
           {{- end }}
           {{- if not .Values.command.disableArgs }}
           args:
-            - "uv run main.py --transport streamable-http {{- if .Values.singleUserMode }} --single-user{{- end }} ${TOOL_TIER:+--tool-tier \"$TOOL_TIER\"} ${TOOLS:+--tools $TOOLS}"
+            - "--transport"
+            - "streamable-http"
+            {{- if .Values.singleUserMode }}
+            - "--single-user"
+            {{- end }}
           {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}

@@ -2,7 +2,10 @@
 
 import pathlib
 
-from gdocs.docs_markdown_writer import markdown_to_docs_requests
+from gdocs.docs_markdown_writer import (
+    markdown_to_docs_requests,
+    split_markdown_table_blocks,
+)
 
 FIXTURE_DIR = pathlib.Path(__file__).parent / "fixtures"
 
@@ -10,6 +13,35 @@ FIXTURE_DIR = pathlib.Path(__file__).parent / "fixtures"
 def test_empty_markdown_returns_empty_list():
     requests = markdown_to_docs_requests("")
     assert requests == []
+
+
+def test_split_markdown_table_blocks_preserves_order_and_native_table_data():
+    markdown = """Before **bold**.
+
+| Control | Owner |
+| --- | --- |
+| AC-1 | *Security* |
+
+After the table.
+"""
+
+    blocks = split_markdown_table_blocks(markdown)
+
+    assert [block["type"] for block in blocks] == ["markdown", "table", "markdown"]
+    assert blocks[0]["markdown"].strip() == "Before **bold**."
+    assert blocks[1]["rows"] == [
+        ["Control", "Owner"],
+        ["AC-1", "Security"],
+    ]
+    assert blocks[2]["markdown"].strip() == "After the table."
+
+
+def test_split_markdown_table_blocks_keeps_commonmark_only_input_as_one_block():
+    markdown = "# Heading\n\nRegular paragraph."
+
+    assert split_markdown_table_blocks(markdown) == [
+        {"type": "markdown", "markdown": markdown}
+    ]
 
 
 def test_returns_list_of_dicts():
@@ -49,6 +81,18 @@ def test_two_paragraphs_emit_two_inserts_with_correct_indices():
     assert inserts[3]["insertText"]["text"] == "\n"
     assert inserts[3]["insertText"]["location"]["index"] == (
         1 + len("First para\n") + 1 + len("Second para\n")
+    )
+
+
+def test_emoji_before_later_paragraph_uses_utf16_indices():
+    requests = markdown_to_docs_requests("😀 intro\n\nLater **text**")
+    inserts = [request for request in requests if "insertText" in request]
+    later_index = 1 + len("😀 intro\n".encode("utf-16-le")) // 2 + 1
+
+    assert inserts[2]["insertText"]["location"]["index"] == later_index
+    styles = [request for request in requests if "updateTextStyle" in request]
+    assert styles[0]["updateTextStyle"]["range"]["startIndex"] == (
+        later_index + len("Later ".encode("utf-16-le")) // 2
     )
 
 

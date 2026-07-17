@@ -11,7 +11,9 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 
-def parse_document_structure(doc_data: dict[str, Any]) -> dict[str, Any]:
+def parse_document_structure(
+    doc_data: dict[str, Any], *, include_text_runs: bool = True
+) -> dict[str, Any]:
     """
     Parse the full document structure into a navigable format.
 
@@ -36,7 +38,7 @@ def parse_document_structure(doc_data: dict[str, Any]) -> dict[str, Any]:
     content = body.get("content", [])
 
     for element in content:
-        element_info = _parse_element(element)
+        element_info = _parse_element(element, include_text_runs=include_text_runs)
         if element_info:
             structure["body"].append(element_info)
             if element_info["type"] == "table":
@@ -74,7 +76,9 @@ def parse_document_structure(doc_data: dict[str, Any]) -> dict[str, Any]:
     return structure
 
 
-def _parse_element(element: dict[str, Any]) -> Optional[dict[str, Any]]:
+def _parse_element(
+    element: dict[str, Any], *, include_text_runs: bool = True
+) -> Optional[dict[str, Any]]:
     """
     Parse a single document element.
 
@@ -93,6 +97,8 @@ def _parse_element(element: dict[str, Any]) -> Optional[dict[str, Any]]:
         paragraph = element["paragraph"]
         element_info["type"] = "paragraph"
         element_info["text"] = _extract_paragraph_text(paragraph)
+        if include_text_runs:
+            element_info["text_runs"] = _parse_paragraph_text_runs(paragraph)
         element_info["style"] = paragraph.get("paragraphStyle", {})
 
     elif "table" in element:
@@ -169,6 +175,24 @@ def _extract_paragraph_text(paragraph: dict[str, Any]) -> str:
         if "textRun" in element:
             text_parts.append(element["textRun"].get("content", ""))
     return "".join(text_parts)
+
+
+def _parse_paragraph_text_runs(paragraph: dict[str, Any]) -> list[dict[str, Any]]:
+    """Preserve exact run ranges and effective styles for readback checks."""
+    runs = []
+    for element in paragraph.get("elements", []):
+        text_run = element.get("textRun")
+        if text_run is None:
+            continue
+        runs.append(
+            {
+                "start_index": element.get("startIndex", 0),
+                "end_index": element.get("endIndex", 0),
+                "text": text_run.get("content", ""),
+                "text_style": text_run.get("textStyle", {}),
+            }
+        )
+    return runs
 
 
 def _extract_cell_text(cell: dict[str, Any]) -> str:

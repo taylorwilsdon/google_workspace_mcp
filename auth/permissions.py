@@ -25,6 +25,7 @@ from auth.scopes import (
     GMAIL_SETTINGS_BASIC_SCOPE,
     DRIVE_READONLY_SCOPE,
     DRIVE_FILE_SCOPE,
+    DRIVE_LABELS_READONLY_SCOPE,
     DRIVE_SCOPE,
     CALENDAR_READONLY_SCOPE,
     CALENDAR_EVENTS_SCOPE,
@@ -70,7 +71,7 @@ SERVICE_PERMISSION_LEVELS: Dict[str, List[Tuple[str, List[str]]]] = {
     ],
     "drive": [
         ("readonly", [DRIVE_READONLY_SCOPE]),
-        ("full", [DRIVE_SCOPE, DRIVE_FILE_SCOPE]),
+        ("full", [DRIVE_SCOPE, DRIVE_FILE_SCOPE, DRIVE_LABELS_READONLY_SCOPE]),
     ],
     "calendar": [
         ("readonly", [CALENDAR_READONLY_SCOPE]),

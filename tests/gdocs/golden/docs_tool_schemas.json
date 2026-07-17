@@ -2148,8 +2148,41 @@
         },
         "type": "array"
       },
+      "required_revision_id": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Optional revision guard. The request fails if the\n                  document is no longer at this exact revision."
+      },
+      "target_revision_id": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Optional recent revision to rebase the changes against.\n                Cannot be combined with required_revision_id."
+      },
       "user_google_email": {
         "description": "User's Google email address",
+        "type": "string"
+      },
+      "write_mode": {
+        "default": "EDIT",
+        "description": "EDIT applies normal document edits. SUGGEST applies every\n        supported operation in the batch as a suggestion and requires\n        Google Workspace Developer Preview access.",
+        "enum": [
+          "EDIT",
+          "SUGGEST"
+        ],
         "type": "string"
       }
     },

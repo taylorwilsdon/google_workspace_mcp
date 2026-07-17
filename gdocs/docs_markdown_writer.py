@@ -6,9 +6,9 @@ markdown into a document or a specific tab within a document.
 
 Supported constructs - headings H1-H6, paragraphs with inline bold/italic/
 code/links, ordered and unordered lists, fenced code blocks, blockquotes,
-horizontal rules, and image alt text linked to the image URL. GFM-only
-features (tables, strikethrough, task lists, autolinks) are not enabled;
-extend the parser config below if they become needed.
+horizontal rules, and image alt text linked to the image URL. GFM tables are
+identified separately for staged native-table creation. Other GFM-only
+features (strikethrough, task lists, autolinks) are not enabled.
 
 Primary entry point - markdown_to_docs_requests(markdown_text, tab_id=None).
 """
@@ -18,6 +18,59 @@ from __future__ import annotations
 from typing import Optional
 
 from markdown_it import MarkdownIt
+from gdocs.docs_utils import utf16_length
+
+
+def split_markdown_table_blocks(markdown_text: str) -> list[dict]:
+    """Split Markdown into ordered prose and native-table blocks.
+
+    Google Docs table cell indices are only known after a table is created, so
+    callers must render these blocks in stages rather than place table requests
+    in the ordinary one-shot Markdown batch.
+    """
+    md = MarkdownIt("commonmark").enable("table")
+    tokens = md.parse(markdown_text)
+    table_spans = [
+        (index, token.map)
+        for index, token in enumerate(tokens)
+        if token.type == "table_open" and token.map
+    ]
+    if not table_spans:
+        return [{"type": "markdown", "markdown": markdown_text}]
+
+    lines = markdown_text.splitlines(keepends=True)
+    blocks = []
+    source_cursor = 0
+
+    for token_index, (start_line, end_line) in table_spans:
+        preceding_markdown = "".join(lines[source_cursor:start_line])
+        if preceding_markdown.strip():
+            blocks.append({"type": "markdown", "markdown": preceding_markdown})
+
+        rows = []
+        row = None
+        cursor = token_index + 1
+        while cursor < len(tokens) and tokens[cursor].type != "table_close":
+            token = tokens[cursor]
+            if token.type == "tr_open":
+                row = []
+            elif token.type == "inline" and row is not None:
+                text, _styles = _render_inline_with_styles(
+                    token.children or [], 0, None
+                )
+                row.append(text)
+            elif token.type == "tr_close" and row is not None:
+                rows.append(row)
+                row = None
+            cursor += 1
+
+        blocks.append({"type": "table", "rows": rows})
+        source_cursor = end_line
+
+    trailing_markdown = "".join(lines[source_cursor:])
+    if trailing_markdown.strip():
+        blocks.append({"type": "markdown", "markdown": trailing_markdown})
+    return blocks
 
 
 def markdown_to_docs_requests(
@@ -50,7 +103,7 @@ def _emit_requests(tokens, requests, tab_id, start_index):
     """Walk markdown-it tokens and append Docs API requests.
 
     Maintains a running `cursor` that represents the current insertion point
-    in the document. Each insertText advances cursor by len(text).
+    in the document. Each insertText advances cursor by its UTF-16 length.
     """
     cursor = [start_index]  # mutable via list so helpers can advance it
 
@@ -67,7 +120,7 @@ def _emit_requests(tokens, requests, tab_id, start_index):
             text += "\n"
             range_start = cursor[0]
             requests.append(_build_insert_text(cursor[0], text, tab_id))
-            cursor[0] += len(text)
+            cursor[0] += utf16_length(text)
             requests.append(_build_heading_style(range_start, cursor[0], level, tab_id))
             requests.extend(inline_styles)
             # Blank spacer paragraph between top-level blocks for visual spacing
@@ -109,7 +162,7 @@ def _emit_requests(tokens, requests, tab_id, start_index):
                         )
                         text += "\n"
                         requests.append(_build_insert_text(cursor[0], text, tab_id))
-                        cursor[0] += len(text)
+                        cursor[0] += utf16_length(text)
                         requests.extend(inline_styles)
                 k += 1
             list_end = cursor[0]
@@ -140,7 +193,7 @@ def _emit_requests(tokens, requests, tab_id, start_index):
             # more blank line than other top-level blocks.
             text = content if content.endswith("\n") else content + "\n"
             requests.append(_build_insert_text(cursor[0], text, tab_id))
-            cursor[0] += len(text)
+            cursor[0] += utf16_length(text)
             # Style the code characters but not the paragraph-ending newline.
             code_end = cursor[0] - 1
             _append_text_style(
@@ -184,7 +237,7 @@ def _emit_requests(tokens, requests, tab_id, start_index):
                     )
                     text += "\n"
                     requests.append(_build_insert_text(cursor[0], text, tab_id))
-                    cursor[0] += len(text)
+                    cursor[0] += utf16_length(text)
                     requests.extend(inline_styles)
                     k += 3
                     continue
@@ -226,7 +279,7 @@ def _emit_requests(tokens, requests, tab_id, start_index):
             )
             text += "\n"
             requests.append(_build_insert_text(cursor[0], text, tab_id))
-            cursor[0] += len(text)
+            cursor[0] += utf16_length(text)
             requests.extend(inline_styles)
             # Blank spacer paragraph between top-level blocks for visual spacing.
             # Only top-level paragraphs receive spacers - list-item paragraphs
@@ -265,7 +318,7 @@ def _render_inline_with_styles(
     for tok in children:
         if tok.type == "text":
             text_parts.append(tok.content)
-            local_pos += len(tok.content)
+            local_pos += utf16_length(tok.content)
         elif tok.type == "softbreak":
             text_parts.append(" ")
             local_pos += 1
@@ -276,7 +329,7 @@ def _render_inline_with_styles(
             # self-contained - emit style immediately
             start_local = local_pos
             text_parts.append(tok.content)
-            local_pos += len(tok.content)
+            local_pos += utf16_length(tok.content)
             _append_text_style(
                 style_requests,
                 base_index + start_local,
@@ -327,7 +380,7 @@ def _render_inline_with_styles(
             if label:
                 start_local = local_pos
                 text_parts.append(label)
-                local_pos += len(label)
+                local_pos += utf16_length(label)
                 if src:
                     _append_text_style(
                         style_requests,
@@ -339,7 +392,7 @@ def _render_inline_with_styles(
                     )
         elif tok.type in ("html_inline", "html_block"):
             text_parts.append(tok.content)
-            local_pos += len(tok.content)
+            local_pos += utf16_length(tok.content)
 
     return "".join(text_parts), style_requests
 

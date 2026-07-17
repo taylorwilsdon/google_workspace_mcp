@@ -10,7 +10,8 @@ MCP tools for reading, creating, editing, and managing Google Docs. All tools re
 - Structural Elements: insert_doc_elements, create_table_with_data, insert_doc_image
 - Headers, Footers & Export: update_doc_headers_footers, export_doc_to_pdf
 - Tabs: manage_doc_tab
-- Comments: list_document_comments, manage_document_comment
+- Comments & Suggestions: list_document_comments, manage_document_comment,
+  get_doc_review_threads, manage_doc_review_thread, manage_doc_suggestion
 - Inspection & Debugging: inspect_doc_structure, debug_table_structure
 - Batch Operations: batch_update_doc
 - Tips
@@ -260,6 +261,26 @@ Create, reply to, or resolve a comment.
 | comment_content | string | no | | Required for `create` and `reply` |
 | comment_id | string | no | | Required for `reply` and `resolve` |
 
+This compatibility tool uses the stable Drive Comments API. New comments are
+file-level comments and cannot be anchored to a Docs text range.
+
+### get_doc_review_threads
+Returns Docs-native comment and suggestion threads, including post IDs, thread
+status, quoted text, tab-aware comment anchors, and a revision ID. Requires
+enrollment in the Google Workspace Developer Preview Program.
+
+### manage_doc_review_thread
+Creates anchored comments and manages Docs-native comment or suggestion threads.
+Actions are `create_comment`, `reply`, `resolve`, `reopen`, `update_post`,
+`delete_comment`, and `delete_reply`. Use `get_doc_review_threads` first to obtain
+the current IDs, ranges, and revision. Google only permits authors to update or
+delete their own posts; a suggestion thread's head post cannot be edited.
+
+### manage_doc_suggestion
+Accepts, rejects, or deletes a suggestion by ID. Accepting requires edit access;
+rejecting requires edit access or authorship; deleting requires authorship. This
+tool requires Google Workspace Developer Preview access.
+
 ---
 
 ## Inspection & Debugging
@@ -302,6 +323,9 @@ Execute multiple operations atomically in a single API call. Each operation is a
 | user_google_email | string | yes | | |
 | document_id | string | yes | | |
 | operations | array | yes | | List of operation dicts (see types below) |
+| write_mode | string | no | `EDIT` | Use `SUGGEST` to propose all supported operations as suggestions (Developer Preview) |
+| required_revision_id | string | no | | Fail unless this exact revision is current |
+| target_revision_id | string | no | | Rebase against a recent revision; mutually exclusive with `required_revision_id` |
 
 **Operation types:**
 
@@ -322,6 +346,21 @@ Execute multiple operations atomically in a single API call. Each operation is a
 
 Use `list_type='NONE'` in `create_bullet_list` to remove existing list formatting.
 
+In `SUGGEST` mode, Google does not support tab creation/deletion/renaming, named
+range creation/deletion, or table column property updates. The tool rejects these
+operations before sending the batch. Suggest mode also excludes the
+`document_mode`, `use_even_page_header_footer`, and
+`use_first_page_header_footer` document-style fields. Always inspect
+`comment_update_state` in the
+result: Google can commit document changes while failing to save their associated
+comment or suggestion threads.
+
+Before sending a `SUGGEST` batch, the server verifies that the authenticated
+client and Cloud project can read the Developer Preview review fields. It refuses
+the write if that capability check fails, because generally available clients can
+silently ignore the preview-only write mode and apply direct edits. If Google does
+not return `suggestionResponses`, stop and verify the document before retrying.
+
 ---
 
 ## Tips
@@ -338,4 +377,7 @@ Use `list_type='NONE'` in `create_bullet_list` to remove existing list formattin
 
 **Tab operations**: Use `inspect_doc_structure` (without `tab_id`) to discover available tabs and their IDs. Then pass `tab_id` to editing tools or to `inspect_doc_structure` again to get structure within a specific tab.
 
-**Comments**: `get_doc_as_markdown` with `comment_mode: "inline"` gives the most useful view of comments in context. Use `list_document_comments` for structured comment data, and `manage_document_comment` to create, reply, or resolve.
+**Comments**: The stable Drive-backed tools remain useful for existing and
+file-level comments. For anchored Docs comments and suggestion lifecycle
+operations, use the Developer Preview tools: `get_doc_review_threads`,
+`manage_doc_review_thread`, and `manage_doc_suggestion`.

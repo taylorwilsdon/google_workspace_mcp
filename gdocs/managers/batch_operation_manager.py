@@ -8,6 +8,7 @@ extracting complex validation and request building logic.
 import logging
 import asyncio
 from typing import Any, Union, Dict, List, Tuple
+from urllib.parse import quote
 
 from gdocs.docs_helpers import (
     create_insert_text_request,
@@ -41,8 +42,23 @@ from gdocs.docs_helpers import (
     validate_operation,
 )
 from gdocs.managers.validation_manager import ValidationManager
+from gdocs.review import execute_preview_rest_request, fetch_review_document
 
 logger = logging.getLogger(__name__)
+
+SUGGEST_MODE_UNSUPPORTED_OPERATIONS = {
+    "create_named_range",
+    "delete_named_range",
+    "insert_doc_tab",
+    "delete_doc_tab",
+    "update_doc_tab",
+    "update_table_column_properties",
+}
+SUGGEST_MODE_UNSUPPORTED_DOCUMENT_STYLE_FIELDS = {
+    "document_mode",
+    "use_even_page_header_footer",
+    "use_first_page_header_footer",
+}
 
 
 class BatchOperationManager:
@@ -66,7 +82,12 @@ class BatchOperationManager:
         self.validation_manager = ValidationManager()
 
     async def execute_batch_operations(
-        self, document_id: str, operations: list[dict[str, Any]]
+        self,
+        document_id: str,
+        operations: list[dict[str, Any]],
+        write_mode: str = "EDIT",
+        required_revision_id: str | None = None,
+        target_revision_id: str | None = None,
     ) -> tuple[bool, str, dict[str, Any]]:
         """
         Execute multiple document operations in a single atomic batch.
@@ -76,6 +97,9 @@ class BatchOperationManager:
         Args:
             document_id: ID of the document to update
             operations: List of operation dictionaries
+            write_mode: Apply operations as direct edits or suggestions
+            required_revision_id: Reject unless this is the current revision
+            target_revision_id: Rebase changes against this recent revision
 
         Returns:
             Tuple of (success, message, metadata)
@@ -90,7 +114,56 @@ class BatchOperationManager:
                 {},
             )
 
+        if write_mode not in {"EDIT", "SUGGEST"}:
+            return False, "write_mode must be either 'EDIT' or 'SUGGEST'.", {}
+
+        if required_revision_id and target_revision_id:
+            return (
+                False,
+                "Provide only one of required_revision_id or target_revision_id.",
+                {},
+            )
+
+        if write_mode == "SUGGEST":
+            unsupported = sorted(
+                {
+                    op.get("type")
+                    for op in operations
+                    if op.get("type") in SUGGEST_MODE_UNSUPPORTED_OPERATIONS
+                }
+            )
+            if unsupported:
+                return (
+                    False,
+                    "The following operations are not supported by the Google Docs "
+                    f"API in SUGGEST mode: {', '.join(unsupported)}.",
+                    {},
+                )
+            unsupported_style_fields = sorted(
+                {
+                    field
+                    for op in operations
+                    if op.get("type") == "update_document_style"
+                    for field in SUGGEST_MODE_UNSUPPORTED_DOCUMENT_STYLE_FIELDS
+                    if op.get(field) is not None
+                }
+            )
+            if unsupported_style_fields:
+                return (
+                    False,
+                    "The Google Docs API does not support suggesting these document "
+                    f"style fields: {', '.join(unsupported_style_fields)}.",
+                    {},
+                )
+
         try:
+            if write_mode == "SUGGEST":
+                # Fail closed before any mutation. The generally available Docs
+                # client can silently ignore preview-only writeMode and apply a
+                # direct edit instead. A preview review read proves that this
+                # authenticated client/project can reach the preview surface.
+                await fetch_review_document(self.service, document_id)
+
             preflight_error = await self._preflight_create_header_footer_operations(
                 document_id, operations
             )
@@ -106,7 +179,22 @@ class BatchOperationManager:
                 return False, "No valid requests could be built from operations", {}
 
             # Execute the batch
-            result = await self._execute_batch_requests(document_id, requests)
+            result = await self._execute_batch_requests(
+                document_id,
+                requests,
+                write_mode=write_mode,
+                required_revision_id=required_revision_id,
+                target_revision_id=target_revision_id,
+            )
+
+            if write_mode == "SUGGEST" and not result.get("suggestionResponses"):
+                return (
+                    False,
+                    "Google did not return suggestionResponses for a SUGGEST batch. "
+                    "The document changes may have been applied as direct edits. "
+                    "Do not retry until you read the document and verify its state.",
+                    {"write_mode": write_mode, "preview_response_missing": True},
+                )
 
             # Process results
             metadata = {
@@ -114,7 +202,19 @@ class BatchOperationManager:
                 "requests_count": len(requests),
                 "replies_count": len(result.get("replies", [])),
                 "operation_summary": operation_descriptions[:5],  # First 5 operations
+                "write_mode": write_mode,
             }
+
+            comment_update_state = result.get("commentUpdateState")
+            if comment_update_state:
+                metadata["comment_update_state"] = comment_update_state
+
+            suggestion_changes = self._extract_suggestion_changes(result)
+            metadata.update(suggestion_changes)
+
+            partial_failure = comment_update_state == "ALL_FAILED_UNKNOWN_REASON"
+            if partial_failure:
+                metadata["partial_failure"] = True
 
             # Fetch document length after batch for downstream chaining
             try:
@@ -142,6 +242,12 @@ class BatchOperationManager:
                     f"'{t['title']}' (tab_id: {t['tab_id']})" for t in created_tabs
                 )
                 msg += f". Created tabs: {tab_info}"
+            if partial_failure:
+                msg += (
+                    ". WARNING: document model changes may have been committed, but "
+                    "Google reported that comment or suggestion thread updates failed "
+                    "for an unknown reason"
+                )
 
             return True, msg, metadata
 
@@ -850,7 +956,12 @@ class BatchOperationManager:
         return request, description
 
     async def _execute_batch_requests(
-        self, document_id: str, requests: list[dict[str, Any]]
+        self,
+        document_id: str,
+        requests: list[dict[str, Any]],
+        write_mode: str = "EDIT",
+        required_revision_id: str | None = None,
+        target_revision_id: str | None = None,
     ) -> dict[str, Any]:
         """
         Execute the batch requests against the Google Docs API.
@@ -862,11 +973,53 @@ class BatchOperationManager:
         Returns:
             API response
         """
+        body: dict[str, Any] = {"requests": requests}
+        write_control: dict[str, str] = {}
+        if write_mode == "SUGGEST":
+            write_control["writeMode"] = "SUGGEST"
+        if required_revision_id:
+            write_control["requiredRevisionId"] = required_revision_id
+        if target_revision_id:
+            write_control["targetRevisionId"] = target_revision_id
+        if write_control:
+            body["writeControl"] = write_control
+
+        if write_mode == "SUGGEST":
+            uri = (
+                "https://docs.googleapis.com/v1/documents/"
+                f"{quote(document_id, safe='')}:batchUpdate"
+            )
+            return await execute_preview_rest_request(
+                self.service,
+                uri,
+                method="POST",
+                body=body,
+            )
+
         return await asyncio.to_thread(
             self.service.documents()
-            .batchUpdate(documentId=document_id, body={"requests": requests})
+            .batchUpdate(documentId=document_id, body=body)
             .execute
         )
+
+    def _extract_suggestion_changes(
+        self, result: dict[str, Any]
+    ) -> dict[str, list[str]]:
+        """Flatten suggestion IDs returned for each request in the batch."""
+        response_to_metadata = {
+            "createdSuggestionIds": "created_suggestion_ids",
+            "updatedSummarySuggestionIds": "updated_summary_suggestion_ids",
+            "deletedSuggestionIds": "deleted_suggestion_ids",
+            "acceptedSuggestionIds": "accepted_suggestion_ids",
+            "rejectedSuggestionIds": "rejected_suggestion_ids",
+        }
+        changes: dict[str, list[str]] = {}
+        for response in result.get("suggestionResponses", []):
+            for response_key, metadata_key in response_to_metadata.items():
+                ids = response.get(response_key, [])
+                if ids:
+                    changes.setdefault(metadata_key, []).extend(ids)
+        return changes
 
     def _extract_created_tabs(self, result: dict[str, Any]) -> list[dict[str, str]]:
         """

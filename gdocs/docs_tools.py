@@ -53,14 +53,26 @@ from gdocs.docs_structure import (
     analyze_document_complexity,
 )
 from gdocs.docs_tables import extract_table_as_data
+from gdocs.docs_utils import utf16_length
 from gdocs.docs_markdown import (
     convert_doc_to_markdown,
     format_comments_inline,
     format_comments_appendix,
     parse_drive_comments,
 )
-from gdocs.docs_markdown_writer import markdown_to_docs_requests
+from gdocs.docs_markdown_writer import (
+    markdown_to_docs_requests,
+    split_markdown_table_blocks,
+)
 from gdocs.operation_schemas import BatchDocOperations
+from gdocs.review import (
+    build_review_thread_request,
+    build_suggestion_request,
+    execute_review_request,
+    extract_tab_comment_anchors,
+    fetch_review_document,
+    resolve_suggestion_comment_anchor,
+)
 
 # Import operation managers for complex business logic
 from gdocs.managers import (
@@ -1076,6 +1088,9 @@ async def batch_update_doc(
     user_google_email: str,
     document_id: str,
     operations: BatchDocOperations,
+    write_mode: Literal["EDIT", "SUGGEST"] = "EDIT",
+    required_revision_id: Optional[str] = None,
+    target_revision_id: Optional[str] = None,
 ) -> str:
     """
     Executes multiple low-level document operations in a single atomic batch update.
@@ -1140,6 +1155,13 @@ async def batch_update_doc(
         document_id: ID of the document to update
         operations: List of operation dicts. Each operation MUST have a 'type' field.
                     All operations accept an optional 'tab_id' to target a specific tab.
+        write_mode: EDIT applies normal document edits. SUGGEST applies every
+                    supported operation in the batch as a suggestion and requires
+                    Google Workspace Developer Preview access.
+        required_revision_id: Optional revision guard. The request fails if the
+                              document is no longer at this exact revision.
+        target_revision_id: Optional recent revision to rebase the changes against.
+                            Cannot be combined with required_revision_id.
 
     Supported operation types and their parameters:
 
@@ -1307,7 +1329,11 @@ async def batch_update_doc(
     batch_manager = BatchOperationManager(service)
 
     success, message, metadata = await batch_manager.execute_batch_operations(
-        document_id, normalized_operations
+        document_id,
+        normalized_operations,
+        write_mode=write_mode,
+        required_revision_id=required_revision_id,
+        target_revision_id=target_revision_id,
     )
 
     if success:
@@ -1315,14 +1341,250 @@ async def batch_update_doc(
         replies_count = metadata.get("replies_count", 0)
         doc_length = metadata.get("document_length")
         length_info = f" Document length: {doc_length}." if doc_length else ""
+        suggestion_ids = metadata.get("created_suggestion_ids", [])
+        suggestion_info = (
+            f" Created suggestion IDs: {', '.join(suggestion_ids)}."
+            if suggestion_ids
+            else ""
+        )
         return (
             f"{message} on document {document_id}. "
-            f"API replies: {replies_count}.{length_info} "
+            f"Write mode: {write_mode}. API replies: {replies_count}."
+            f"{length_info}{suggestion_info} "
             f"To apply formatting, call inspect_doc_structure to get exact text positions. "
             f"Link: {link}"
         )
     else:
         return f"Error: {message}"
+
+
+@server.tool(
+    title="Get Doc Review Threads",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("get_doc_review_threads", is_read_only=True, service_type="docs")
+@require_google_service("docs", "docs_read")
+async def get_doc_review_threads(
+    service: Any,
+    user_google_email: str,
+    document_id: str,
+) -> str:
+    """Returns Docs-native comment and suggestion threads with anchor locations.
+
+    This tool uses Google Workspace Developer Preview fields. The caller must be
+    enrolled in the Preview Program and have permission to view document comments.
+    The returned revision_id can be passed to write tools as a revision guard.
+    """
+    validator = ValidationManager()
+    is_valid, error_msg = validator.validate_document_id(document_id)
+    if not is_valid:
+        return f"Error: {error_msg}"
+
+    document = await fetch_review_document(service, document_id)
+    result = {
+        "document_id": document.get("documentId", document_id),
+        "title": document.get("title"),
+        "revision_id": document.get("revisionId"),
+        "comments": document.get("comments", []),
+        "suggestions": document.get("suggestions", []),
+        "tabs": extract_tab_comment_anchors(document.get("tabs", [])),
+    }
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@server.tool(
+    title="Manage Doc Review Thread",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("manage_doc_review_thread", service_type="docs")
+@require_google_service("docs", "docs_write")
+async def manage_doc_review_thread(
+    service: Any,
+    user_google_email: str,
+    document_id: str,
+    action: Literal[
+        "create_comment",
+        "reply",
+        "resolve",
+        "reopen",
+        "update_post",
+        "delete_comment",
+        "delete_reply",
+    ],
+    content: Optional[str] = None,
+    comment_id: Optional[str] = None,
+    suggestion_id: Optional[str] = None,
+    post_id: Optional[str] = None,
+    start_index: Optional[int] = None,
+    end_index: Optional[int] = None,
+    tab_id: Optional[str] = None,
+    segment_id: Optional[str] = None,
+    assignee_email: Optional[str] = None,
+    required_revision_id: Optional[str] = None,
+    target_revision_id: Optional[str] = None,
+) -> str:
+    """Creates and manages Docs-native anchored review threads.
+
+    Requires Google Workspace Developer Preview access.
+
+    Actions:
+      create_comment: requires content and exactly one anchor mode: suggestion_id
+                      (resolved to its live proposed-text range), or start_index
+                      plus end_index. Optional tab_id, segment_id, and
+                      assignee_email refine an explicit range anchor.
+      reply: requires content and exactly one comment_id or suggestion_id.
+      resolve/reopen: requires comment_id; optionally includes content.
+      update_post: requires post_id, content, and exactly one thread ID. Google
+                   only permits authors to update their own posts and does not
+                   permit updating a suggestion thread's head post.
+      delete_comment: requires comment_id and author ownership of the head post.
+      delete_reply: requires post_id and exactly one thread ID; only the author
+                    can delete eligible replies.
+
+    Use get_doc_review_threads to retrieve IDs, anchors, and a fresh revision ID.
+    """
+    validator = ValidationManager()
+    is_valid, error_msg = validator.validate_document_id(document_id)
+    if not is_valid:
+        return f"Error: {error_msg}"
+
+    try:
+        resolved_anchor = None
+        if action == "create_comment" and suggestion_id:
+            if any(
+                value is not None
+                for value in (start_index, end_index, tab_id, segment_id)
+            ):
+                raise ValueError(
+                    "For create_comment, provide either suggestion_id or an "
+                    "explicit range, not both."
+                )
+            review_document = await fetch_review_document(service, document_id)
+            resolved_anchor = resolve_suggestion_comment_anchor(
+                review_document, suggestion_id
+            )
+            start_index = resolved_anchor["start_index"]
+            end_index = resolved_anchor["end_index"]
+            tab_id = resolved_anchor.get("tab_id")
+            segment_id = resolved_anchor.get("segment_id")
+            if required_revision_id is None and target_revision_id is None:
+                required_revision_id = review_document.get("revisionId")
+
+        request = build_review_thread_request(
+            action,
+            content=content,
+            comment_id=comment_id,
+            suggestion_id=None if action == "create_comment" else suggestion_id,
+            post_id=post_id,
+            start_index=start_index,
+            end_index=end_index,
+            tab_id=tab_id,
+            segment_id=segment_id,
+            assignee_email=assignee_email,
+        )
+        result = await execute_review_request(
+            service,
+            document_id,
+            request,
+            required_revision_id=required_revision_id,
+            target_revision_id=target_revision_id,
+        )
+    except ValueError as exc:
+        return f"Error: {exc}"
+
+    comment_state = result.get("commentUpdateState", "NOT_REPORTED")
+    if comment_state == "ALL_FAILED_UNKNOWN_REASON":
+        return (
+            "Error: Google accepted the batch but failed to save the comment or "
+            "suggestion thread update for an unknown reason. Read the document "
+            "again before retrying."
+        )
+    return json.dumps(
+        {
+            "success": True,
+            "action": action,
+            "document_id": document_id,
+            "comment_update_state": comment_state,
+            "resolved_anchor": resolved_anchor,
+            "replies": result.get("replies", []),
+            "write_control": result.get("writeControl"),
+        },
+        indent=2,
+    )
+
+
+@server.tool(
+    title="Manage Doc Suggestion",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("manage_doc_suggestion", service_type="docs")
+@require_google_service("docs", "docs_write")
+async def manage_doc_suggestion(
+    service: Any,
+    user_google_email: str,
+    document_id: str,
+    action: Literal["accept", "reject", "delete"],
+    suggestion_id: str,
+    required_revision_id: Optional[str] = None,
+    target_revision_id: Optional[str] = None,
+) -> str:
+    """Accepts, rejects, or deletes a Docs suggestion by ID.
+
+    Requires Google Workspace Developer Preview access. Accept requires document
+    edit access. Reject requires edit access or suggestion authorship. Delete is
+    restricted to the suggestion author. Use get_doc_review_threads first to get
+    suggestion IDs and a fresh revision ID.
+    """
+    validator = ValidationManager()
+    is_valid, error_msg = validator.validate_document_id(document_id)
+    if not is_valid:
+        return f"Error: {error_msg}"
+
+    try:
+        request = build_suggestion_request(action, suggestion_id)
+        try:
+            result = await execute_review_request(
+                service,
+                document_id,
+                request,
+                required_revision_id=required_revision_id,
+                target_revision_id=target_revision_id,
+            )
+        except HttpError:
+            # A caller-supplied required revision is an optimistic-concurrency
+            # guard. Never replace it with a newer revision and silently apply
+            # the lifecycle action to a document the caller did not approve.
+            raise
+    except ValueError as exc:
+        return f"Error: {exc}"
+
+    return json.dumps(
+        {
+            "success": True,
+            "action": action,
+            "document_id": document_id,
+            "suggestion_id": suggestion_id,
+            "suggestion_responses": result.get("suggestionResponses", []),
+            "comment_update_state": result.get("commentUpdateState"),
+            "write_control": result.get("writeControl"),
+        },
+        indent=2,
+    )
 
 
 @server.tool(
@@ -1389,7 +1651,9 @@ async def inspect_doc_structure(
         user_google_email: User's Google email address
         document_id: ID of the document to inspect
         detailed: Whether to return detailed structure information
-        tab_id: Optional ID of the tab to inspect. If not provided, inspects main document.
+        tab_id: Optional ID of the tab to inspect. If omitted, a single document
+                tab is selected automatically. Documents with multiple document
+                tabs require an explicit ID.
 
     Returns:
         str: JSON string containing document structure and safe insertion indices
@@ -1403,7 +1667,10 @@ async def inspect_doc_structure(
         service.documents().get(documentId=document_id, includeTabsContent=True).execute
     )
 
-    # If tab_id is specified, find the tab and use its content
+    requested_tab_id = tab_id
+    auto_selected_tab = False
+
+    # Resolve which document body to inspect before calculating any indices.
     target_content = doc.get("body", {})
 
     def find_tab(tabs, target_id):
@@ -1416,6 +1683,14 @@ async def inspect_doc_structure(
                     return found
         return None
 
+    def document_tabs(tabs):
+        found = []
+        for candidate in tabs:
+            if "documentTab" in candidate:
+                found.append(candidate)
+            found.extend(document_tabs(candidate.get("childTabs", [])))
+        return found
+
     if tab_id:
         tab = find_tab(doc.get("tabs", []), tab_id)
         if tab and "documentTab" in tab:
@@ -1427,35 +1702,38 @@ async def inspect_doc_structure(
         else:
             return f"Error: Tab {tab_id} not found in document."
     else:
-        analysis_named_ranges = doc.get("namedRanges", {})
-        document_tab = None
+        available_document_tabs = document_tabs(doc.get("tabs", []))
+        if len(available_document_tabs) > 1:
+            choices = ", ".join(
+                f"{item.get('tabProperties', {}).get('tabId')} "
+                f"({item.get('tabProperties', {}).get('title') or 'Untitled'})"
+                for item in available_document_tabs
+            )
+            return (
+                "Error: This document has multiple document tabs. Provide an "
+                f"explicit tab_id before using its indices. Available tabs: {choices}."
+            )
+        if len(available_document_tabs) == 1:
+            tab = available_document_tabs[0]
+            tab_id = tab.get("tabProperties", {}).get("tabId")
+            document_tab = tab["documentTab"]
+            target_content = document_tab.get("body", {})
+            analysis_named_ranges = document_tab.get("namedRanges", {})
+            auto_selected_tab = True
+        else:
+            analysis_named_ranges = doc.get("namedRanges", {})
+            document_tab = None
 
     # Create a dummy doc object for analysis tools that expect a full doc
     analysis_doc = doc.copy()
     analysis_doc["body"] = target_content
     analysis_doc["namedRanges"] = analysis_named_ranges
-    if tab_id and document_tab:
+    if document_tab:
         analysis_doc["headers"] = document_tab.get("headers", {})
         analysis_doc["footers"] = document_tab.get("footers", {})
         analysis_doc["documentStyle"] = document_tab.get("documentStyle", {})
-    elif not tab_id and doc.get("tabs"):
-        # Default to the first document tab for tab-aware header/footer inspection.
-        def first_document_tab(tabs):
-            for candidate in tabs:
-                if "documentTab" in candidate:
-                    return candidate["documentTab"]
-                child = first_document_tab(candidate.get("childTabs", []))
-                if child:
-                    return child
-            return None
 
-        first_tab_doc = first_document_tab(doc.get("tabs", []))
-        if first_tab_doc:
-            analysis_doc["headers"] = first_tab_doc.get("headers", {})
-            analysis_doc["footers"] = first_tab_doc.get("footers", {})
-            analysis_doc["documentStyle"] = first_tab_doc.get("documentStyle", {})
-
-    structure = parse_document_structure(analysis_doc)
+    structure = parse_document_structure(analysis_doc, include_text_runs=detailed)
 
     if detailed:
         # Return full parsed structure
@@ -1491,6 +1769,7 @@ async def inspect_doc_structure(
                 elem_summary["cell_count"] = len(element.get("cells", []))
             elif element["type"] == "paragraph":
                 elem_summary["text_preview"] = element.get("text", "")[:100]
+                elem_summary["text_runs"] = element.get("text_runs", [])
 
             result["elements"].append(elem_summary)
 
@@ -1562,7 +1841,7 @@ async def inspect_doc_structure(
             result["footers"] = footer_entries
 
     # Always include available tabs if no tab_id was specified
-    if not tab_id:
+    if requested_tab_id is None:
 
         def get_tabs_summary(tabs):
             summary = []
@@ -1581,6 +1860,8 @@ async def inspect_doc_structure(
 
     if tab_id:
         result["inspected_tab_id"] = tab_id
+    if auto_selected_tab:
+        result["tab_selection"] = "automatic_single_document_tab"
 
     link = f"https://docs.google.com/document/d/{document_id}/edit"
     return f"Document structure analysis for {document_id}:\n\n{json.dumps(result, indent=2)}\n\nLink: {link}"
@@ -2587,7 +2868,8 @@ async def manage_doc_tab(
         title: Tab title (required for create; used by rename)
         index: Position index for new tab, 0-based among siblings (required for create)
         parent_tab_id: Optional parent tab ID to nest under (create only)
-        markdown_text: Markdown source to render (populate_from_markdown only)
+        markdown_text: Markdown source to render (populate_from_markdown only).
+                       GFM tables are created as native Docs tables in stages.
         replace_existing: Clear tab body before inserting markdown (default True)
 
     Returns:
@@ -2695,6 +2977,20 @@ async def manage_doc_tab(
     if tab_end is None:
         raise UserInputError(f"'{tab_id}' not found in document")
 
+    markdown_blocks = split_markdown_table_blocks(markdown_text)
+    has_native_tables = any(block["type"] == "table" for block in markdown_blocks)
+
+    if replace_existing and has_native_tables:
+        # Native tables require multiple dependent batchUpdate calls because
+        # Google assigns cell indices only after table creation. Reject the
+        # destructive replacement form until those calls can be transactional;
+        # otherwise a later failure could leave the existing tab partially lost.
+        raise UserInputError(
+            "replace_existing=true is not supported when Markdown contains "
+            "native tables. Use replace_existing=false to append safely, or "
+            "remove the tables from this replacement."
+        )
+
     if replace_existing:
         # tab_end includes the segment-terminating newline that Google Docs
         # refuses to delete, so we delete up to tab_end - 1. Empty tabs
@@ -2720,6 +3016,79 @@ async def manage_doc_tab(
                 markdown_text, tab_id=tab_id, start_index=insert_at
             )
         )
+
+    if has_native_tables:
+        # Tables require staged writes because Docs assigns cell indices only
+        # after insertTable has completed and the document is fetched again.
+        clear_requests = all_requests[:1] if replace_existing and tab_end > 2 else []
+        if clear_requests:
+            await asyncio.to_thread(
+                service.documents()
+                .batchUpdate(documentId=document_id, body={"requests": clear_requests})
+                .execute
+            )
+
+        insertion_index = 1 if replace_existing else (tab_end - 1 if tab_end > 2 else 1)
+        requests_applied = len(clear_requests)
+        table_manager = TableOperationManager(service)
+
+        for block in markdown_blocks:
+            if block["type"] == "markdown":
+                requests = markdown_to_docs_requests(
+                    block["markdown"], tab_id=tab_id, start_index=insertion_index
+                )
+                if not requests:
+                    continue
+                await asyncio.to_thread(
+                    service.documents()
+                    .batchUpdate(documentId=document_id, body={"requests": requests})
+                    .execute
+                )
+                insertion_index += sum(
+                    utf16_length(request["insertText"]["text"])
+                    for request in requests
+                    if "insertText" in request
+                )
+                requests_applied += len(requests)
+                continue
+
+            success, message, metadata = await table_manager.create_and_populate_table(
+                document_id,
+                block["rows"],
+                insertion_index,
+                bold_headers=True,
+                tab_id=tab_id,
+            )
+            if not success:
+                raise UserInputError(
+                    "Staged Markdown rendering stopped while creating a native "
+                    f"table at index {insertion_index}: {message}"
+                )
+            requests_applied += 1 + metadata.get("populated_cells", 0)
+
+            refreshed_doc = await asyncio.to_thread(
+                service.documents()
+                .get(documentId=document_id, includeTabsContent=True)
+                .execute
+            )
+            refreshed_end = _find_tab_end_index(refreshed_doc, tab_id)
+            if refreshed_end is None:
+                raise UserInputError(
+                    f"Tab '{tab_id}' disappeared during staged Markdown rendering."
+                )
+            insertion_index = refreshed_end - 1 if refreshed_end > 2 else 1
+
+        return {
+            "action": action,
+            "success": True,
+            "message": (
+                f"Populated tab '{tab_id}' in document {document_id} from "
+                f"{len(markdown_text)} characters of markdown, including native tables."
+            ),
+            "requests_applied": requests_applied,
+            "tab_id": tab_id,
+            "link": link,
+        }
 
     if not all_requests:
         return {
