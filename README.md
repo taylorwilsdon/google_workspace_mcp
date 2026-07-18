@@ -797,13 +797,14 @@ cp .env.oauth21 .env
 | <sub>`get_gmail_message_content`</sub> | <sub>Core</sub> | <sub>Retrieve message content</sub> |
 | <sub>`get_gmail_messages_content_batch`</sub> | <sub>Core</sub> | <sub>Batch retrieve message content</sub> |
 | <sub>`send_gmail_message`</sub> | <sub>Core</sub> | <sub>Send emails</sub> |
+| <sub>`send_gmail_draft`</sub> | <sub>Core</sub> | <sub>Send an existing draft by draft ID or (edit-proof) thread ID</sub> |
 | <sub>`get_gmail_thread_content`</sub> | <sub>Extended</sub> | <sub>Get full thread content</sub> |
 | <sub>`modify_gmail_message_labels`</sub> | <sub>Extended</sub> | <sub>Modify message labels</sub> |
 | <sub>`list_gmail_labels`</sub> | <sub>Extended</sub> | <sub>List available labels</sub> |
 | <sub>`list_gmail_filters`</sub> | <sub>Extended</sub> | <sub>List Gmail filters</sub> |
 | <sub>`manage_gmail_label`</sub> | <sub>Extended</sub> | <sub>Create/update/delete labels</sub> |
 | <sub>`manage_gmail_filter`</sub> | <sub>Extended</sub> | <sub>Create or delete Gmail filters</sub> |
-| <sub>`draft_gmail_message`</sub> | <sub>Extended</sub> | <sub>Create drafts</sub> |
+| <sub>`draft_gmail_message`</sub> | <sub>Extended</sub> | <sub>Create drafts (compose, reply, or forward)</sub> |
 | <sub>`get_gmail_threads_content_batch`</sub> | <sub>Complete</sub> | <sub>Batch retrieve thread content</sub> |
 | <sub>`batch_modify_gmail_message_labels`</sub> | <sub>Complete</sub> | <sub>Batch modify labels</sub> |
 | <sub>`start_google_auth`</sub> | <sub>Complete</sub> | <sub>Legacy OAuth 2.0 auth (disabled when OAuth 2.1 is enabled)</sub> |

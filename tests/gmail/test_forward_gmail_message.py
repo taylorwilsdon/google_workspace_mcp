@@ -11,7 +11,23 @@ import os
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-from gmail.gmail_tools import _forward_gmail_message_impl
+from gmail.gmail_tools import _forward_gmail_message_impl, draft_gmail_message
+
+
+def _unwrap(tool):
+    """Unwrap FunctionTool + decorators to the original async function."""
+    fn = tool.fn if hasattr(tool, "fn") else tool
+    while hasattr(fn, "__wrapped__"):
+        fn = fn.__wrapped__
+    return fn
+
+
+def get_drafted_mime_message(mock_service):
+    """Decode the raw MIME message passed to drafts().create()."""
+    raw = (
+        mock_service.users().drafts().create.call_args.kwargs["body"]["message"]["raw"]
+    )
+    return message_from_bytes(base64.urlsafe_b64decode(raw))
 
 
 def get_sent_mime_message(mock_service):
@@ -171,6 +187,91 @@ async def test_forward_simple_text_email():
     assert "This is the body." in body
     assert "Forwarded message" in body
     assert "alice@example.com" in body
+
+
+@pytest.mark.asyncio
+async def test_draft_forward_carries_note_body_and_attachment():
+    """draft_gmail_message(forward_message_id=...) drafts a forward (not send)."""
+    message = create_mock_message(
+        subject="Quarterly",
+        from_addr="alice@example.com",
+        to_addr="me@example.com",
+        text_body="Original body.",
+        attachments=[
+            {
+                "filename": "report.pdf",
+                "mimeType": "application/pdf",
+                "attachmentId": "att1",
+                "size": 10,
+            }
+        ],
+    )
+    att_bytes = base64.urlsafe_b64encode(b"PDFDATA").decode()
+    mock = create_mock_service(message, attachments_data=[{"data": att_bytes}])
+    mock.users().drafts().create().execute.return_value = {"id": "draft-99"}
+
+    result = await _unwrap(draft_gmail_message)(
+        service=mock,
+        user_google_email="me@example.com",
+        to="recipient@example.com",
+        forward_message_id="msg123",
+        body="FYI",  # optional note prepended above the forward
+    )
+
+    # A draft was created, and the send path's execute() was never invoked.
+    assert "draft-99" in result
+    mock.users().drafts().create.assert_called()
+    mock.users().messages().send().execute.assert_not_called()
+
+    drafted = get_drafted_mime_message(mock)
+    assert drafted["Subject"] == "Fwd: Quarterly"
+    assert drafted["To"] == "recipient@example.com"
+    body_part, attachments = get_body_and_attachments(drafted)
+    body = get_body_text(drafted)
+    assert "FYI" in body  # the note
+    assert "Forwarded message" in body
+    assert "Original body." in body
+    assert len(attachments) == 1
+    assert attachments[0].get_filename() == "report.pdf"
+
+
+@pytest.mark.asyncio
+async def test_draft_forward_plus_explicit_attachment_counts_both():
+    """A forward that also has an explicit attachment must not misreport a partial."""
+    message = create_mock_message(
+        subject="Quarterly",
+        from_addr="alice@example.com",
+        to_addr="me@example.com",
+        text_body="Original body.",
+        attachments=[
+            {
+                "filename": "report.pdf",
+                "mimeType": "application/pdf",
+                "attachmentId": "att1",
+                "size": 10,
+            }
+        ],
+    )
+    att_bytes = base64.urlsafe_b64encode(b"PDFDATA").decode()
+    mock = create_mock_service(message, attachments_data=[{"data": att_bytes}])
+    mock.users().drafts().create().execute.return_value = {"id": "draft-1"}
+
+    # No UserInputError despite the explicit attachment + the forwarded one.
+    result = await _unwrap(draft_gmail_message)(
+        service=mock,
+        user_google_email="me@example.com",
+        to="recipient@example.com",
+        forward_message_id="msg123",
+        attachments=[
+            {"content": base64.b64encode(b"HI").decode(), "filename": "note.txt"}
+        ],
+    )
+
+    assert "draft-1" in result
+    drafted = get_drafted_mime_message(mock)
+    _, attachments = get_body_and_attachments(drafted)
+    names = sorted(a.get_filename() for a in attachments)
+    assert names == ["note.txt", "report.pdf"]  # both, no partial-failure error
 
 
 @pytest.mark.asyncio
