@@ -152,6 +152,10 @@ def create_mock_service(message, attachments_data=None, sent_message_id="sent123
     # Setup chain: service.users().messages().send()
     mock.users().messages().send().execute.return_value = {"id": sent_message_id}
 
+    # Setup chain: service.users().settings().sendAs().list() — no signature
+    # configured by default (include_signature defaults to True on the tools).
+    mock.users().settings().sendAs().list().execute.return_value = {"sendAs": []}
+
     return mock
 
 
@@ -233,6 +237,75 @@ async def test_draft_forward_carries_note_body_and_attachment():
     assert "Original body." in body
     assert len(attachments) == 1
     assert attachments[0].get_filename() == "report.pdf"
+
+
+@pytest.mark.asyncio
+async def test_forward_appends_signature_after_quoted_message():
+    """Send-forward honors include_signature: signature lands below the quote."""
+    message = create_mock_message(
+        subject="Hello",
+        from_addr="alice@example.com",
+        to_addr="bob@example.com",
+        text_body="Original body.",
+    )
+    mock_service = create_mock_service(message, sent_message_id="fwd-sig")
+    mock_service.users().settings().sendAs().list().execute.return_value = {
+        "sendAs": [
+            {
+                "sendAsEmail": "me@example.com",
+                "isPrimary": True,
+                "signature": "<div>Best,<br>Alice</div>",
+            }
+        ]
+    }
+
+    result = await _forward_gmail_message_impl(
+        service=mock_service,
+        message_id="msg123",
+        to="recipient@example.com",
+        user_google_email="me@example.com",
+    )
+
+    assert "fwd-sig" in result
+    body = get_body_text(get_sent_mime_message(mock_service))
+    assert "Best," in body
+    # Gmail's default forward layout: signature after the quoted message.
+    assert body.index("Original body.") < body.index("Best,")
+
+
+@pytest.mark.asyncio
+async def test_draft_forward_appends_signature_after_quoted_message():
+    """Draft-forward honors include_signature (was silently ignored)."""
+    message = create_mock_message(
+        subject="Hello",
+        from_addr="alice@example.com",
+        to_addr="bob@example.com",
+        text_body="Original body.",
+    )
+    mock = create_mock_service(message)
+    mock.users().drafts().create().execute.return_value = {"id": "draft-sig"}
+    mock.users().settings().sendAs().list().execute.return_value = {
+        "sendAs": [
+            {
+                "sendAsEmail": "me@example.com",
+                "isPrimary": True,
+                "signature": "<div>Best,<br>Alice</div>",
+            }
+        ]
+    }
+
+    result = await _unwrap(draft_gmail_message)(
+        service=mock,
+        user_google_email="me@example.com",
+        to="recipient@example.com",
+        forward_message_id="msg123",
+        body="FYI",
+    )
+
+    assert "draft-sig" in result
+    body = get_body_text(get_drafted_mime_message(mock))
+    assert "Best," in body
+    assert body.index("Original body.") < body.index("Best,")
 
 
 @pytest.mark.asyncio

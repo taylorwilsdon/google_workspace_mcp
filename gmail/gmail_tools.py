@@ -2046,6 +2046,7 @@ async def send_gmail_message(
         in_reply_to (Optional[str]): Optional RFC Message-ID of the message being replied to (e.g., '<message123@gmail.com>').
         references (Optional[str]): Optional chain of RFC Message-IDs for proper threading (e.g., '<msg1@gmail.com> <msg2@gmail.com>').
         include_signature (bool): Whether to append Gmail signature HTML from send-as settings.
+            Also honored when forwarding (the signature is appended after the quoted message).
             When include_signature is true and Gmail signature retrieval fails for benign reasons
             (e.g., missing gmail.settings.basic scope), the send proceeds without a signature.
             Non-benign failures such as quota/rate-limit or API errors raise ToolError and abort
@@ -2146,6 +2147,7 @@ async def send_gmail_message(
             forward_message=body,
             forward_message_format=body_format,
             include_attachments=include_forwarded_attachments,
+            include_signature=include_signature,
             cc=cc,
             bcc=bcc,
             from_name=from_name,
@@ -2315,6 +2317,7 @@ async def _forward_gmail_message_impl(
     forward_message: Optional[str] = None,
     forward_message_format: Literal["plain", "html"] = "plain",
     include_attachments: bool = True,
+    include_signature: bool = True,
     cc: Optional[str] = None,
     bcc: Optional[str] = None,
     from_name: Optional[str] = None,
@@ -2324,7 +2327,9 @@ async def _forward_gmail_message_impl(
     """Build and send a forward of an existing Gmail message.
 
     Shared by send_gmail_message's forward path. An explicit ``subject`` overrides
-    the auto-derived 'Fwd: <original subject>'.
+    the auto-derived 'Fwd: <original subject>'. When ``include_signature`` is true
+    the sender's Gmail signature is appended after the quoted message, matching
+    Gmail's default forward layout.
     """
     (
         forward_subject,
@@ -2342,6 +2347,13 @@ async def _forward_gmail_message_impl(
 
     # Prepare and send the message
     sender_email = from_email or user_google_email
+    if include_signature:
+        signature_html = await _get_send_as_signature_html_for_tool(
+            service, from_email=sender_email
+        )
+        forward_body = _append_signature_to_body(
+            forward_body, body_format, signature_html
+        )
     raw_message, _, attached_count, attachment_errors = _prepare_gmail_message(
         subject=forward_subject,
         body=forward_body,
@@ -2631,6 +2643,7 @@ async def draft_gmail_message(
               - 'filename' (required): Name of the file
               - 'mime_type' (optional): MIME type (defaults to 'application/octet-stream')
         include_signature (bool): Whether to append Gmail signature HTML from send-as settings.
+            Also honored when forwarding (the signature is appended after the quoted message).
             When include_signature is true and Gmail signature retrieval fails for benign reasons
             (e.g., missing gmail.settings.basic scope), the draft proceeds without a signature.
             Non-benign failures such as quota/rate-limit or API errors raise ToolError and abort
@@ -2711,8 +2724,9 @@ async def draft_gmail_message(
 
     if forward_message_id:
         # Forward draft: build the subject, quoted body, and carried-over attachments
-        # from the original ('body' becomes an optional prepended note). Reply/quote/
-        # signature composition does not apply to a forward.
+        # from the original ('body' becomes an optional prepended note). Reply/quote
+        # composition does not apply to a forward; the signature is appended after
+        # the quoted message, matching Gmail's default forward layout.
         (
             subject,
             draft_body,
@@ -2726,6 +2740,13 @@ async def draft_gmail_message(
             forward_message_format=body_format,
             include_attachments=include_forwarded_attachments,
         )
+        if include_signature:
+            signature_html = await _get_send_as_signature_html_for_tool(
+                service, from_email=sender_email
+            )
+            draft_body = _append_signature_to_body(
+                draft_body, body_format, signature_html
+            )
     else:
         subject = subject or ""
         draft_body = body or ""
