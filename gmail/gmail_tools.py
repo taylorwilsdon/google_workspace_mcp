@@ -2716,22 +2716,29 @@ async def list_gmail_drafts(
         subject = "(no subject)"
         snippet = ""
         if message_id:
-            message_metadata = await asyncio.to_thread(
-                service.users()
-                .messages()
-                .get(
-                    userId="me",
-                    id=message_id,
-                    format="metadata",
-                    metadataHeaders=["Subject"],
+            try:
+                message_metadata = await asyncio.to_thread(
+                    service.users()
+                    .messages()
+                    .get(
+                        userId="me",
+                        id=message_id,
+                        format="metadata",
+                        metadataHeaders=["Subject"],
+                    )
+                    .execute
                 )
-                .execute
-            )
-            headers = _extract_headers(
-                message_metadata.get("payload", {}), ["Subject"]
-            )
-            subject = headers.get("Subject") or subject
-            snippet = message_metadata.get("snippet", "") or ""
+                headers = _extract_headers(
+                    message_metadata.get("payload", {}), ["Subject"]
+                )
+                subject = headers.get("Subject") or subject
+                snippet = message_metadata.get("snippet", "") or ""
+            except Exception:
+                logger.warning(
+                    f"Failed to fetch metadata for draft message {message_id}"
+                )
+                subject = "(unavailable)"
+                snippet = "(metadata fetch failed)"
 
         lines.append(
             f"{draft_id} | {message_id or 'unknown'} | {thread_id} | {subject} | {snippet}"
@@ -2917,6 +2924,9 @@ async def update_gmail_draft(
 
     if attach_to_thread and not thread_id:
         raise UserInputError("attach_to_thread=True requires thread_id.")
+
+    if quote_original and not thread_id:
+        raise UserInputError("quote_original=True requires thread_id.")
 
     # Prepare the email message
     # Use from_email (Send As alias) if provided, otherwise default to authenticated user
