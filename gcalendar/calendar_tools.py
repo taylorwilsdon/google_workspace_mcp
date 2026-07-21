@@ -22,6 +22,8 @@ from gcalendar.calendar_helpers import (
     _format_attachment_details,
     _format_attendee_details,
     _format_person,
+    _format_reminder_overrides,
+    _format_reminders,
     _get_meeting_link,
 )
 
@@ -329,17 +331,25 @@ def _strip_utc_offset(datetime_str: str) -> str:
 )
 @handle_http_errors("list_calendars", is_read_only=True, service_type="calendar")
 @require_google_service("calendar", "calendar_read")
-async def list_calendars(service, user_google_email: str) -> str:
+async def list_calendars(
+    service, user_google_email: str, include_reminders: bool = False
+) -> str:
     """
     Retrieves a list of calendars accessible to the authenticated user.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
+        include_reminders (bool): Whether to include each calendar's default reminders
+            (the notification settings applied to events that use calendar defaults) in
+            the output. Defaults to False to keep the listing concise.
 
     Returns:
-        str: A formatted list of the user's calendars (summary, ID, primary status).
+        str: A formatted list of the user's calendars (summary, ID, primary status,
+            and default reminders when include_reminders=True).
     """
-    logger.info(f"[list_calendars] Invoked. Email: '{user_google_email}'")
+    logger.info(
+        f"[list_calendars] Invoked. Email: '{user_google_email}', include_reminders: {include_reminders}"
+    )
 
     calendar_list_response = await asyncio.to_thread(
         lambda: service.calendarList().list().execute()
@@ -348,10 +358,18 @@ async def list_calendars(service, user_google_email: str) -> str:
     if not items:
         return f"No calendars found for {user_google_email}."
 
-    calendars_summary_list = [
-        f'- "{cal.get("summary", "No Summary")}"{" (Primary)" if cal.get("primary") else ""} (ID: {cal["id"]})'
-        for cal in items
-    ]
+    calendars_summary_list = []
+    for cal in items:
+        primary_marker = " (Primary)" if cal.get("primary") else ""
+        line = (
+            f'- "{cal.get("summary", "No Summary")}"{primary_marker} (ID: {cal["id"]})'
+        )
+        if include_reminders:
+            default_reminders = _format_reminder_overrides(
+                cal.get("defaultReminders", [])
+            )
+            line += f"\n  Default Reminders: {default_reminders}"
+        calendars_summary_list.append(line)
     text_output = (
         f"Successfully listed {len(items)} calendars for {user_google_email}:\n"
         + "\n".join(calendars_summary_list)
@@ -382,6 +400,7 @@ async def get_events(
     query: Optional[str] = None,
     detailed: bool = False,
     include_attachments: bool = False,
+    include_reminders: bool = False,
 ) -> str:
     """
     Retrieves events from a specified Google Calendar. Can retrieve a single event by ID or multiple events within a time range.
@@ -397,12 +416,13 @@ async def get_events(
         query (Optional[str]): A keyword to search for within event fields (summary, description, location). Ignored if event_id is provided.
         detailed (bool): Whether to return detailed event information including description, location, attendees, and attendee details (response status, organizer, optional flags). Defaults to False.
         include_attachments (bool): Whether to include attachment information in detailed event output. When True, shows attachment details (fileId, fileUrl, mimeType, title) for events that have attachments. Only applies when detailed=True. Set this to True when you need to view or access files that have been attached to calendar events, such as meeting documents, presentations, or other shared files. Defaults to False.
+        include_reminders (bool): Whether to include each event's reminder/notification settings in detailed event output. When True, shows whether the event uses the calendar's default reminders or has custom overrides (method + minutes before). Only applies when detailed=True. Defaults to False.
 
     Returns:
         str: A formatted list of events (summary, start and end times, link) within the specified range, or detailed information for a single event if event_id is provided.
     """
     logger.info(
-        f"[get_events] Raw parameters - event_id: '{event_id}', time_min: '{time_min}', time_max: '{time_max}', query: '{query}', detailed: {detailed}, include_attachments: {include_attachments}"
+        f"[get_events] Raw parameters - event_id: '{event_id}', time_min: '{time_min}', time_max: '{time_max}', query: '{query}', detailed: {detailed}, include_attachments: {include_attachments}, include_reminders: {include_reminders}"
     )
 
     # Handle single event retrieval
@@ -513,6 +533,10 @@ async def get_events(
             )
             event_details += f"- Attachments: {attachment_details_str}\n"
 
+        if include_reminders:
+            reminders_str = _format_reminders(item.get("reminders"))
+            event_details += f"- Reminders: {reminders_str}\n"
+
         event_details += f"- Event ID: {event_id}\n- Link: {link}"
         logger.info(
             f"[get_events] Successfully retrieved detailed event {event_id} for {user_google_email}."
@@ -567,6 +591,10 @@ async def get_events(
                     attachments, indent="    "
                 )
                 event_detail_parts += f"  Attachments: {attachment_details_str}\n"
+
+            if include_reminders:
+                reminders_str = _format_reminders(item.get("reminders"))
+                event_detail_parts += f"  Reminders: {reminders_str}\n"
 
             event_detail_parts += f"  ID: {item_event_id} | Link: {link}"
             event_details_list.append(event_detail_parts)

@@ -100,6 +100,51 @@ def _format_attachment_details(
     return f"\n{indent}".join(attachment_details_list)
 
 
+def _format_reminder_overrides(overrides: List[Dict[str, Any]]) -> str:
+    """Format a list of reminder override objects (method + minutes) for display.
+
+    Each override looks like ``{"method": "popup", "minutes": 10}``. Returns a
+    comma-separated summary such as ``"popup 10 min before, email 1440 min before"``,
+    or ``"None"`` if there are no overrides.
+    """
+    if not overrides:
+        return "None"
+
+    parts = []
+    for override in overrides:
+        method = override.get("method", "unknown")
+        minutes = override.get("minutes")
+        if minutes is None:
+            parts.append(method)
+        else:
+            parts.append(f"{method} {minutes} min before")
+    return ", ".join(parts)
+
+
+def _format_reminders(reminders: Optional[Dict[str, Any]]) -> str:
+    """Format an event's ``reminders`` object (useDefault + overrides) for display.
+
+    The Google Calendar API returns reminders as
+    ``{"useDefault": true}`` or ``{"useDefault": false, "overrides": [...]}``.
+    When ``useDefault`` is true the calendar's default reminders apply and any
+    overrides are ignored; when it is false the overrides (if any) are the
+    event's reminders.
+
+    Returns a human-readable summary, or ``"None"`` if no reminders data is present.
+    """
+    if not reminders:
+        return "None"
+
+    use_default = reminders.get("useDefault", False)
+    overrides = reminders.get("overrides", [])
+
+    if use_default:
+        return "Using calendar default reminders"
+    if overrides:
+        return _format_reminder_overrides(overrides)
+    return "No reminders"
+
+
 def _format_person(person: Optional[Dict[str, Any]]) -> Optional[str]:
     """Format a Google Calendar person dict (creator or organizer) for display."""
     if not person:
