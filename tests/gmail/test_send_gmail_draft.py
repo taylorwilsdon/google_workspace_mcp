@@ -1,8 +1,9 @@
-"""Tests for send_gmail_draft (draft_id + edit-proof thread_id)."""
+"""Tests for send_gmail_draft (draft_id-first resolution, thread_id fallback)."""
 
 from unittest.mock import Mock
 
 import pytest
+from googleapiclient.errors import HttpError
 
 from core.utils import UserInputError
 from gmail.gmail_tools import send_gmail_draft
@@ -84,19 +85,60 @@ async def test_send_gmail_draft_thread_ambiguous_errors():
 
 
 @pytest.mark.asyncio
-async def test_send_gmail_draft_requires_exactly_one_handle():
+async def test_send_gmail_draft_requires_a_handle():
     service = Mock()
-    with pytest.raises(UserInputError, match="exactly one"):
+    with pytest.raises(UserInputError, match="draft_id.*thread_id.*both"):
         await _unwrap(send_gmail_draft)(
             service=service, user_google_email="user@example.com"
         )
-    with pytest.raises(UserInputError, match="exactly one"):
-        await _unwrap(send_gmail_draft)(
-            service=service,
-            user_google_email="user@example.com",
-            draft_id="d1",
-            thread_id="t1",
-        )
+
+
+@pytest.mark.asyncio
+async def test_send_gmail_draft_prefers_draft_id_when_both_given():
+    """draft_id is the stable handle; when both are supplied it wins and thread_id is
+    never scanned."""
+    service = Mock()
+    send_request = Mock()
+    send_request.execute.return_value = {"id": "sent-x", "threadId": "t1"}
+    service.users().drafts().send.return_value = send_request
+
+    result = await _unwrap(send_gmail_draft)(
+        service=service,
+        user_google_email="user@example.com",
+        draft_id="d1",
+        thread_id="t1",
+    )
+
+    service.users().drafts().send.assert_called_with(userId="me", body={"id": "d1"})
+    service.users().drafts().list.assert_not_called()
+    assert "sent-x" in result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [404, 400])
+async def test_send_gmail_draft_falls_back_to_thread_when_draft_stale(status):
+    """A stale (404) or malformed (400) draft_id with a thread_id given recovers via
+    the thread scan."""
+    service = Mock()
+    resp = Mock()
+    resp.status = status
+    service.users().drafts().get().execute.side_effect = HttpError(resp, b"bad id")
+    service.users().drafts().list().execute.return_value = {
+        "drafts": [{"id": "d-live", "message": {"threadId": "thrX"}}]
+    }
+    send_request = Mock()
+    send_request.execute.return_value = {"id": "sent-fb", "threadId": "thrX"}
+    service.users().drafts().send.return_value = send_request
+
+    result = await _unwrap(send_gmail_draft)(
+        service=service,
+        user_google_email="user@example.com",
+        draft_id="stale",
+        thread_id="thrX",
+    )
+
+    service.users().drafts().send.assert_called_with(userId="me", body={"id": "d-live"})
+    assert "sent-fb" in result
 
 
 @pytest.mark.asyncio

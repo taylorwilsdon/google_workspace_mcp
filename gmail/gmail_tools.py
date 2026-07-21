@@ -2391,6 +2391,24 @@ async def _forward_gmail_message_impl(
     return f"Email forwarded{attachment_info}! Message ID: {sent_message_id}"
 
 
+async def _draft_exists(service, draft_id: str) -> bool:
+    """True if draft_id still resolves to a live draft (else False on 404)."""
+    try:
+        await asyncio.to_thread(
+            service.users()
+            .drafts()
+            .get(userId="me", id=draft_id, format="minimal")
+            .execute
+        )
+        return True
+    except HttpError as e:
+        # 404 = draft gone; 400 = malformed/invalid id. Either way the draft_id is
+        # unusable, so report it missing and let the caller fall back to thread_id.
+        if e.resp.status in (400, 404):
+            return False
+        raise
+
+
 @server.tool(
     title="Send Gmail Draft",
     annotations=ToolAnnotations(
@@ -2409,10 +2427,11 @@ async def send_gmail_draft(
         Optional[str],
         Field(
             description=(
-                "The ID of an existing Gmail draft to send (as returned by "
-                "draft_gmail_message). NOTE: a draft_id goes stale if the draft is edited "
-                "in the Gmail UI afterward — prefer thread_id for a handle that survives "
-                "edits. Provide exactly one of draft_id or thread_id."
+                "Primary handle for the draft to send (as returned by draft_gmail_message). "
+                "In practice the most stable handle — it survives body edits on Gmail web and "
+                "mobile; only a rare discard-recreate rotates it. Pass this when you have it. "
+                "Provide draft_id, thread_id, or both (both = draft_id preferred, thread_id "
+                "used only as a fallback if draft_id no longer resolves)."
             ),
         ),
     ] = None,
@@ -2420,10 +2439,11 @@ async def send_gmail_draft(
         Optional[str],
         Field(
             description=(
-                "Send the unique draft in this Gmail thread. Unlike draft_id, a thread_id "
-                "is stable across edits made to the draft in the Gmail UI, so this is the "
-                "robust way to send a draft the user may have edited. Errors if the thread "
-                "has zero or more than one draft. Provide exactly one of draft_id or thread_id."
+                "Fallback handle: send the unique draft in this Gmail thread when draft_id is "
+                "absent or no longer resolves. CAVEAT: a draft's thread_id changes if the user "
+                "edits its SUBJECT (Gmail re-threads by subject), so a subject edit can move the "
+                "draft out of this thread and this lookup will miss it — draft_id is preferred. "
+                "Errors if the thread has more than one draft. Provide draft_id, thread_id, or both."
             ),
         ),
     ] = None,
@@ -2436,29 +2456,37 @@ async def send_gmail_draft(
     sent here. Sending requires the gmail.compose scope (drafts.send is not covered by
     gmail.send).
 
-    **Edit safety:** a draft's draft_id and message_id both change if the draft is edited
-    in the Gmail UI, but its thread_id does not. Pass thread_id to send whatever the
-    current draft in that thread is — the reliable choice when a human may have edited it.
+    **Edit safety (measured):** message_id rotates on *every* edit — never cache it.
+    draft_id is the most stable handle (unchanged across web/mobile body edits, subject
+    changes, and attachments in testing); only a rare discard-recreate rotates it.
+    thread_id is stable for body/attachment edits but MOVES if the subject is edited
+    (Gmail re-threads by subject). So prefer draft_id; thread_id is only a fallback and
+    can miss a draft whose subject changed.
 
     Args:
-        draft_id (Optional[str]): The draft to send. Stale if the draft was edited.
-        thread_id (Optional[str]): Send the unique draft in this thread (edit-proof).
+        draft_id (Optional[str]): Primary handle for the draft to send.
+        thread_id (Optional[str]): Fallback — send the unique draft in this thread.
         user_google_email (str): The user's Google email address. Required.
 
     Returns:
         str: Confirmation with the sent message's ID and thread ID.
     """
-    if bool(draft_id) == bool(thread_id):
-        raise UserInputError(
-            "Provide exactly one of 'draft_id' or 'thread_id'. Prefer 'thread_id' — it "
-            "survives edits made to the draft in the Gmail UI."
-        )
+    if not draft_id and not thread_id:
+        raise UserInputError("Provide 'draft_id', 'thread_id', or both.")
 
-    if thread_id:
-        # Re-resolve the live draft in the thread at send time. drafts.list returns each
-        # draft's message.threadId, so we can match without extra get() calls. Paginate so
-        # accounts with many drafts don't yield a false "no draft found"; stop early once
-        # the result is already ambiguous.
+    resolved_id = None
+
+    # Prefer draft_id — empirically the most stable handle across edits (web + mobile).
+    if draft_id and await _draft_exists(service, draft_id):
+        resolved_id = draft_id
+
+    # Fall back to a thread scan when draft_id is missing or no longer resolves. drafts.list
+    # returns each draft's message.threadId, so we can match without extra get() calls.
+    # NOTE: thread_id moves if the user edited the draft's SUBJECT, so this can legitimately
+    # find nothing even though the draft still exists — hence draft_id is preferred. Paginate
+    # so accounts with many drafts don't yield a false "no draft found"; stop early once
+    # the result is already ambiguous.
+    if resolved_id is None and thread_id:
         logger.info(
             f"[send_gmail_draft] Resolving draft in thread '{thread_id}' for '{user_google_email}'"
         )
@@ -2479,18 +2507,28 @@ async def send_gmail_draft(
             page_token = drafts_resp.get("nextPageToken")
             if len(matches) > 1 or not page_token:
                 break
-        if not matches:
-            raise UserInputError(
-                f"No draft found in thread '{thread_id}'. It may have already been sent "
-                "or discarded."
-            )
         if len(matches) > 1:
             ids = ", ".join(d.get("id", "?") for d in matches)
             raise UserInputError(
                 f"Thread '{thread_id}' has {len(matches)} drafts ({ids}); ambiguous. "
                 "Pass a specific draft_id."
             )
-        draft_id = matches[0].get("id")
+        if matches:
+            resolved_id = matches[0].get("id")
+
+    if resolved_id is None:
+        hint = (
+            " If the draft's subject was edited it may have moved to a different thread — "
+            "pass draft_id instead."
+            if thread_id and not draft_id
+            else ""
+        )
+        raise UserInputError(
+            f"No draft found for the given handle(s). It may have already been sent "
+            f"or discarded.{hint}"
+        )
+
+    draft_id = resolved_id
 
     logger.info(
         f"[send_gmail_draft] Invoked. Draft ID: '{draft_id}', Email: '{user_google_email}'"
