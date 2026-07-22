@@ -2433,10 +2433,18 @@ async def draft_gmail_message(
             description="Whether to include the original message as a quoted reply. Requires thread_id. Defaults to false.",
         ),
     ] = False,
+    draft_id: Annotated[
+        Optional[str],
+        Field(
+            description="Optional ID of an existing draft to update in place (drafts().update) instead of creating a new draft. The draft's message is fully replaced, so re-supply every field (subject, body, recipients, threading) as it should appear after the update. The draft ID remains stable across updates.",
+        ),
+    ] = None,
 ) -> str:
     """
     Creates a draft email in the user's Gmail account. Supports both new drafts and reply drafts with optional attachments.
     Supports Gmail's "Send As" feature to draft from configured alias addresses.
+    When draft_id is provided, updates that existing draft in place (full message replacement)
+    instead of creating a new one, so revising a draft does not leave stale duplicates behind.
 
     Args:
         user_google_email (str): The user's Google email address. Required for authentication.
@@ -2470,9 +2478,13 @@ async def draft_gmail_message(
         quote_original (bool): Whether to include the original message as a quoted reply.
             Requires thread_id to be provided. When enabled, fetches the original message
             and appends it below the signature. Defaults to False.
+        draft_id (Optional[str]): Optional ID of an existing draft to update in place
+            (drafts().update) instead of creating a new draft. Gmail replaces the draft's
+            message wholesale, so all fields must be re-supplied; the draft ID itself
+            remains stable across updates.
 
     Returns:
-        str: Confirmation message with the created draft's ID.
+        str: Confirmation message with the created (or updated) draft's ID.
 
     Examples:
         # Create a new draft
@@ -2524,6 +2536,14 @@ async def draft_gmail_message(
             thread_id="thread_123",
             in_reply_to="<message123@gmail.com>",
             references="<original@gmail.com> <message123@gmail.com>"
+        )
+
+        # Revise an existing draft in place (no duplicate drafts)
+        draft_gmail_message(
+            subject="Re: Meeting tomorrow",
+            body="Updated: see you at 10am instead.",
+            to="user@example.com",
+            draft_id="r1234567890"
         )
     """
     logger.info(
@@ -2614,16 +2634,31 @@ async def draft_gmail_message(
     if thread_id and in_reply_to and references:
         draft_body["message"]["threadId"] = thread_id
 
+    attachment_info = _format_attachment_result(
+        attached_count, requested_attachment_count
+    )
+
+    if draft_id:
+        # Update the existing draft in place. Gmail replaces the contained
+        # message wholesale (it cannot be edited field-by-field), while the
+        # draft ID remains stable across updates.
+        updated_draft = await asyncio.to_thread(
+            service.users()
+            .drafts()
+            .update(userId="me", id=draft_id, body=draft_body)
+            .execute,
+            num_retries=GOOGLE_API_WRITE_RETRIES,
+        )
+        updated_id = updated_draft.get("id", draft_id)
+        return f"Draft updated{attachment_info}! Draft ID: {updated_id}"
+
     # Create the draft
     created_draft = await asyncio.to_thread(
         service.users().drafts().create(userId="me", body=draft_body).execute,
         num_retries=GOOGLE_API_WRITE_RETRIES,
     )
-    draft_id = created_draft.get("id")
-    attachment_info = _format_attachment_result(
-        attached_count, requested_attachment_count
-    )
-    return f"Draft created{attachment_info}! Draft ID: {draft_id}"
+    created_id = created_draft.get("id")
+    return f"Draft created{attachment_info}! Draft ID: {created_id}"
 
 
 def _format_thread_content(

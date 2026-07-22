@@ -690,6 +690,68 @@ async def test_draft_gmail_message_gracefully_degrades_when_thread_has_no_messag
     assert "threadId" not in create_kwargs["body"]["message"]
 
 
+@pytest.mark.asyncio
+async def test_draft_gmail_message_updates_existing_draft_when_draft_id_provided():
+    mock_service = Mock()
+    mock_service.users().drafts().update().execute.return_value = {"id": "draft123"}
+
+    result = await _unwrap(draft_gmail_message)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        to="recipient@example.com",
+        subject="Updated subject",
+        body="Updated body.",
+        draft_id="draft123",
+        include_signature=False,
+    )
+
+    assert "Draft updated! Draft ID: draft123" in result
+
+    update_kwargs = (
+        mock_service.users.return_value.drafts.return_value.update.call_args.kwargs
+    )
+    assert update_kwargs["userId"] == "me"
+    assert update_kwargs["id"] == "draft123"
+    raw_text = base64.urlsafe_b64decode(update_kwargs["body"]["message"]["raw"]).decode(
+        "utf-8", errors="ignore"
+    )
+    assert "Updated body." in raw_text
+    assert mock_service.users.return_value.drafts.return_value.create.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_draft_gmail_message_update_preserves_thread_context():
+    mock_service = Mock()
+    mock_service.users().drafts().update().execute.return_value = {"id": "draft_reply"}
+    mock_service.users().threads().get().execute.return_value = _thread_response(
+        "<msg1@example.com>",
+        "<msg2@example.com>",
+    )
+
+    result = await _unwrap(draft_gmail_message)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        to="recipient@example.com",
+        subject="Meeting tomorrow",
+        body="Revised reply.",
+        thread_id="thread123",
+        draft_id="draft_reply",
+        include_signature=False,
+    )
+
+    assert "Draft updated! Draft ID: draft_reply" in result
+
+    update_kwargs = (
+        mock_service.users.return_value.drafts.return_value.update.call_args.kwargs
+    )
+    assert update_kwargs["body"]["message"]["threadId"] == "thread123"
+    raw_text = base64.urlsafe_b64decode(update_kwargs["body"]["message"]["raw"]).decode(
+        "utf-8", errors="ignore"
+    )
+    assert "In-Reply-To: <msg2@example.com>" in raw_text
+    assert "References: <msg1@example.com> <msg2@example.com>" in raw_text
+
+
 # ---------------------------------------------------------------------------
 # URL-based attachment tests
 # ---------------------------------------------------------------------------
