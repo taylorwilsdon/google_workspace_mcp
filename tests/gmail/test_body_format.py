@@ -156,11 +156,111 @@ class TestFormatBodyContentTextMode:
         result = _format_body_content("", long_html)
         assert "[Content truncated...]" in result
 
-    def test_html_to_text_separates_br_text(self):
-        assert _html_to_text("<div>Best,<br>Alice</div>") == "Best, Alice"
+    def test_html_to_text_renders_br_as_line_break(self):
+        result = _html_to_text("<div>Best,<br>Alice</div>")
+        assert "Best," in result
+        assert "Alice" in result
+        assert result.splitlines()[-1].strip() == "Alice"
 
-    def test_html_to_text_ignores_br_inside_skipped_tags(self):
-        assert _html_to_text("<script>x<br>y</script><p>Visible</p>") == "Visible"
+    def test_html_to_text_skips_script_and_style_content(self):
+        result = _html_to_text(
+            "<script>var x = 1;</script>"
+            "<style>body { color: red; }</style>"
+            "<p>Visible</p>"
+        )
+        assert result == "Visible"
+
+    def test_detects_mailman_footer_with_differing_urls(self):
+        # Plain part is only the appended list footer with a direct URL; the
+        # HTML part has the real content plus the same footer behind a
+        # tracking redirect. The url sentinel lets the tail alignment fire.
+        plain = (
+            "dev mailing list\n"
+            "https://lists.example.org/mailman/listinfo/dev\n"
+            "To manage preferences visit https://lists.example.org/prefs"
+        )
+        html = (
+            "<p>Hello team, here is the quarterly update with plenty of "
+            "detail about the roadmap, staffing, budget and milestones "
+            "for the next planning period.</p>"
+            "<p>dev mailing list<br>"
+            '<a href="https://track.example.com/r/abc">'
+            "https://lists.example.org/mailman/listinfo/dev</a><br>"
+            "To manage preferences visit "
+            '<a href="https://track.example.com/r/def">'
+            "https://lists.example.org/prefs</a></p>"
+        )
+        result = _format_body_content(plain, html)
+        assert "quarterly update" in result
+
+    def test_appended_footer_tail_without_markers_flips_to_html(self):
+        # Keyword-free appended boilerplate: only the tail-alignment check can
+        # catch this. Plain shows raw URLs, HTML wraps the same visible URLs
+        # in tracking-redirect anchors; the sentinel keeps the tails aligned.
+        plain = (
+            "Sent by Acme Notifications https://acme.example/notify\n"
+            "Update your settings at https://acme.example/settings"
+        )
+        html = (
+            "<p>Hello team, here is the quarterly update with plenty of "
+            "detail about the roadmap, staffing, budget and milestones "
+            "for the next planning period.</p>"
+            "<p>Sent by Acme Notifications "
+            '<a href="https://track.example.com/r/abc">'
+            "https://acme.example/notify</a><br>"
+            "Update your settings at "
+            '<a href="https://track.example.com/r/def">'
+            "https://acme.example/settings</a></p>"
+        )
+        result = _format_body_content(plain, html)
+        assert "quarterly update" in result
+
+    def test_keeps_plain_list_of_links(self):
+        plain = (
+            "https://example.com/one\n"
+            "https://example.com/two\n"
+            "https://example.com/three"
+        )
+        html = "<p>Some completely different HTML content</p>"
+        result = _format_body_content(plain, html)
+        assert result == plain
+
+    def test_image_only_html_never_wins(self):
+        plain = "Short real answer."
+        html = '<img src="https://cdn.example.com/logo.png" alt="">'
+        result = _format_body_content(plain, html)
+        assert result == plain
+
+    def test_near_identical_short_mail_keeps_plain_byte_exact(self):
+        plain = "Hello world, see you tomorrow at the office."
+        html = "<p><b>Hello world</b>, see you tomorrow at the office.</p>"
+        result = _format_body_content(plain, html)
+        assert result == plain
+
+    def test_unsubscribed_word_does_not_trigger_footer_marker(self):
+        plain = "You have been unsubscribed successfully. No further action needed."
+        html = (
+            "<p>You have been unsubscribed successfully. No further action "
+            "needed. We are sorry to see you go and hope you will come back "
+            "to our community some day in the future soon.</p>"
+        )
+        result = _format_body_content(plain, html)
+        assert result == plain
+
+    def test_footer_marker_with_richer_html_flips_to_html(self):
+        plain = "Unsubscribe from this mailing list at any time."
+        html = (
+            "<p>Big announcement: we are launching a brand new product line "
+            "next month with several new features and improvements for all "
+            "our customers worldwide.</p>"
+            "<p>Unsubscribe from this mailing list at any time.</p>"
+        )
+        result = _format_body_content(plain, html)
+        assert "Big announcement" in result
+
+    def test_punctuation_only_plain_flips_to_html(self):
+        result = _format_body_content("---", "<p>Actual HTML content</p>")
+        assert "Actual HTML content" in result
 
 
 class TestFormatBodyContentHtmlMode:
@@ -255,6 +355,19 @@ class TestExtractMessageBodies:
         bodies = _extract_message_bodies({})
         assert bodies["text"] == ""
         assert bodies["html"] == ""
+
+    def test_decodes_unpadded_base64url_body_data(self):
+        """Gmail serializes body data as base64url without '=' padding."""
+        text = "Unpadded text."  # 14 bytes -> unpadded base64 length % 4 != 0
+        unpadded = _encode(text).rstrip("=")
+        assert len(unpadded) % 4 != 0, "fixture must actually be unpadded"
+
+        payload = {
+            "mimeType": "text/plain",
+            "body": {"data": unpadded},
+        }
+        bodies = _extract_message_bodies(payload)
+        assert bodies["text"] == text
 
     def test_handles_nested_multipart(self):
         payload = {

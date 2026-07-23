@@ -112,6 +112,19 @@ def test_save_attachment_sanitizes_windows_reserved_filenames(
     assert saved_bytes == payload
 
 
+def test_save_attachment_accepts_unpadded_base64url(isolated_storage):
+    """Google APIs emit base64url without '=' padding; save must still decode it."""
+    # Length not a multiple of 3 so the encoded form requires padding.
+    payload = b"unpadded base64url data!"[:22]
+    b64_unpadded = base64.urlsafe_b64encode(payload).decode().rstrip("=")
+    assert len(b64_unpadded) % 4 != 0, "fixture must actually be unpadded"
+
+    result = isolated_storage.save_attachment(b64_unpadded, filename="test.bin")
+
+    with open(result.path, "rb") as f:
+        assert f.read() == payload
+
+
 def test_save_attachment_metadata_filename_matches_saved_file(isolated_storage):
     """Attachment metadata should report the on-disk filename."""
     payload = b"metadata filename check"

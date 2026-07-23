@@ -747,6 +747,15 @@ wheels = [
 ]
 
 [[package]]
+name = "html2text"
+version = "2025.4.15"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f8/27/e158d86ba1e82967cc2f790b0cb02030d4a8bef58e0c79a8590e9678107f/html2text-2025.4.15.tar.gz", hash = "sha256:948a645f8f0bc3abe7fd587019a2197a12436cd73d0d4908af95bfc8da337588", size = 64316, upload-time = "2025-04-15T04:02:30.045Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1d/84/1a0f9555fd5f2b1c924ff932d99b40a0f8a6b12f6dd625e2a47f415b00ea/html2text-2025.4.15-py3-none-any.whl", hash = "sha256:00569167ffdab3d7767a4cdf589b7f57e777a5ed28d12907d8c58769ec734acc", size = 34656, upload-time = "2025-04-15T04:02:28.44Z" },
+]
+
+[[package]]
 name = "httpcore"
 version = "1.0.9"
 source = { registry = "https://pypi.org/simple" }
@@ -2234,6 +2243,7 @@ dependencies = [
     { name = "google-api-python-client" },
     { name = "google-auth-httplib2" },
     { name = "google-auth-oauthlib" },
+    { name = "html2text" },
     { name = "httpx" },
     { name = "markdown-it-py" },
     { name = "py-key-value-aio" },
@@ -2314,6 +2324,7 @@ requires-dist = [
     { name = "google-cloud-storage", marker = "extra == 'dev'", specifier = ">=2.18.0" },
     { name = "google-cloud-storage", marker = "extra == 'gcs'", specifier = ">=2.18.0" },
     { name = "google-cloud-storage", marker = "extra == 'test'", specifier = ">=2.18.0" },
+    { name = "html2text", specifier = ">=2025.4.15" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "markdown-it-py", specifier = ">=3.0.0" },
     { name = "py-key-value-aio", specifier = ">=0.3.0" },

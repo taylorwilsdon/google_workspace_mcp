@@ -31,9 +31,12 @@ def _build_mock_service(
     *,
     filename: str = "attachment.bin",
     mime_type: str = "application/octet-stream",
+    unpadded: bool = False,
 ) -> Mock:
     """Build a Mock google-api service returning ``payload`` as an attachment."""
     urlsafe_b64 = base64.urlsafe_b64encode(payload).decode("ascii")
+    if unpadded:
+        urlsafe_b64 = urlsafe_b64.rstrip("=")
 
     mock_service = Mock()
 
@@ -106,6 +109,18 @@ def test_format_base64_content_block_converts_urlsafe_to_standard():
     assert base64.b64decode(standard_b64) == payload
 
 
+def test_format_base64_content_block_accepts_unpadded_base64url():
+    """Gmail-style unpadded base64url must round-trip to standard base64."""
+    payload = bytes(range(256))
+    urlsafe_unpadded = base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+    assert len(urlsafe_unpadded) % 4 != 0, "fixture must actually be unpadded"
+
+    lines = _format_base64_content_block(urlsafe_unpadded)
+
+    assert len(lines) == 2
+    assert base64.b64decode(lines[1]) == payload
+
+
 def test_format_base64_content_block_handles_invalid_input_gracefully():
     """Invalid base64 shouldn't raise — it should return a warning line."""
     lines = _format_base64_content_block("not valid base64 !!!")
@@ -132,6 +147,28 @@ async def test_default_call_omits_base64_content(isolated_attachment_env):
     assert "Attachment downloaded successfully!" in result
     assert "📦 Base64 content" not in result
     assert "standard base64" not in result
+
+
+@pytest.mark.asyncio
+async def test_unpadded_base64url_attachment_still_saved(isolated_attachment_env):
+    """Gmail serves attachment data as base64url without '=' padding; save must not fail."""
+    # Length not a multiple of 3 so the encoded form requires padding.
+    payload = b"unpadded attachment payload."
+    mock_service = _build_mock_service(payload, filename="doc.bin", unpadded=True)
+
+    result = await _unwrap(get_gmail_attachment_content)(
+        service=mock_service,
+        message_id="msg-1",
+        attachment_id="att-123",
+        user_google_email="user@example.com",
+    )
+
+    assert "Attachment downloaded successfully!" in result
+    assert "Failed to save attachment" not in result
+
+    saved_files = list(isolated_attachment_env.iterdir())
+    assert len(saved_files) == 1
+    assert saved_files[0].read_bytes() == payload
 
 
 @pytest.mark.asyncio

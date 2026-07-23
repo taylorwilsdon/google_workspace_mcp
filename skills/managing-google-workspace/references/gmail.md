@@ -30,6 +30,8 @@ Get full content of a single message (subject, sender, recipients, date, Message
 |-----------|------|----------|---------|-------|
 | message_id | string | yes | | |
 | user_google_email | string | yes | | |
+| body_format | string | no | "text" | "text" (plaintext, HTML converted as fallback), "html" (raw HTML), or "raw" (decoded raw MIME) |
+| save_body_to_file | boolean | no | false | Save the full untruncated body to a file instead of returning it inline (see Full Message Bodies below) |
 
 ### get_gmail_messages_content_batch
 Get content of multiple messages in one request. Max 25 per batch.
@@ -39,6 +41,8 @@ Get content of multiple messages in one request. Max 25 per batch.
 | message_ids | array of strings | yes | | Max 25 |
 | user_google_email | string | yes | | |
 | format | string | no | "full" | "full" (with body) or "metadata" (headers only) |
+| body_format | string | no | "text" | "text", "html", or "raw"; requires format="full" for "html"/"raw" |
+| save_body_to_file | boolean | no | false | Save each message's full body to its own file; requires format="full" |
 
 ### get_gmail_thread_content
 Get all messages in a conversation thread.
@@ -47,6 +51,9 @@ Get all messages in a conversation thread.
 |-----------|------|----------|---------|-------|
 | thread_id | string | yes | | |
 | user_google_email | string | yes | | |
+| body_format | string | no | "text" | "text", "html", or "raw" |
+| save_body_to_file | boolean | no | false | Save each message's full body to its own file (one file per message in the thread) |
+| include_analysis | boolean | no | false | Also return structured ownership analysis (last sender, ball-in-court verdict, participants) |
 
 ### get_gmail_threads_content_batch
 Get content of multiple threads in one request. Auto-batches in chunks of 25.
@@ -55,6 +62,8 @@ Get content of multiple threads in one request. Auto-batches in chunks of 25.
 |-----------|------|----------|---------|-------|
 | thread_ids | array of strings | yes | | |
 | user_google_email | string | yes | | |
+| body_format | string | no | "text" | "text", "html", or "raw" |
+| save_body_to_file | boolean | no | false | Save each message's full body to its own file (one file per message per thread) |
 
 ### get_gmail_attachment_content
 Download an attachment to local disk (stdio mode) or get a temporary URL (HTTP mode, 1-hour expiry).
@@ -222,3 +231,8 @@ Create or delete a filter.
 - To find attachments, read the message with `get_gmail_message_content` -- attachment IDs are listed in the response.
 - Download with `get_gmail_attachment_content` using both the message_id and attachment_id.
 - When sending/drafting, attachments can be specified as file paths (auto-encoded) or pre-encoded base64 content (standard base64, not urlsafe).
+
+### Full Message Bodies
+- Inline bodies are truncated at 20000 characters for html/raw output. To get the complete body, pass `save_body_to_file=true` to any of the four content tools (`get_gmail_message_content`, `get_gmail_messages_content_batch`, `get_gmail_thread_content`, `get_gmail_threads_content_batch`).
+- The full untruncated body is written to one file per message: `.txt` for body_format="text", `.html` for "html", `.eml` (original MIME) for "raw". The response contains a local file path (stdio mode) or a temporary download URL that expires after 1 hour (HTTP mode) instead of the inline body.
+- Not available in stateless mode -- the body is returned inline with a warning instead.

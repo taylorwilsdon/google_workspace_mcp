@@ -100,9 +100,12 @@ class AttachmentStorage:
         # Generate unique file ID for metadata tracking
         file_id = str(uuid.uuid4())
 
-        # Decode base64 data
+        # Decode base64 data. Google APIs serialize bytes fields as base64url
+        # frequently WITHOUT '=' padding (RFC 4648 §5), which the strict
+        # stdlib decoder rejects; re-pad first (no-op for padded input).
+        padded_data = base64_data + "=" * (-len(base64_data) % 4)
         try:
-            file_bytes = base64.urlsafe_b64decode(base64_data)
+            file_bytes = base64.urlsafe_b64decode(padded_data)
         except Exception as e:
             logger.error(f"Failed to decode base64 attachment data: {e}")
             raise ValueError(f"Invalid base64 data: {e}")

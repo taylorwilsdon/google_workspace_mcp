@@ -12,7 +12,6 @@ import re
 import ssl
 import mimetypes
 import html
-from html.parser import HTMLParser
 from pathlib import Path
 from typing import Annotated, Optional, List, Dict, Literal, Any
 from urllib.parse import unquote, urlparse, urlunsplit
@@ -21,6 +20,7 @@ from email.message import EmailMessage
 from email.policy import SMTP
 from email.utils import formataddr
 
+import html2text
 import httpx
 from mcp.types import ToolAnnotations
 
@@ -28,7 +28,11 @@ from pydantic import Field
 from googleapiclient.errors import HttpError
 
 from auth.service_decorator import require_google_service
-from core.attachment_storage import get_attachment_storage, STORAGE_DIR
+from core.attachment_storage import (
+    get_attachment_storage,
+    sanitize_attachment_filename,
+    STORAGE_DIR,
+)
 from core.config import (
     WORKSPACE_EXTERNAL_URL,
     WORKSPACE_MCP_BASE_URI,
@@ -65,6 +69,8 @@ logger = logging.getLogger(__name__)
 GMAIL_BATCH_SIZE = 25
 GMAIL_REQUEST_DELAY = 0.1
 HTML_BODY_TRUNCATE_LIMIT = 20000
+# Marker phrases are matched against word-normalized text (lowercase words
+# separated by single spaces, no punctuation), so they must be word-normalized too.
 LOW_VALUE_TEXT_PLACEHOLDERS = (
     "your client does not support html",
     "view this email in your browser",
@@ -72,50 +78,87 @@ LOW_VALUE_TEXT_PLACEHOLDERS = (
 )
 LOW_VALUE_TEXT_FOOTER_MARKERS = (
     "mailing list",
-    "mailman/listinfo",
+    "mailman listinfo",
     "unsubscribe",
-    "list-unsubscribe",
+    "list unsubscribe",
     "manage preferences",
 )
-LOW_VALUE_TEXT_HTML_DIFF_MIN = 80
+LOW_VALUE_WORD_DIFF_MIN = 15
 CONTENT_ID_SAFE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+\-@]*$")
-
-
-class _HTMLTextExtractor(HTMLParser):
-    """Extract readable text from HTML using stdlib."""
-
-    def __init__(self):
-        super().__init__()
-        self._text = []
-        self._skip = False
-
-    def handle_starttag(self, tag, attrs):
-        if tag in ("script", "style"):
-            self._skip = True
-            return
-        if tag == "br" and not self._skip:
-            self._text.append(" ")
-
-    def handle_endtag(self, tag):
-        if tag in ("script", "style"):
-            self._skip = False
-
-    def handle_data(self, data):
-        if not self._skip:
-            self._text.append(data)
-
-    def get_text(self) -> str:
-        return " ".join("".join(self._text).split())
+MD_LINK_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")  # [label](url) -> label
+URL_RE = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
 
 
 def _html_to_text(html: str) -> str:
-    """Convert HTML to readable plain text."""
+    """Convert HTML to readable plain text (Markdown-flavored)."""
     try:
-        parser = _HTMLTextExtractor()
-        parser.feed(html)
-        return parser.get_text()
+        converter = html2text.HTML2Text()
+        converter.body_width = 0  # no hard line-wrapping
+        converter.ignore_images = True  # drop logos/tracking pixels
+        converter.ignore_emphasis = True
+        return converter.handle(html).strip()
     except Exception:
         return html
+
+
+def _normalize_words(text: str) -> List[str]:
+    """Reduce text to lowercase word tokens for comparing MIME alternatives.
+
+    Markdown links keep their label (the target URL is plumbing); any URL that
+    remains visible becomes the single sentinel word "url" so it counts as
+    content while representational differences between the text/plain and
+    text/html parts (raw URL vs. anchor text vs. tracking redirect) can't
+    break the comparison.
+    """
+    text = MD_LINK_RE.sub(r"\1", text)
+    text = URL_RE.sub(" url ", text)
+    return re.findall(r"[^\W_]+", text.lower())
+
+
+def _plain_is_low_value(plain_words: List[str], html_words: List[str]) -> bool:
+    """Decide whether the text/plain part is a useless stand-in for the HTML.
+
+    Operates on word-normalized token lists (see _normalize_words) so the
+    checks are immune to punctuation, whitespace, markup, and URL drift
+    between the two MIME parts.
+    """
+    if not plain_words:
+        return False
+
+    # Pad with spaces for whole-word phrase matching ("unsubscribed" must not
+    # match the "unsubscribe" marker).
+    padded = f" {' '.join(plain_words)} "
+    html_richer = len(html_words) >= len(plain_words) + LOW_VALUE_WORD_DIFF_MIN
+
+    # Known placeholder phrases mark the plain part as a stub outright.
+    if any(f" {marker} " in padded for marker in LOW_VALUE_TEXT_PLACEHOLDERS):
+        return True
+
+    # Footer-only plain part: known list/footer markers plus much richer HTML.
+    if html_richer and any(
+        f" {marker} " in padded for marker in LOW_VALUE_TEXT_FOOTER_MARKERS
+    ):
+        return True
+
+    # Appended-boilerplate detector (keyword-free): the plain part is exactly
+    # the tail of the HTML's words and the HTML says much more. Suffix rather
+    # than containment on purpose: appended footers land at the end, while a
+    # mid-body match usually means a legitimate plain-text rendition.
+    if html_richer and html_words[-len(plain_words) :] == plain_words:
+        return True
+
+    return False
+
+
+def _pad_urlsafe_b64(data: str) -> str:
+    """
+    Re-pad a base64url string to a multiple of 4 characters.
+
+    Google APIs serialize bytes fields as base64url frequently WITHOUT '='
+    padding (RFC 4648 §5), which the strict stdlib decoder rejects with
+    "Incorrect padding". Padding an already-padded value is a no-op.
+    """
+    return data + "=" * (-len(data) % 4)
 
 
 def _extract_message_body(payload):
@@ -155,9 +198,9 @@ def _extract_message_bodies(payload):
 
         if body_data:
             try:
-                decoded_data = base64.urlsafe_b64decode(body_data).decode(
-                    "utf-8", errors="ignore"
-                )
+                decoded_data = base64.urlsafe_b64decode(
+                    _pad_urlsafe_b64(body_data)
+                ).decode("utf-8", errors="ignore")
                 if mime_type == "text/plain" and not text_body:
                     text_body = decoded_data
                 elif mime_type == "text/html" and not html_body:
@@ -172,9 +215,9 @@ def _extract_message_bodies(payload):
     # Check the main payload if it has body data directly
     if payload.get("body", {}).get("data"):
         try:
-            decoded_data = base64.urlsafe_b64decode(payload["body"]["data"]).decode(
-                "utf-8", errors="ignore"
-            )
+            decoded_data = base64.urlsafe_b64decode(
+                _pad_urlsafe_b64(payload["body"]["data"])
+            ).decode("utf-8", errors="ignore")
             mime_type = payload.get("mimeType", "")
             if mime_type == "text/plain" and not text_body:
                 text_body = decoded_data
@@ -190,6 +233,7 @@ def _format_body_content(
     text_body: str,
     html_body: str,
     body_format: Literal["text", "html"] = "text",
+    truncate: bool = True,
 ) -> str:
     """
     Helper function to format message body content with HTML fallback and truncation.
@@ -200,6 +244,8 @@ def _format_body_content(
         html_body: HTML body content
         body_format: Output format - "text" converts HTML to plaintext (default),
                      "html" returns raw HTML body as-is
+        truncate: When True (default), truncate long content for inline display.
+                  Set False to get the full untruncated body (e.g. for file export).
 
     Returns:
         Formatted body content string
@@ -207,7 +253,7 @@ def _format_body_content(
     if body_format == "html":
         html_stripped = html_body.strip()
         if html_stripped:
-            if len(html_stripped) > HTML_BODY_TRUNCATE_LIMIT:
+            if truncate and len(html_stripped) > HTML_BODY_TRUNCATE_LIMIT:
                 return (
                     html_stripped[:HTML_BODY_TRUNCATE_LIMIT]
                     + "\n\n[Content truncated...]"
@@ -221,28 +267,22 @@ def _format_body_content(
     html_stripped = html_body.strip()
     html_text = _html_to_text(html_stripped).strip() if html_stripped else ""
 
-    plain_lower = " ".join(text_stripped.split()).lower()
-    html_lower = " ".join(html_text.split()).lower()
-    plain_is_low_value = plain_lower and (
-        any(marker in plain_lower for marker in LOW_VALUE_TEXT_PLACEHOLDERS)
-        or (
-            any(marker in plain_lower for marker in LOW_VALUE_TEXT_FOOTER_MARKERS)
-            and len(html_lower) >= len(plain_lower) + LOW_VALUE_TEXT_HTML_DIFF_MIN
-        )
-        or (
-            len(html_lower) >= len(plain_lower) + LOW_VALUE_TEXT_HTML_DIFF_MIN
-            and html_lower.endswith(plain_lower)
-        )
-    )
+    # Word-normalized views are used for the decision only, never for output.
+    plain_words = _normalize_words(text_stripped)
+    html_words = _normalize_words(html_text)
 
-    # Prefer plain text, but fall back to HTML when plain text is empty or clearly low-value.
-    use_html = html_text and (
-        not text_stripped or "<!--" in text_stripped or plain_is_low_value
+    # Prefer plain text, but fall back to HTML when plain text is wordless or
+    # clearly low-value. Gating on html_words keeps image-only HTML (zero
+    # readable words) from ever displacing a real plain part.
+    use_html = bool(html_words) and (
+        not plain_words
+        or "<!--" in text_stripped
+        or _plain_is_low_value(plain_words, html_words)
     )
 
     if use_html:
         content = html_text
-        if len(content) > HTML_BODY_TRUNCATE_LIMIT:
+        if truncate and len(content) > HTML_BODY_TRUNCATE_LIMIT:
             content = content[:HTML_BODY_TRUNCATE_LIMIT] + "\n\n[Content truncated...]"
         return content
     elif text_stripped:
@@ -263,9 +303,8 @@ def _decode_raw_mime_content(raw_data: str) -> str:
     if not raw_data:
         return "[No raw content found]"
 
-    padded_raw = raw_data + "=" * (-len(raw_data) % 4)
     try:
-        decoded_raw = base64.urlsafe_b64decode(padded_raw).decode(
+        decoded_raw = base64.urlsafe_b64decode(_pad_urlsafe_b64(raw_data)).decode(
             "utf-8", errors="replace"
         )
     except (binascii.Error, ValueError) as exc:
@@ -336,11 +375,16 @@ def _build_message_get_request(
 def _validate_message_batch_options(
     response_format: Literal["full", "metadata"],
     body_format: Literal["text", "html", "raw"],
+    save_body_to_file: bool = False,
 ) -> None:
     """Reject incompatible output combinations for batch message reads."""
     if response_format == "metadata" and body_format != "text":
         raise UserInputError(
             "body_format='html' and body_format='raw' require format='full'."
+        )
+    if response_format == "metadata" and save_body_to_file:
+        raise UserInputError(
+            "save_body_to_file=True requires format='full' (metadata has no body to save)."
         )
 
 
@@ -378,9 +422,17 @@ async def _fetch_message_with_retry(
 
 async def _fetch_raw_message_contents(
     service, message_ids: List[str], log_prefix: str
-) -> Dict[str, str]:
-    """Fetch decoded raw MIME content for a set of Gmail message IDs."""
-    raw_contents: Dict[str, str] = {}
+) -> Dict[str, Dict[str, str]]:
+    """
+    Fetch raw MIME content for a set of Gmail message IDs.
+
+    Returns:
+        Mapping of message ID to a dict with:
+          - "decoded": decoded (truncated) raw MIME text for inline display
+          - "raw_b64": the undecoded urlsafe-base64 raw value (empty on failure),
+            suitable for saving the full untruncated MIME to a file
+    """
+    raw_contents: Dict[str, Dict[str, str]] = {}
     for message_id in message_ids:
         _, raw_message, raw_error = await _fetch_message_with_retry(
             service,
@@ -388,11 +440,17 @@ async def _fetch_raw_message_contents(
             message_format="raw",
             log_prefix=log_prefix,
         )
-        raw_contents[message_id] = (
-            _decode_raw_mime_content(raw_message.get("raw", ""))
-            if raw_message
-            else f"[Failed to fetch raw MIME: {raw_error}]"
-        )
+        if raw_message:
+            raw_b64 = raw_message.get("raw", "")
+            raw_contents[message_id] = {
+                "decoded": _decode_raw_mime_content(raw_b64),
+                "raw_b64": raw_b64,
+            }
+        else:
+            raw_contents[message_id] = {
+                "decoded": f"[Failed to fetch raw MIME: {raw_error}]",
+                "raw_b64": "",
+            }
         await asyncio.sleep(GMAIL_REQUEST_DELAY)
 
     return raw_contents
@@ -609,7 +667,7 @@ def _format_base64_content_block(urlsafe_b64_data: str) -> List[str]:
         decode, returns a single warning line instead of raising.
     """
     try:
-        raw_bytes = base64.urlsafe_b64decode(urlsafe_b64_data)
+        raw_bytes = base64.urlsafe_b64decode(_pad_urlsafe_b64(urlsafe_b64_data))
         standard_b64 = base64.b64encode(raw_bytes).decode("ascii")
         return [
             f"\n📦 Base64 content ({len(standard_b64)} chars, standard base64):",
@@ -621,6 +679,147 @@ def _format_base64_content_block(urlsafe_b64_data: str) -> List[str]:
             f"to standard base64: {e}"
         )
         return [f"\n⚠️ Could not include base64 content: {e}"]
+
+
+# File extension and MIME type for saved email bodies, keyed by body_format.
+_BODY_FILE_FORMAT_INFO = {
+    "text": (".txt", "text/plain"),
+    "html": (".html", "text/html"),
+    "raw": (".eml", "message/rfc822"),
+}
+_BODY_FILE_SUBJECT_STEM_MAX = 50
+
+
+def _save_body_file(
+    body_content_b64: str,
+    message_id: str,
+    subject: str,
+    body_format: Literal["text", "html", "raw"],
+) -> tuple[List[str], bool]:
+    """
+    Save an email body to the managed attachment storage.
+
+    Mirrors the ``get_gmail_attachment_content`` response pattern: local file
+    path in stdio mode, temporary download URL (1-hour expiry) in HTTP mode,
+    and an inline fallback in stateless mode.
+
+    Args:
+        body_content_b64: URL-safe base64 of the file content.
+        message_id: Gmail message ID (used in the filename).
+        subject: Message subject (used in the filename).
+        body_format: Determines file extension (.txt/.html/.eml) and MIME type.
+
+    Returns:
+        Tuple of (result_lines, saved). When ``saved`` is False the caller
+        should keep the body inline; ``result_lines`` then contain only a
+        warning explaining why no file was written.
+    """
+    from auth.oauth_config import is_stateless_mode
+
+    if is_stateless_mode():
+        return (
+            [
+                "⚠️ Stateless mode: File storage disabled. Returning body inline instead."
+            ],
+            False,
+        )
+
+    if not body_content_b64:
+        return (["⚠️ No body content available to save to file."], False)
+
+    extension, mime_type = _BODY_FILE_FORMAT_INFO[body_format]
+    subject_stem = Path(sanitize_attachment_filename(subject or "email")).stem
+    subject_stem = subject_stem[:_BODY_FILE_SUBJECT_STEM_MAX].strip(" ._") or "email"
+    filename = f"{subject_stem}_{message_id}{extension}"
+
+    try:
+        from core.attachment_storage import get_attachment_url
+        from core.config import get_transport_mode
+
+        storage = get_attachment_storage()
+        result = storage.save_attachment(
+            base64_data=body_content_b64, filename=filename, mime_type=mime_type
+        )
+        size_bytes = Path(result.path).stat().st_size
+        size_kb = size_bytes / 1024
+
+        result_lines = [
+            f"Body saved to file ({body_format} format).",
+            f"Filename: {Path(result.path).name}",
+            f"Size: {size_kb:.1f} KB ({size_bytes} bytes)",
+        ]
+
+        if get_transport_mode() == "stdio":
+            result_lines.append(f"📎 Saved to: {result.path}")
+            result_lines.append(
+                "The file has been saved to disk and can be accessed directly via the file path."
+            )
+        else:
+            download_url = get_attachment_url(result.file_id)
+            result_lines.append(f"📎 Download URL: {download_url}")
+            result_lines.append("The file will expire after 1 hour.")
+
+        logger.info(
+            f"[_save_body_file] Saved {size_kb:.1f} KB body for message {message_id} to {result.path}"
+        )
+        return (result_lines, True)
+    except Exception as e:
+        logger.error(
+            f"[_save_body_file] Failed to save body for message {message_id}: {e}",
+            exc_info=True,
+        )
+        return (
+            [f"⚠️ Failed to save body to file: {e}. Returning body inline instead."],
+            False,
+        )
+
+
+def _build_body_section(
+    *,
+    message_id: str,
+    subject: str,
+    body_format: Literal["text", "html", "raw"],
+    save_body_to_file: bool,
+    text_body: str = "",
+    html_body: str = "",
+    raw_b64: str = "",
+    decoded_raw: str = "",
+) -> tuple[str, str]:
+    """
+    Build the body section of a message/thread response.
+
+    Returns:
+        Tuple of (label, content). Label is "BODY SAVED TO FILE" when the body
+        was persisted via ``_save_body_file``; otherwise the inline body is
+        returned under "BODY" / "RAW MIME", prefixed with a warning when
+        saving was requested but not possible.
+    """
+    warning_lines: List[str] = []
+    if save_body_to_file:
+        if body_format == "raw":
+            file_b64 = raw_b64
+        else:
+            full_body = _format_body_content(
+                text_body, html_body, body_format=body_format, truncate=False
+            )
+            file_b64 = base64.urlsafe_b64encode(full_body.encode("utf-8")).decode(
+                "ascii"
+            )
+        file_lines, saved = _save_body_file(file_b64, message_id, subject, body_format)
+        if saved:
+            return ("BODY SAVED TO FILE", "\n".join(file_lines))
+        warning_lines = file_lines
+
+    if body_format == "raw":
+        label = "RAW MIME"
+        content = decoded_raw or _decode_raw_mime_content(raw_b64)
+    else:
+        label = "BODY"
+        content = _format_body_content(text_body, html_body, body_format=body_format)
+
+    if warning_lines:
+        content = "\n".join(warning_lines) + "\n\n" + content
+    return (label, content)
 
 
 def _extract_attachments(payload: dict) -> List[Dict[str, Any]]:
@@ -1426,6 +1625,19 @@ async def get_gmail_message_content(
             ),
         ),
     ] = "text",
+    save_body_to_file: Annotated[
+        bool,
+        Field(
+            description=(
+                "When True, saves the full untruncated body to a file instead of "
+                "returning it inline. The response contains a local file path "
+                "(stdio mode) or a temporary download URL valid for 1 hour "
+                "(HTTP mode). File type follows body_format: .txt (text), "
+                ".html (html), .eml (raw MIME). Not available in stateless mode "
+                "(body stays inline with a warning)."
+            ),
+        ),
+    ] = False,
 ) -> str:
     """
     Retrieves the full content (subject, sender, recipients, body) of a specific Gmail message.
@@ -1437,9 +1649,15 @@ async def get_gmail_message_content(
             "text" (default) returns plaintext (HTML converted to text as fallback).
             "html" returns the raw HTML body as-is without conversion.
             "raw" fetches the full raw MIME message and returns the base64url-decoded content.
+        save_body_to_file (bool): When True, saves the full untruncated body to a
+            file via the managed attachment storage instead of returning it inline.
+            Returns a local file path (stdio mode) or a temporary download URL
+            (HTTP mode, 1-hour expiry). Falls back to inline output in stateless
+            mode or when saving fails.
 
     Returns:
-        str: The message details including subject, sender, date, Message-ID, recipients (To, Cc), and body content.
+        str: The message details including subject, sender, date, Message-ID, recipients (To, Cc),
+        and body content (inline, or the saved file location when save_body_to_file=True).
     """
     logger.info(
         f"[get_gmail_message_content] Invoked. Message ID: '{message_id}', Email: '{user_google_email}'"
@@ -1472,10 +1690,16 @@ async def get_gmail_message_content(
             .get(userId="me", id=message_id, format="raw")
             .execute
         )
-        decoded_raw = _decode_raw_mime_content(message_raw.get("raw", ""))
+        body_label, body_data = _build_body_section(
+            message_id=message_id,
+            subject=headers.get("Subject", ""),
+            body_format="raw",
+            save_body_to_file=save_body_to_file,
+            raw_b64=message_raw.get("raw", ""),
+        )
 
         content_lines = _format_message_header_lines(headers)
-        content_lines.append(f"\n--- RAW MIME ---\n{decoded_raw}")
+        content_lines.append(f"\n--- {body_label} ---\n{body_data}")
         return "\n".join(content_lines)
 
     # Now fetch the full message to get the body parts
@@ -1496,14 +1720,23 @@ async def get_gmail_message_content(
     text_body = bodies.get("text", "")
     html_body = bodies.get("html", "")
 
-    # Format body content with HTML fallback
-    body_data = _format_body_content(text_body, html_body, body_format=body_format)
+    # Format body content with HTML fallback (or save it to a file)
+    body_label, body_data = _build_body_section(
+        message_id=message_id,
+        subject=headers.get("Subject", ""),
+        body_format=body_format,
+        save_body_to_file=save_body_to_file,
+        text_body=text_body,
+        html_body=html_body,
+    )
 
     # Extract attachment metadata
     attachments = _extract_attachments(payload)
 
     content_lines = _format_message_header_lines(headers)
-    content_lines.append(f"\n--- BODY ---\n{body_data or '[No text/plain body found]'}")
+    content_lines.append(
+        f"\n--- {body_label} ---\n{body_data or '[No text/plain body found]'}"
+    )
 
     # Add attachment information if present
     if attachments:
@@ -1548,6 +1781,20 @@ async def get_gmail_messages_content_batch(
             ),
         ),
     ] = "text",
+    save_body_to_file: Annotated[
+        bool,
+        Field(
+            description=(
+                "When True, saves each message's full untruncated body to its own "
+                "file instead of returning it inline (requires format='full'). "
+                "The response contains a local file path (stdio mode) or a "
+                "temporary download URL valid for 1 hour (HTTP mode) per message. "
+                "File type follows body_format: .txt (text), .html (html), "
+                ".eml (raw MIME). Not available in stateless mode (bodies stay "
+                "inline with a warning)."
+            ),
+        ),
+    ] = False,
 ) -> str:
     """
     Retrieves the content of multiple Gmail messages in a single batch request.
@@ -1561,6 +1808,11 @@ async def get_gmail_messages_content_batch(
             "text" (default) returns plaintext (HTML converted to text as fallback).
             "html" returns the raw HTML body as-is without conversion.
             "raw" fetches the full raw MIME message and returns the base64url-decoded content.
+        save_body_to_file (bool): When True, saves each message's full untruncated
+            body to its own file via the managed attachment storage instead of
+            returning it inline (requires format='full'). Returns a local file path
+            (stdio mode) or a temporary download URL (HTTP mode, 1-hour expiry) per
+            message. Falls back to inline output in stateless mode or when saving fails.
 
     Returns:
         str: A formatted list of message contents including subject, sender, date, Message-ID, recipients (To, Cc), and body (if full format).
@@ -1571,7 +1823,7 @@ async def get_gmail_messages_content_batch(
 
     if not message_ids:
         raise Exception("No message IDs provided")
-    _validate_message_batch_options(format, body_format)
+    _validate_message_batch_options(format, body_format, save_body_to_file)
 
     output_messages = []
 
@@ -1625,7 +1877,7 @@ async def get_gmail_messages_content_batch(
                 # Brief delay between requests to allow connection cleanup
                 await asyncio.sleep(GMAIL_REQUEST_DELAY)
 
-        raw_contents: Optional[Dict[str, str]] = None
+        raw_contents: Optional[Dict[str, Dict[str, str]]] = None
         if format != "metadata" and body_format == "raw":
             raw_message_ids = [
                 mid for mid in chunk_ids if not results.get(mid, {}).get("error")
@@ -1662,23 +1914,28 @@ async def get_gmail_messages_content_batch(
                 else:
                     headers = _extract_headers(payload, GMAIL_METADATA_HEADERS)
                     if body_format == "raw":
-                        body_data = (
-                            raw_contents.get(
-                                mid, "[Failed to fetch raw MIME: No result]"
-                            )
-                            if raw_contents
-                            else "[Failed to fetch raw MIME: No result]"
+                        raw_entry = (raw_contents or {}).get(mid) or {}
+                        body_label, body_data = _build_body_section(
+                            message_id=mid,
+                            subject=headers.get("Subject", ""),
+                            body_format="raw",
+                            save_body_to_file=save_body_to_file,
+                            raw_b64=raw_entry.get("raw_b64", ""),
+                            decoded_raw=raw_entry.get(
+                                "decoded", "[Failed to fetch raw MIME: No result]"
+                            ),
                         )
-                        body_label = "RAW MIME"
                     else:
                         # Full format - extract body too
                         bodies = _extract_message_bodies(payload)
-                        text_body = bodies.get("text", "")
-                        html_body = bodies.get("html", "")
-                        body_data = _format_body_content(
-                            text_body, html_body, body_format=body_format
+                        body_label, body_data = _build_body_section(
+                            message_id=mid,
+                            subject=headers.get("Subject", ""),
+                            body_format=body_format,
+                            save_body_to_file=save_body_to_file,
+                            text_body=bodies.get("text", ""),
+                            html_body=bodies.get("html", ""),
                         )
-                        body_label = "BODY"
 
                     attachments = _extract_attachments(payload)
 
@@ -2284,9 +2541,8 @@ async def _forward_gmail_message_impl(
                 # tolerantly and re-encode as standard, padded base64 so the
                 # downstream base64.b64decode() in _prepare_gmail_message succeeds.
                 urlsafe_data = attachment_data.get("data", "")
-                padded = urlsafe_data + "=" * (-len(urlsafe_data) % 4)
                 standard_b64 = base64.b64encode(
-                    base64.urlsafe_b64decode(padded)
+                    base64.urlsafe_b64decode(_pad_urlsafe_b64(urlsafe_data))
                 ).decode()
                 attachments_to_send.append(
                     {
@@ -2630,7 +2886,8 @@ def _format_thread_content(
     thread_data: dict,
     thread_id: str,
     body_format: Literal["text", "html", "raw"] = "text",
-    raw_contents: Optional[Dict[str, str]] = None,
+    raw_contents: Optional[Dict[str, Dict[str, str]]] = None,
+    save_body_to_file: bool = False,
 ) -> str:
     """
     Helper function to format thread content from Gmail API response.
@@ -2639,7 +2896,10 @@ def _format_thread_content(
         thread_data (dict): Thread data from Gmail API
         thread_id (str): Thread ID for display
         body_format: Output format - "text" (default), "html", or "raw"
-        raw_contents: Optional mapping of message IDs to decoded raw MIME content
+        raw_contents: Optional mapping of message IDs to raw MIME content dicts
+            (with "decoded" and "raw_b64" keys, see _fetch_raw_message_contents)
+        save_body_to_file: When True, each message's full untruncated body is
+            saved to its own file and the file location replaces the inline body
 
     Returns:
         str: Formatted thread content
@@ -2677,26 +2937,32 @@ def _format_thread_content(
         in_reply_to = headers.get("In-Reply-To", "")
         references = headers.get("References", "")
 
+        message_id = message.get("id", "")
+
         if body_format == "raw":
-            body_data = (raw_contents or {}).get(
-                message.get("id", ""), "[No raw content found]"
+            raw_entry = (raw_contents or {}).get(message_id) or {}
+            body_label, body_data = _build_body_section(
+                message_id=message_id,
+                subject=subject,
+                body_format="raw",
+                save_body_to_file=save_body_to_file,
+                raw_b64=raw_entry.get("raw_b64", ""),
+                decoded_raw=raw_entry.get("decoded", "[No raw content found]"),
             )
-            body_label = "RAW MIME"
         else:
             # Extract both text and HTML bodies
             bodies = _extract_message_bodies(payload)
-            text_body = bodies.get("text", "")
-            html_body = bodies.get("html", "")
-
-            # Format body content with HTML fallback
-            body_data = _format_body_content(
-                text_body, html_body, body_format=body_format
+            body_label, body_data = _build_body_section(
+                message_id=message_id,
+                subject=subject,
+                body_format=body_format,
+                save_body_to_file=save_body_to_file,
+                text_body=bodies.get("text", ""),
+                html_body=bodies.get("html", ""),
             )
-            body_label = "BODY"
 
         # Extract attachment metadata for this message
         attachments = _extract_attachments(payload)
-        message_id = message.get("id", "")
 
         # Add message to content
         content_lines.extend(
@@ -2718,7 +2984,11 @@ def _format_thread_content(
         if subject != thread_subject:
             content_lines.append(f"Subject: {subject}")
 
-        if body_format == "raw":
+        # Plain text/html bodies are shown without a section label (existing
+        # behavior); raw MIME and saved-file blocks get a labeled section.
+        if body_label == "BODY":
+            content_lines.extend(["", body_data, ""])
+        else:
             content_lines.extend(
                 [
                     "",
@@ -2727,8 +2997,6 @@ def _format_thread_content(
                     "",
                 ]
             )
-        else:
-            content_lines.extend(["", body_data, ""])
 
         if attachments:
             content_lines.append("--- ATTACHMENTS ---")
@@ -2770,6 +3038,19 @@ async def get_gmail_thread_content(
             ),
         ),
     ] = "text",
+    save_body_to_file: Annotated[
+        bool,
+        Field(
+            description=(
+                "When True, saves each message's full untruncated body to its own "
+                "file instead of returning it inline. The response contains a "
+                "local file path (stdio mode) or a temporary download URL valid "
+                "for 1 hour (HTTP mode) per message. File type follows "
+                "body_format: .txt (text), .html (html), .eml (raw MIME). "
+                "Not available in stateless mode (bodies stay inline with a warning)."
+            ),
+        ),
+    ] = False,
     include_analysis: Annotated[
         bool,
         Field(
@@ -2797,6 +3078,11 @@ async def get_gmail_thread_content(
             "text" (default) returns plaintext (HTML converted to text as fallback).
             "html" returns the raw HTML body as-is without conversion.
             "raw" fetches each message's full raw MIME content and returns the base64url-decoded body.
+        save_body_to_file (bool): When True, saves each message's full untruncated
+            body to its own file via the managed attachment storage instead of
+            returning it inline. Returns a local file path (stdio mode) or a
+            temporary download URL (HTTP mode, 1-hour expiry) per message. Falls
+            back to inline output in stateless mode or when saving fails.
         include_analysis (bool): When True, returns a dict containing both the
             formatted thread content and structured ownership analysis. When
             False (default), returns the formatted content string (existing
@@ -2836,6 +3122,7 @@ async def get_gmail_thread_content(
         thread_id,
         body_format=body_format,
         raw_contents=raw_contents,
+        save_body_to_file=save_body_to_file,
     )
 
     if not include_analysis:
@@ -2873,6 +3160,19 @@ async def get_gmail_threads_content_batch(
             ),
         ),
     ] = "text",
+    save_body_to_file: Annotated[
+        bool,
+        Field(
+            description=(
+                "When True, saves each message's full untruncated body to its own "
+                "file instead of returning it inline. The response contains a "
+                "local file path (stdio mode) or a temporary download URL valid "
+                "for 1 hour (HTTP mode) per message. File type follows "
+                "body_format: .txt (text), .html (html), .eml (raw MIME). "
+                "Not available in stateless mode (bodies stay inline with a warning)."
+            ),
+        ),
+    ] = False,
 ) -> str:
     """
     Retrieves the content of multiple Gmail threads in a single batch request.
@@ -2885,6 +3185,11 @@ async def get_gmail_threads_content_batch(
             "text" (default) returns plaintext (HTML converted to text as fallback).
             "html" returns the raw HTML body as-is without conversion.
             "raw" fetches each message's full raw MIME content and returns the base64url-decoded body.
+        save_body_to_file (bool): When True, saves each message's full untruncated
+            body to its own file via the managed attachment storage instead of
+            returning it inline. Returns a local file path (stdio mode) or a
+            temporary download URL (HTTP mode, 1-hour expiry) per message. Falls
+            back to inline output in stateless mode or when saving fails.
 
     Returns:
         str: A formatted list of thread contents with separators.
@@ -2989,6 +3294,7 @@ async def get_gmail_threads_content_batch(
                         tid,
                         body_format=body_format,
                         raw_contents=raw_contents,
+                        save_body_to_file=save_body_to_file,
                     )
                 )
 
