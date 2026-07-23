@@ -1,5 +1,6 @@
 """Tests for streamable-http / dual-transport TCP bind pre-flight probes."""
 
+import errno
 import logging
 import os
 import socket
@@ -35,16 +36,10 @@ def _hold_listening_port(host: str = "127.0.0.1"):
         s.close()
 
 
-def _free_port(host: str = "127.0.0.1") -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind((host, 0))
-        return s.getsockname()[1]
-
-
 def test_probe_tcp_bind_succeeds_on_free_port():
+    # Port 0 lets the OS allocate an ephemeral port atomically during the probe.
     host = "127.0.0.1"
-    port = _free_port(host)
-    main.probe_tcp_bind(host, port)
+    main.probe_tcp_bind(host, 0)
 
 
 def test_probe_tcp_bind_sets_so_reuseaddr():
@@ -74,9 +69,8 @@ def test_probe_tcp_bind_sets_so_reuseaddr():
             return False
 
     host = "127.0.0.1"
-    port = _free_port(host)
     with patch("main.socket.socket", TrackingSocket):
-        main.probe_tcp_bind(host, port)
+        main.probe_tcp_bind(host, 0)
 
     assert (socket.SOL_SOCKET, socket.SO_REUSEADDR, 1) in recorded
 
@@ -89,7 +83,7 @@ def test_probe_tcp_bind_raises_when_port_held():
 
 def test_report_preflight_bind_failure_logs_at_error(caplog):
     """Bind failure must be visible at ERROR when stderr is non-TTY (containers)."""
-    error = OSError(98, "Address already in use")
+    error = OSError(errno.EADDRINUSE, "Address already in use")
     with caplog.at_level(logging.DEBUG, logger="main"):
         main.report_preflight_bind_failure(8123, error)
 
@@ -100,6 +94,20 @@ def test_report_preflight_bind_failure_logs_at_error(caplog):
     assert any("8123" in m and "already in use" in m for m in error_messages)
     # Must not be debug-only: at least one ERROR record for the failure.
     assert any(r.levelno == logging.ERROR for r in caplog.records)
+
+
+def test_report_preflight_bind_failure_non_eaddrinuse_is_generic(caplog):
+    """Non-EADDRINUSE bind errors must not claim the port is already in use."""
+    error = OSError(errno.EACCES, "Permission denied")
+    with caplog.at_level(logging.DEBUG, logger="main"):
+        main.report_preflight_bind_failure(8123, error)
+
+    error_messages = [
+        r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR
+    ]
+    assert any("Socket error during pre-flight bind" in m for m in error_messages)
+    assert any("Failed to bind HTTP server on port 8123" in m for m in error_messages)
+    assert not any("already in use" in m for m in error_messages)
 
 
 def test_outer_except_exception_does_not_catch_systemexit():
