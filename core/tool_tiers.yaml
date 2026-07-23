@@ -87,6 +87,7 @@ sheets:
     - get_spreadsheet_info
     - format_sheet_range
     - list_sheet_tables
+    - update_cell_note
   complete:
     - create_sheet
     - append_table_rows

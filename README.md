@@ -884,6 +884,7 @@ Saved files expire after 1 hour and are cleaned up automatically.
 | <sub>`list_spreadsheets`</sub> | <sub>Extended</sub> | <sub>List accessible spreadsheets</sub> |
 | <sub>`get_spreadsheet_info`</sub> | <sub>Extended</sub> | <sub>Get spreadsheet metadata</sub> |
 | <sub>`format_sheet_range`</sub> | <sub>Extended</sub> | <sub>Apply colors, number formats, text wrapping, alignment, bold/italic, font size</sub> |
+| <sub>`update_cell_note`</sub> | <sub>Extended</sub> | <sub>Set or clear cell notes (hover annotations) without touching cell values</sub> |
 | <sub>`list_sheet_tables`</sub> | <sub>Extended</sub> | <sub>List structured tables with IDs, names, ranges, and columns</sub> |
 | <sub>`create_sheet`</sub> | <sub>Complete</sub> | <sub>Add sheets to existing files</sub> |
 | <sub>`move_sheet_rows`</sub> | <sub>Complete</sub> | <sub>Move rows between sheets within a spreadsheet</sub> |
