@@ -29,7 +29,7 @@ def _column_to_index(column: str) -> Optional[int]:
     # check the arithmetic below still produces a plausible index -- "B2" gives
     # 37, i.e. column AL -- and the callers' `if col_idx is None` guards never
     # fire, so a delete_columns request silently targets a column nobody named.
-    if not column or not COLUMN_LETTERS_RE.match(column):
+    if not column or not COLUMN_LETTERS_RE.fullmatch(column):
         return None
     result = 0
     for char in column.upper():

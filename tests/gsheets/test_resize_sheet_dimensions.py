@@ -583,7 +583,7 @@ async def test_delete_rows_non_integer_value_raises_user_input_error():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("column", ["B2", "A1", "C3", "5", "A:B", "Sheet1"])
+@pytest.mark.parametrize("column", ["B2", "A1", "C3", "5", "A:B", "Sheet1", "AA\n"])
 async def test_delete_columns_rejects_non_letter_values(column):
     """Test delete_columns rejects values that are not bare column letters."""
     mock_service = create_mock_service()
