@@ -1,5 +1,6 @@
 import io
 import argparse
+import errno
 import json
 import logging
 import os
@@ -226,11 +227,23 @@ def report_preflight_bind_failure(port: int, error: OSError) -> None:
 
     safe_print alone routes to DEBUG in non-TTY / container environments, so
     operators would otherwise see only a silent exit-1 crash-loop.
+
+    Only label the failure as port contention for errno.EADDRINUSE; other
+    OSError values (permission, address family, unavailable address) keep a
+    generic bind-failure message that includes the original error.
     """
     logger.error("Socket error during pre-flight bind: %s", error)
-    logger.error("Port %s is already in use. Cannot start HTTP server.", port)
     safe_print(f"Socket error: {error}")
-    safe_print(f"❌ Port {port} is already in use. Cannot start HTTP server.")
+    if error.errno == errno.EADDRINUSE:
+        logger.error("Port %s is already in use. Cannot start HTTP server.", port)
+        safe_print(f"❌ Port {port} is already in use. Cannot start HTTP server.")
+    else:
+        logger.error(
+            "Failed to bind HTTP server on port %s: %s",
+            port,
+            error,
+        )
+        safe_print(f"❌ Failed to bind HTTP server on port {port}: {error}")
 
 
 def configure_safe_logging():
@@ -908,11 +921,18 @@ def main():
                     try:
                         # Same SO_REUSEADDR probe as streamable-http above.
                         probe_tcp_bind(http_host, http_port)
-                    except OSError:
-                        logger.warning(
-                            "Port %d in use, workspace-cli HTTP endpoint unavailable",
-                            http_port,
-                        )
+                    except OSError as e:
+                        if e.errno == errno.EADDRINUSE:
+                            logger.warning(
+                                "Port %d in use, workspace-cli HTTP endpoint unavailable",
+                                http_port,
+                            )
+                        else:
+                            logger.warning(
+                                "Failed to bind workspace-cli HTTP endpoint on port %d: %s",
+                                http_port,
+                                e,
+                            )
                         http_available = False
 
                     http_srv = None
