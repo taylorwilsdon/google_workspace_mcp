@@ -6,6 +6,7 @@ Tests column/row resizing, auto-resize, freeze, and hide/unhide operations.
 
 import pytest
 from unittest.mock import Mock
+import re
 import sys
 import os
 
@@ -579,3 +580,63 @@ async def test_delete_rows_non_integer_value_raises_user_input_error():
             spreadsheet_id="test_123",
             delete_rows=["abc"],
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("column", ["B2", "A1", "C3", "5", "A:B", "Sheet1"])
+async def test_delete_columns_rejects_non_letter_values(column):
+    """Test delete_columns rejects values that are not bare column letters."""
+    mock_service = create_mock_service()
+    batch_update = mock_service.spreadsheets().batchUpdate
+    calls_before = batch_update.call_count
+
+    from core.utils import UserInputError
+
+    with pytest.raises(
+        UserInputError,
+        match=rf"Invalid column letter in delete_columns: '{re.escape(column)}'\.",
+    ):
+        await _resize_sheet_dimensions_impl(
+            service=mock_service,
+            spreadsheet_id="test_123",
+            delete_columns=[column],
+        )
+
+    # The whole point is that nothing is deleted: "B2" used to resolve to index
+    # 37 and delete column AL, so the request must never reach the API.
+    assert batch_update.call_count == calls_before
+
+
+@pytest.mark.asyncio
+async def test_insert_columns_at_rejects_cell_reference():
+    """Test insert_columns_at rejects a cell reference instead of a column letter."""
+    mock_service = create_mock_service()
+
+    from core.utils import UserInputError
+
+    with pytest.raises(
+        UserInputError, match=r"Invalid column letter for insert_columns_at: 'B2'\."
+    ):
+        await _resize_sheet_dimensions_impl(
+            service=mock_service,
+            spreadsheet_id="test_123",
+            insert_columns=1,
+            insert_columns_at="B2",
+        )
+
+
+@pytest.mark.asyncio
+async def test_multi_letter_column_still_resolves():
+    """Test that valid multi-letter columns are unaffected by the format check."""
+    mock_service = create_mock_service()
+
+    await _resize_sheet_dimensions_impl(
+        service=mock_service,
+        spreadsheet_id="test_123",
+        column_sizes={"AA": 150},
+    )
+
+    call_args = mock_service.spreadsheets().batchUpdate.call_args
+    req = call_args[1]["body"]["requests"][0]["updateDimensionProperties"]
+    assert req["range"]["startIndex"] == 26
+    assert req["range"]["endIndex"] == 27

@@ -19,11 +19,17 @@ MAX_GRID_METADATA_CELLS = 5000
 
 A1_PART_REGEX = re.compile(r"^([A-Za-z]*)(\d*)$")
 SHEET_TITLE_SAFE_RE = re.compile(r"^[A-Za-z0-9_]+$")
+COLUMN_LETTERS_RE = re.compile(r"^[A-Za-z]+$")
 
 
 def _column_to_index(column: str) -> Optional[int]:
     """Convert column letters (A, B, AA) to zero-based index."""
-    if not column:
+    # Callers pass raw tool arguments straight through, so a cell reference or a
+    # range can arrive where a bare column letter was expected. Without a format
+    # check the arithmetic below still produces a plausible index -- "B2" gives
+    # 37, i.e. column AL -- and the callers' `if col_idx is None` guards never
+    # fire, so a delete_columns request silently targets a column nobody named.
+    if not column or not COLUMN_LETTERS_RE.match(column):
         return None
     result = 0
     for char in column.upper():
