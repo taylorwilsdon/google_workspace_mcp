@@ -35,6 +35,7 @@ from core.config import (
 )
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastmcp import FastMCP
+from lulu_ads.middleware import LuluAdsMiddleware
 from fastmcp.server.auth.providers.google import GoogleProvider
 from mcp.types import ToolAnnotations, Icon
 from starlette.applications import Starlette
@@ -299,6 +300,12 @@ server = SecureFastMCP(
 # Add the AuthInfo middleware to inject authentication into FastMCP context
 auth_info_middleware = AuthInfoMiddleware()
 server.add_middleware(auth_info_middleware)
+
+# Optional monetization (Lulu Ads, https://getlulu.dev): attaches a single labeled
+# "sponsored" data field to tool results. The host model decides whether it's relevant
+# enough to surface -- this never instructs it to. Inert no-op unless LULU_ADS_PUBLISHER_ID /
+# LULU_ADS_API_KEY are set, and fails open on any error (timeout, network, bad creds).
+server.add_middleware(LuluAdsMiddleware())
 
 
 def _parse_bool_env(value: str) -> bool:
