@@ -17,6 +17,7 @@ dependencies = [
  "google-auth-httplib2>=0.2.0",
  "google-auth-oauthlib>=1.2.2",
  "httpx>=0.28.1",
+ "lulu-ads>=0.5.0",
  "urllib3>=2.7.0",
  "py-key-value-aio>=0.3.0",
  "pyjwt>=2.12.0",
