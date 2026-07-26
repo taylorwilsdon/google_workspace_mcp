@@ -773,6 +773,140 @@ async def format_sheet_range(
     )
 
 
+# Internal implementation function for testing
+async def _update_cell_note_impl(
+    service,
+    spreadsheet_id: str,
+    range_name: str,
+    note: Optional[str] = None,
+    clear_note: bool = False,
+) -> dict:
+    """Internal implementation for update_cell_note.
+
+    Sets (or clears) the note attached to every cell in a range using a single
+    repeatCell batchUpdate with fields="note". Notes are the hover annotations
+    that live alongside a cell (Insert > Note); they are stored separately from
+    the cell's value and formatting, so this never overwrites cell contents.
+
+    Args:
+        service: Google Sheets API service client.
+        spreadsheet_id: The ID of the spreadsheet.
+        range_name: A1-style range (optionally with sheet name).
+        note: Note text to apply to every cell in the range.
+        clear_note: If True, removes the note from every cell in the range.
+
+    Returns:
+        Dictionary with keys: range_name, spreadsheet_id, summary.
+    """
+    if clear_note:
+        note_value = ""
+    else:
+        if not note:
+            raise UserInputError(
+                "Provide 'note' text to set, or pass clear_note=True to remove the note."
+            )
+        note_value = note
+
+    # Resolve the A1 range to a GridRange
+    metadata = await asyncio.to_thread(
+        service.spreadsheets()
+        .get(
+            spreadsheetId=spreadsheet_id,
+            fields="sheets(properties(sheetId,title))",
+        )
+        .execute
+    )
+    sheets = metadata.get("sheets", [])
+    grid_range = _parse_a1_range(range_name, sheets)
+
+    request_body = {
+        "requests": [
+            {
+                "repeatCell": {
+                    "range": grid_range,
+                    "cell": {"note": note_value},
+                    "fields": "note",
+                }
+            }
+        ]
+    }
+
+    await asyncio.to_thread(
+        service.spreadsheets()
+        .batchUpdate(spreadsheetId=spreadsheet_id, body=request_body)
+        .execute
+    )
+
+    summary = "cleared note" if clear_note else f"set note ({len(note_value)} chars)"
+
+    # Return structured data for the wrapper to format
+    return {
+        "range_name": range_name,
+        "spreadsheet_id": spreadsheet_id,
+        "summary": summary,
+    }
+
+
+@server.tool(
+    title="Update Cell Note",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("update_cell_note", service_type="sheets")
+@require_google_service("sheets", "sheets_write")
+async def update_cell_note(
+    service,
+    user_google_email: str,
+    spreadsheet_id: str,
+    range_name: str,
+    note: Optional[str] = None,
+    clear_note: bool = False,
+) -> str:
+    """
+    Sets or clears the note attached to cells in a range.
+
+    A note is the small annotation shown on hover (Insert > Note); it is stored
+    separately from the cell's value and formatting, so this never overwrites
+    cell contents. The same note is applied to every cell in the range. To set
+    distinct notes on different cells, call this once per cell (e.g. "Plan!B3").
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        spreadsheet_id (str): The ID of the spreadsheet. Required.
+        range_name (str): A1-style range (optionally with sheet name), e.g.
+            "Plan!M3". If no sheet name is provided, the first sheet is used.
+        note (Optional[str]): Note text to apply. Required unless clear_note=True.
+        clear_note (bool): If True, removes the note from every cell in the range.
+
+    Returns:
+        str: Confirmation of the note update.
+    """
+    logger.info(
+        "[update_cell_note] Invoked. Email: '%s', Spreadsheet: %s, Range: %s, Clear: %s",
+        user_google_email,
+        spreadsheet_id,
+        range_name,
+        clear_note,
+    )
+
+    result = await _update_cell_note_impl(
+        service=service,
+        spreadsheet_id=spreadsheet_id,
+        range_name=range_name,
+        note=note,
+        clear_note=clear_note,
+    )
+
+    return (
+        f"Updated note on range '{result['range_name']}' in spreadsheet "
+        f"{result['spreadsheet_id']} for {user_google_email}: {result['summary']}."
+    )
+
+
 @server.tool(
     title="Manage Conditional Formatting",
     annotations=ToolAnnotations(
