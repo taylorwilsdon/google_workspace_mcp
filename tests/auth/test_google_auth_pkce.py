@@ -29,7 +29,7 @@ def test_create_oauth_flow_autogenerates_verifier_when_missing():
             return_value=DUMMY_CLIENT_CONFIG,
         ),
         patch(
-            "auth.google_auth.Flow.from_client_config",
+            "google_auth_oauthlib.flow.Flow.from_client_config",
             return_value=expected_flow,
         ) as mock_from_client_config,
     ):
@@ -54,7 +54,7 @@ def test_create_oauth_flow_preserves_callback_verifier():
             return_value=DUMMY_CLIENT_CONFIG,
         ),
         patch(
-            "auth.google_auth.Flow.from_client_config",
+            "google_auth_oauthlib.flow.Flow.from_client_config",
             return_value=expected_flow,
         ) as mock_from_client_config,
     ):
@@ -78,7 +78,7 @@ def test_create_oauth_flow_file_config_still_enables_pkce():
         patch("auth.google_auth.load_client_secrets_from_env", return_value=None),
         patch("auth.google_auth.os.path.exists", return_value=True),
         patch(
-            "auth.google_auth.Flow.from_client_secrets_file",
+            "google_auth_oauthlib.flow.Flow.from_client_secrets_file",
             return_value=expected_flow,
         ) as mock_from_file,
     ):
@@ -102,7 +102,7 @@ def test_create_oauth_flow_allows_disabling_autogenerate_without_verifier():
             return_value=DUMMY_CLIENT_CONFIG,
         ),
         patch(
-            "auth.google_auth.Flow.from_client_config",
+            "google_auth_oauthlib.flow.Flow.from_client_config",
             return_value=expected_flow,
         ) as mock_from_client_config,
     ):
