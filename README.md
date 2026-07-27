@@ -52,9 +52,8 @@ See [workspace.lens.io.vn](https://workspace.lens.io.vn) for the full walkthroug
 | ✅ Google Tasks | Create/manage task lists and tasks |
 
 This is the tool set exposed by the public `office.lens.io.vn` endpoint (the `office`
-worker — see [cloudflare-worker/README.md](cloudflare-worker/README.md)). The codebase
-also includes a broader `workspace` worker covering Gmail, Calendar, Chat, Contacts,
-and Custom Search in addition to the above, for deployments that need the full surface.
+worker — see [cloudflare-worker/README.md](cloudflare-worker/README.md)), currently the
+only deployed worker.
 
 ## Pricing
 
