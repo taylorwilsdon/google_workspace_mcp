@@ -749,6 +749,7 @@ def _prepare_gmail_message(
     body_format: Literal["plain", "html"] = "plain",
     from_email: Optional[str] = None,
     from_name: Optional[str] = None,
+    reply_to: Optional[str] = None,
     attachments: Optional[List[Dict[str, str]]] = None,
 ) -> tuple[str, Optional[str], int, List[str]]:
     """
@@ -766,6 +767,7 @@ def _prepare_gmail_message(
         body_format: Content type for the email body ('plain' or 'html')
         from_email: Optional sender email address
         from_name: Optional sender display name (e.g., "Peter Hartree")
+        reply_to: Optional Reply-To email address (where replies should be directed)
         attachments: Optional list of attachments. Each can have 'path' (file path) OR 'content' (base64) + 'filename'
 
     Returns:
@@ -798,6 +800,11 @@ def _prepare_gmail_message(
             message["From"] = formataddr((safe_name, from_email))
         else:
             message["From"] = from_email
+
+    # Add Reply-To if provided (sanitize to prevent header injection)
+    if reply_to:
+        safe_reply_to = reply_to.replace("\r", "").replace("\n", "").replace("\x00", "")
+        message["Reply-To"] = safe_reply_to
 
     # Add recipients if provided
     if to:
@@ -1539,6 +1546,12 @@ async def send_gmail_message(
             description="Optional 'Send As' alias email address. Must be configured in Gmail settings (Settings > Accounts > Send mail as). If not provided, uses the authenticated user's email.",
         ),
     ] = None,
+    reply_to: Annotated[
+        Optional[str],
+        Field(
+            description="Optional Reply-To email address. Replies will be directed to this address instead of the From address. Unlike from_email, no Gmail-side registration is required.",
+        ),
+    ] = None,
     thread_id: Annotated[
         Optional[str],
         Field(
@@ -1588,6 +1601,8 @@ async def send_gmail_message(
         from_email (Optional[str]): Optional 'Send As' alias email address. The alias must be
             configured in Gmail settings (Settings > Accounts > Send mail as). If not provided,
             the email will be sent from the authenticated user's primary email address.
+        reply_to (Optional[str]): Optional Reply-To email address. Replies will be directed to
+            this address instead of the From address. No Gmail-side registration is required.
         user_google_email (str): The user's Google email address. Required for authentication.
         thread_id (Optional[str]): Optional Gmail thread ID to reply within. When provided, sends a reply.
         in_reply_to (Optional[str]): Optional RFC Message-ID of the message being replied to (e.g., '<message123@gmail.com>').
@@ -1680,6 +1695,7 @@ async def send_gmail_message(
             body_format=body_format,
             from_email=sender_email,
             from_name=from_name,
+            reply_to=reply_to,
             attachments=attachments if attachments else None,
         )
     )
