@@ -828,7 +828,7 @@ cp .env.oauth21 .env
 | <sub>`list_gmail_filters`</sub> | <sub>Extended</sub> | <sub>List Gmail filters</sub> |
 | <sub>`manage_gmail_label`</sub> | <sub>Extended</sub> | <sub>Create/update/delete labels</sub> |
 | <sub>`manage_gmail_filter`</sub> | <sub>Extended</sub> | <sub>Create or delete Gmail filters</sub> |
-| <sub>`draft_gmail_message`</sub> | <sub>Extended</sub> | <sub>Create drafts</sub> |
+| <sub>`manage_gmail_draft`</sub> | <sub>Extended</sub> | <sub>Create or delete drafts</sub> |
 | <sub>`get_gmail_threads_content_batch`</sub> | <sub>Complete</sub> | <sub>Batch retrieve thread content</sub> |
 | <sub>`batch_modify_gmail_message_labels`</sub> | <sub>Complete</sub> | <sub>Batch modify labels</sub> |
 | <sub>`start_google_auth`</sub> | <sub>Complete</sub> | <sub>Legacy OAuth 2.0 auth (disabled when OAuth 2.1 is enabled)</sub> |
@@ -836,7 +836,7 @@ cp .env.oauth21 .env
 <details open>
 <summary><b>📎 Email Attachments</b> <sub><sup>← Send emails with files</sup></sub></summary>
 
-Both `send_gmail_message` and `draft_gmail_message` support attachments via two methods:
+Both `send_gmail_message` and `manage_gmail_draft` (with `action="create"`) support attachments via two methods:
 
 **Option 1: File Path** (local server only)
 ```python

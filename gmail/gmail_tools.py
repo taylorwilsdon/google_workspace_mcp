@@ -767,7 +767,7 @@ def _format_base64_content_block(urlsafe_b64_data: str) -> List[str]:
     format it as a labeled block of result lines.
 
     The Gmail API returns attachment bodies in URL-safe base64 (per RFC 4648).
-    ``draft_gmail_message`` and most stdlib consumers expect standard base64
+    ``manage_gmail_draft`` and most stdlib consumers expect standard base64
     (``base64.b64decode``). Converting here keeps the response self-contained
     so a caller can pass the bytes straight back into the draft flow without
     knowing about the alphabet difference.
@@ -1955,7 +1955,7 @@ async def get_gmail_attachment_content(
             reach localhost download URLs or the MCP server's local file
             paths (e.g. containerized agents with network allowlists). The
             returned base64 uses the standard alphabet, so it can be passed
-            directly to tools like ``draft_gmail_message`` that expect
+            directly to tools like ``manage_gmail_draft`` that expect
             standard (not URL-safe) base64. Default False preserves the
             existing behavior and response size.
 
@@ -2379,7 +2379,7 @@ async def send_gmail_message(
     sender_email = from_email or user_google_email
 
     # Optionally append the Gmail signature from send-as settings, mirroring
-    # draft_gmail_message so sent mail respects the user's Settings > Signature.
+    # manage_gmail_draft so sent mail respects the user's Settings > Signature.
     send_body_content = body
     if include_signature:
         signature_html = await _get_send_as_signature_html_for_tool(
@@ -2563,21 +2563,35 @@ async def _forward_gmail_message_impl(
 
 
 @server.tool(
-    title="Draft Gmail Message",
+    title="Manage Gmail Draft",
     annotations=ToolAnnotations(
         readOnlyHint=False,
-        destructiveHint=False,
+        destructiveHint=True,
         idempotentHint=False,
         openWorldHint=True,
     ),
 )
-@handle_http_errors("draft_gmail_message", service_type="gmail")
+@handle_http_errors("manage_gmail_draft", service_type="gmail")
 @require_google_service("gmail", GMAIL_COMPOSE_SCOPE)
-async def draft_gmail_message(
+async def manage_gmail_draft(
     service,
     user_google_email: str,
-    subject: Annotated[str, Field(description="Email subject.")],
-    body: Annotated[str, Field(description="Email body (plain text).")],
+    action: Annotated[
+        Literal["create", "delete"],
+        Field(description="Action to perform on the draft."),
+    ],
+    draft_id: Annotated[
+        Optional[str],
+        Field(description="Draft ID. Required for delete."),
+    ] = None,
+    subject: Annotated[
+        Optional[str],
+        Field(description="Email subject. Required for create."),
+    ] = None,
+    body: Annotated[
+        Optional[str],
+        Field(description="Email body. Required for create."),
+    ] = None,
     body_format: Annotated[
         Literal["plain", "html"],
         Field(
@@ -2646,100 +2660,49 @@ async def draft_gmail_message(
     ] = False,
 ) -> str:
     """
-    Creates a draft email in the user's Gmail account. Supports both new drafts and reply drafts with optional attachments.
-    Supports Gmail's "Send As" feature to draft from configured alias addresses.
+    Manages Gmail drafts: create or delete drafts. Create supports new drafts and reply drafts
+    with optional attachments, and supports Gmail's "Send As" feature to draft from configured
+    alias addresses. Delete permanently removes the draft, bypassing Trash.
 
     Args:
-        user_google_email (str): The user's Google email address. Required for authentication.
-        subject (str): Email subject.
-        body (str): Email body (plain text).
-        body_format (Literal['plain', 'html']): Email body format. Defaults to 'plain'.
+        user_google_email (str): The user's Google email address. Required.
+        action (Literal["create", "delete"]): Action to perform on the draft.
+        draft_id (Optional[str]): Draft ID. Required for delete.
+        subject (Optional[str]): Email subject. Required for create.
+        body (Optional[str]): Email body. Required for create.
+        body_format (Literal['plain', 'html']): Email body format for create. Defaults to 'plain'.
         to (Optional[str]): Optional recipient email address. Can be left empty for drafts.
         cc (Optional[str]): Optional CC email address.
         bcc (Optional[str]): Optional BCC email address.
-        from_name (Optional[str]): Optional sender display name. If provided, the From header will be formatted as 'Name <email>'.
+        from_name (Optional[str]): Optional sender display name.
         from_email (Optional[str]): Optional 'Send As' alias email address. The alias must be
-            configured in Gmail settings (Settings > Accounts > Send mail as). If not provided,
-            the draft will be from the authenticated user's primary email address.
+            configured in Gmail settings (Settings > Accounts > Send mail as).
         thread_id (Optional[str]): Optional Gmail thread ID to reply within. When provided, creates a reply draft.
-        in_reply_to (Optional[str]): Optional RFC Message-ID of the message being replied to (e.g., '<message123@gmail.com>').
-        references (Optional[str]): Optional chain of RFC Message-IDs for proper threading (e.g., '<msg1@gmail.com> <msg2@gmail.com>').
-        attachments (List[Dict[str, str]]): Optional list of attachments. Each dict can contain:
-            Option 1 - File path (auto-encodes):
-              - 'path' (required): File path to attach
-              - 'filename' (optional): Override filename
-              - 'mime_type' (optional): Override MIME type (auto-detected if not provided)
-            Option 2 - Base64 content:
-              - 'content' (required): Standard base64-encoded file content (not urlsafe)
-              - 'filename' (required): Name of the file
-              - 'mime_type' (optional): MIME type (defaults to 'application/octet-stream')
-        include_signature (bool): Whether to append Gmail signature HTML from send-as settings.
-            When include_signature is true and Gmail signature retrieval fails for benign reasons
-            (e.g., missing gmail.settings.basic scope), the draft proceeds without a signature.
-            Non-benign failures such as quota/rate-limit or API errors raise ToolError and abort
-            the draft.
-        quote_original (bool): Whether to include the original message as a quoted reply.
-            Requires thread_id to be provided. When enabled, fetches the original message
-            and appends it below the signature. Defaults to False.
+        in_reply_to (Optional[str]): Optional RFC Message-ID of the message being replied to.
+        references (Optional[str]): Optional chain of RFC Message-IDs for proper threading.
+        attachments (Optional[List[Dict[str, str]]]): Optional attachments for create.
+        include_signature (bool): Whether to append the Gmail signature for create. Defaults to true.
+        quote_original (bool): Whether to include the original message as a quoted reply for create.
+            Requires thread_id. Defaults to false.
 
     Returns:
-        str: Confirmation message with the created draft's ID.
-
-    Examples:
-        # Create a new draft
-        draft_gmail_message(subject="Hello", body="Hi there!", to="user@example.com")
-
-        # Create a draft from a configured alias (Send As)
-        draft_gmail_message(
-            subject="Business Inquiry",
-            body="Hello from my business address...",
-            to="user@example.com",
-            from_email="business@mydomain.com"
-        )
-
-        # Create a plaintext draft with CC and BCC
-        draft_gmail_message(
-            subject="Project Update",
-            body="Here's the latest update...",
-            to="user@example.com",
-            cc="manager@example.com",
-            bcc="archive@example.com"
-        )
-
-        # Create a HTML draft with CC and BCC
-        draft_gmail_message(
-            subject="Project Update",
-            body="<strong>Hi there!</strong>",
-            body_format="html",
-            to="user@example.com",
-            cc="manager@example.com",
-            bcc="archive@example.com"
-        )
-
-        # Create a reply draft in plaintext
-        draft_gmail_message(
-            subject="Re: Meeting tomorrow",
-            body="Thanks for the update!",
-            to="user@example.com",
-            thread_id="thread_123",
-            in_reply_to="<message123@gmail.com>",
-            references="<original@gmail.com> <message123@gmail.com>"
-        )
-
-        # Create a reply draft in HTML
-        draft_gmail_message(
-            subject="Re: Meeting tomorrow",
-            body="<strong>Thanks for the update!</strong>",
-            body_format="html",
-            to="user@example.com",
-            thread_id="thread_123",
-            in_reply_to="<message123@gmail.com>",
-            references="<original@gmail.com> <message123@gmail.com>"
-        )
+        str: Confirmation message of the draft operation.
     """
     logger.info(
-        f"[draft_gmail_message] Invoked. Email: '{user_google_email}', Subject: '{subject}'"
+        f"[manage_gmail_draft] Invoked. Email: '{user_google_email}', Action: '{action}'"
     )
+
+    if action == "delete":
+        if not draft_id:
+            raise UserInputError("draft_id is required for delete action.")
+        await asyncio.to_thread(
+            service.users().drafts().delete(userId="me", id=draft_id).execute
+        )
+        return f"Draft deleted! Draft ID: {draft_id}"
+
+    # action == "create"
+    if subject is None or body is None:
+        raise UserInputError("subject and body are required for create action.")
 
     # Prepare the email message
     # Use from_email (Send As alias) if provided, otherwise default to authenticated user
@@ -2821,13 +2784,12 @@ async def draft_gmail_message(
     # RFC-compliant In-Reply-To/References headers to add a draft to a thread.
     # If we could not derive the headers, fall back to an unthreaded draft
     # instead of sending an invalid thread request.
-    draft_body = {"message": {"raw": raw_message}}
+    create_body = {"message": {"raw": raw_message}}
     if thread_id and in_reply_to and references:
-        draft_body["message"]["threadId"] = thread_id
+        create_body["message"]["threadId"] = thread_id
 
-    # Create the draft
     created_draft = await asyncio.to_thread(
-        service.users().drafts().create(userId="me", body=draft_body).execute,
+        service.users().drafts().create(userId="me", body=create_body).execute,
         num_retries=GOOGLE_API_WRITE_RETRIES,
     )
     draft_id = created_draft.get("id")

@@ -54,7 +54,7 @@ export OAUTHLIB_INSECURE_TRANSPORT=1  # Development only
 | `get_gmail_messages_content_batch` | Core | Batch retrieve up to 25 messages |
 | `send_gmail_message` | Core | Send emails with HTML support, CC/BCC, threading |
 | `get_gmail_thread_content` | Extended | Get complete conversation thread |
-| `draft_gmail_message` | Extended | Create drafts with threading support |
+| `manage_gmail_draft` | Extended | Create or delete drafts (threading support) |
 | `list_gmail_labels` | Extended | List all system and user labels |
 | `manage_gmail_label` | Extended | Create, update, delete labels |
 | `modify_gmail_message_labels` | Extended | Add/remove labels (archive, trash, etc.) |

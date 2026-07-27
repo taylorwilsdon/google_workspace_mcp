@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 import gmail.gmail_tools as gmail_tools
 from core.utils import UserInputError
 from gmail.gmail_tools import (
-    draft_gmail_message,
+    manage_gmail_draft,
     send_gmail_message,
     _resolve_url_attachments,
     _try_read_local_attachment,
@@ -111,7 +111,7 @@ def _parse_raw_message(raw_message: str):
 
 
 @pytest.mark.asyncio
-async def test_draft_gmail_message_reports_actual_attachment_count(
+async def test_manage_gmail_draft_reports_actual_attachment_count(
     tmp_path, monkeypatch
 ):
     monkeypatch.setenv("ALLOWED_FILE_DIRS", str(tmp_path))
@@ -121,7 +121,7 @@ async def test_draft_gmail_message_reports_actual_attachment_count(
     mock_service = Mock()
     mock_service.users().drafts().create().execute.return_value = {"id": "draft123"}
 
-    result = await _unwrap(draft_gmail_message)(
+    result = await _unwrap(manage_gmail_draft)(action="create", 
         service=mock_service,
         user_google_email="user@example.com",
         to="recipient@example.com",
@@ -144,7 +144,7 @@ async def test_draft_gmail_message_reports_actual_attachment_count(
 
 
 @pytest.mark.asyncio
-async def test_draft_gmail_message_raises_when_no_attachments_are_added(
+async def test_manage_gmail_draft_raises_when_no_attachments_are_added(
     tmp_path, monkeypatch
 ):
     monkeypatch.setenv("ALLOWED_FILE_DIRS", str(tmp_path))
@@ -154,7 +154,7 @@ async def test_draft_gmail_message_raises_when_no_attachments_are_added(
     mock_service.users().drafts().create().execute.return_value = {"id": "draft123"}
 
     with pytest.raises(UserInputError, match="No valid attachments were added"):
-        await _unwrap(draft_gmail_message)(
+        await _unwrap(manage_gmail_draft)(action="create", 
             service=mock_service,
             user_google_email="user@example.com",
             to="recipient@example.com",
@@ -166,7 +166,7 @@ async def test_draft_gmail_message_raises_when_no_attachments_are_added(
 
 
 @pytest.mark.asyncio
-async def test_draft_gmail_message_surfaces_guidance_for_paths_outside_allowed_dirs(
+async def test_manage_gmail_draft_surfaces_guidance_for_paths_outside_allowed_dirs(
     tmp_path, monkeypatch
 ):
     allowed_dir = tmp_path / "allowed"
@@ -181,7 +181,7 @@ async def test_draft_gmail_message_surfaces_guidance_for_paths_outside_allowed_d
     mock_service.users().drafts().create().execute.return_value = {"id": "draft123"}
 
     with pytest.raises(UserInputError) as exc_info:
-        await _unwrap(draft_gmail_message)(
+        await _unwrap(manage_gmail_draft)(action="create", 
             service=mock_service,
             user_google_email="user@example.com",
             to="recipient@example.com",
@@ -199,7 +199,7 @@ async def test_draft_gmail_message_surfaces_guidance_for_paths_outside_allowed_d
 
 
 @pytest.mark.asyncio
-async def test_draft_gmail_message_appends_gmail_signature_html():
+async def test_manage_gmail_draft_appends_gmail_signature_html():
     mock_service = Mock()
     mock_service.users().drafts().create().execute.return_value = {"id": "draft_sig"}
     mock_service.users().settings().sendAs().list().execute.return_value = {
@@ -212,7 +212,7 @@ async def test_draft_gmail_message_appends_gmail_signature_html():
         ]
     }
 
-    result = await _unwrap(draft_gmail_message)(
+    result = await _unwrap(manage_gmail_draft)(action="create", 
         service=mock_service,
         user_google_email="user@example.com",
         to="recipient@example.com",
@@ -370,7 +370,7 @@ async def test_send_gmail_message_skips_signature_when_disabled():
 
 
 @pytest.mark.asyncio
-async def test_draft_gmail_message_builds_threaded_html_reply_as_multipart_alternative():
+async def test_manage_gmail_draft_builds_threaded_html_reply_as_multipart_alternative():
     mock_service = Mock()
     mock_service.users().drafts().create().execute.return_value = {"id": "draft_reply"}
     mock_service.users().threads().get().execute.return_value = _thread_response(
@@ -378,7 +378,7 @@ async def test_draft_gmail_message_builds_threaded_html_reply_as_multipart_alter
         "<msg2@example.com>",
     )
 
-    await _unwrap(draft_gmail_message)(
+    await _unwrap(manage_gmail_draft)(action="create", 
         service=mock_service,
         user_google_email="user@example.com",
         to="recipient@example.com",
@@ -409,13 +409,13 @@ async def test_draft_gmail_message_builds_threaded_html_reply_as_multipart_alter
 
 
 @pytest.mark.asyncio
-async def test_draft_gmail_message_builds_html_attachments_with_mixed_top_level():
+async def test_manage_gmail_draft_builds_html_attachments_with_mixed_top_level():
     mock_service = Mock()
     mock_service.users().drafts().create().execute.return_value = {
         "id": "draft_attachments"
     }
 
-    await _unwrap(draft_gmail_message)(
+    await _unwrap(manage_gmail_draft)(action="create", 
         service=mock_service,
         user_google_email="user@example.com",
         to="recipient@example.com",
@@ -458,7 +458,7 @@ async def test_draft_gmail_message_builds_html_attachments_with_mixed_top_level(
 
 
 @pytest.mark.asyncio
-async def test_draft_gmail_message_autofills_reply_recipient_from_thread_target():
+async def test_manage_gmail_draft_autofills_reply_recipient_from_thread_target():
     mock_service = Mock()
     mock_service.users().drafts().create().execute.return_value = {"id": "draft_reply"}
     mock_service.users().threads().get().execute.return_value = {
@@ -471,7 +471,7 @@ async def test_draft_gmail_message_autofills_reply_recipient_from_thread_target(
         ]
     }
 
-    await _unwrap(draft_gmail_message)(
+    await _unwrap(manage_gmail_draft)(action="create", 
         service=mock_service,
         user_google_email="user@example.com",
         subject="Meeting tomorrow",
@@ -489,7 +489,7 @@ async def test_draft_gmail_message_autofills_reply_recipient_from_thread_target(
 
 
 @pytest.mark.asyncio
-async def test_draft_gmail_message_fetches_thread_once_when_quoting_reply():
+async def test_manage_gmail_draft_fetches_thread_once_when_quoting_reply():
     mock_service = Mock()
     mock_service.users().drafts().create().execute.return_value = {"id": "draft_reply"}
     mock_service.users().threads().get().execute.return_value = {
@@ -504,7 +504,7 @@ async def test_draft_gmail_message_fetches_thread_once_when_quoting_reply():
     }
     mock_service.users.return_value.threads.return_value.get.reset_mock()
 
-    await _unwrap(draft_gmail_message)(
+    await _unwrap(manage_gmail_draft)(action="create", 
         service=mock_service,
         user_google_email="user@example.com",
         to="recipient@example.com",
@@ -524,7 +524,7 @@ async def test_draft_gmail_message_fetches_thread_once_when_quoting_reply():
 
 
 @pytest.mark.asyncio
-async def test_draft_gmail_message_autofills_reply_headers_from_thread():
+async def test_manage_gmail_draft_autofills_reply_headers_from_thread():
     mock_service = Mock()
     mock_service.users().drafts().create().execute.return_value = {"id": "draft_reply"}
     mock_service.users().threads().get().execute.return_value = _thread_response(
@@ -533,7 +533,7 @@ async def test_draft_gmail_message_autofills_reply_headers_from_thread():
         "<msg3@example.com>",
     )
 
-    result = await _unwrap(draft_gmail_message)(
+    result = await _unwrap(manage_gmail_draft)(action="create", 
         service=mock_service,
         user_google_email="user@example.com",
         to="recipient@example.com",
@@ -569,7 +569,7 @@ async def test_draft_gmail_message_autofills_reply_headers_from_thread():
 
 
 @pytest.mark.asyncio
-async def test_draft_gmail_message_uses_explicit_in_reply_to_when_filling_references():
+async def test_manage_gmail_draft_uses_explicit_in_reply_to_when_filling_references():
     mock_service = Mock()
     mock_service.users().drafts().create().execute.return_value = {"id": "draft_reply"}
     mock_service.users().threads().get().execute.return_value = _thread_response(
@@ -578,7 +578,7 @@ async def test_draft_gmail_message_uses_explicit_in_reply_to_when_filling_refere
         "<msg3@example.com>",
     )
 
-    await _unwrap(draft_gmail_message)(
+    await _unwrap(manage_gmail_draft)(action="create", 
         service=mock_service,
         user_google_email="user@example.com",
         to="recipient@example.com",
@@ -601,7 +601,7 @@ async def test_draft_gmail_message_uses_explicit_in_reply_to_when_filling_refere
 
 
 @pytest.mark.asyncio
-async def test_draft_gmail_message_uses_explicit_references_when_filling_in_reply_to():
+async def test_manage_gmail_draft_uses_explicit_references_when_filling_in_reply_to():
     mock_service = Mock()
     mock_service.users().drafts().create().execute.return_value = {"id": "draft_reply"}
     mock_service.users().threads().get().execute.return_value = _thread_response(
@@ -610,7 +610,7 @@ async def test_draft_gmail_message_uses_explicit_references_when_filling_in_repl
         "<msg3@example.com>",
     )
 
-    await _unwrap(draft_gmail_message)(
+    await _unwrap(manage_gmail_draft)(action="create", 
         service=mock_service,
         user_google_email="user@example.com",
         to="recipient@example.com",
@@ -633,12 +633,12 @@ async def test_draft_gmail_message_uses_explicit_references_when_filling_in_repl
 
 
 @pytest.mark.asyncio
-async def test_draft_gmail_message_gracefully_degrades_when_thread_fetch_fails():
+async def test_manage_gmail_draft_gracefully_degrades_when_thread_fetch_fails():
     mock_service = Mock()
     mock_service.users().drafts().create().execute.return_value = {"id": "draft_reply"}
     mock_service.users().threads().get().execute.side_effect = RuntimeError("boom")
 
-    result = await _unwrap(draft_gmail_message)(
+    result = await _unwrap(manage_gmail_draft)(action="create", 
         service=mock_service,
         user_google_email="user@example.com",
         to="recipient@example.com",
@@ -662,12 +662,12 @@ async def test_draft_gmail_message_gracefully_degrades_when_thread_fetch_fails()
 
 
 @pytest.mark.asyncio
-async def test_draft_gmail_message_gracefully_degrades_when_thread_has_no_messages():
+async def test_manage_gmail_draft_gracefully_degrades_when_thread_has_no_messages():
     mock_service = Mock()
     mock_service.users().drafts().create().execute.return_value = {"id": "draft_reply"}
     mock_service.users().threads().get().execute.return_value = {"messages": []}
 
-    result = await _unwrap(draft_gmail_message)(
+    result = await _unwrap(manage_gmail_draft)(action="create", 
         service=mock_service,
         user_google_email="user@example.com",
         to="recipient@example.com",
@@ -881,8 +881,8 @@ async def test_resolve_url_attachments_rejects_oversized(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_draft_gmail_message_with_url_attachment(monkeypatch):
-    """End-to-end: draft_gmail_message should accept a URL attachment."""
+async def test_manage_gmail_draft_with_url_attachment(monkeypatch):
+    """End-to-end: manage_gmail_draft(action="create") should accept a URL attachment."""
     fake_response = _FakeStreamResponse(
         200,
         headers={"content-type": "application/pdf"},
@@ -896,7 +896,7 @@ async def test_draft_gmail_message_with_url_attachment(monkeypatch):
     mock_service = Mock()
     mock_service.users().drafts().create().execute.return_value = {"id": "draft_url"}
 
-    result = await _unwrap(draft_gmail_message)(
+    result = await _unwrap(manage_gmail_draft)(action="create", 
         service=mock_service,
         user_google_email="user@example.com",
         to="recipient@example.com",
@@ -950,3 +950,48 @@ async def test_send_gmail_message_with_url_attachment(monkeypatch):
     raw_bytes = base64.urlsafe_b64decode(create_kwargs["body"]["raw"])
     assert b"Content-Disposition: attachment;" in raw_bytes
     assert b"doc.pdf" in raw_bytes
+
+
+@pytest.mark.asyncio
+async def test_manage_gmail_draft_delete_calls_api_and_returns_confirmation():
+    mock_service = Mock()
+    mock_service.users().drafts().delete().execute.return_value = ""
+
+    result = await _unwrap(manage_gmail_draft)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        action="delete",
+        draft_id="draft123",
+    )
+
+    assert "draft123" in result
+    assert "deleted" in result.lower()
+
+    delete_kwargs = (
+        mock_service.users.return_value.drafts.return_value.delete.call_args.kwargs
+    )
+    assert delete_kwargs == {"userId": "me", "id": "draft123"}
+
+
+@pytest.mark.asyncio
+async def test_manage_gmail_draft_delete_requires_draft_id():
+    mock_service = Mock()
+
+    with pytest.raises(UserInputError, match="draft_id is required"):
+        await _unwrap(manage_gmail_draft)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            action="delete",
+        )
+
+
+@pytest.mark.asyncio
+async def test_manage_gmail_draft_create_requires_subject_and_body():
+    mock_service = Mock()
+
+    with pytest.raises(UserInputError, match="subject and body are required"):
+        await _unwrap(manage_gmail_draft)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            action="create",
+        )
