@@ -51,6 +51,8 @@ from gdocs.docs_structure import (
     parse_document_structure,
     find_tables,
     analyze_document_complexity,
+    find_heading_range,
+    body_protected_end_index,
 )
 from gdocs.docs_tables import extract_table_as_data
 from gdocs.docs_markdown import (
@@ -2780,3 +2782,392 @@ _comment_tools = create_comment_tools("document", "document_id")
 # Extract and register the functions
 list_document_comments = _comment_tools["list_comments"]
 manage_document_comment = _comment_tools["manage_comment"]
+
+
+# Section-addressable markdown editing tools.
+#
+# Background: the Docs API addresses edits by character-offset Ranges in a
+# structural-element tree. Agents struggle with this — computing the right
+# (startIndex, endIndex) for a target heading section requires reading the
+# doc, walking the element tree, and threading paragraph boundaries.
+#
+# These three tools wrap the existing markdown_to_docs_requests converter
+# with a heading-text section-finder so agents can write markdown and address
+# edits by heading name. Each tool issues exactly one batchUpdate guarded by
+# WriteControl.requiredRevisionId; concurrent edits return 400 with no
+# partial application. Footnote references inside the candidate delete range
+# raise UserInputError before any API write — the Docs API does not document
+# cross-footnoteRef delete behavior, so failing fast is safer than discovering
+# at runtime.
+
+
+def _section_edit_return_message(
+    document_id: str,
+    chars_deleted: int,
+    request_count: int,
+    section_start: int,
+    section_end_after: int,
+) -> str:
+    """Return shape per update_paragraph_style precedent (docs_tools.py:2341)."""
+    link = f"https://docs.google.com/document/d/{document_id}/edit"
+    return (
+        f"Edited section in document {document_id}: "
+        f"deleted {chars_deleted} characters, applied {request_count} requests, "
+        f"new section range {section_start}-{section_end_after}. Link: {link}"
+    )
+
+
+async def _fetch_doc_for_section_edit(service: Any, document_id: str) -> dict:
+    """Fetch full doc with tabs for index computation. Wrapped in
+    asyncio.wait_for(timeout=30) per get_doc_as_markdown precedent — large
+    docs can take a while to serialize on Google's side."""
+    return await asyncio.wait_for(
+        asyncio.to_thread(
+            service.documents()
+            .get(documentId=document_id, includeTabsContent=True)
+            .execute
+        ),
+        timeout=30,
+    )
+
+
+def _require_revision_id(doc: dict) -> str:
+    """revisionId may be omitted if the token lacks edit access. Raise a clear
+    error instead of letting a KeyError surface."""
+    revision_id = doc.get("revisionId")
+    if not revision_id:
+        raise UserInputError(
+            "WriteControl unavailable — the token lacks edit access on this document."
+        )
+    return revision_id
+
+
+@server.tool(
+    title="Replace Doc Section by Heading",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("replace_doc_section_by_heading", service_type="docs")
+@require_google_service("docs", "docs_write")
+async def replace_doc_section_by_heading(
+    service: Any,
+    user_google_email: str,
+    document_id: str,
+    heading_text: str,
+    new_markdown: str,
+    heading_level: Optional[int] = None,
+    match: Literal["first", "exact"] = "first",
+    tab_id: Optional[str] = None,
+) -> str:
+    """Replace a heading-delimited section's contents with new markdown.
+
+    Locates the heading paragraph whose visible text (after rstrip("\\n"))
+    equals heading_text, case-sensitive. If heading_level is given, also
+    requires that level. The "section" runs from the heading paragraph's
+    startIndex through (exclusive) the next paragraph whose namedStyleType is
+    a heading at equal-or-shallower level (HEADING_N where N <= matched_level)
+    or TITLE — or body_protected_end_index() if no such heading follows.
+    SUBTITLE is not a section terminator.
+
+    Body-only matching. Headings inside table cells, footnotes, headers, or
+    footers are NOT addressable — use batch_update_doc for those.
+
+    Atomicity: single batchUpdate with WriteControl.requiredRevisionId set to
+    the revisionId returned by the documents.get that computed indices. If a
+    concurrent edit lands between the read and the write, the API returns 400
+    and no changes are applied. The tool does NOT auto-retry; caller can
+    re-invoke.
+
+    Preservation: comments anchored outside the section keep their anchors;
+    comments anchored inside are visible in Docs UI as "Original content
+    deleted" but remain `deleted=false` in comments.list (verified by absence
+    of any orphan-filter parameter in Drive API). Suggestions inside are
+    silently dropped. Body footnote references inside the section cause an
+    early UserInputError; use copy_doc_as_snapshot + batch_update_doc for
+    docs with footnoted sections.
+
+    Args:
+        user_google_email: User's Google email address
+        document_id: ID of the Google Doc (or full URL)
+        heading_text: Visible text of the heading paragraph to match
+        new_markdown: Replacement markdown. CommonMark only — GFM tables,
+            strikethrough, task lists, and autolinks are not supported.
+        heading_level: Optional H1-H6 level requirement (1-6)
+        match: "first" takes the first occurrence; "exact" errors on
+            multiple matches
+        tab_id: Tab ID for multi-tab docs. REQUIRED if the doc has >1 tab;
+            UserInputError lists the available tab IDs otherwise.
+
+    Returns:
+        Single-line confirmation: characters deleted, request count, new
+        section range, and the doc's edit link. Matches update_paragraph_style
+        return shape.
+    """
+    url_match = re.search(r"/d/([\w-]+)", document_id)
+    if url_match:
+        document_id = url_match.group(1)
+
+    if heading_level is not None and not (1 <= heading_level <= 6):
+        raise UserInputError("heading_level must be between 1 and 6.")
+    if match not in ("first", "exact"):
+        raise UserInputError("match must be 'first' or 'exact'.")
+
+    doc = await _fetch_doc_for_section_edit(service, document_id)
+    revision_id = _require_revision_id(doc)
+    section_start, section_end, footnote_count = find_heading_range(
+        doc, heading_text, heading_level, match, tab_id
+    )
+    if footnote_count > 0:
+        raise UserInputError(
+            f"Section contains {footnote_count} footnote reference(s); "
+            "use batch_update_doc for surgical edits, or copy_doc_as_snapshot "
+            "first and then redesign the doc to detach the footnotes."
+        )
+    if section_end <= section_start:
+        raise UserInputError("Computed section range is empty; nothing to replace.")
+
+    chars_deleted = section_end - section_start
+
+    delete_range: dict[str, Any] = {
+        "startIndex": section_start,
+        "endIndex": section_end,
+    }
+    if tab_id:
+        delete_range["tabId"] = tab_id
+
+    requests = [{"deleteContentRange": {"range": delete_range}}]
+    # Delete-then-insert ordering: the inserts emitted by
+    # markdown_to_docs_requests assume cursor = section_start, which is valid
+    # in the post-delete state because the delete shifts no index above
+    # section_start. DO NOT reorder these requests.
+    requests.extend(
+        markdown_to_docs_requests(
+            new_markdown, tab_id=tab_id, start_index=section_start
+        )
+    )
+
+    body_payload: dict[str, Any] = {
+        "requests": requests,
+        "writeControl": {"requiredRevisionId": revision_id},
+    }
+
+    await asyncio.to_thread(
+        service.documents()
+        .batchUpdate(documentId=document_id, body=body_payload)
+        .execute
+    )
+
+    # Section length after the insert; markdown_to_docs_requests advances
+    # cursor by total inserted-text length. We don't get cursor back from the
+    # function, but the inserted-text length equals sum of insertText request
+    # text-field lengths. Compute for the return message.
+    inserted_len = sum(
+        len(r.get("insertText", {}).get("text", ""))
+        for r in requests
+        if "insertText" in r
+    )
+    section_end_after = section_start + inserted_len
+
+    return _section_edit_return_message(
+        document_id, chars_deleted, len(requests), section_start, section_end_after
+    )
+
+
+@server.tool(
+    title="Append Doc after Heading",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("append_doc_after_heading", service_type="docs")
+@require_google_service("docs", "docs_write")
+async def append_doc_after_heading(
+    service: Any,
+    user_google_email: str,
+    document_id: str,
+    heading_text: str,
+    new_markdown: str,
+    heading_level: Optional[int] = None,
+    match: Literal["first", "exact"] = "first",
+    tab_id: Optional[str] = None,
+) -> str:
+    """Insert markdown at the end of a heading-delimited section.
+
+    Section-end computation is identical to replace_doc_section_by_heading.
+    No deletion — pure insertion at section_end. Nothing is orphaned because
+    nothing is deleted. Same multi-tab requirements, body-only restrictions,
+    and WriteControl.requiredRevisionId guard.
+
+    Note: if new_markdown begins with a heading re-stating the section
+    heading, the result is a duplicate heading — caller's responsibility.
+
+    Args:
+        user_google_email: User's Google email address
+        document_id: ID of the Google Doc (or full URL)
+        heading_text: Visible text of the heading paragraph to match
+        new_markdown: Markdown to insert at the section end (CommonMark only)
+        heading_level: Optional H1-H6 level requirement (1-6)
+        match: "first" takes the first occurrence; "exact" errors on
+            multiple matches
+        tab_id: Tab ID for multi-tab docs. REQUIRED if doc has >1 tab.
+
+    Returns:
+        Single-line confirmation with the insertion point and doc edit link.
+    """
+    url_match = re.search(r"/d/([\w-]+)", document_id)
+    if url_match:
+        document_id = url_match.group(1)
+
+    if heading_level is not None and not (1 <= heading_level <= 6):
+        raise UserInputError("heading_level must be between 1 and 6.")
+    if match not in ("first", "exact"):
+        raise UserInputError("match must be 'first' or 'exact'.")
+
+    doc = await _fetch_doc_for_section_edit(service, document_id)
+    revision_id = _require_revision_id(doc)
+    _, section_end, _ = find_heading_range(
+        doc, heading_text, heading_level, match, tab_id
+    )
+
+    requests = markdown_to_docs_requests(
+        new_markdown, tab_id=tab_id, start_index=section_end
+    )
+    if not requests:
+        raise UserInputError("new_markdown produced no insert requests.")
+
+    body_payload: dict[str, Any] = {
+        "requests": requests,
+        "writeControl": {"requiredRevisionId": revision_id},
+    }
+
+    await asyncio.to_thread(
+        service.documents()
+        .batchUpdate(documentId=document_id, body=body_payload)
+        .execute
+    )
+
+    inserted_len = sum(
+        len(r.get("insertText", {}).get("text", ""))
+        for r in requests
+        if "insertText" in r
+    )
+    return _section_edit_return_message(
+        document_id, 0, len(requests), section_end, section_end + inserted_len
+    )
+
+
+@server.tool(
+    title="Replace Doc Fully from Markdown",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("replace_doc_fully_from_markdown", service_type="docs")
+@require_google_service("docs", "docs_write")
+async def replace_doc_fully_from_markdown(
+    service: Any,
+    user_google_email: str,
+    document_id: str,
+    new_markdown: str,
+    tab_id: Optional[str] = None,
+) -> str:
+    """Replace the entire body of a Doc with new markdown.
+
+    Computes body_protected_end via body_protected_end_index() — explicitly
+    excludes the trailing newline (whose deletion is rejected by the API
+    with "Deleting the last newline character of a Body").
+
+    Single batchUpdate with WriteControl.requiredRevisionId:
+      1. DeleteContentRangeRequest(1, body_protected_end) [skipped if body
+         is the empty default — body_protected_end <= 1]
+      2. The output of markdown_to_docs_requests(new_markdown, tab_id, 1)
+
+    If the body contains footnote references, this tool raises
+    UserInputError before issuing any write — cross-footnoteRef delete
+    behavior is undocumented.
+
+    Document ID survives. This is distinct from import_to_google_doc, which
+    creates a NEW file with a NEW ID and breaks every external link.
+
+    Preservation:
+      - Body contents wiped; comments orphaned in UI (deleted=false in API);
+        suggestions silently dropped; body named ranges lost.
+      - Headers, footers, footnote SEGMENTS survive (cross-segment delete is
+        not expressible — Range has a single segmentId).
+      - NamedRanges with ranges[] in both body and non-body segments lose
+        only their body Range entries.
+      - Doc metadata, sharing, revision history all preserved.
+
+    Args:
+        user_google_email: User's Google email address
+        document_id: ID of the Google Doc (or full URL)
+        new_markdown: Replacement markdown (CommonMark only)
+        tab_id: Tab ID for multi-tab docs. REQUIRED if doc has >1 tab.
+
+    Returns:
+        Single-line confirmation with character delta, request count, and
+        the doc's edit link.
+    """
+    url_match = re.search(r"/d/([\w-]+)", document_id)
+    if url_match:
+        document_id = url_match.group(1)
+
+    doc = await _fetch_doc_for_section_edit(service, document_id)
+    revision_id = _require_revision_id(doc)
+    body_end = body_protected_end_index(doc, tab_id)
+
+    # Whole-body footnote-ref pre-check.
+    from gdocs.docs_structure import count_footnote_refs_in_range
+
+    footnote_count = count_footnote_refs_in_range(doc, tab_id, 1, body_end)
+    if footnote_count > 0:
+        raise UserInputError(
+            f"Body contains {footnote_count} footnote reference(s); "
+            "use batch_update_doc for surgical edits, or copy_doc_as_snapshot "
+            "first and then redesign the doc to detach the footnotes."
+        )
+
+    requests: list[dict[str, Any]] = []
+    chars_deleted = 0
+    if body_end > 1:
+        delete_range: dict[str, Any] = {"startIndex": 1, "endIndex": body_end}
+        if tab_id:
+            delete_range["tabId"] = tab_id
+        requests.append({"deleteContentRange": {"range": delete_range}})
+        chars_deleted = body_end - 1
+
+    requests.extend(
+        markdown_to_docs_requests(new_markdown, tab_id=tab_id, start_index=1)
+    )
+    if not requests:
+        raise UserInputError("Refusing to wipe doc with empty new_markdown.")
+
+    body_payload: dict[str, Any] = {
+        "requests": requests,
+        "writeControl": {"requiredRevisionId": revision_id},
+    }
+
+    await asyncio.to_thread(
+        service.documents()
+        .batchUpdate(documentId=document_id, body=body_payload)
+        .execute
+    )
+
+    inserted_len = sum(
+        len(r.get("insertText", {}).get("text", ""))
+        for r in requests
+        if "insertText" in r
+    )
+    return _section_edit_return_message(
+        document_id, chars_deleted, len(requests), 1, 1 + inserted_len
+    )
