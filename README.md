@@ -526,6 +526,12 @@ Read-only mode provides secure, restricted access by:
 - Automatically filtering out tools that require write permissions at startup
 - Allowing read operations: list, get, search, and export across all services
 
+Chat read-only mode also requests `chat.memberships.readonly` and
+`contacts.readonly` so `list_spaces(resolve_dm_names=True)` can label direct
+message spaces. Google Chat's `spaces.list` response can omit DM display names,
+and user-authenticated membership responses only guarantee member resource IDs;
+the People API lookup is what turns those IDs into useful names.
+
 **🔐 Granular Permissions**
 ```bash
 # Per-service permission levels
@@ -761,6 +767,26 @@ cp .env.oauth21 .env
 - ✅ **No secrets in git** - Keep credentials secure
 - ✅ **Easy rotation** - Update without code changes
 
+**OAuth scope updates and cached tokens**
+
+When a release adds a required Google scope, existing cached tokens might not
+contain it. Workspace MCP checks cached credential scopes before building a
+Google service; if a token is missing a required scope, the server rejects that
+cached credential and returns a fresh Google auth URL so the user can grant the
+new scope instead of continuing in a partially broken state.
+
+For Chat DM name resolution, Chat deployments request these additional read-only
+helper scopes:
+- `https://www.googleapis.com/auth/chat.memberships.readonly` for
+  `spaces.members.list`
+- `https://www.googleapis.com/auth/contacts.readonly` for People API profile
+  lookup of Chat member IDs
+
+After deploying a version that adds these scopes, users with old cached Chat
+tokens are prompted to reauthenticate the next time a Chat tool needs the new
+scope. OAuth 2.1 deployments should restart the server so dynamic client
+registration advertises the updated Chat scope set.
+
 </details>
 
 </td>
@@ -968,7 +994,7 @@ Saved files expire after 1 hour and are cleaned up automatically.
 
 | <sub>Tool</sub> | <sub>Tier</sub> | <sub>Description</sub> |
 |------|------|-------------|
-| <sub>`list_spaces`</sub> | <sub>Extended</sub> | <sub>List chat spaces/rooms</sub> |
+| <sub>`list_spaces`</sub> | <sub>Extended</sub> | <sub>List chat spaces/rooms; can resolve DM participant names</sub> |
 | <sub>`get_messages`</sub> | <sub>Core</sub> | <sub>Retrieve space messages</sub> |
 | <sub>`send_message`</sub> | <sub>Core</sub> | <sub>Send messages to spaces</sub> |
 | <sub>`search_messages`</sub> | <sub>Core</sub> | <sub>Search across chat history</sub> |

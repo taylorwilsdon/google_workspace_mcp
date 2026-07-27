@@ -48,6 +48,7 @@ from auth.scopes import (
     CHAT_WRITE_SCOPE,
     CHAT_SPACES_SCOPE,
     CHAT_SPACES_READONLY_SCOPE,
+    CHAT_MEMBERSHIPS_READONLY_SCOPE,
     FORMS_BODY_SCOPE,
     FORMS_BODY_READONLY_SCOPE,
     FORMS_RESPONSES_READONLY_SCOPE,
@@ -560,6 +561,7 @@ SCOPE_GROUPS = {
     "chat_write": CHAT_WRITE_SCOPE,
     "chat_spaces": CHAT_SPACES_SCOPE,
     "chat_spaces_readonly": CHAT_SPACES_READONLY_SCOPE,
+    "chat_memberships_readonly": CHAT_MEMBERSHIPS_READONLY_SCOPE,
     # Forms scopes
     "forms": FORMS_BODY_SCOPE,
     "forms_read": FORMS_BODY_READONLY_SCOPE,

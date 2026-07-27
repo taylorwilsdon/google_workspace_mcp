@@ -55,6 +55,254 @@ def _unwrap(tool):
 
 
 # ---------------------------------------------------------------------------
+# list_spaces: direct-message names
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_spaces_keeps_dm_resolution_opt_in():
+    """list_spaces should not call membership or People APIs unless requested."""
+    service = Mock()
+    spaces_resource = service.spaces.return_value
+    spaces_resource.list.return_value.execute.return_value = {
+        "spaces": [
+            {"name": "spaces/DM", "spaceType": "DIRECT_MESSAGE"},
+        ]
+    }
+
+    from gchat.chat_tools import list_spaces
+
+    result = await _unwrap(list_spaces)(
+        service=service,
+        user_google_email="me@example.com",
+    )
+
+    assert "Unnamed Space" in result
+    spaces_resource.members.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_list_spaces_resolves_dm_names_from_memberships_and_people(monkeypatch):
+    """Opt-in DM name resolution should show the other participant's display name."""
+    service = Mock()
+    spaces_resource = service.spaces.return_value
+    spaces_resource.list.return_value.execute.return_value = {
+        "spaces": [
+            {"name": "spaces/AAA", "spaceType": "DIRECT_MESSAGE"},
+            {"name": "spaces/BBB", "displayName": "Project", "spaceType": "SPACE"},
+        ]
+    }
+    spaces_resource.members.return_value.list.return_value.execute.return_value = {
+        "memberships": [
+            {"member": {"name": "users/me"}},
+            {"member": {"name": "users/other"}},
+        ]
+    }
+
+    people_service = Mock()
+    people_service.people.return_value.getBatchGet.return_value.execute.return_value = {
+        "responses": [
+            {
+                "person": {
+                    "resourceName": "people/me",
+                    "names": [{"displayName": "Me"}],
+                    "emailAddresses": [{"value": "me@example.com"}],
+                }
+            },
+            {
+                "person": {
+                    "resourceName": "people/other",
+                    "names": [{"displayName": "Joe Blue"}],
+                    "emailAddresses": [{"value": "joe@example.com"}],
+                }
+            },
+        ]
+    }
+    people_service.close = Mock()
+    auth_calls = []
+
+    async def fake_get_authenticated_google_service(
+        service_name, version, tool_name, user_google_email, required_scopes, **kwargs
+    ):  # noqa: ARG001
+        auth_calls.append((service_name, required_scopes))
+        if service_name == "chat":
+            return service, "me@example.com"
+        return people_service, "me@example.com"
+
+    monkeypatch.setattr(
+        "gchat.chat_tools.get_authenticated_google_service",
+        fake_get_authenticated_google_service,
+    )
+
+    from gchat.chat_tools import list_spaces
+
+    result = await _unwrap(list_spaces)(
+        service=service,
+        user_google_email="me@example.com",
+        resolve_dm_names=True,
+    )
+
+    assert "Joe Blue (DM)" in result
+    assert "Project" in result
+    assert auth_calls == [
+        (
+            "chat",
+            [
+                "https://www.googleapis.com/auth/chat.memberships.readonly",
+                "https://www.googleapis.com/auth/contacts.readonly",
+            ],
+        ),
+        ("people", ["https://www.googleapis.com/auth/contacts.readonly"]),
+    ]
+    spaces_resource.members.return_value.list.assert_called_once_with(
+        parent="spaces/AAA"
+    )
+    people_service.people.return_value.getBatchGet.assert_called_once_with(
+        resourceNames=["people/me", "people/other"],
+        personFields="names,emailAddresses",
+    )
+    service.close.assert_called_once()
+    people_service.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_list_spaces_caps_dm_resolution_and_fetches_memberships_concurrently(
+    monkeypatch,
+):
+    """DM name resolution should cap work and bound concurrent membership calls."""
+    from gchat.chat_tools import _DM_MEMBERSHIP_MAX_CONCURRENT_FETCHES
+    from gchat.chat_tools import list_spaces
+
+    state = {"current": 0, "max": 0}
+
+    async def fake_to_thread(fn, *args, **kwargs):
+        state["current"] += 1
+        state["max"] = max(state["max"], state["current"])
+        await asyncio.sleep(0.01)
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            state["current"] -= 1
+
+    monkeypatch.setattr("gchat.chat_tools.asyncio.to_thread", fake_to_thread)
+
+    spaces = [
+        {"name": f"spaces/DM{i}", "spaceType": "DIRECT_MESSAGE"} for i in range(8)
+    ]
+    service = Mock()
+    spaces_resource = service.spaces.return_value
+    spaces_resource.list.return_value.execute.return_value = {"spaces": spaces}
+
+    def list_members(parent):
+        user_number = parent.removeprefix("spaces/DM")
+        request = Mock()
+        request.execute.return_value = {
+            "memberships": [
+                {"member": {"name": "users/me"}},
+                {"member": {"name": f"users/other{user_number}"}},
+            ]
+        }
+        return request
+
+    spaces_resource.members.return_value.list.side_effect = list_members
+
+    people_service = Mock()
+    people_service.people.return_value.getBatchGet.return_value.execute.return_value = {
+        "responses": [
+            {
+                "person": {
+                    "resourceName": "people/me",
+                    "names": [{"displayName": "Me"}],
+                    "emailAddresses": [{"value": "me@example.com"}],
+                }
+            },
+            *[
+                {
+                    "person": {
+                        "resourceName": f"people/other{i}",
+                        "names": [{"displayName": f"Person {i}"}],
+                        "emailAddresses": [{"value": f"person{i}@example.com"}],
+                    }
+                }
+                for i in range(6)
+            ],
+        ]
+    }
+
+    async def fake_get_authenticated_google_service(
+        service_name, version, tool_name, user_google_email, required_scopes, **kwargs
+    ):  # noqa: ARG001
+        if service_name == "chat":
+            return service, "me@example.com"
+        return people_service, "me@example.com"
+
+    monkeypatch.setattr(
+        "gchat.chat_tools.get_authenticated_google_service",
+        fake_get_authenticated_google_service,
+    )
+
+    result = await _unwrap(list_spaces)(
+        service=service,
+        user_google_email="me@example.com",
+        resolve_dm_names=True,
+        max_dm_spaces=6,
+    )
+
+    assert "Person 0 (DM)" in result
+    assert "Person 5 (DM)" in result
+    assert "spaces/DM6, Type: DIRECT_MESSAGE" in result
+    assert "Person 6 (DM)" not in result
+    assert spaces_resource.members.return_value.list.call_count == 6
+    assert state["max"] > 1
+    assert state["max"] <= _DM_MEMBERSHIP_MAX_CONCURRENT_FETCHES
+    people_service.people.return_value.getBatchGet.assert_called_once_with(
+        resourceNames=[
+            "people/me",
+            "people/other0",
+            "people/other1",
+            "people/other2",
+            "people/other3",
+            "people/other4",
+            "people/other5",
+        ],
+        personFields="names,emailAddresses",
+    )
+    service.close.assert_called_once()
+    people_service.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_list_spaces_skips_dm_auth_when_no_dm_spaces(monkeypatch):
+    """resolve_dm_names should not request optional auth when no DMs are returned."""
+    service = Mock()
+    spaces_resource = service.spaces.return_value
+    spaces_resource.list.return_value.execute.return_value = {
+        "spaces": [
+            {"name": "spaces/ROOM", "displayName": "Project", "spaceType": "SPACE"},
+        ]
+    }
+
+    async def fail_get_authenticated_google_service(*args, **kwargs):  # noqa: ARG001
+        raise AssertionError("optional auth should not be requested")
+
+    monkeypatch.setattr(
+        "gchat.chat_tools.get_authenticated_google_service",
+        fail_get_authenticated_google_service,
+    )
+
+    from gchat.chat_tools import list_spaces
+
+    result = await _unwrap(list_spaces)(
+        service=service,
+        user_google_email="me@example.com",
+        resolve_dm_names=True,
+    )
+
+    assert "Project" in result
+    spaces_resource.members.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # get_messages: attachment metadata appears in output
 # ---------------------------------------------------------------------------
 

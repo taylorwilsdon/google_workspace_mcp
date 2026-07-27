@@ -15,6 +15,9 @@ from auth.scopes import (
     BASE_SCOPES,
     CALENDAR_READONLY_SCOPE,
     CALENDAR_SCOPE,
+    CHAT_MEMBERSHIPS_READONLY_SCOPE,
+    CHAT_READONLY_SCOPE,
+    CHAT_SPACES_READONLY_SCOPE,
     CONTACTS_READONLY_SCOPE,
     CONTACTS_SCOPE,
     DRIVE_FILE_SCOPE,
@@ -109,6 +112,25 @@ class TestReadOnlyScopes:
         set_read_only(True)
         scopes = get_scopes_for_tools(["sheets"])
         assert DRIVE_READONLY_SCOPE in scopes
+
+    def test_chat_readonly_includes_dm_name_resolution_scopes(self):
+        """list_spaces DM name resolution needs membership and People profile data."""
+        set_read_only(True)
+        scopes = get_scopes_for_tools(["chat"])
+        assert CHAT_READONLY_SCOPE in scopes
+        assert CHAT_SPACES_READONLY_SCOPE in scopes
+        assert CHAT_MEMBERSHIPS_READONLY_SCOPE in scopes
+        assert CONTACTS_READONLY_SCOPE in scopes
+
+
+class TestChatScopes:
+    """Tests for Chat cross-service scope generation."""
+
+    def test_chat_includes_dm_name_resolution_scopes(self):
+        """Chat tools need membership and People scopes for resolved DM labels."""
+        scopes = get_scopes_for_tools(["chat"])
+        assert CHAT_MEMBERSHIPS_READONLY_SCOPE in scopes
+        assert CONTACTS_READONLY_SCOPE in scopes
 
 
 class TestHasRequiredScopes:
@@ -229,3 +251,8 @@ class TestGranularPermissionsScopes:
         with_permissions = get_scopes_for_tools(["drive"])
         assert GMAIL_READONLY_SCOPE in with_permissions
         assert DRIVE_READONLY_SCOPE not in with_permissions
+
+    def test_chat_readonly_permission_includes_dm_name_resolution_scopes(self):
+        scopes = get_scopes_for_permission("chat", "readonly")
+        assert CHAT_MEMBERSHIPS_READONLY_SCOPE in scopes
+        assert CONTACTS_READONLY_SCOPE in scopes

@@ -37,6 +37,7 @@ from auth.scopes import (
     CHAT_WRITE_SCOPE,
     CHAT_SPACES_SCOPE,
     CHAT_SPACES_READONLY_SCOPE,
+    CHAT_MEMBERSHIPS_READONLY_SCOPE,
     FORMS_BODY_SCOPE,
     FORMS_BODY_READONLY_SCOPE,
     FORMS_RESPONSES_READONLY_SCOPE,
@@ -85,7 +86,15 @@ SERVICE_PERMISSION_LEVELS: Dict[str, List[Tuple[str, List[str]]]] = {
         ("full", [SHEETS_WRITE_SCOPE, DRIVE_READONLY_SCOPE]),
     ],
     "chat": [
-        ("readonly", [CHAT_READONLY_SCOPE, CHAT_SPACES_READONLY_SCOPE]),
+        (
+            "readonly",
+            [
+                CHAT_READONLY_SCOPE,
+                CHAT_SPACES_READONLY_SCOPE,
+                CHAT_MEMBERSHIPS_READONLY_SCOPE,
+                CONTACTS_READONLY_SCOPE,
+            ],
+        ),
         ("full", [CHAT_WRITE_SCOPE, CHAT_SPACES_SCOPE]),
     ],
     "forms": [

@@ -14,6 +14,7 @@ Lists Google Chat spaces (rooms and direct messages) accessible to the user.
 | user_google_email | string | yes | | |
 | page_size | integer | no | 100 | |
 | space_type | string | no | "all" | |
+| resolve_dm_names | boolean | no | false | Resolve direct-message space names from Chat memberships and People profiles |
 
 ---
 
