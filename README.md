@@ -808,6 +808,7 @@ cp .env.oauth21 .env
 | <sub>`get_drive_shareable_link`</sub> | <sub>Core</sub> | <sub>Get shareable links for a file</sub> |
 | <sub>`list_drive_items`</sub> | <sub>Extended</sub> | <sub>List folder contents or shared drives</sub> |
 | <sub>`copy_drive_file`</sub> | <sub>Extended</sub> | <sub>Copy existing files (templates) with optional renaming</sub> |
+| <sub>`copy_doc_as_snapshot`</sub> | <sub>Extended</sub> | <sub>Create a sibling-file snapshot of a Google Doc as a rollback point before destructive edits; idempotent via `files.list` dedup pre-check</sub> |
 | <sub>`update_drive_file`</sub> | <sub>Extended</sub> | <sub>Update metadata, move files, or replace Google Apps content</sub> |
 | <sub>`manage_drive_access`</sub> | <sub>Extended</sub> | <sub>Grant, update, revoke permissions, and transfer ownership</sub> |
 | <sub>`set_drive_file_permissions`</sub> | <sub>Extended</sub> | <sub>Set link sharing and file-level sharing settings</sub> |

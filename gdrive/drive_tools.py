@@ -7,6 +7,7 @@ This module provides MCP tools for interacting with Google Drive API.
 import asyncio
 import logging
 import io
+import re
 import base64
 import binascii
 
@@ -27,6 +28,7 @@ from core.attachment_storage import get_attachment_storage, get_attachment_url
 from core.utils import (
     GOOGLE_API_WRITE_RETRIES,
     IMAGE_MIME_TYPES,
+    UserInputError,
     encode_image_content,
     extract_office_xml_text,
     extract_pdf_text,
@@ -2673,4 +2675,175 @@ async def set_drive_file_permissions(
         output_parts.append("  - No changes (already configured)")
     output_parts.extend(["", f"View link: {file_metadata.get('webViewLink', 'N/A')}"])
 
+    return "\n".join(output_parts)
+
+
+@server.tool(
+    title="Copy Doc as Snapshot",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("copy_doc_as_snapshot", is_read_only=False, service_type="drive")
+@require_google_service("drive", "drive_file")
+async def copy_doc_as_snapshot(
+    service,
+    user_google_email: str,
+    document_id: str,
+    name: Optional[str] = None,
+    folder_id: Optional[str] = None,
+    timestamp: Optional[str] = None,
+) -> str:
+    """Create a snapshot copy of a Google Doc as a sibling file.
+
+    Why this tool exists: Drive API revisions for native Docs cannot be
+    pinned (keepForever is binary-file-only and silently no-ops on native
+    Docs) or named (no name field on the Revision resource for native
+    files). Instead, this tool creates an independent copy via Drive
+    files.copy — a full-fidelity snapshot the owner can compare with via
+    Tools > Compare Documents, revert from, or trash after the edit lands.
+
+    Idempotency: before creating the snapshot, calls files.list to look
+    for an existing file with the computed name in the target folder. If
+    found, returns the existing snapshot's ID instead of creating a
+    duplicate. Agents that retry the same call (with the same timestamp)
+    get the same snapshot back.
+
+    Comments and suggestions are NOT carried to the snapshot. Drive UI's
+    "Make a copy" offers checkboxes for those; files.copy API does not
+    expose them. If the human expects thread fidelity, they should use
+    the Drive UI instead.
+
+    Failure modes the caller MUST handle:
+      - 403 storageQuotaExceeded — user is over Drive quota
+      - 403 insufficientFilePermissions — folder-write or restricted-copy
+        (source's viewersCanCopyContent set to false by owner)
+      - 404 — source not accessible via the granted scope
+
+    If this tool returns an error, the safety net was NOT created — do
+    NOT proceed with the destructive edit assuming rollback is available.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        document_id (str): ID of the Google Doc (or full URL). Required.
+        name (Optional[str]): Snapshot file name. Defaults to
+            "{original_title}.snapshot.{timestamp}". If both name and
+            timestamp are None, raises UserInputError.
+        folder_id (Optional[str]): Parent folder ID. Defaults to the
+            source file's first parent (or root if no parent).
+        timestamp (Optional[str]): Compact ISO 8601 UTC timestamp
+            (YYYYMMDDTHHMMSSZ). Required if name is None; ignored if
+            name is given. Agents supply this because this MCP runs
+            stateless.
+
+    Returns:
+        Multi-line confirmation per copy_drive_file convention, plus a
+        ready-to-paste comment string the caller can attach to the
+        source doc for human-visible rollback.
+    """
+    logger.info(
+        f"[copy_doc_as_snapshot] Invoked. Email: '{user_google_email}', "
+        f"Doc ID: '{document_id}', Name: '{name}', Folder: '{folder_id}'"
+    )
+
+    url_match = re.search(r"/d/([\w-]+)", document_id)
+    if url_match:
+        document_id = url_match.group(1)
+
+    resolved_doc_id, doc_metadata = await resolve_drive_item(
+        service, document_id, extra_fields="name, webViewLink, mimeType, parents"
+    )
+    document_id = resolved_doc_id
+    original_title = doc_metadata.get("name", "Unknown Doc")
+    source_webview = doc_metadata.get("webViewLink", "N/A")
+
+    if name is None:
+        if timestamp is None:
+            raise UserInputError(
+                "Either `name` or `timestamp` must be provided. Pass the "
+                "current UTC time as a compact ISO 8601 string "
+                "(YYYYMMDDTHHMMSSZ, e.g. 20260612T194401Z)."
+            )
+        snapshot_name = f"{original_title}.snapshot.{timestamp}"
+    else:
+        snapshot_name = name
+
+    # Resolve target folder. Default: first parent of the source, or root.
+    if folder_id:
+        resolved_folder_id = await resolve_folder_id(service, folder_id)
+    else:
+        source_parents = doc_metadata.get("parents") or []
+        resolved_folder_id = source_parents[0] if source_parents else "root"
+
+    # Dedup pre-check: if a file with this name already exists in the target
+    # folder (and isn't trashed), return its ID instead of creating a dup.
+    # Escape single quotes in the name per Drive query-language spec.
+    safe_name = snapshot_name.replace("\\", "\\\\").replace("'", "\\'")
+    query_parts = [f"name = '{safe_name}'", "trashed = false"]
+    if resolved_folder_id != "root":
+        query_parts.append(f"'{resolved_folder_id}' in parents")
+    list_response = await asyncio.to_thread(
+        service.files()
+        .list(
+            q=" and ".join(query_parts),
+            spaces="drive",
+            fields="files(id, name, webViewLink, mimeType)",
+            pageSize=1,
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
+        )
+        .execute
+    )
+    existing = list_response.get("files") or []
+    if existing:
+        existing_snapshot = existing[0]
+        output_parts = [
+            f"Snapshot already exists for '{original_title}' (returned existing).",
+            "",
+            f"Original file ID: {document_id}",
+            f"Snapshot file ID: {existing_snapshot.get('id', 'N/A')}",
+            f"Snapshot name: {existing_snapshot.get('name', snapshot_name)}",
+            f"Location: {resolved_folder_id}",
+            "",
+            f"View snapshot: {existing_snapshot.get('webViewLink', 'N/A')}",
+            f"View source: {source_webview}",
+            "",
+            "For human-visible rollback, paste this comment on the source:",
+            f'  "Snapshot before agent edit: {existing_snapshot.get("webViewLink", "N/A")}"',
+        ]
+        return "\n".join(output_parts)
+
+    # Create the snapshot.
+    copy_body: dict[str, Any] = {"name": snapshot_name}
+    if resolved_folder_id != "root":
+        copy_body["parents"] = [resolved_folder_id]
+
+    snapshot = await asyncio.to_thread(
+        service.files()
+        .copy(
+            fileId=document_id,
+            body=copy_body,
+            supportsAllDrives=True,
+            fields="id, name, webViewLink, mimeType, parents",
+        )
+        .execute
+    )
+
+    output_parts = [
+        f"Successfully created snapshot of '{original_title}'",
+        "",
+        f"Original file ID: {document_id}",
+        f"Snapshot file ID: {snapshot.get('id', 'N/A')}",
+        f"Snapshot name: {snapshot.get('name', snapshot_name)}",
+        f"Location: {resolved_folder_id}",
+        "",
+        f"View snapshot: {snapshot.get('webViewLink', 'N/A')}",
+        f"View source: {source_webview}",
+        "",
+        "For human-visible rollback, paste this comment on the source:",
+        f'  "Snapshot before agent edit: {snapshot.get("webViewLink", "N/A")}"',
+    ]
     return "\n".join(output_parts)
