@@ -1638,6 +1638,11 @@ async def _manage_sheet_table_impl(
 
     if action_normalized == "create":
         table: dict = {"name": table_name, "range": grid_range}
+        # Truthiness is intentional here, and differs from the `is not None`
+        # check in the update branch below. On create there is no existing
+        # state, so None and [] both mean "no typed columns" and an empty
+        # columnProperties array would be sent for nothing. On update the two
+        # are distinct: None leaves columns untouched, [] clears them.
         if parsed_columns:
             table["columnProperties"] = parsed_columns
         if rows_properties:
@@ -1652,12 +1657,11 @@ async def _manage_sheet_table_impl(
             .execute
         )
 
-        created_id = (
-            response.get("replies", [{}])[0]
-            .get("addTable", {})
-            .get("table", {})
-            .get("tableId")
-        )
+        # A dict default only applies when the key is absent, so an explicitly
+        # empty "replies" list would still make [0] raise. Read the first reply
+        # defensively and report a missing id rather than failing the call.
+        replies = response.get("replies") or [{}]
+        created_id = replies[0].get("addTable", {}).get("table", {}).get("tableId")
         return {
             "spreadsheet_id": spreadsheet_id,
             "action": action_normalized,

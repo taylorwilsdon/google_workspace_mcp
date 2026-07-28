@@ -75,6 +75,40 @@ async def test_create_table_sends_add_table_with_grid_range():
     assert result["action"] == "create"
 
 
+@pytest.mark.parametrize(
+    "batch_response",
+    [
+        pytest.param({}, id="no-replies-key"),
+        pytest.param({"replies": []}, id="empty-replies-list"),
+        pytest.param({"replies": [{}]}, id="reply-without-addTable"),
+        pytest.param({"replies": [{"addTable": {}}]}, id="addTable-without-table"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_create_reports_missing_table_id_without_raising(batch_response):
+    """
+    A batchUpdate response that carries no usable table id must degrade to
+    table_id=None, not raise. An empty 'replies' list is the sharp edge here:
+    dict.get's default only applies when the key is absent, so indexing [0]
+    on an explicitly empty list raises IndexError.
+    """
+    mock_service = create_mock_service()
+    mock_service.spreadsheets().batchUpdate().execute = Mock(
+        return_value=batch_response
+    )
+
+    result = await _manage_sheet_table_impl(
+        service=mock_service,
+        spreadsheet_id="ss_1",
+        action="create",
+        table_name="Pipeline",
+        range_name="Sheet1!A1:C10",
+    )
+
+    assert result["table_id"] is None
+    assert result["action"] == "create"
+
+
 @pytest.mark.asyncio
 async def test_create_table_assigns_sequential_column_indexes():
     """columnIndex is table-relative and inferred from position when omitted."""
