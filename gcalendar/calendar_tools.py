@@ -360,6 +360,16 @@ async def list_calendars(service, user_google_email: str) -> str:
     return text_output
 
 
+_VALID_EVENT_TYPES = {
+    "default",
+    "outOfOffice",
+    "focusTime",
+    "workingLocation",
+    "fromGmail",
+    "birthday",
+}
+
+
 @server.tool(
     title="Get Events",
     annotations=ToolAnnotations(
@@ -380,6 +390,7 @@ async def get_events(
     time_max: Optional[str] = None,
     max_results: int = 25,
     query: Optional[str] = None,
+    event_types: Optional[StringList] = None,
     detailed: bool = False,
     include_attachments: bool = False,
 ) -> str:
@@ -395,14 +406,23 @@ async def get_events(
         time_max (Optional[str]): The end of the time range (exclusive) in RFC3339 format. If omitted, events starting from `time_min` onwards are considered (up to `max_results`). Ignored if event_id is provided.
         max_results (int): The maximum number of events to return. Defaults to 25. Ignored if event_id is provided.
         query (Optional[str]): A keyword to search for within event fields (summary, description, location). Ignored if event_id is provided.
+        event_types (Optional[List[str]]): Restrict results to specific Google Calendar event types. Allowed values: 'default', 'outOfOffice', 'focusTime', 'workingLocation', 'fromGmail', 'birthday'. If omitted, the API returns all event types (including working-location and birthday entries). Pass ['default'] to retrieve only regular calendar events. Ignored if event_id is provided.
         detailed (bool): Whether to return detailed event information including description, location, attendees, and attendee details (response status, organizer, optional flags). Defaults to False.
         include_attachments (bool): Whether to include attachment information in detailed event output. When True, shows attachment details (fileId, fileUrl, mimeType, title) for events that have attachments. Only applies when detailed=True. Set this to True when you need to view or access files that have been attached to calendar events, such as meeting documents, presentations, or other shared files. Defaults to False.
 
     Returns:
         str: A formatted list of events (summary, start and end times, link) within the specified range, or detailed information for a single event if event_id is provided.
     """
+    if event_types:
+        invalid_types = [t for t in event_types if t not in _VALID_EVENT_TYPES]
+        if invalid_types:
+            raise ValueError(
+                f"Invalid event_types: {invalid_types}. "
+                f"Must be one of: {', '.join(sorted(_VALID_EVENT_TYPES))}"
+            )
+
     logger.info(
-        f"[get_events] Raw parameters - event_id: '{event_id}', time_min: '{time_min}', time_max: '{time_max}', query: '{query}', detailed: {detailed}, include_attachments: {include_attachments}"
+        f"[get_events] Raw parameters - event_id: '{event_id}', time_min: '{time_min}', time_max: '{time_max}', query: '{query}', event_types: {event_types}, detailed: {detailed}, include_attachments: {include_attachments}"
     )
 
     # Handle single event retrieval
@@ -439,7 +459,7 @@ async def get_events(
             )
 
         logger.info(
-            f"[get_events] Final API parameters - calendarId: '{calendar_id}', timeMin: '{effective_time_min}', timeMax: '{effective_time_max}', maxResults: {max_results}, query: '{query}'"
+            f"[get_events] Final API parameters - calendarId: '{calendar_id}', timeMin: '{effective_time_min}', timeMax: '{effective_time_max}', maxResults: {max_results}, query: '{query}', eventTypes: {event_types}"
         )
 
         # Build the request parameters dynamically
@@ -454,6 +474,8 @@ async def get_events(
 
         if query:
             request_params["q"] = query
+        if event_types:
+            request_params["eventTypes"] = list(event_types)
 
         events_result = await asyncio.to_thread(
             lambda: service.events().list(**request_params).execute()
@@ -527,6 +549,7 @@ async def get_events(
         end_time = item["end"].get("dateTime", item["end"].get("date"))
         link = item.get("htmlLink", "No Link")
         item_event_id = item.get("id", "No ID")
+        event_type = item.get("eventType", "default")
 
         if detailed:
             # Add detailed information for multiple events
@@ -550,6 +573,8 @@ async def get_events(
                 f"  Description: {description}\n"
                 f"  Location: {location}\n"
             )
+            if event_type != "default":
+                event_detail_parts += f"  Type: {event_type}\n"
             if creator_str:
                 event_detail_parts += f"  Creator: {creator_str}\n"
             if organizer_str:
@@ -574,6 +599,8 @@ async def get_events(
             # Basic output format
             meeting_link = _get_meeting_link(item)
             basic_line = f'- "{summary}" (Starts: {start_time}, Ends: {end_time})'
+            if event_type != "default":
+                basic_line += f" [type: {event_type}]"
             if meeting_link:
                 basic_line += f" Meeting: {meeting_link}"
             basic_line += f" ID: {item_event_id} | Link: {link}"
