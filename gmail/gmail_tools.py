@@ -1052,9 +1052,13 @@ def _build_attachment_error_entry(
 ) -> Dict[str, Any]:
     """Preserve failed attachment context so message creation can continue."""
     failed_attachment = dict(attachment)
+    error_detail = str(exc)
     if "url" in failed_attachment:
-        failed_attachment["display_url"] = _redact_url(str(failed_attachment["url"]))
-    failed_attachment["error"] = str(exc)
+        raw_url = str(failed_attachment["url"])
+        redacted_url = _redact_url(raw_url)
+        failed_attachment["display_url"] = redacted_url
+        error_detail = error_detail.replace(raw_url, redacted_url)
+    failed_attachment["error"] = error_detail
     failed_attachment["error_type"] = type(exc).__name__
     return failed_attachment
 
@@ -1152,8 +1156,13 @@ async def _resolve_url_attachments(
         try:
             local = _try_read_local_attachment(url)
         except Exception as exc:
-            logger.exception("Failed to read local attachment URL %s", _redact_url(url))
-            resolved.append(_build_attachment_error_entry(att, exc))
+            error_entry = _build_attachment_error_entry(att, exc)
+            logger.warning(
+                "Failed to read local attachment URL %s: %s",
+                _redact_url(url),
+                error_entry["error"],
+            )
+            resolved.append(error_entry)
             continue
         if local is not None:
             data, local_filename, local_mime = local
@@ -1171,8 +1180,13 @@ async def _resolve_url_attachments(
         try:
             data, resp = await _download_attachment_bytes(url)
         except Exception as exc:
-            logger.exception("Failed to fetch attachment URL %s", _redact_url(url))
-            resolved.append(_build_attachment_error_entry(att, exc))
+            error_entry = _build_attachment_error_entry(att, exc)
+            logger.warning(
+                "Failed to fetch attachment URL %s: %s",
+                _redact_url(url),
+                error_entry["error"],
+            )
+            resolved.append(error_entry)
             continue
 
         # Infer filename from URL path if not provided.
@@ -2835,6 +2849,170 @@ async def draft_gmail_message(
         attached_count, requested_attachment_count
     )
     return f"Draft created{attachment_info}! Draft ID: {draft_id}"
+
+
+@server.tool()
+@handle_http_errors("update_gmail_draft", service_type="gmail")
+@require_google_service("gmail", GMAIL_COMPOSE_SCOPE)
+async def update_gmail_draft(
+    service,
+    user_google_email: str,
+    draft_id: Annotated[str, Field(description="Gmail draft ID to update.")],
+    subject: Annotated[str, Field(description="Replacement email subject.")],
+    body: Annotated[str, Field(description="Replacement email body.")],
+    body_format: Annotated[
+        Literal["plain", "html"],
+        Field(
+            description="Replacement body format. Use 'plain' for plaintext or 'html' for HTML content.",
+        ),
+    ] = "plain",
+    to: Annotated[
+        Optional[str],
+        Field(
+            description="Optional replacement recipient email address.",
+        ),
+    ] = None,
+    cc: Annotated[
+        Optional[str],
+        Field(description="Optional replacement CC email address."),
+    ] = None,
+    bcc: Annotated[
+        Optional[str],
+        Field(description="Optional replacement BCC email address."),
+    ] = None,
+    from_name: Annotated[
+        Optional[str],
+        Field(
+            description="Optional replacement sender display name.",
+        ),
+    ] = None,
+    from_email: Annotated[
+        Optional[str],
+        Field(
+            description="Optional replacement 'Send As' alias email address. Must be configured in Gmail settings.",
+        ),
+    ] = None,
+    thread_id: Annotated[
+        Optional[str],
+        Field(
+            description="Optional replacement Gmail thread ID to associate with the draft.",
+        ),
+    ] = None,
+    in_reply_to: Annotated[
+        Optional[str],
+        Field(
+            description="Optional replacement RFC Message-ID of the message being replied to.",
+        ),
+    ] = None,
+    references: Annotated[
+        Optional[str],
+        Field(
+            description="Optional replacement chain of Message-IDs for proper threading.",
+        ),
+    ] = None,
+    attachments: Annotated[
+        Optional[DictList],
+        Field(
+            description=(
+                "Optional replacement attachments. Each can have: 'url' (fetch from URL — "
+                "works with MCP attachment URLs from get_drive_file_download_url / "
+                "get_gmail_attachment_content), OR 'path' (file path, auto-encodes), "
+                "OR 'content' (standard base64, not urlsafe) + 'filename'. "
+                "Optional 'mime_type' is allowed for URL, path, and content attachments."
+            ),
+        ),
+    ] = None,
+    include_signature: Annotated[
+        bool,
+        Field(
+            description="Whether to append the Gmail signature from Settings > Signature when available. Defaults to true.",
+        ),
+    ] = True,
+) -> str:
+    """Replaces an existing Gmail draft by draft ID."""
+    logger.info(
+        f"[update_gmail_draft] Invoked. Email: '{user_google_email}', Draft ID: '{draft_id}'"
+    )
+
+    draft_id = draft_id.strip()
+    if not draft_id:
+        raise UserInputError("draft_id is required.")
+
+    sender_email = from_email or user_google_email
+    draft_body_text = body
+    if include_signature:
+        signature_html = await _get_send_as_signature_html(
+            service, from_email=sender_email
+        )
+        draft_body_text = _append_signature_to_body(body, body_format, signature_html)
+
+    resolved_attachments = await _resolve_url_attachments(attachments)
+
+    raw_message, thread_id_final, attached_count, attachment_errors = (
+        _prepare_gmail_message(
+            subject=subject,
+            body=draft_body_text,
+            body_format=body_format,
+            to=to,
+            cc=cc,
+            bcc=bcc,
+            thread_id=thread_id,
+            in_reply_to=in_reply_to,
+            references=references,
+            from_email=sender_email,
+            from_name=from_name,
+            attachments=resolved_attachments,
+        )
+    )
+
+    requested_attachment_count = len(attachments or [])
+    if requested_attachment_count > 0 and attached_count == 0:
+        details = (
+            f" Details: {'; '.join(attachment_errors)}" if attachment_errors else ""
+        )
+        raise UserInputError(
+            "No valid attachments were added. Verify each attachment path/content and retry."
+            f"{details}"
+        )
+
+    draft_body = {"message": {"raw": raw_message}}
+    if thread_id_final:
+        draft_body["message"]["threadId"] = thread_id_final
+
+    updated_draft = await asyncio.to_thread(
+        service.users()
+        .drafts()
+        .update(userId="me", id=draft_id, body=draft_body)
+        .execute
+    )
+    updated_draft_id = updated_draft.get("id") or draft_id
+    attachment_info = _format_attachment_result(
+        attached_count, requested_attachment_count
+    )
+    return f"Draft updated{attachment_info}! Draft ID: {updated_draft_id}"
+
+
+@server.tool()
+@handle_http_errors("delete_gmail_draft", service_type="gmail")
+@require_google_service("gmail", GMAIL_COMPOSE_SCOPE)
+async def delete_gmail_draft(
+    service,
+    user_google_email: str,
+    draft_id: Annotated[str, Field(description="Gmail draft ID to delete.")],
+) -> str:
+    """Deletes an existing Gmail draft by draft ID."""
+    logger.info(
+        f"[delete_gmail_draft] Invoked. Email: '{user_google_email}', Draft ID: '{draft_id}'"
+    )
+
+    draft_id = draft_id.strip()
+    if not draft_id:
+        raise UserInputError("draft_id is required.")
+
+    await asyncio.to_thread(
+        service.users().drafts().delete(userId="me", id=draft_id).execute
+    )
+    return f"Draft deleted! Draft ID: {draft_id}"
 
 
 def _format_thread_content(

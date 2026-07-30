@@ -4,7 +4,7 @@ MCP tools for Gmail message search, sending, drafting, labels, and filters. All 
 
 ## Contents
 - Search & Read: search_gmail_messages, get_gmail_message_content, get_gmail_messages_content_batch, get_gmail_thread_content, get_gmail_threads_content_batch, get_gmail_attachment_content
-- Send & Draft: send_gmail_message, draft_gmail_message
+- Send & Draft: send_gmail_message, draft_gmail_message, update_gmail_draft, delete_gmail_draft
 - Label Management: list_gmail_labels, manage_gmail_label, modify_gmail_message_labels, batch_modify_gmail_message_labels
 - Filter Management: list_gmail_filters, manage_gmail_filter
 - Tips
@@ -112,6 +112,35 @@ Create a draft. Same capabilities as send but with additional signature/quoting 
 | attachments | array | no | | Same format as send |
 | include_signature | boolean | no | true | Append Gmail signature if available |
 | quote_original | boolean | no | false | Include original message as quoted reply (requires thread_id) |
+
+### update_gmail_draft
+Replace an existing draft's message content and supplied headers.
+
+| Parameter | Type | Required | Default | Notes |
+|-----------|------|----------|---------|-------|
+| draft_id | string | yes | | Gmail draft ID to update |
+| subject | string | yes | | Replacement subject |
+| body | string | yes | | Replacement body |
+| body_format | string | no | "plain" | "plain" or "html" |
+| user_google_email | string | yes | | |
+| to | string | no | | Replacement recipient |
+| cc | string | no | | Replacement CC recipients |
+| bcc | string | no | | Replacement BCC recipients |
+| from_name | string | no | | Replacement sender display name |
+| from_email | string | no | | Replacement Send As alias |
+| thread_id | string | no | | Replacement thread association |
+| in_reply_to | string | no | | Replacement reply Message-ID |
+| references | string | no | | Replacement References header |
+| attachments | array | no | | Replacement attachments; same format as draft attachments |
+| include_signature | boolean | no | true | Append Gmail signature if available |
+
+### delete_gmail_draft
+Delete an existing draft by Gmail draft ID.
+
+| Parameter | Type | Required | Default | Notes |
+|-----------|------|----------|---------|-------|
+| draft_id | string | yes | | Gmail draft ID to delete |
+| user_google_email | string | yes | | |
 
 ---
 
