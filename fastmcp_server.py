@@ -159,6 +159,21 @@ import gsearch.search_tools
 # Configure tool registration
 wrap_server_tool_method(server)
 
+# Load out-of-tree tool plugins (workspace_mcp.tools entry-point group), same
+# seam as main.py — importing each registers its @server.tool() tools.
+try:
+    from importlib.metadata import entry_points as _entry_points
+
+    for _ep in _entry_points(group="workspace_mcp.tools"):
+        try:
+            _ep.load()
+        except Exception:  # noqa: BLE001
+            logging.getLogger(__name__).error(
+                "Failed to load tool plugin '%s'", _ep.name, exc_info=True
+            )
+except Exception:  # pragma: no cover
+    pass
+
 # Enable all tools and services by default
 all_services = [
     "gmail",

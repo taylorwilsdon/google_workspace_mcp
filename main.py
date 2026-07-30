@@ -674,6 +674,28 @@ def main():
         safe_print(f"🔒 Permissions: {perm_summary}")
     safe_print("")
 
+    # Load out-of-tree tool plugins advertised via the "workspace_mcp.tools"
+    # entry-point group. Importing each entry point's module runs its
+    # @server.tool() decorators against the shared `server` singleton, exactly
+    # like the in-tree tool modules above — so external pip packages can
+    # contribute tools without editing this file.
+    try:
+        from importlib.metadata import entry_points as _entry_points
+
+        _eps = _entry_points(group="workspace_mcp.tools")
+    except Exception as _eps_exc:  # pragma: no cover - importlib API drift
+        _eps = ()
+        logger.debug("entry_points lookup failed: %s", _eps_exc)
+    for _ep in _eps:
+        try:
+            _ep.load()  # importing the module registers its tools as a side effect
+            safe_print(f"   🔌 Plugin loaded: {_ep.name}")
+        except Exception as _plugin_exc:  # noqa: BLE001 - one bad plugin must not abort startup
+            logger.error(
+                "Failed to load tool plugin '%s': %s", _ep.name, _plugin_exc, exc_info=True
+            )
+            safe_print(f"   ⚠️ Failed to load plugin '{_ep.name}' ({_plugin_exc}).")
+
     # Filter tools based on tier configuration (if tier-based loading is enabled)
     filter_server_tools(server)
 
