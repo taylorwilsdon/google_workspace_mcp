@@ -31,6 +31,33 @@ def _unwrap(tool):
     return fn
 
 
+@pytest.fixture(autouse=True)
+def _route_send_as_settings_auth_to_compose_service(monkeypatch):
+    """Tests inject a mock Gmail service; route settings lookup to that service."""
+    compose_service = {}
+
+    async def _fake_send_as_settings_authenticated(
+        user_google_email, from_email=None, service=None
+    ):
+        svc = compose_service.get("service")
+        assert svc is not None, "compose service not captured before settings lookup"
+        return await gmail_tools._get_send_as_settings_for_tool(svc, from_email)
+
+    original_send_gmail_message = gmail_tools.send_gmail_message
+
+    async def _capturing_send_gmail_message(service, *args, **kwargs):
+        compose_service["service"] = service
+        return await _unwrap(original_send_gmail_message)(service, *args, **kwargs)
+
+    monkeypatch.setattr(
+        gmail_tools,
+        "_get_send_as_settings_authenticated",
+        _fake_send_as_settings_authenticated,
+    )
+    monkeypatch.setattr(gmail_tools, "send_gmail_message", _capturing_send_gmail_message)
+    monkeypatch.setattr(sys.modules[__name__], "send_gmail_message", _capturing_send_gmail_message)
+
+
 def _thread_response(*message_ids):
     return {
         "messages": [

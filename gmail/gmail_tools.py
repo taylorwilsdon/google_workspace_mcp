@@ -2163,6 +2163,16 @@ async def get_gmail_attachment_content(
         return "\n".join(result_lines)
 
 
+@require_google_service("gmail", ["gmail_read", "gmail_settings_basic"])
+async def _get_send_as_settings_authenticated(
+    service,
+    user_google_email: str,
+    from_email: Optional[str] = None,
+) -> tuple[str, str]:
+    """Fetch send-as settings with the Gmail settings scope."""
+    return await _get_send_as_settings_for_tool(service, from_email=from_email)
+
+
 @server.tool(
     title="Send Gmail Message",
     annotations=ToolAnnotations(
@@ -2173,9 +2183,7 @@ async def get_gmail_attachment_content(
     ),
 )
 @handle_http_errors("send_gmail_message", service_type="gmail")
-@require_google_service(
-    "gmail", ["gmail_read", GMAIL_SEND_SCOPE, "gmail_settings_basic"]
-)
+@require_google_service("gmail", ["gmail_read", GMAIL_SEND_SCOPE])
 async def send_gmail_message(
     service,
     user_google_email: str,
@@ -2422,8 +2430,9 @@ async def send_gmail_message(
     send_body_content = body
     resolved_from_name = from_name
     if include_signature or not resolved_from_name:
-        signature_html, auto_display_name = await _get_send_as_settings_for_tool(
-            service, from_email=sender_email
+        signature_html, auto_display_name = await _get_send_as_settings_authenticated(
+            user_google_email=user_google_email,
+            from_email=sender_email,
         )
         if include_signature:
             send_body_content = _append_signature_to_body(
