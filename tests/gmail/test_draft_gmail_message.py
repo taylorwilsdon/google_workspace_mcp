@@ -353,10 +353,11 @@ async def test_send_gmail_message_skips_signature_when_disabled():
         body="<p>Hello</p>",
         body_format="html",
         include_signature=False,
+        from_name="Explicit Sender",
     )
 
-    # When include_signature is False we must NOT call the settings endpoint
-    # at all (avoids requiring the gmail.settings.basic scope).
+    # When include_signature is False and from_name is provided we must NOT call
+    # the settings endpoint.
     assert list_mock.call_count == 0
 
     send_kwargs = (
@@ -367,6 +368,76 @@ async def test_send_gmail_message_skips_signature_when_disabled():
 
     assert "<p>Hello</p>" in raw_text
     assert "Best," not in raw_text
+
+
+@pytest.mark.asyncio
+async def test_send_gmail_message_autofills_from_name_from_send_as_display_name():
+    mock_service = Mock()
+    mock_service.users().messages().send().execute.return_value = {"id": "msg_name"}
+    mock_service.users().settings().sendAs().list().execute.return_value = {
+        "sendAs": [
+            {
+                "sendAsEmail": "user@example.com",
+                "isPrimary": True,
+                "displayName": "Sloane Voss",
+                "signature": "<div>Best,<br>Sloane</div>",
+            }
+        ]
+    }
+
+    await _unwrap(send_gmail_message)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        to="recipient@example.com",
+        subject="Display name test",
+        body="<p>Hello</p>",
+        body_format="html",
+        include_signature=False,
+    )
+
+    send_kwargs = (
+        mock_service.users.return_value.messages.return_value.send.call_args.kwargs
+    )
+    raw_message = send_kwargs["body"]["raw"]
+    raw_text = base64.urlsafe_b64decode(raw_message).decode("utf-8", errors="ignore")
+
+    assert "From: Sloane Voss <user@example.com>" in raw_text
+
+
+@pytest.mark.asyncio
+async def test_send_gmail_message_prefers_explicit_from_name_over_send_as_display_name():
+    mock_service = Mock()
+    mock_service.users().messages().send().execute.return_value = {"id": "msg_explicit"}
+    mock_service.users().settings().sendAs().list().execute.return_value = {
+        "sendAs": [
+            {
+                "sendAsEmail": "user@example.com",
+                "isPrimary": True,
+                "displayName": "Sloane Voss",
+                "signature": "<div>Best,<br>Sloane</div>",
+            }
+        ]
+    }
+
+    await _unwrap(send_gmail_message)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        to="recipient@example.com",
+        subject="Explicit name test",
+        body="<p>Hello</p>",
+        body_format="html",
+        include_signature=True,
+        from_name="Override Name",
+    )
+
+    send_kwargs = (
+        mock_service.users.return_value.messages.return_value.send.call_args.kwargs
+    )
+    raw_message = send_kwargs["body"]["raw"]
+    raw_text = base64.urlsafe_b64decode(raw_message).decode("utf-8", errors="ignore")
+
+    assert "From: Override Name <user@example.com>" in raw_text
+    assert "Sloane Voss" not in raw_text
 
 
 @pytest.mark.asyncio
@@ -940,6 +1011,7 @@ async def test_send_gmail_message_with_url_attachment(monkeypatch):
         body="See attached from URL.",
         attachments=[{"url": "https://example.com/doc.pdf", "filename": "doc.pdf"}],
         include_signature=False,
+        from_name="Test Sender",
     )
 
     assert "Email sent with 1 attachment(s)! Message ID: msg_url" in result

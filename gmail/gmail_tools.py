@@ -669,6 +669,65 @@ def _build_quoted_reply_body(
     return f"{reply_body}{sig_block}\n\n{attribution}\n{quoted_lines}"
 
 
+def _select_send_as_entry(
+    send_as_entries: List[Dict[str, Any]], from_email: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    """Pick the send-as entry for the requested alias, else primary, else first."""
+    if not send_as_entries:
+        return None
+
+    if from_email:
+        from_email_normalized = from_email.strip().lower()
+        for entry in send_as_entries:
+            if entry.get("sendAsEmail", "").strip().lower() == from_email_normalized:
+                return entry
+
+    for entry in send_as_entries:
+        if entry.get("isPrimary"):
+            return entry
+
+    return send_as_entries[0]
+
+
+async def _fetch_send_as_entries(service) -> List[Dict[str, Any]]:
+    """Fetch Gmail send-as settings entries."""
+    response = await asyncio.to_thread(
+        service.users().settings().sendAs().list(userId="me").execute
+    )
+    return response.get("sendAs", [])
+
+
+async def _get_send_as_settings(
+    service, from_email: Optional[str] = None
+) -> tuple[str, str]:
+    """
+    Fetch signature HTML and display name from Gmail send-as settings.
+
+    Returns ("", "") when settings are unavailable due to auth/scope errors.
+    """
+    try:
+        send_as_entries = await _fetch_send_as_entries(service)
+    except HttpError as e:
+        if _is_benign_signature_http_error(e):
+            logger.info(
+                "Skipping Gmail send-as settings fetch: missing auth/scope for settings endpoint."
+            )
+            return "", ""
+        logger.error(f"Failed to fetch Gmail send-as settings: {e}", exc_info=True)
+        raise _signature_fetch_tool_error(e) from e
+    except Exception as e:
+        logger.error(f"Failed to fetch Gmail send-as settings: {e}", exc_info=True)
+        raise _signature_fetch_tool_error(e) from e
+
+    entry = _select_send_as_entry(send_as_entries, from_email=from_email)
+    if not entry:
+        return "", ""
+
+    signature_html = entry.get("signature", "") or ""
+    display_name = entry.get("displayName", "").strip()
+    return signature_html, display_name
+
+
 async def _get_send_as_signature_html(service, from_email: Optional[str] = None) -> str:
     """
     Fetch signature HTML from Gmail send-as settings.
@@ -676,37 +735,8 @@ async def _get_send_as_signature_html(service, from_email: Optional[str] = None)
     Returns empty string when the account has no signature configured or when
     auth/scope errors mean the settings endpoint is unavailable.
     """
-    try:
-        response = await asyncio.to_thread(
-            service.users().settings().sendAs().list(userId="me").execute
-        )
-    except HttpError as e:
-        if _is_benign_signature_http_error(e):
-            logger.info(
-                "Skipping Gmail signature fetch: missing auth/scope for settings endpoint."
-            )
-            return ""
-        logger.error(f"Failed to fetch Gmail send-as signatures: {e}", exc_info=True)
-        raise _signature_fetch_tool_error(e) from e
-    except Exception as e:
-        logger.error(f"Failed to fetch Gmail send-as signatures: {e}", exc_info=True)
-        raise _signature_fetch_tool_error(e) from e
-
-    send_as_entries = response.get("sendAs", [])
-    if not send_as_entries:
-        return ""
-
-    if from_email:
-        from_email_normalized = from_email.strip().lower()
-        for entry in send_as_entries:
-            if entry.get("sendAsEmail", "").strip().lower() == from_email_normalized:
-                return entry.get("signature", "") or ""
-
-    for entry in send_as_entries:
-        if entry.get("isPrimary"):
-            return entry.get("signature", "") or ""
-
-    return send_as_entries[0].get("signature", "") or ""
+    signature_html, _display_name = await _get_send_as_settings(service, from_email)
+    return signature_html
 
 
 async def _get_send_as_signature_html_for_tool(
@@ -714,6 +744,13 @@ async def _get_send_as_signature_html_for_tool(
 ) -> str:
     """Fetch signature HTML and convert non-benign failures to tool errors."""
     return await _get_send_as_signature_html(service, from_email=from_email)
+
+
+async def _get_send_as_settings_for_tool(
+    service, from_email: Optional[str] = None
+) -> tuple[str, str]:
+    """Fetch send-as signature and display name for outbound mail tools."""
+    return await _get_send_as_settings(service, from_email=from_email)
 
 
 def _format_attachment_result(attached_count: int, requested_count: int) -> str:
@@ -2136,7 +2173,9 @@ async def get_gmail_attachment_content(
     ),
 )
 @handle_http_errors("send_gmail_message", service_type="gmail")
-@require_google_service("gmail", ["gmail_read", GMAIL_SEND_SCOPE])
+@require_google_service(
+    "gmail", ["gmail_read", GMAIL_SEND_SCOPE, "gmail_settings_basic"]
+)
 async def send_gmail_message(
     service,
     user_google_email: str,
@@ -2378,16 +2417,20 @@ async def send_gmail_message(
     # Use from_email (Send As alias) if provided, otherwise default to authenticated user
     sender_email = from_email or user_google_email
 
-    # Optionally append the Gmail signature from send-as settings, mirroring
-    # draft_gmail_message so sent mail respects the user's Settings > Signature.
+    # Fetch send-as signature and display name in one settings round trip when
+    # either is needed (mirrors Gmail web UI defaults for From + signature).
     send_body_content = body
-    if include_signature:
-        signature_html = await _get_send_as_signature_html_for_tool(
+    resolved_from_name = from_name
+    if include_signature or not resolved_from_name:
+        signature_html, auto_display_name = await _get_send_as_settings_for_tool(
             service, from_email=sender_email
         )
-        send_body_content = _append_signature_to_body(
-            send_body_content, body_format, signature_html
-        )
+        if include_signature:
+            send_body_content = _append_signature_to_body(
+                send_body_content, body_format, signature_html
+            )
+        if not resolved_from_name and auto_display_name:
+            resolved_from_name = auto_display_name
 
     resolved_attachments = await _resolve_url_attachments(attachments)
     raw_message, thread_id_final, attached_count, attachment_errors = (
@@ -2402,7 +2445,7 @@ async def send_gmail_message(
             references=references,
             body_format=body_format,
             from_email=sender_email,
-            from_name=from_name,
+            from_name=resolved_from_name,
             attachments=resolved_attachments if resolved_attachments else None,
         )
     )
