@@ -6,6 +6,8 @@ import hashlib
 import hmac
 import logging
 import os
+import secrets
+import threading
 import time
 from typing import Optional
 
@@ -13,15 +15,31 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_TTL_SECONDS = 3600
 
+_generated_key: Optional[bytes] = None
+_key_lock = threading.Lock()
+
 
 def _signing_key() -> bytes:
     material = (
         os.getenv("WORKSPACE_ATTACHMENT_SIGNING_KEY", "").strip()
         or os.getenv("FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY", "").strip()
         or os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "").strip()
-        or "workspace-mcp-dev-attachment-key"
     )
-    return material.encode("utf-8")
+    if material:
+        return material.encode("utf-8")
+
+    global _generated_key
+    with _key_lock:
+        if _generated_key is None:
+            _generated_key = secrets.token_bytes(32)
+            logger.warning(
+                "No attachment signing key configured; using a random "
+                "process-stable key. Attachment URLs become invalid after a "
+                "process restart. Set WORKSPACE_ATTACHMENT_SIGNING_KEY (or "
+                "FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY / "
+                "GOOGLE_OAUTH_CLIENT_SECRET) for stable tokens."
+            )
+        return _generated_key
 
 
 def mint_attachment_token(

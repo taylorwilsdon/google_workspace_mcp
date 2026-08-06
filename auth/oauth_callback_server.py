@@ -15,7 +15,6 @@ import socket
 import uvicorn
 
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse
 from typing import Optional
 from urllib.parse import urlparse
 from urllib.error import HTTPError, URLError
@@ -115,36 +114,14 @@ class MinimalOAuthServer:
 
     def _setup_attachment_route(self):
         """Setup the attachment serving route."""
-        from core.attachment_storage import get_attachment_storage
 
         @self.app.get("/attachments/{file_id}")
         async def serve_attachment(file_id: str, request: Request):
             """Serve a stored attachment file (requires HMAC download token)."""
-            from core.attachment_tokens import verify_attachment_token
+            from core.attachment_storage import serve_attachment_response
 
             token = request.query_params.get("token")
-            if not verify_attachment_token(file_id, token):
-                return JSONResponse({"error": "Unauthorized"}, status_code=401)
-
-            storage = get_attachment_storage()
-            metadata = storage.get_attachment_metadata(file_id)
-
-            if not metadata:
-                return JSONResponse(
-                    {"error": "Attachment not found or expired"}, status_code=404
-                )
-
-            file_path = storage.get_attachment_path(file_id)
-            if not file_path:
-                return JSONResponse(
-                    {"error": "Attachment file not found"}, status_code=404
-                )
-
-            return FileResponse(
-                path=str(file_path),
-                filename=metadata["filename"],
-                media_type=metadata["mime_type"],
-            )
+            return serve_attachment_response(file_id, token)
 
     def is_actually_running(self) -> bool:
         """

@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import os
+import threading
 import webbrowser
 
 from typing import List, Optional, Tuple, Dict, Any
@@ -160,24 +161,82 @@ def _find_any_credentials(
     return None, None
 
 
-def _email_from_verified_id_token(id_token_jwt: str) -> Optional[str]:
-    """Extract email from a Google id_token after full cryptographic verification."""
-    from auth.oauth_config import get_oauth_config
+_ID_TOKEN_VERIFY_TIMEOUT_SECONDS = 10
+_id_token_email_cache: Dict[str, Optional[str]] = {}
+_id_token_cache_lock = threading.Lock()
+_ID_TOKEN_CACHE_MAX = 256
 
-    client_id = get_oauth_config().client_id
-    if not client_id:
-        logger.debug("Cannot verify id_token without GOOGLE_OAUTH_CLIENT_ID")
-        return None
+
+def _resolve_oauth_client_id_for_verification() -> Optional[str]:
+    """Resolve OAuth client ID from config or the same client-secrets source as the flow."""
     try:
-        decoded = google_id_token.verify_oauth2_token(
-            id_token_jwt,
-            google_auth_requests.Request(),
-            audience=client_id,
-        )
-        return decoded.get("email")
+        from auth.oauth_config import get_oauth_config
+
+        client_id = get_oauth_config().client_id
+        if client_id:
+            return client_id
     except Exception as e:
-        logger.debug(f"id_token verification failed: {e}")
+        logger.debug(f"Could not load OAuth client_id from config: {e}")
+
+    try:
+        secrets = load_client_secrets(CONFIG_CLIENT_SECRETS_PATH)
+        return secrets.get("client_id")
+    except Exception as e:
+        logger.debug(f"Could not load OAuth client_id from client secrets: {e}")
         return None
+
+
+class _BoundedTimeoutRequest(google_auth_requests.Request):
+    """Request adapter that caps certificate-fetch timeouts."""
+
+    def __call__(
+        self, url, method="GET", body=None, headers=None, timeout=None, **kwargs
+    ):
+        return super().__call__(
+            url,
+            method=method,
+            body=body,
+            headers=headers,
+            timeout=_ID_TOKEN_VERIFY_TIMEOUT_SECONDS if timeout is None else timeout,
+            **kwargs,
+        )
+
+
+def _email_from_verified_id_token(id_token_jwt: str) -> Optional[str]:
+    """Extract email from a Google id_token after full cryptographic verification.
+
+    Results are cached per token string so repeated session saves avoid re-fetching
+    Google's certs. Callers on the event loop should use ``asyncio.to_thread``.
+    """
+    with _id_token_cache_lock:
+        if id_token_jwt in _id_token_email_cache:
+            return _id_token_email_cache[id_token_jwt]
+
+    client_id = _resolve_oauth_client_id_for_verification()
+    if not client_id:
+        logger.debug(
+            "Cannot verify id_token without a configured OAuth client ID "
+            "(env or client_secret.json)"
+        )
+        email: Optional[str] = None
+    else:
+        try:
+            decoded = google_id_token.verify_oauth2_token(
+                id_token_jwt,
+                _BoundedTimeoutRequest(),
+                audience=client_id,
+            )
+            email = decoded.get("email")
+        except Exception as e:
+            logger.debug(f"id_token verification failed: {e}")
+            email = None
+
+    with _id_token_cache_lock:
+        if len(_id_token_email_cache) >= _ID_TOKEN_CACHE_MAX:
+            # Drop an arbitrary old entry; tokens are short-lived JWTs.
+            _id_token_email_cache.pop(next(iter(_id_token_email_cache)), None)
+        _id_token_email_cache[id_token_jwt] = email
+    return email
 
 
 def save_credentials_to_session(session_id: str, credentials: Credentials):
@@ -938,7 +997,7 @@ async def handle_auth_callback(
 
         # If session_id is provided, also save to session cache for compatibility
         if session_id:
-            save_credentials_to_session(session_id, credentials)
+            await asyncio.to_thread(save_credentials_to_session, session_id, credentials)
 
         return user_google_email, credentials
 
@@ -1420,19 +1479,10 @@ async def get_authenticated_google_service(
 
     try:
         service = build(service_name, version, http=_build_authorized_http(credentials))
-        log_user_email = user_google_email
-
-        # Try to get email from credentials if needed for validation
-        if credentials and credentials.id_token:
-            token_email = _email_from_verified_id_token(credentials.id_token)
-            if token_email:
-                log_user_email = token_email
-                logger.info(f"[{tool_name}] Token email: {token_email}")
-
         logger.info(
-            f"[{tool_name}] Successfully authenticated {service_name} service for user: {log_user_email}"
+            f"[{tool_name}] Successfully authenticated {service_name} service for user: {user_google_email}"
         )
-        return service, log_user_email
+        return service, user_google_email
 
     except Exception as e:
         error_msg = f"[{tool_name}] Failed to build {service_name} service: {str(e)}"

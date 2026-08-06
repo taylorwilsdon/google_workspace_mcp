@@ -35,7 +35,7 @@ from core.config import (
     set_transport_mode as _set_transport_mode,
     get_oauth_redirect_uri as get_oauth_redirect_uri_for_current_mode,
 )
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastmcp import FastMCP
 from fastmcp.server.auth.providers.google import GoogleProvider
 from mcp.types import ToolAnnotations, Icon
@@ -50,6 +50,11 @@ logger = logging.getLogger(__name__)
 
 _auth_provider: Optional[GoogleProvider] = None
 _legacy_callback_registered = False
+
+
+class WeakJwtSigningKeyError(Exception):
+    """Raised when FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY is too short."""
+
 
 session_middleware = Middleware(MCPSessionMiddleware)
 
@@ -108,8 +113,10 @@ def _is_origin_allowed(origin: str) -> bool:
     # forbidden Origin header.
     if parsed.scheme in TRUSTED_ORIGIN_SCHEMES:
         return True
-    # Loopback Origins are NOT blanket-trusted: require explicit allowlist entry
-    # (or same-origin-as-Host, checked by the middleware separately).
+    # Loopback Origins are NOT blanket-trusted: require an explicit allowlist entry
+    # via OAUTH_ALLOWED_ORIGINS (or same-origin-as-Host, checked by the middleware
+    # separately). Cross-port local browser clients (e.g. http://localhost:5173)
+    # may receive 403 unless that origin is listed.
     normalized = _normalize_parsed(parsed)
     if not normalized:
         return False
@@ -409,7 +416,7 @@ def configure_server_for_http():
             """Validate JWT signing key override and derive the final JWT key."""
             if jwt_signing_key_override:
                 if len(jwt_signing_key_override.encode("utf-8")) < 32:
-                    raise ValueError(
+                    raise WeakJwtSigningKeyError(
                         "OAuth 2.1: FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY must be "
                         "at least 32 bytes. Refusing to start with a weak signing key."
                     )
@@ -746,16 +753,26 @@ async def health_check(request: Request):
 
 @server.custom_route("/health/details", methods=["GET"])
 async def health_details(request: Request):
-    """Authenticated health details (shared token or bearer present)."""
+    """Authenticated health details (requires WORKSPACE_HEALTH_TOKEN)."""
+    import hmac
+
     expected = os.getenv("WORKSPACE_HEALTH_TOKEN", "").strip()
+    if not expected:
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
     provided = (
         request.headers.get("x-health-token")
         or request.query_params.get("token")
         or ""
     ).strip()
     auth_header = (request.headers.get("authorization") or "").strip()
-    authorized = bool(expected and provided and provided == expected) or bool(
-        auth_header.lower().startswith("bearer ") and len(auth_header) > 16
+    if auth_header.lower().startswith("bearer "):
+        provided = provided or auth_header[7:].strip()
+
+    authorized = bool(
+        provided
+        and len(provided) == len(expected)
+        and hmac.compare_digest(provided, expected)
     )
     if not authorized:
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
@@ -777,31 +794,11 @@ async def health_details(request: Request):
 @server.custom_route("/attachments/{file_id}", methods=["GET"])
 async def serve_attachment(request: Request):
     """Serve a stored attachment file (requires HMAC download token)."""
-    from core.attachment_storage import get_attachment_storage
-    from core.attachment_tokens import verify_attachment_token
+    from core.attachment_storage import serve_attachment_response
 
     file_id = request.path_params["file_id"]
     token = request.query_params.get("token")
-    if not verify_attachment_token(file_id, token):
-        return JSONResponse({"error": "Unauthorized"}, status_code=401)
-
-    storage = get_attachment_storage()
-    metadata = storage.get_attachment_metadata(file_id)
-
-    if not metadata:
-        return JSONResponse(
-            {"error": "Attachment not found or expired"}, status_code=404
-        )
-
-    file_path = storage.get_attachment_path(file_id)
-    if not file_path:
-        return JSONResponse({"error": "Attachment file not found"}, status_code=404)
-
-    return FileResponse(
-        path=str(file_path),
-        filename=metadata["filename"],
-        media_type=metadata["mime_type"],
-    )
+    return serve_attachment_response(file_id, token)
 
 
 async def legacy_oauth2_callback(request: Request) -> HTMLResponse:

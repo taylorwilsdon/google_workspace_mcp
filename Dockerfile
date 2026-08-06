@@ -35,9 +35,9 @@ EXPOSE 8000
 ARG PORT
 EXPOSE ${PORT:-8000}
 
-# Health check (exec form; default container port)
+# Health check — resolve listener port like main.py: PORT, then WORKSPACE_MCP_PORT, then 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD curl -f http://127.0.0.1:8000/health || exit 1
+    CMD sh -c 'p="${PORT:-${WORKSPACE_MCP_PORT:-8000}}"; curl -f "http://127.0.0.1:${p}/health" || exit 1'
 
 # Optional tool selection via env (consumed by docker-entrypoint.sh, not shell CMD)
 ENV TOOL_TIER=""

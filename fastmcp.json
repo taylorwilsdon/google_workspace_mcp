@@ -14,8 +14,7 @@
     "port": 8000,
     "log_level": "INFO",
     "env": {
-      "MCP_ENABLE_OAUTH21": "true",
-      "OAUTHLIB_INSECURE_TRANSPORT": "1"
+      "MCP_ENABLE_OAUTH21": "true"
     }
   }
 }

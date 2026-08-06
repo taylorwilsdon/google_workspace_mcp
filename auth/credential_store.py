@@ -10,7 +10,7 @@ import logging
 import os
 import re
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 from urllib.parse import quote, unquote
 
@@ -38,13 +38,23 @@ def _credentials_from_stored_data(creds_data: dict, user_email: str) -> Credenti
         try:
             expiry = datetime.fromisoformat(creds_data["expiry"])
             if expiry.tzinfo is not None:
-                expiry = expiry.replace(tzinfo=None)
+                # google-auth expects naive UTC; convert aware values first.
+                expiry = expiry.astimezone(timezone.utc).replace(tzinfo=None)
         except (ValueError, TypeError) as e:
             logger.warning(f"Could not parse expiry time for {user_email}: {e}")
 
     cfg_client_id, cfg_client_secret = _configured_oauth_client()
+    stored_client_id = creds_data.get("client_id")
+    if cfg_client_id and stored_client_id and cfg_client_id != stored_client_id:
+        logger.warning(
+            "OAuth client_id mismatch for %s: configured=%s stored=%s "
+            "(using configured value)",
+            user_email,
+            cfg_client_id,
+            stored_client_id,
+        )
     # Backward compatible: older files may still contain client_id/secret.
-    client_id = cfg_client_id or creds_data.get("client_id")
+    client_id = cfg_client_id or stored_client_id
     client_secret = cfg_client_secret or creds_data.get("client_secret")
 
     return Credentials(

@@ -53,7 +53,7 @@ brew install gitleaks   # or: pipx install detect-secrets
 #     - id: gitleaks
 
 # CI example
-gitleaks detect --source . --verbose
+gitleaks detect --source . --verbose --redact
 ```
 
 For more information on securing your use of the project, see https://workspacemcp.com/privacy

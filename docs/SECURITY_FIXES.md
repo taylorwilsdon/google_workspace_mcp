@@ -58,7 +58,8 @@ schemas, and auth architecture are preserved unless a change was required for se
 
 ### V8 — Origin validation
 - **Root cause:** Any `localhost` Origin accepted.
-- **Change:** Loopback Origins must be allowlisted (or same-origin-as-Host). `vscode-webview://` scheme trust retained (IDE GUID hosts).
+- **Change:** Blanket loopback Origin trust was removed. Loopback Origins must be allowlisted via `OAUTH_ALLOWED_ORIGINS` (or same-origin-as-Host). `vscode-webview://` scheme trust retained (IDE GUID hosts).
+- **Upgrade note:** Cross-port local browser clients (e.g. `http://localhost:5173`) may now receive 403 unless listed in `OAUTH_ALLOWED_ORIGINS`.
 - **Regression:** Server’s own `base_url` remains allowlisted; add `OAUTH_ALLOWED_ORIGINS` for extra local ports.
 
 ### V9 — Health disclosure

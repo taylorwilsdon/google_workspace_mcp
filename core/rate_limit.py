@@ -7,7 +7,7 @@ import os
 import threading
 import time
 from collections import defaultdict, deque
-from typing import Deque, Dict, Tuple
+from typing import Deque, Dict, Set, Tuple
 
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -24,6 +24,13 @@ def _int_env(name: str, default: int) -> int:
         return value if value > 0 else default
     except ValueError:
         return default
+
+
+def _trusted_proxy_ips() -> Set[str]:
+    raw = os.getenv("WORKSPACE_TRUSTED_PROXY_IPS", "").strip()
+    if not raw:
+        return set()
+    return {part.strip() for part in raw.split(",") if part.strip()}
 
 
 class RateLimitMiddleware:
@@ -45,16 +52,23 @@ class RateLimitMiddleware:
             "true",
             "yes",
         }
+        self._trusted_proxies = _trusted_proxy_ips()
 
-    def _client_ip(self, scope: Scope) -> str:
-        headers = dict(scope.get("headers") or [])
-        forwarded = headers.get(b"x-forwarded-for")
-        if forwarded:
-            return forwarded.decode("latin-1").split(",")[0].strip() or "unknown"
+    def _direct_client_ip(self, scope: Scope) -> str:
         client = scope.get("client")
         if client and client[0]:
             return str(client[0])
         return "unknown"
+
+    def _client_ip(self, scope: Scope) -> str:
+        direct = self._direct_client_ip(scope)
+        # Only trust X-Forwarded-For when the immediate peer is a configured proxy.
+        if direct in self._trusted_proxies:
+            headers = dict(scope.get("headers") or [])
+            forwarded = headers.get(b"x-forwarded-for")
+            if forwarded:
+                return forwarded.decode("latin-1").split(",")[0].strip() or "unknown"
+        return direct
 
     def _bucket_and_limit(self, path: str) -> Tuple[str, int]:
         if path.startswith("/oauth") or path in {"/callback", "/auth/callback"}:
@@ -72,6 +86,11 @@ class RateLimitMiddleware:
             cutoff = now - self._window
             while q and q[0] < cutoff:
                 q.popleft()
+            if not q:
+                # Drop empty deques after pruning; re-create for this allowed hit.
+                self._hits.pop(key, None)
+                self._hits[key].append(now)
+                return True
             if len(q) >= limit:
                 return False
             q.append(now)

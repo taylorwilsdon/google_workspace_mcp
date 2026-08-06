@@ -59,16 +59,58 @@ async def test_serve_attachment_uses_path_param_file_id(monkeypatch, tmp_path):
 async def test_serve_attachment_rejects_missing_token(monkeypatch, tmp_path):
     class DummyStorage:
         def get_attachment_metadata(self, _file_id):
-            return {"filename": "sample.pdf", "mime_type": "application/pdf"}
+            raise AssertionError("storage must not be reached without a valid token")
 
         def get_attachment_path(self, _file_id):
-            return tmp_path / "sample.pdf"
+            raise AssertionError("storage must not be reached without a valid token")
 
     monkeypatch.setattr(
         "core.attachment_storage.get_attachment_storage", lambda: DummyStorage()
     )
 
     response = await serve_attachment(_build_request("abc123"))
+    assert isinstance(response, JSONResponse)
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_serve_attachment_rejects_token_for_different_file_id(monkeypatch):
+    class DummyStorage:
+        def get_attachment_metadata(self, _file_id):
+            raise AssertionError("storage must not be reached for wrong-file token")
+
+        def get_attachment_path(self, _file_id):
+            raise AssertionError("storage must not be reached for wrong-file token")
+
+    monkeypatch.setattr(
+        "core.attachment_storage.get_attachment_storage", lambda: DummyStorage()
+    )
+
+    token = mint_attachment_token("other-file")
+    response = await serve_attachment(_build_request("abc123", token))
+    assert isinstance(response, JSONResponse)
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_serve_attachment_rejects_expired_token(monkeypatch):
+    class DummyStorage:
+        def get_attachment_metadata(self, _file_id):
+            raise AssertionError("storage must not be reached for expired token")
+
+        def get_attachment_path(self, _file_id):
+            raise AssertionError("storage must not be reached for expired token")
+
+    monkeypatch.setattr(
+        "core.attachment_storage.get_attachment_storage", lambda: DummyStorage()
+    )
+
+    fixed_now = 1_700_000_000
+    monkeypatch.setattr("core.attachment_tokens.time.time", lambda: fixed_now)
+    token = mint_attachment_token("abc123", ttl_seconds=1)
+    monkeypatch.setattr("core.attachment_tokens.time.time", lambda: fixed_now + 10)
+
+    response = await serve_attachment(_build_request("abc123", token))
     assert isinstance(response, JSONResponse)
     assert response.status_code == 401
 
