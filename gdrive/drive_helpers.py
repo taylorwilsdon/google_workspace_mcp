@@ -537,6 +537,33 @@ TEXT_BASED_IMPORT_MIME_TYPES = {
     "application/rtf",
 }
 
+# Target MIME types whose bytes can be safely built from an in-memory UTF-8
+# `content` string on the raw-media (no-conversion) replacement path. This is
+# distinct from TEXT_BASED_IMPORT_MIME_TYPES (which gates source formats fed to
+# Drive's conversion engine). Any `text/*` type qualifies; these non-text MIME
+# types are textual payloads that are also safe to encode from a string.
+TEXT_BASED_RAW_MIME_TYPES = {
+    "application/json",
+    "application/xml",
+    "application/rtf",
+    "application/x-yaml",
+    "application/yaml",
+    "image/svg+xml",
+}
+
+
+def _is_text_based_target(mime_type: Optional[str]) -> bool:
+    """True when a target MIME type's bytes can be built from a UTF-8 string.
+
+    Used by the raw-media replacement path to decide whether in-memory
+    ``content`` is acceptable, or whether the caller must supply binary bytes
+    via ``file_path``/``file_url``.
+    """
+    if not mime_type:
+        return False
+    base = mime_type.split(";", 1)[0].strip().lower()
+    return base.startswith("text/") or base in TEXT_BASED_RAW_MIME_TYPES
+
 
 def _detect_source_format(
     file_name: str,
@@ -684,3 +711,92 @@ async def _resolve_import_media(
         chunksize=UPLOAD_CHUNK_SIZE_BYTES,
     )
     return media, source_mime_type, remote_file_data
+
+
+async def _resolve_raw_media(
+    *,
+    tool_name: str,
+    mime_type: str,
+    content: Optional[str],
+    file_path: Optional[str],
+    file_url: Optional[str],
+) -> Tuple[MediaIoBaseUpload, Optional[BinaryIO]]:
+    """
+    Resolve a content source into a raw (no-conversion) ``MediaIoBaseUpload``.
+
+    Unlike :func:`_resolve_import_media`, the bytes are uploaded with the
+    *target* ``mime_type`` and stored verbatim by Drive — no format conversion.
+    Used to replace the bytes of a non-native Drive file (PDF, PNG, ZIP, ...)
+    in place, preserving its fileId, sharing, comments, and links.
+
+    Exactly one of ``content``, ``file_path``, or ``file_url`` must be provided.
+    ``content`` is only valid when ``mime_type`` is text-based (see
+    :func:`_is_text_based_target`); binary targets require ``file_path`` or
+    ``file_url``.
+
+    Returns ``(media, closeable)``; when the source is a remote URL,
+    ``closeable`` is the download stream the caller must close after upload
+    (else ``None``).
+    """
+    source_count = sum(1 for x in (content, file_path, file_url) if x is not None)
+    if source_count == 0:
+        raise ValueError(
+            "You must provide one of: 'content', 'file_path', or 'file_url'."
+        )
+    if source_count > 1:
+        raise ValueError("Provide only one of: 'content', 'file_path', or 'file_url'.")
+
+    file_data: bytes
+    remote_file_data: Optional[BinaryIO] = None
+
+    if content is not None:
+        if not _is_text_based_target(mime_type):
+            raise ValueError(
+                f"[{tool_name}] 'content' (a text string) cannot replace a binary "
+                f"target of type '{mime_type}'. Provide 'file_path' or 'file_url' "
+                f"with the raw bytes instead."
+            )
+        file_data = content.encode("utf-8")
+        logger.info(
+            f"[{tool_name}] Using content for raw upload: {len(file_data)} bytes"
+        )
+
+    elif file_path is not None:
+        parsed_url = urlparse(file_path)
+        if parsed_url.scheme == "file":
+            raw_path = parsed_url.path or ""
+            netloc = parsed_url.netloc
+            if netloc and netloc.lower() != "localhost":
+                raw_path = f"//{netloc}{raw_path}"
+            actual_path = url2pathname(raw_path)
+        elif parsed_url.scheme == "":
+            actual_path = file_path
+        else:
+            raise ValueError(
+                f"file_path should be a local path or file:// URL, got: {file_path}"
+            )
+
+        path_obj = validate_file_path(actual_path)
+        if not path_obj.exists():
+            raise FileNotFoundError(f"File not found: {actual_path}")
+        if not path_obj.is_file():
+            raise ValueError(f"Path is not a file: {actual_path}")
+
+        file_data = await asyncio.to_thread(path_obj.read_bytes)
+        logger.info(
+            f"[{tool_name}] Read local file for raw upload: {len(file_data)} bytes"
+        )
+
+    else:  # file_url is not None
+        parsed_url = urlparse(file_url)
+        if parsed_url.scheme not in ("http", "https"):
+            raise ValueError(f"file_url must be http:// or https://, got: {file_url}")
+        remote_file_data, _remote_content_type = await _download_url_to_bytes(file_url)
+
+    media = MediaIoBaseUpload(
+        remote_file_data if remote_file_data is not None else io.BytesIO(file_data),
+        mimetype=mime_type,  # Target format stored verbatim — no conversion
+        resumable=True,
+        chunksize=UPLOAD_CHUNK_SIZE_BYTES,
+    )
+    return media, remote_file_data

@@ -46,6 +46,7 @@ from gdrive.drive_helpers import (
     GOOGLE_SLIDES_MIME_TYPE,
     UPLOAD_CHUNK_SIZE_BYTES,
     _resolve_import_media,
+    _resolve_raw_media,
     _stream_url_with_validation,
     build_drive_list_params,
     check_public_link_permission,
@@ -1788,10 +1789,17 @@ async def update_drive_file(
     Updates metadata, properties, and/or content of a Google Drive file.
 
     Providing one of ``content``, ``file_path``, or ``file_url`` replaces the file's
-    content in place. The source is uploaded with its source MIME type so the Drive
-    API applies the same format conversion as import_to_google_doc (markdown headings,
-    tables, bold, etc.) while preserving the existing file ID, sharing, comments, and
-    links. Metadata and content can be updated in a single call.
+    content in place, preserving the existing fileId, sharing, comments, and links.
+
+    - For native Google files (Docs/Sheets/Slides), the source is uploaded with its
+      *source* MIME type so Drive applies the same format conversion as
+      import_to_google_doc (markdown headings, tables, bold, etc.).
+    - For any other type (PDF, PNG, ZIP, CSV-as-file, etc.), the bytes are uploaded
+      raw with the file's *target* MIME type and stored verbatim — no conversion.
+      Binary targets must be supplied via ``file_path`` or ``file_url``; a ``content``
+      string is accepted only for text-based targets (text/*, application/json, etc.).
+
+    Metadata and content can be updated in a single call.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
@@ -1806,11 +1814,15 @@ async def update_drive_file(
         writers_can_share (Optional[bool]): Whether editors can share the file.
         copy_requires_writer_permission (Optional[bool]): Whether copying requires writer permission.
         properties (Optional[dict]): Custom key-value properties for the file.
-        content (Optional[str]): New text content for text-based formats (markdown, TXT, HTML).
-        file_path (Optional[str]): Local file path for binary formats (DOCX, ODT). Supports file:// URLs.
+        content (Optional[str]): New text content. For native targets, text-based source
+            formats (markdown, TXT, HTML); for non-native targets, only text-based types
+            (text/*, application/json, etc.) — binary targets require file_path/file_url.
+        file_path (Optional[str]): Local file path. Required for binary non-native targets
+            (PDF, PNG, ZIP) and binary source formats (DOCX, ODT). Supports file:// URLs.
         file_url (Optional[str]): Remote http(s) URL to fetch new content from.
         source_format (Optional[str]): Source format hint for conversion
             (md, markdown, docx, txt, html, rtf, odt). Auto-detected when omitted.
+            Ignored for non-native raw replacement (bytes stored verbatim).
             Provide at most one of content/file_path/file_url.
 
     Returns:
@@ -1880,33 +1892,36 @@ async def update_drive_file(
     if update_body:
         query_params["body"] = update_body
 
-    # Replacement content is uploaded with its source MIME type so Drive converts it
-    # into the file's existing type — the same engine import_to_google_doc uses.
+    # Replacement content. Native targets (Docs/Sheets/Slides) are uploaded with
+    # their *source* MIME type so Drive converts them (the import_to_google_doc
+    # engine). Non-native targets (PDF, images, etc.) are uploaded as raw media
+    # with the *target* MIME type, replacing the bytes in place while preserving
+    # the fileId, sharing, comments, and links.
     replacing_content = any(x is not None for x in (content, file_path, file_url))
     remote_file_data = None
     if replacing_content:
         target_mime_type = mime_type or current_file.get("mimeType")
         format_map = IMPORT_FORMATS_BY_GOOGLE_MIME_TYPE.get(target_mime_type)
-        if format_map is None:
-            supported_targets = ", ".join(
-                mime for mime in IMPORT_FORMATS_BY_GOOGLE_MIME_TYPE
+        if format_map is not None:
+            # Native target: upload-with-conversion (unchanged path).
+            media, _source_mime_type, remote_file_data = await _resolve_import_media(
+                tool_name="update_drive_file",
+                file_name=name or current_file.get("name", ""),
+                content=content,
+                file_path=file_path,
+                file_url=file_url,
+                source_format=source_format,
+                format_map=format_map,
             )
-            raise ValueError(
-                "Content replacement with conversion is only supported for native "
-                f"Google Docs, Sheets, and Slides files. Current target MIME type: "
-                f"{target_mime_type or 'unknown'}. Supported target MIME types: "
-                f"{supported_targets}."
+        else:
+            # Non-native target: replace bytes in place, no conversion.
+            media, remote_file_data = await _resolve_raw_media(
+                tool_name="update_drive_file",
+                mime_type=target_mime_type,
+                content=content,
+                file_path=file_path,
+                file_url=file_url,
             )
-
-        media, _source_mime_type, remote_file_data = await _resolve_import_media(
-            tool_name="update_drive_file",
-            file_name=name or current_file.get("name", ""),
-            content=content,
-            file_path=file_path,
-            file_url=file_url,
-            source_format=source_format,
-            format_map=format_map,
-        )
         query_params["media_body"] = media
 
     # Perform the update
@@ -1972,9 +1987,17 @@ async def update_drive_file(
         changes.append(f"   • Updated custom properties: {properties}")
     if replacing_content:
         source = "content" if content is not None else (file_path or file_url)
-        changes.append(
-            f"   • Replaced content from {source} (converted to {updated_file.get('mimeType', current_file.get('mimeType', 'file type'))})"
+        result_mime = updated_file.get(
+            "mimeType", current_file.get("mimeType", "file type")
         )
+        if IMPORT_FORMATS_BY_GOOGLE_MIME_TYPE.get(target_mime_type) is not None:
+            changes.append(
+                f"   • Replaced content from {source} (converted to {result_mime})"
+            )
+        else:
+            changes.append(
+                f"   • Replaced content from {source} (stored as {result_mime}, in place)"
+            )
 
     if changes:
         output_parts.append("")

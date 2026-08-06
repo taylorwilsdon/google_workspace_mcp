@@ -2031,26 +2031,137 @@ async def test_update_drive_file_replaces_sheet_content_with_sheet_formats(
 
 @pytest.mark.asyncio
 @patch("gdrive.drive_tools.resolve_drive_item", new_callable=AsyncMock)
-async def test_update_drive_file_rejects_content_replacement_for_unsupported_targets(
+async def test_update_drive_file_rejects_string_content_for_binary_target(
     mock_resolve_item,
 ):
-    """Non-Google Apps files fail before an ambiguous conversion upload."""
+    """A `content` string cannot replace a binary target (PDF): fail before upload."""
     mock_resolve_item.return_value = (
         "pdf123",
         {"name": "Report.pdf", "mimeType": "application/pdf"},
     )
     mock_service = Mock()
 
-    with pytest.raises(ValueError, match="only supported for native Google Docs"):
+    with pytest.raises(ValueError, match="cannot replace a binary target"):
         await _unwrap(update_drive_file)(
             service=mock_service,
             user_google_email="user@example.com",
             file_id="pdf123",
             content="# Replacement",
-            source_format="md",
         )
 
     mock_service.files.return_value.update.return_value.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_helpers.validate_file_path")
+@patch("gdrive.drive_tools.resolve_drive_item", new_callable=AsyncMock)
+async def test_update_drive_file_replaces_pdf_via_file_path(
+    mock_resolve_item, mock_validate_path
+):
+    """A PDF's bytes are replaced in place from a local file_path, no conversion."""
+    mock_resolve_item.return_value = (
+        "pdf123",
+        {"name": "Report.pdf", "mimeType": "application/pdf"},
+    )
+
+    fake_path = Mock()
+    fake_path.exists.return_value = True
+    fake_path.is_file.return_value = True
+    fake_path.read_bytes.return_value = b"%PDF-1.7 fake bytes"
+    mock_validate_path.return_value = fake_path
+
+    mock_service = Mock()
+    mock_service.files().update().execute.return_value = {
+        "id": "pdf123",
+        "name": "Report.pdf",
+        "mimeType": "application/pdf",
+        "webViewLink": "https://drive.google.com/file/d/pdf123",
+    }
+
+    result = await _unwrap(update_drive_file)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        file_id="pdf123",
+        file_path="/tmp/Report.pdf",
+    )
+
+    update_kwargs = mock_service.files.return_value.update.call_args.kwargs
+    assert update_kwargs["fileId"] == "pdf123"
+    assert update_kwargs["media_body"].mimetype() == "application/pdf"
+    assert "body" not in update_kwargs  # content-only: no metadata body
+    execute_kwargs = (
+        mock_service.files.return_value.update.return_value.execute.call_args.kwargs
+    )
+    assert execute_kwargs["num_retries"] == 3
+    assert "Replaced content" in result
+    assert "in place" in result
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_helpers._download_url_to_bytes", new_callable=AsyncMock)
+@patch("gdrive.drive_tools.resolve_drive_item", new_callable=AsyncMock)
+async def test_update_drive_file_replaces_image_via_file_url(
+    mock_resolve_item, mock_download
+):
+    """An image's bytes are replaced in place from a remote file_url, no conversion."""
+    mock_resolve_item.return_value = (
+        "img123",
+        {"name": "logo.png", "mimeType": "image/png"},
+    )
+
+    spool = io.BytesIO(b"\x89PNG\r\n\x1a\n fake image bytes")
+    mock_download.return_value = (spool, "image/png")
+
+    mock_service = Mock()
+    mock_service.files().update().execute.return_value = {
+        "id": "img123",
+        "name": "logo.png",
+        "mimeType": "image/png",
+        "webViewLink": "https://drive.google.com/file/d/img123",
+    }
+
+    result = await _unwrap(update_drive_file)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        file_id="img123",
+        file_url="https://example.com/logo.png",
+    )
+
+    update_kwargs = mock_service.files.return_value.update.call_args.kwargs
+    assert update_kwargs["fileId"] == "img123"
+    assert update_kwargs["media_body"].mimetype() == "image/png"
+    mock_download.assert_awaited_once_with("https://example.com/logo.png")
+    assert spool.closed is True  # remote stream closed after upload
+    assert "Replaced content" in result
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_tools.resolve_drive_item", new_callable=AsyncMock)
+async def test_update_drive_file_replaces_text_target_via_content(mock_resolve_item):
+    """A text/* target accepts an in-memory `content` string for raw replacement."""
+    mock_resolve_item.return_value = (
+        "txt123",
+        {"name": "notes.txt", "mimeType": "text/plain"},
+    )
+
+    mock_service = Mock()
+    mock_service.files().update().execute.return_value = {
+        "id": "txt123",
+        "name": "notes.txt",
+        "mimeType": "text/plain",
+        "webViewLink": "https://drive.google.com/file/d/txt123",
+    }
+
+    result = await _unwrap(update_drive_file)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        file_id="txt123",
+        content="hello world",
+    )
+
+    update_kwargs = mock_service.files.return_value.update.call_args.kwargs
+    assert update_kwargs["media_body"].mimetype() == "text/plain"
+    assert "Replaced content" in result
 
 
 @pytest.mark.asyncio
