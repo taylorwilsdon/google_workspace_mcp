@@ -309,4 +309,7 @@ def get_attachment_url(file_id: str) -> str:
     else:
         base_url = f"{WORKSPACE_MCP_BASE_URI}:{WORKSPACE_MCP_PORT}"
 
-    return f"{base_url}/attachments/{file_id}"
+    from core.attachment_tokens import mint_attachment_token
+
+    token = mint_attachment_token(file_id)
+    return f"{base_url}/attachments/{file_id}?token={token}"

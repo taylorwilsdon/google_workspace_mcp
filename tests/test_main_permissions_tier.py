@@ -124,7 +124,7 @@ def test_resolve_bind_host_preserves_oauth21_streamable_http_default(monkeypatch
     )
     monkeypatch.delenv("WORKSPACE_MCP_HOST", raising=False)
 
-    assert main.resolve_bind_host_for_transport("streamable-http") == "0.0.0.0"
+    assert main.resolve_bind_host_for_transport("streamable-http") == "127.0.0.1"
 
 
 def test_validate_streamable_http_auth_rejects_unconfigured_oauth21(

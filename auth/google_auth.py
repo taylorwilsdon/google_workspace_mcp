@@ -3,7 +3,6 @@
 import asyncio
 import hashlib
 import json
-import jwt
 import logging
 import os
 import webbrowser
@@ -28,11 +27,14 @@ from auth.oauth_config import (
     is_stateless_mode,
     is_trust_gateway_identity,
 )
+from auth.oauthlib_transport import oauthlib_insecure_transport_scope
 from core.config import (
     get_transport_mode,
     get_oauth_redirect_uri,
 )
 from core.context import get_fastmcp_session_id
+from google.oauth2 import id_token as google_id_token
+from google.auth.transport import requests as google_auth_requests
 
 # Try to import FastMCP dependencies (may not be available in all environments)
 try:
@@ -158,18 +160,32 @@ def _find_any_credentials(
     return None, None
 
 
+def _email_from_verified_id_token(id_token_jwt: str) -> Optional[str]:
+    """Extract email from a Google id_token after full cryptographic verification."""
+    from auth.oauth_config import get_oauth_config
+
+    client_id = get_oauth_config().client_id
+    if not client_id:
+        logger.debug("Cannot verify id_token without GOOGLE_OAUTH_CLIENT_ID")
+        return None
+    try:
+        decoded = google_id_token.verify_oauth2_token(
+            id_token_jwt,
+            google_auth_requests.Request(),
+            audience=client_id,
+        )
+        return decoded.get("email")
+    except Exception as e:
+        logger.debug(f"id_token verification failed: {e}")
+        return None
+
+
 def save_credentials_to_session(session_id: str, credentials: Credentials):
     """Saves user credentials using OAuth21SessionStore."""
     # Get user email from credentials if possible
     user_email = None
     if credentials and credentials.id_token:
-        try:
-            decoded_token = jwt.decode(
-                credentials.id_token, options={"verify_signature": False}
-            )
-            user_email = decoded_token.get("email")
-        except Exception as e:
-            logger.debug(f"Could not decode id_token to get email: {e}")
+        user_email = _email_from_verified_id_token(credentials.id_token)
 
     if user_email:
         store = get_oauth21_session_store()
@@ -534,13 +550,8 @@ async def start_auth_flow(
     # Note: Caller should ensure OAuth callback is available before calling this function
 
     try:
-        if "OAUTHLIB_INSECURE_TRANSPORT" not in os.environ and (
-            "localhost" in redirect_uri or "127.0.0.1" in redirect_uri
-        ):  # Use passed redirect_uri
-            logger.warning(
-                "OAUTHLIB_INSECURE_TRANSPORT not set. Setting it for localhost/local development."
-            )
-            os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+        # Note: Caller should ensure OAuth callback is available before calling this function
+        # Insecure transport is scoped only during token exchange (see handle_oauth_callback).
 
         oauth_state = os.urandom(16).hex()
         current_scopes = get_current_scopes()
@@ -690,9 +701,8 @@ async def handle_auth_callback(
         redirect_uri: The redirect URI.
         credentials_base_dir: Base directory for credential files.
         session_id: Optional MCP session ID to associate with the credentials.
-        allow_missing_state_fallback: Whether to recover a missing callback state
-            from the most recently stored OAuth state. Only enable for local stdio
-            callbacks where there is no multi-user session context.
+        allow_missing_state_fallback: Deprecated and ignored. OAuth state is
+            always required; single-user mode no longer bypasses CSRF protection.
         client_secrets_path: (Deprecated) Path to client secrets file. Ignored if environment variables are set.
 
     Returns:
@@ -710,13 +720,6 @@ async def handle_auth_callback(
                 "The 'client_secrets_path' parameter is deprecated. Use GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET environment variables instead."
             )
 
-        # Allow HTTP for localhost in development
-        if "OAUTHLIB_INSECURE_TRANSPORT" not in os.environ:
-            logger.warning(
-                "OAUTHLIB_INSECURE_TRANSPORT not set. Setting it for localhost development."
-            )
-            os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
-
         # Allow partial scope grants without raising an exception.
         # When users decline some scopes on Google's consent screen,
         # oauthlib raises because the granted scopes differ from requested.
@@ -728,35 +731,16 @@ async def handle_auth_callback(
         state_values = parse_qs(parsed_response.query).get("state")
         state = state_values[0] if state_values else None
 
-        if state:
-            state_info = store.validate_and_consume_oauth_state(
-                state, session_id=session_id
-            )
-        elif (
-            allow_missing_state_fallback
-            and os.getenv("MCP_SINGLE_USER_MODE") == "1"
-            and session_id is None
-        ):
-            # stdio mode fallback: state may be absent from Google's redirect
-            # (e.g. when prompt=select_account is used with revoked credentials).
-            # Use the most recently stored state to recover the PKCE code_verifier.
-            logger.warning(
-                "OAuth callback missing state parameter; using most recent stored state (single-user stdio fallback)"
-            )
-            state_info = store.consume_latest_oauth_state(
-                initiating_session_id=session_id,
-                allow_any_session=True,
-            )
-            if not state_info:
-                raise ValueError(
-                    "Missing OAuth state parameter and no stored state available"
-                )
-        else:
+        if not state:
             raise ValueError("Missing OAuth state parameter")
+
+        state_info = store.validate_and_consume_oauth_state(
+            state, session_id=session_id
+        )
 
         logger.debug(
             "OAuth callback state %s for session %s",
-            (state[:8] if state else "<fallback>"),
+            state[:8],
             state_info.get("session_id") or "<unknown>",
         )
 
@@ -777,12 +761,13 @@ async def handle_auth_callback(
             autogenerate_code_verifier=False,
         )
 
-        # Exchange the authorization code for credentials
-        # Note: fetch_token will use the redirect_uri configured in the flow
+        # Exchange the authorization code for credentials.
+        # Scope insecure transport to this loopback exchange only (no process-wide leak).
         try:
-            await asyncio.to_thread(
-                flow.fetch_token, authorization_response=authorization_response
-            )
+            with oauthlib_insecure_transport_scope(redirect_uri):
+                await asyncio.to_thread(
+                    flow.fetch_token, authorization_response=authorization_response
+                )
             credentials = flow.credentials
         except Exception as exc:
             if _is_pkce_verifier_not_needed_error(exc):
@@ -1439,17 +1424,10 @@ async def get_authenticated_google_service(
 
         # Try to get email from credentials if needed for validation
         if credentials and credentials.id_token:
-            try:
-                # Decode without verification (just to get email for logging)
-                decoded_token = jwt.decode(
-                    credentials.id_token, options={"verify_signature": False}
-                )
-                token_email = decoded_token.get("email")
-                if token_email:
-                    log_user_email = token_email
-                    logger.info(f"[{tool_name}] Token email: {token_email}")
-            except Exception as e:
-                logger.debug(f"[{tool_name}] Could not decode id_token: {e}")
+            token_email = _email_from_verified_id_token(credentials.id_token)
+            if token_email:
+                log_user_email = token_email
+                logger.info(f"[{tool_name}] Token email: {token_email}")
 
         logger.info(
             f"[{tool_name}] Successfully authenticated {service_name} service for user: {log_user_email}"

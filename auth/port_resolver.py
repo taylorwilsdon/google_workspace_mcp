@@ -105,7 +105,7 @@ def resolve_port(
                 f"WORKSPACE_MCP_PORT_FALLBACK_COUNT must be an integer, got {raw!r}"
             ) from exc
     if host is None:
-        host = os.getenv("WORKSPACE_MCP_HOST", "0.0.0.0")
+        host = os.getenv("WORKSPACE_MCP_HOST", "127.0.0.1")
 
     candidates = _candidate_ports(preferred, fallback_count)
     for port in candidates:

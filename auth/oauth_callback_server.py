@@ -99,8 +99,6 @@ class MinimalOAuthServer:
                     authorization_response=str(request.url),
                     redirect_uri=redirect_uri,
                     session_id=None,
-                    allow_missing_state_fallback=os.getenv("MCP_SINGLE_USER_MODE")
-                    == "1",
                 )
 
                 logger.info(
@@ -121,7 +119,13 @@ class MinimalOAuthServer:
 
         @self.app.get("/attachments/{file_id}")
         async def serve_attachment(file_id: str, request: Request):
-            """Serve a stored attachment file."""
+            """Serve a stored attachment file (requires HMAC download token)."""
+            from core.attachment_tokens import verify_attachment_token
+
+            token = request.query_params.get("token")
+            if not verify_attachment_token(file_id, token):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
             storage = get_attachment_storage()
             metadata = storage.get_attachment_metadata(file_id)
 
