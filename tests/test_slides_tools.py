@@ -2,6 +2,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from core.server import server
 from core.utils import UserInputError
 from gslides.slides_tools import (
     _describe_elements,
@@ -9,6 +10,53 @@ from gslides.slides_tools import (
     _iter_text_bearing_elements,
     batch_update_presentation,
 )
+
+EXPECTED_SLIDES_BATCH_REQUEST_TYPES = {
+    "createSlide",
+    "createShape",
+    "createTable",
+    "insertText",
+    "insertTableRows",
+    "insertTableColumns",
+    "deleteTableRow",
+    "deleteTableColumn",
+    "replaceAllText",
+    "deleteObject",
+    "updatePageElementTransform",
+    "updateSlidesPosition",
+    "deleteText",
+    "createImage",
+    "createVideo",
+    "createSheetsChart",
+    "createLine",
+    "refreshSheetsChart",
+    "updateShapeProperties",
+    "updateImageProperties",
+    "updateVideoProperties",
+    "updatePageProperties",
+    "updateTableCellProperties",
+    "updateLineProperties",
+    "createParagraphBullets",
+    "replaceAllShapesWithImage",
+    "duplicateObject",
+    "updateTextStyle",
+    "replaceAllShapesWithSheetsChart",
+    "deleteParagraphBullets",
+    "updateParagraphStyle",
+    "updateTableBorderProperties",
+    "updateTableColumnProperties",
+    "updateTableRowProperties",
+    "mergeTableCells",
+    "unmergeTableCells",
+    "groupObjects",
+    "ungroupObjects",
+    "updatePageElementAltText",
+    "replaceImage",
+    "updateSlideProperties",
+    "updatePageElementsZOrder",
+    "updateLineCategory",
+    "rerouteLine",
+}
 
 
 def _unwrap(tool):
@@ -29,6 +77,92 @@ def _build_slides_service(presentation=None, batch_update_response=None):
         batch_update_response or {"replies": []}
     )
     return service, presentations
+
+
+@pytest.mark.asyncio
+async def test_batch_update_schema_exposes_slides_request_variants():
+    tools = await server.list_tools(run_middleware=False)
+    tool = next(tool for tool in tools if tool.name == "batch_update_presentation")
+
+    requests_schema = tool.parameters["properties"]["requests"]
+    request_variants = requests_schema["items"]["anyOf"]
+    request_types = {next(iter(variant["properties"])) for variant in request_variants}
+
+    assert requests_schema["minItems"] == 1
+    assert len(request_variants) == 44
+    assert request_types == EXPECTED_SLIDES_BATCH_REQUEST_TYPES
+
+    for variant in request_variants:
+        assert variant["additionalProperties"] is False
+        assert len(variant["properties"]) == 1
+        request_type = next(iter(variant["properties"]))
+        assert variant["required"] == [request_type]
+        request_payload = variant["properties"][request_type]
+        assert request_payload["additionalProperties"] is False
+        assert request_payload["properties"]
+
+    create_shape = next(
+        variant["properties"]["createShape"]
+        for variant in request_variants
+        if "createShape" in variant["properties"]
+    )
+    assert create_shape["additionalProperties"] is False
+    assert {
+        "objectId",
+        "shapeType",
+        "elementProperties",
+    }.issubset(create_shape["properties"])
+
+    create_line = next(
+        variant["properties"]["createLine"]
+        for variant in request_variants
+        if "createLine" in variant["properties"]
+    )
+    assert {"category", "lineCategory"}.issubset(create_line["properties"])
+
+    replace_shapes_with_image = next(
+        variant["properties"]["replaceAllShapesWithImage"]
+        for variant in request_variants
+        if "replaceAllShapesWithImage" in variant["properties"]
+    )
+    assert {"imageReplaceMethod", "replaceMethod"}.issubset(
+        replace_shapes_with_image["properties"]
+    )
+
+    update_text_style = next(
+        variant["properties"]["updateTextStyle"]
+        for variant in request_variants
+        if "updateTextStyle" in variant["properties"]
+    )
+    assert {
+        "backgroundColor",
+        "baselineOffset",
+        "fontFamily",
+        "link",
+        "smallCaps",
+        "strikethrough",
+    }.issubset(update_text_style["properties"]["style"]["properties"])
+
+    update_shape_properties = next(
+        variant["properties"]["updateShapeProperties"]
+        for variant in request_variants
+        if "updateShapeProperties" in variant["properties"]
+    )
+    solid_fill = update_shape_properties["properties"]["shapeProperties"]["properties"][
+        "shapeBackgroundFill"
+    ]["anyOf"][0]["properties"]["solidFill"]["anyOf"][0]
+    assert "color" in solid_fill["properties"]
+    assert "opaqueColor" not in solid_fill["properties"]
+
+    update_video_properties = next(
+        variant["properties"]["updateVideoProperties"]
+        for variant in request_variants
+        if "updateVideoProperties" in variant["properties"]
+    )
+    video_properties = update_video_properties["properties"]["videoProperties"][
+        "properties"
+    ]
+    assert {"autoPlay", "end", "mute", "outline", "start"} == set(video_properties)
 
 
 @pytest.mark.asyncio
@@ -196,6 +330,96 @@ async def test_batch_update_allows_insert_text_targeting_created_shape():
     assert call_kwargs["body"] == {"requests": requests}
     assert "Batch Update Completed" in result
     assert "Created shape with ID title_box" in result
+
+
+@pytest.mark.asyncio
+async def test_batch_update_strips_schema_nulls_before_google_api_call():
+    service, presentations = _build_slides_service(
+        batch_update_response={"replies": [{"createSlide": {"objectId": "slide_2"}}]}
+    )
+    requests = [
+        {
+            "createSlide": {
+                "objectId": "slide_2",
+                "insertionIndex": None,
+                "slideLayoutReference": None,
+            }
+        }
+    ]
+
+    await _unwrap(batch_update_presentation)(
+        service=service,
+        user_google_email="user@example.com",
+        presentation_id="presentation-1",
+        requests=requests,
+    )
+
+    call_kwargs = presentations.batchUpdate.call_args.kwargs
+    assert call_kwargs["body"] == {
+        "requests": [{"createSlide": {"objectId": "slide_2"}}]
+    }
+
+
+@pytest.mark.asyncio
+async def test_batch_update_prunes_nested_empty_schema_objects():
+    service, presentations = _build_slides_service()
+    requests = [
+        {
+            "updateTextStyle": {
+                "objectId": "title_box",
+                "textRange": {
+                    "type": "ALL",
+                    "startIndex": None,
+                    "endIndex": None,
+                },
+                "style": {
+                    "backgroundColor": {"opaqueColor": None},
+                    "baselineOffset": None,
+                    "bold": True,
+                    "fontFamily": None,
+                    "fontSize": None,
+                    "foregroundColor": {"opaqueColor": None},
+                    "italic": None,
+                    "link": {
+                        "url": None,
+                        "relativeLink": None,
+                        "pageObjectId": None,
+                        "slideIndex": None,
+                    },
+                    "smallCaps": None,
+                    "strikethrough": None,
+                    "underline": None,
+                    "weightedFontFamily": {
+                        "fontFamily": None,
+                        "weight": None,
+                    },
+                },
+                "fields": "bold",
+                "cellLocation": None,
+            }
+        }
+    ]
+
+    await _unwrap(batch_update_presentation)(
+        service=service,
+        user_google_email="user@example.com",
+        presentation_id="presentation-1",
+        requests=requests,
+    )
+
+    call_kwargs = presentations.batchUpdate.call_args.kwargs
+    assert call_kwargs["body"] == {
+        "requests": [
+            {
+                "updateTextStyle": {
+                    "objectId": "title_box",
+                    "textRange": {"type": "ALL"},
+                    "style": {"bold": True},
+                    "fields": "bold",
+                }
+            }
+        ]
+    }
 
 
 @pytest.mark.asyncio

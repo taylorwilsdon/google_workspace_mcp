@@ -6,8 +6,9 @@ This module provides MCP tools for interacting with Google Slides API.
 
 import logging
 import asyncio
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Annotated, Any, Dict, Iterator, List, Optional
 
+from pydantic import Field
 from mcp.types import ToolAnnotations
 
 from auth.service_decorator import require_google_service
@@ -15,6 +16,8 @@ from core.server import server
 from core.utils import handle_http_errors
 from core.comments import create_comment_tools
 from gslides.slides_helpers import (
+    SLIDES_BATCH_UPDATE_REQUESTS_JSON_SCHEMA_EXTRA,
+    strip_null_values,
     validate_batch_update_requests,
     validate_insert_text_targets,
 )
@@ -287,7 +290,18 @@ async def batch_update_presentation(
     service,
     user_google_email: str,
     presentation_id: str,
-    requests: List[Dict[str, Any]],
+    requests: Annotated[
+        List[Dict[str, Any]],
+        Field(
+            description=(
+                "List of Google Slides batchUpdate requests. Each item must "
+                "contain exactly one request type, such as createSlide, "
+                "createShape, insertText, updateTextStyle, createImage, or "
+                "deleteObject."
+            ),
+            json_schema_extra=SLIDES_BATCH_UPDATE_REQUESTS_JSON_SCHEMA_EXTRA,
+        ),
+    ],
 ) -> str:
     """
     Apply batch updates to a Google Slides presentation.
@@ -315,6 +329,8 @@ async def batch_update_presentation(
         f"[batch_update_presentation] Invoked. Email: '{user_google_email}', ID: '{presentation_id}', Requests: {len(requests)}"
     )
 
+    validate_batch_update_requests(requests)
+    requests = strip_null_values(requests)
     validate_batch_update_requests(requests)
     await validate_insert_text_targets(service, presentation_id, requests)
 
