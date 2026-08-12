@@ -1,6 +1,7 @@
 # auth/google_auth.py
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import jwt
@@ -158,11 +159,41 @@ def _find_any_credentials(
     return None, None
 
 
-def save_credentials_to_session(session_id: str, credentials: Credentials):
+@contextlib.contextmanager
+def _insecure_localhost_transport(redirect_uri: str):
+    """Scope OAUTHLIB_INSECURE_TRANSPORT to a single localhost OAuth operation.
+
+    Setting this env var globally (Vuln 1) silently downgrades every OAuthlib
+    operation in the process to allow plaintext HTTP. This context manager
+    sets it only while the specific localhost call is in flight, then restores
+    the previous value so the process-wide default is unaffected.
+    """
+    is_localhost = "localhost" in redirect_uri or "127.0.0.1" in redirect_uri
+    already_set = "OAUTHLIB_INSECURE_TRANSPORT" in os.environ
+    if not is_localhost or already_set:
+        yield
+        return
+    logger.warning(
+        "Temporarily enabling OAUTHLIB_INSECURE_TRANSPORT for localhost OAuth callback."
+    )
+    os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+    try:
+        yield
+    finally:
+        os.environ.pop("OAUTHLIB_INSECURE_TRANSPORT", None)
+
+
+def save_credentials_to_session(
+    session_id: str,
+    credentials: Credentials,
+    user_email: Optional[str] = None,
+):
     """Saves user credentials using OAuth21SessionStore."""
-    # Get user email from credentials if possible
-    user_email = None
-    if credentials and credentials.id_token:
+    # Prefer a caller-supplied verified email (e.g. from the userinfo endpoint).
+    # Fall back to JWT decode without signature verification only when no
+    # verified email is available, since the id_token is not checked against
+    # Google's JWKS here (Vuln 2 mitigation).
+    if not user_email and credentials and credentials.id_token:
         try:
             decoded_token = jwt.decode(
                 credentials.id_token, options={"verify_signature": False}
@@ -534,22 +565,15 @@ async def start_auth_flow(
     # Note: Caller should ensure OAuth callback is available before calling this function
 
     try:
-        if "OAUTHLIB_INSECURE_TRANSPORT" not in os.environ and (
-            "localhost" in redirect_uri or "127.0.0.1" in redirect_uri
-        ):  # Use passed redirect_uri
-            logger.warning(
-                "OAUTHLIB_INSECURE_TRANSPORT not set. Setting it for localhost/local development."
-            )
-            os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
-
         oauth_state = os.urandom(16).hex()
         current_scopes = get_current_scopes()
 
-        flow = create_oauth_flow(
-            scopes=current_scopes,  # Use scopes for enabled tools only
-            redirect_uri=redirect_uri,  # Use passed redirect_uri
-            state=oauth_state,
-        )
+        with _insecure_localhost_transport(redirect_uri):
+            flow = create_oauth_flow(
+                scopes=current_scopes,
+                redirect_uri=redirect_uri,
+                state=oauth_state,
+            )
 
         session_id = None
         try:
@@ -710,13 +734,6 @@ async def handle_auth_callback(
                 "The 'client_secrets_path' parameter is deprecated. Use GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET environment variables instead."
             )
 
-        # Allow HTTP for localhost in development
-        if "OAUTHLIB_INSECURE_TRANSPORT" not in os.environ:
-            logger.warning(
-                "OAUTHLIB_INSECURE_TRANSPORT not set. Setting it for localhost development."
-            )
-            os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
-
         # Allow partial scope grants without raising an exception.
         # When users decline some scopes on Google's consent screen,
         # oauthlib raises because the granted scopes differ from requested.
@@ -777,12 +794,13 @@ async def handle_auth_callback(
             autogenerate_code_verifier=False,
         )
 
-        # Exchange the authorization code for credentials
-        # Note: fetch_token will use the redirect_uri configured in the flow
+        # Exchange the authorization code for credentials.
+        # Scope OAUTHLIB_INSECURE_TRANSPORT to this call only (Vuln 1).
         try:
-            await asyncio.to_thread(
-                flow.fetch_token, authorization_response=authorization_response
-            )
+            with _insecure_localhost_transport(redirect_uri):
+                await asyncio.to_thread(
+                    flow.fetch_token, authorization_response=authorization_response
+                )
             credentials = flow.credentials
         except Exception as exc:
             if _is_pkce_verifier_not_needed_error(exc):
@@ -951,9 +969,9 @@ async def handle_auth_callback(
             issuer="https://accounts.google.com",  # Add issuer for Google tokens
         )
 
-        # If session_id is provided, also save to session cache for compatibility
+        # Pass the userinfo-verified email so JWT decode without sig check is skipped.
         if session_id:
-            save_credentials_to_session(session_id, credentials)
+            save_credentials_to_session(session_id, credentials, user_email=user_google_email)
 
         return user_google_email, credentials
 

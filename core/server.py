@@ -403,10 +403,11 @@ def configure_server_for_http():
         ) -> bytes:
             """Validate JWT signing key override and derive the final JWT key."""
             if jwt_signing_key_override:
-                if len(jwt_signing_key_override) < 12:
-                    logger.warning(
-                        "OAuth 2.1: FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY is less than 12 characters; "
-                        "use a longer secret to improve key derivation strength."
+                if len(jwt_signing_key_override) < 32:
+                    raise ValueError(
+                        f"FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY must be at least 32 characters "
+                        f"(got {len(jwt_signing_key_override)}). "
+                        "Generate with: python -c \"import secrets; print(secrets.token_hex(32))\""
                     )
                 return derive_jwt_key(
                     low_entropy_material=jwt_signing_key_override,
@@ -735,17 +736,7 @@ def get_auth_provider() -> Optional[GoogleProvider]:
 @server.custom_route("/", methods=["GET"])
 @server.custom_route("/health", methods=["GET"])
 async def health_check(request: Request):
-    try:
-        version = metadata.version("workspace-mcp")
-    except metadata.PackageNotFoundError:
-        version = "dev"
-    return JSONResponse(
-        {
-            "status": "healthy",
-            "service": "workspace-mcp",
-            "version": version,
-            "transport": get_transport_mode(),
-        }
+    return JSONResponse({"status": "ok"}
     )
 
 
