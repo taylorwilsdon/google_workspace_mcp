@@ -54,6 +54,9 @@ def _session_id_log_fingerprint(session_id: Optional[str]) -> str:
 
 
 # Constants
+GOOGLE_ACCOUNTS_URL = "https://accounts.google.com"
+
+
 def get_default_credentials_dir():
     """Get the default credentials directory path, preferring user-specific locations.
 
@@ -118,7 +121,7 @@ else:
 
 
 def _find_any_credentials(
-    base_dir: str = DEFAULT_CREDENTIALS_DIR,
+    _base_dir: str = DEFAULT_CREDENTIALS_DIR,
 ) -> tuple[Optional[Credentials], Optional[str]]:
     """
     Find and load any valid credentials from the credentials directory.
@@ -151,8 +154,8 @@ def _find_any_credentials(
             )
 
     except Exception as e:
-        logger.error(
-            f"[single-user] Error finding credentials via credential store: {e}"
+        logger.exception(
+            "[single-user] Error finding credentials via credential store"
         )
 
     logger.info("[single-user] No valid credentials found via credential store")
@@ -335,7 +338,7 @@ def load_client_secrets(client_secrets_path: str) -> Dict[str, Any]:
                 )
                 raise ValueError("Invalid client secrets file format")
     except (IOError, json.JSONDecodeError) as e:
-        logger.error(f"Error loading client secrets file {client_secrets_path}: {e}")
+        logger.exception(f"Error loading client secrets file {client_secrets_path}")
         raise
 
 
@@ -680,22 +683,21 @@ async def start_auth_flow(
 
     except FileNotFoundError as e:
         error_text = f"OAuth client credentials not found: {e}. Please either:\n1. Set environment variables: GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET\n2. Ensure '{CONFIG_CLIENT_SECRETS_PATH}' file exists"
-        logger.error(error_text, exc_info=True)
-        raise Exception(error_text)
+        logger.exception(error_text)
+        raise RuntimeError(error_text)
     except Exception as e:
         error_text = f"Could not initiate authentication for {user_display_name} due to an unexpected error: {str(e)}"
-        logger.error(
-            f"Failed to start the OAuth flow for {user_display_name}: {e}",
-            exc_info=True,
+        logger.exception(
+            f"Failed to start the OAuth flow for {user_display_name}",
         )
-        raise Exception(error_text)
+        raise RuntimeError(error_text)
 
 
 async def handle_auth_callback(
     scopes: List[str],
     authorization_response: str,
     redirect_uri: str,
-    credentials_base_dir: str = DEFAULT_CREDENTIALS_DIR,
+    _credentials_base_dir: str = DEFAULT_CREDENTIALS_DIR,
     session_id: Optional[str] = None,
     *,
     allow_missing_state_fallback: bool = False,
@@ -712,7 +714,7 @@ async def handle_auth_callback(
         scopes: List of OAuth scopes requested.
         authorization_response: The full callback URL from Google.
         redirect_uri: The redirect URI.
-        credentials_base_dir: Base directory for credential files.
+        _credentials_base_dir: Deprecated base directory for credential files (unused).
         session_id: Optional MCP session ID to associate with the credentials.
         allow_missing_state_fallback: Whether to recover a missing callback state
             from the most recently stored OAuth state. Only enable for local stdio
@@ -966,7 +968,7 @@ async def handle_auth_callback(
             scopes=credentials.scopes,
             expiry=credentials.expiry,
             mcp_session_id=session_id,
-            issuer="https://accounts.google.com",  # Add issuer for Google tokens
+            issuer=GOOGLE_ACCOUNTS_URL,  # Add issuer for Google tokens
         )
 
         # Pass the userinfo-verified email so JWT decode without sig check is skipped.
@@ -976,7 +978,7 @@ async def handle_auth_callback(
         return user_google_email, credentials
 
     except Exception as e:  # Catch specific exceptions like FlowExchangeError if needed
-        logger.error(f"Error handling auth callback: {e}")
+        logger.exception("Error handling auth callback")
         raise  # Re-raise for the caller
 
 
@@ -1074,11 +1076,11 @@ def get_credentials(
                                         scopes=credentials.scopes,
                                         expiry=credentials.expiry,
                                         mcp_session_id=session_id,
-                                        issuer="https://accounts.google.com",
+                                        issuer=GOOGLE_ACCOUNTS_URL,
                                     )
                         except Exception as e:
-                            logger.error(
-                                f"[get_credentials] Failed to refresh OAuth 2.1 credentials: {e}"
+                            logger.exception(
+                                "[get_credentials] Failed to refresh OAuth 2.1 credentials"
                             )
                             return None
 
@@ -1251,7 +1253,7 @@ def get_credentials(
                         scopes=credentials.scopes,
                         expiry=credentials.expiry,
                         mcp_session_id=session_id,
-                        issuer="https://accounts.google.com",  # Add issuer for Google tokens
+                        issuer=GOOGLE_ACCOUNTS_URL,  # Add issuer for Google tokens
                     )
 
             if session_id and (persist_succeeded or is_stateless_mode()):
@@ -1264,9 +1266,8 @@ def get_credentials(
             # For RefreshError, we should return None to trigger reauthentication
             return None
         except Exception as e:
-            logger.error(
-                f"[get_credentials] Error refreshing credentials: {e}. User: '{user_google_email}', Session: '{session_id}'",
-                exc_info=True,
+            logger.exception(
+                f"[get_credentials] Error refreshing credentials. User: '{user_google_email}', Session: '{session_id}'"
             )
             return None  # Failed to refresh
     else:
@@ -1308,11 +1309,11 @@ def get_user_info(
         logger.info(f"Successfully fetched user info: {user_info.get('email')}")
         return user_info
     except HttpError as e:
-        logger.error(f"HttpError fetching user info: {e.status_code} {e.reason}")
+        logger.exception(f"HttpError fetching user info: {e.status_code} {e.reason}")
         # Handle specific errors, e.g., 401 Unauthorized might mean token issue
         return None
     except Exception as e:
-        logger.error(f"Unexpected error fetching user info: {e}")
+        logger.exception("Unexpected error fetching user info")
         return None
     finally:
         if service:
@@ -1476,5 +1477,5 @@ async def get_authenticated_google_service(
 
     except Exception as e:
         error_msg = f"[{tool_name}] Failed to build {service_name} service: {str(e)}"
-        logger.error(error_msg, exc_info=True)
+        logger.exception(error_msg)
         raise GoogleAuthenticationError(error_msg)

@@ -62,7 +62,8 @@ def test_valid_assertion_returns_claims_and_email(monkeypatch, ec_keypair):
     _patch(monkeypatch, pub, _Cfg())
     token = _make(priv)
     claims = gi.verify_gateway_assertion(token)
-    assert claims is not None and claims["email"] == "andy@scientist.com"
+    assert claims is not None
+    assert claims["email"] == "andy@scientist.com"
     assert gi.extract_email_from_assertion(token) == "andy@scientist.com"
 
 

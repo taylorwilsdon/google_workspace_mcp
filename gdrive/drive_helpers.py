@@ -10,7 +10,6 @@ import io
 import logging
 import re
 from pathlib import Path
-from tempfile import SpooledTemporaryFile
 from typing import List, Dict, Any, Awaitable, BinaryIO, Callable, Optional, Tuple
 from urllib.parse import urlparse
 from urllib.request import url2pathname
@@ -200,13 +199,13 @@ def has_explicit_trashed_clause(query: str) -> bool:
 
 # Precompiled regex patterns for Drive query detection
 DRIVE_QUERY_PATTERNS = [
-    re.compile(r'\b\w+\s*(=|!=|>|<)\s*[\'"].*?[\'"]', re.IGNORECASE),  # field = 'value'
-    re.compile(r"\b\w+\s*(=|!=|>|<)\s*\d+", re.IGNORECASE),  # field = number
+    re.compile(r'\b\w+\s*(=|!=|>|<)\s*[\'"][^\'"]*[\'"]', re.IGNORECASE),
+    re.compile(r"\b\w+\s*(=|!=|>|<)\s*\d+", re.IGNORECASE),
     re.compile(r"\bcontains\b", re.IGNORECASE),  # contains operator
     re.compile(r"\bin\s+parents\b", re.IGNORECASE),  # in parents
     re.compile(r"\bhas\s*\{", re.IGNORECASE),  # has {properties}
     TRASHED_CLAUSE_PATTERN,  # trashed =/!= true/false
-    re.compile(r"\bstarred\s*=\s*(true|false)\b", re.IGNORECASE),  # starred=true/false
+    re.compile(r"\bstarred\s*=\s*(true|false)\b", re.IGNORECASE),
     re.compile(
         r'[\'"][^\'"]+[\'"]\s+in\s+parents', re.IGNORECASE
     ),  # 'parentId' in parents
@@ -292,6 +291,10 @@ def build_drive_list_params(
 GOOGLE_APPS_MIME_PREFIX = "application/vnd.google-apps."
 SHORTCUT_MIME_TYPE = "application/vnd.google-apps.shortcut"
 FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
+GOOGLE_DOCS_MIME_TYPE = "application/vnd.google-apps.document"
+GOOGLE_SHEETS_MIME_TYPE = "application/vnd.google-apps.spreadsheet"
+GOOGLE_SLIDES_MIME_TYPE = "application/vnd.google-apps.presentation"
+GOOGLE_JAM_MIME_TYPE = "application/vnd.google-apps.jam"
 
 # RFC 6838 token-style MIME type validation (safe for Drive query interpolation).
 MIME_TYPE_PATTERN = re.compile(r"^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+$")
@@ -299,35 +302,35 @@ MIME_TYPE_PATTERN = re.compile(r"^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+$")
 # Mapping from friendly type names to Google Drive MIME types.
 # Raw MIME type strings (containing '/') are always accepted as-is.
 FILE_TYPE_MIME_MAP: Dict[str, str] = {
-    "folder": "application/vnd.google-apps.folder",
-    "folders": "application/vnd.google-apps.folder",
-    "document": "application/vnd.google-apps.document",
-    "doc": "application/vnd.google-apps.document",
-    "documents": "application/vnd.google-apps.document",
-    "docs": "application/vnd.google-apps.document",
-    "spreadsheet": "application/vnd.google-apps.spreadsheet",
-    "sheet": "application/vnd.google-apps.spreadsheet",
-    "spreadsheets": "application/vnd.google-apps.spreadsheet",
-    "sheets": "application/vnd.google-apps.spreadsheet",
-    "presentation": "application/vnd.google-apps.presentation",
-    "presentations": "application/vnd.google-apps.presentation",
-    "slide": "application/vnd.google-apps.presentation",
-    "slides": "application/vnd.google-apps.presentation",
+    "folder": FOLDER_MIME_TYPE,
+    "folders": FOLDER_MIME_TYPE,
+    "document": GOOGLE_DOCS_MIME_TYPE,
+    "doc": GOOGLE_DOCS_MIME_TYPE,
+    "documents": GOOGLE_DOCS_MIME_TYPE,
+    "docs": GOOGLE_DOCS_MIME_TYPE,
+    "spreadsheet": GOOGLE_SHEETS_MIME_TYPE,
+    "sheet": GOOGLE_SHEETS_MIME_TYPE,
+    "spreadsheets": GOOGLE_SHEETS_MIME_TYPE,
+    "sheets": GOOGLE_SHEETS_MIME_TYPE,
+    "presentation": GOOGLE_SLIDES_MIME_TYPE,
+    "presentations": GOOGLE_SLIDES_MIME_TYPE,
+    "slide": GOOGLE_SLIDES_MIME_TYPE,
+    "slides": GOOGLE_SLIDES_MIME_TYPE,
     "form": "application/vnd.google-apps.form",
     "forms": "application/vnd.google-apps.form",
     "drawing": "application/vnd.google-apps.drawing",
     "drawings": "application/vnd.google-apps.drawing",
     "pdf": "application/pdf",
     "pdfs": "application/pdf",
-    "shortcut": "application/vnd.google-apps.shortcut",
-    "shortcuts": "application/vnd.google-apps.shortcut",
+    "shortcut": SHORTCUT_MIME_TYPE,
+    "shortcuts": SHORTCUT_MIME_TYPE,
     "script": "application/vnd.google-apps.script",
     "scripts": "application/vnd.google-apps.script",
     "site": "application/vnd.google-apps.site",
     "sites": "application/vnd.google-apps.site",
-    "jam": "application/vnd.google-apps.jam",
-    "jamboard": "application/vnd.google-apps.jam",
-    "jamboards": "application/vnd.google-apps.jam",
+    "jam": GOOGLE_JAM_MIME_TYPE,
+    "jamboard": GOOGLE_JAM_MIME_TYPE,
+    "jamboards": GOOGLE_JAM_MIME_TYPE,
 }
 
 
@@ -406,11 +409,11 @@ async def resolve_drive_item(
         shortcut_details = metadata.get("shortcutDetails") or {}
         target_id = shortcut_details.get("targetId")
         if not target_id:
-            raise Exception(f"Shortcut '{current_id}' is missing target details.")
+            raise RuntimeError(f"Shortcut '{current_id}' is missing target details.")
 
         depth += 1
         if depth > max_depth:
-            raise Exception(
+            raise RuntimeError(
                 f"Shortcut resolution exceeded {max_depth} hops starting from '{file_id}'."
             )
         current_id = target_id
@@ -432,7 +435,7 @@ async def resolve_folder_id(
     )
     mime_type = metadata.get("mimeType")
     if mime_type != FOLDER_MIME_TYPE:
-        raise Exception(
+        raise ValueError(
             f"Resolved ID '{resolved_id}' (from '{folder_id}') is not a folder; mimeType={mime_type}."
         )
     return resolved_id
@@ -477,29 +480,33 @@ async def _stream_url_with_validation(
 
 
 async def _download_url_to_bytes(url: str) -> Tuple[BinaryIO, Optional[str]]:
-    """Download a remote file into a spooled temporary file with bounded streaming."""
-    spool = SpooledTemporaryFile(max_size=UPLOAD_CHUNK_SIZE_BYTES)
+    """Download a remote file into an in-memory buffer with bounded streaming."""
+    buffer = io.BytesIO()
     try:
 
         async def _collect(chunk: bytes) -> None:
-            await asyncio.to_thread(spool.write, chunk)
+            buffer.write(chunk)
 
         _total_bytes, content_type = await _stream_url_with_validation(url, _collect)
-        await asyncio.to_thread(spool.seek, 0)
-        return spool, content_type
+        buffer.seek(0)
+        return buffer, content_type
     except Exception:
-        spool.close()
+        buffer.close()
         raise
 
 
+TEXT_MARKDOWN_MIME_TYPE = "text/markdown"
+TEXT_PLAIN_MIME_TYPE = "text/plain"
+TEXT_HTML_MIME_TYPE = "text/html"
+
 # Mapping of file extensions to source MIME types for Google Docs conversion
 GOOGLE_DOCS_IMPORT_FORMATS = {
-    ".md": "text/markdown",
-    ".markdown": "text/markdown",
-    ".txt": "text/plain",
-    ".text": "text/plain",
-    ".html": "text/html",
-    ".htm": "text/html",
+    ".md": TEXT_MARKDOWN_MIME_TYPE,
+    ".markdown": TEXT_MARKDOWN_MIME_TYPE,
+    ".txt": TEXT_PLAIN_MIME_TYPE,
+    ".text": TEXT_PLAIN_MIME_TYPE,
+    ".html": TEXT_HTML_MIME_TYPE,
+    ".htm": TEXT_HTML_MIME_TYPE,
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     ".doc": "application/msword",
     ".rtf": "application/rtf",
@@ -522,17 +529,13 @@ GOOGLE_SHEETS_IMPORT_FORMATS = {
     ".tsv": "text/tab-separated-values",
 }
 
-GOOGLE_DOCS_MIME_TYPE = "application/vnd.google-apps.document"
-GOOGLE_SLIDES_MIME_TYPE = "application/vnd.google-apps.presentation"
-GOOGLE_SHEETS_MIME_TYPE = "application/vnd.google-apps.spreadsheet"
-
 # Source MIME types safe to build from an in-memory `content` string. Binary
 # Office/OpenDocument formats must come from file_path/file_url; UTF-8 encoding
 # their bytes from a string would corrupt the upload and its conversion.
 TEXT_BASED_IMPORT_MIME_TYPES = {
-    "text/plain",
-    "text/markdown",
-    "text/html",
+    TEXT_PLAIN_MIME_TYPE,
+    TEXT_MARKDOWN_MIME_TYPE,
+    TEXT_HTML_MIME_TYPE,
     "text/csv",
     "text/tab-separated-values",
     "application/rtf",
@@ -568,9 +571,9 @@ def _detect_source_format(
         return format_map[ext]
 
     if content and (content.startswith("#") or "```" in content or "**" in content):
-        return "text/markdown"
+        return TEXT_MARKDOWN_MIME_TYPE
 
-    return "text/plain"
+    return TEXT_PLAIN_MIME_TYPE
 
 
 async def _resolve_import_media(

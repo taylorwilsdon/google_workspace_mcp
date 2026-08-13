@@ -680,7 +680,7 @@ def main():
             tool_imports[tool]()
             loaded.append(tool)
         except ModuleNotFoundError as exc:
-            logger.error("Failed to import tool '%s': %s", tool, exc, exc_info=True)
+            logger.exception("Failed to import tool '%s'", tool)
             failed.append((tool, exc))
 
     # Filter tools based on tier configuration (if tier-based loading is enabled)
@@ -795,13 +795,13 @@ def main():
         try:
             check_credentials_directory_permissions()
             ui.step("Credentials directory verified")
-        except (PermissionError, OSError) as e:
+        except OSError as e:
             ui.step("Credentials directory permission check failed", state="fail")
             ui.detail(str(e))
             ui.detail(
                 "Ensure the service can create and write to the credentials directory"
             )
-            logger.error(f"Failed credentials directory permission check: {e}")
+            logger.exception("Failed credentials directory permission check")
             sys.exit(1)
     else:
         if is_stateless_mode():
@@ -974,7 +974,7 @@ def main():
         sys.exit(0)
     except Exception as e:
         safe_print(f"\n❌ Server error: {e}")
-        logger.error(f"Unexpected error running server: {e}", exc_info=True)
+        logger.exception("Unexpected error running server")
         # Clean up OAuth callback server if running
         from auth.oauth_callback_server import cleanup_oauth_callback_server
 

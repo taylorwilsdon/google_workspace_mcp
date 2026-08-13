@@ -5,6 +5,8 @@ Shared utilities for Google Sheets operations including A1 parsing and
 conditional formatting helpers.
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
@@ -16,6 +18,7 @@ from core.utils import UserInputError
 logger = logging.getLogger(__name__)
 
 MAX_GRID_METADATA_CELLS = 5000
+UNKNOWN_CELL = "(unknown cell)"
 
 # Cap rows fetched by read_sheet_values before calling values().get.
 # Matches the tool default range (A1:Z1000). Open-ended or oversized A1
@@ -23,7 +26,7 @@ MAX_GRID_METADATA_CELLS = 5000
 MAX_READ_SHEET_ROWS = 1000
 
 A1_PART_REGEX = re.compile(r"^([A-Za-z]*)(\d*)$")
-SHEET_TITLE_SAFE_RE = re.compile(r"^[A-Za-z0-9_]+$")
+SHEET_TITLE_SAFE_RE = re.compile(r"^\w+$")
 COLUMN_LETTER_REGEX = re.compile(r"^[A-Za-z]+$")
 QUOTED_SHEET_ONLY_REGEX = re.compile(r"^'(?:[^']|'')+'$")
 
@@ -575,7 +578,7 @@ def _format_sheet_error_section(
 
     lines = []
     for item in errors[:max_details]:
-        cell = item.get("cell") or "(unknown cell)"
+        cell = item.get("cell") or UNKNOWN_CELL
         error_type = item.get("type")
         message = item.get("message")
         if error_type and message:
@@ -610,7 +613,7 @@ def _format_sheet_hyperlink_section(
 
     lines = []
     for item in hyperlinks[:max_details]:
-        cell = item.get("cell") or "(unknown cell)"
+        cell = item.get("cell") or UNKNOWN_CELL
         url = item.get("url") or "(missing url)"
         lines.append(f"- {cell}: {url}")
 
@@ -670,15 +673,9 @@ def _grid_range_to_a1(grid_range: dict, sheet_titles: dict[int, str]) -> str:
     end_label = f"{col_label(end_col - 1 if end_col is not None else None)}{row_label(end_row - 1 if end_row is not None else None)}"
 
     if start_label and end_label:
-        range_ref = (
-            start_label if start_label == end_label else f"{start_label}:{end_label}"
-        )
-    elif start_label:
-        range_ref = start_label
-    elif end_label:
-        range_ref = end_label
+        range_ref = start_label if start_label == end_label else f"{start_label}:{end_label}"
     else:
-        range_ref = ""
+        range_ref = start_label or end_label or ""
 
     return f"{sheet_title}!{range_ref}" if range_ref else sheet_title
 
@@ -835,8 +832,8 @@ def _select_sheet(sheets: List[dict], sheet_name: Optional[str]) -> dict:
 
 
 def _parse_condition_values(
-    condition_values: Optional[Union[str, List[Union[str, int, float]]]],
-) -> Optional[List[Union[str, int, float]]]:
+    condition_values: Union[str, List[Union[str, int, float]]] | None,
+) -> List[Union[str, int, float]] | None:
     """
     Normalize and validate condition_values into a list of strings/numbers.
     """
@@ -863,8 +860,8 @@ def _parse_condition_values(
 
 
 def _parse_gradient_points(
-    gradient_points: Optional[Union[str, List[dict]]],
-) -> Optional[List[dict]]:
+    gradient_points: Union[str, List[dict]] | None,
+) -> List[dict] | None:
     """
     Normalize gradient points into a list of dicts with type/value/color.
     Each point must have a 'type' (MIN, MAX, NUMBER, PERCENT, PERCENTILE) and a color.
@@ -920,9 +917,9 @@ def _parse_gradient_points(
 def _build_boolean_rule(
     ranges: List[dict],
     condition_type: str,
-    condition_values: Optional[List[Union[str, int, float]]],
-    background_color: Optional[str],
-    text_color: Optional[str],
+    condition_values: List[Union[str, int, float]] | None,
+    background_color: str | None,
+    text_color: str | None,
 ) -> tuple[dict, str]:
     """
     Build a Sheets boolean conditional formatting rule payload.
@@ -1050,7 +1047,7 @@ def _format_sheet_notes_section(
 
     lines = []
     for item in notes[:max_details]:
-        cell = item.get("cell") or "(unknown cell)"
+        cell = item.get("cell") or UNKNOWN_CELL
         note = item.get("note") or "(empty note)"
         lines.append(f"- {cell}: {note}")
 
@@ -1128,7 +1125,7 @@ def _format_sheet_formula_section(
 
     lines = []
     for item in formulas[:max_details]:
-        cell = item.get("cell") or "(unknown cell)"
+        cell = item.get("cell") or UNKNOWN_CELL
         formula = item.get("formula") or "(empty formula)"
         lines.append(f"- {cell}: {formula}")
 

@@ -91,6 +91,13 @@ LOW_VALUE_TEXT_FOOTER_MARKERS = (
 )
 LOW_VALUE_TEXT_HTML_DIFF_MIN = 80
 CONTENT_ID_SAFE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+\-@]*$")
+MIME_TEXT_PLAIN = "text/plain"
+MIME_TEXT_HTML = "text/html"
+MIME_OCTET_STREAM = "application/octet-stream"
+CONTENT_TRUNCATED = "\n\n[Content truncated...]"
+NO_SUBJECT = "(no subject)"
+ATTACHMENT_DOWNLOADED_MSG = "Attachment downloaded successfully!"
+ATTACHMENT_ID_NOTE = "\nNote: Attachment IDs are ephemeral. Always use IDs from the most recent message fetch."
 
 
 class _HTMLTextExtractor(HTMLParser):
@@ -170,9 +177,9 @@ def _extract_message_bodies(payload):
                 decoded_data = base64.urlsafe_b64decode(body_data).decode(
                     "utf-8", errors="ignore"
                 )
-                if mime_type == "text/plain" and not text_body:
+                if mime_type == MIME_TEXT_PLAIN and not text_body:
                     text_body = decoded_data
-                elif mime_type == "text/html" and not html_body:
+                elif mime_type == MIME_TEXT_HTML and not html_body:
                     html_body = decoded_data
             except Exception as e:
                 logger.warning(f"Failed to decode body part: {e}")
@@ -188,9 +195,9 @@ def _extract_message_bodies(payload):
                 "utf-8", errors="ignore"
             )
             mime_type = payload.get("mimeType", "")
-            if mime_type == "text/plain" and not text_body:
+            if mime_type == MIME_TEXT_PLAIN and not text_body:
                 text_body = decoded_data
-            elif mime_type == "text/html" and not html_body:
+            elif mime_type == MIME_TEXT_HTML and not html_body:
                 html_body = decoded_data
         except Exception as e:
             logger.warning(f"Failed to decode main payload body: {e}")
@@ -222,7 +229,7 @@ def _format_body_content(
             if len(html_stripped) > HTML_BODY_TRUNCATE_LIMIT:
                 return (
                     html_stripped[:HTML_BODY_TRUNCATE_LIMIT]
-                    + "\n\n[Content truncated...]"
+                    + CONTENT_TRUNCATED
                 )
             return html_stripped
         # Fall back to text body when no HTML is available
@@ -255,7 +262,7 @@ def _format_body_content(
     if use_html:
         content = html_text
         if len(content) > HTML_BODY_TRUNCATE_LIMIT:
-            content = content[:HTML_BODY_TRUNCATE_LIMIT] + "\n\n[Content truncated...]"
+            content = content[:HTML_BODY_TRUNCATE_LIMIT] + CONTENT_TRUNCATED
         return content
     elif text_stripped:
         return text_body
@@ -267,7 +274,7 @@ def _truncate_content(content: str, limit: int) -> str:
     """Truncate content to a readable length for tool responses."""
     if len(content) <= limit:
         return content
-    return content[:limit] + "\n\n[Content truncated...]"
+    return content[:limit] + CONTENT_TRUNCATED
 
 
 def _decode_raw_mime_content(raw_data: str) -> str:
@@ -280,7 +287,7 @@ def _decode_raw_mime_content(raw_data: str) -> str:
         decoded_raw = base64.urlsafe_b64decode(padded_raw).decode(
             "utf-8", errors="replace"
         )
-    except (binascii.Error, ValueError) as exc:
+    except ValueError as exc:
         return f"[Failed to decode raw MIME: {exc}]"
 
     return _truncate_content(decoded_raw, RAW_BODY_TRUNCATE_LIMIT)
@@ -290,7 +297,7 @@ def _format_message_header_lines(
     headers: Dict[str, str], message_id: Optional[str] = None
 ) -> List[str]:
     """Format standard Gmail message headers for response output."""
-    subject = headers.get("Subject", "(no subject)")
+    subject = headers.get("Subject", NO_SUBJECT)
     sender = headers.get("From", "(unknown sender)")
     to = headers.get("To", "")
     cc = headers.get("Cc", "")
@@ -377,7 +384,7 @@ async def _export_full_message(
         padded_raw = raw_data + "=" * (-len(raw_data) % 4)
         try:
             content_bytes = base64.urlsafe_b64decode(padded_raw)
-        except (binascii.Error, ValueError) as exc:
+        except ValueError as exc:
             return f"Error: failed to decode raw MIME content: {exc}"
         mime_type = "message/rfc822"
         extension = ".eml"
@@ -397,19 +404,19 @@ async def _export_full_message(
         if body_format == "html":
             if html_body.strip():
                 content_str = html_body
-                mime_type = "text/html"
+                mime_type = MIME_TEXT_HTML
                 extension = ".html"
             elif text_body.strip():
                 # No HTML part; fall back to plaintext and label it honestly.
                 content_str = text_body
-                mime_type = "text/plain"
+                mime_type = MIME_TEXT_PLAIN
                 extension = ".txt"
                 notes.append(
                     "No HTML body present; exported the plaintext body instead."
                 )
             else:
                 content_str = ""
-                mime_type = "text/html"
+                mime_type = MIME_TEXT_HTML
                 extension = ".html"
         else:  # text
             if text_body.strip():
@@ -418,7 +425,7 @@ async def _export_full_message(
                 content_str = _html_to_text(html_body)
             else:
                 content_str = ""
-            mime_type = "text/plain"
+            mime_type = MIME_TEXT_PLAIN
             extension = ".txt"
 
         if not content_str.strip():
@@ -471,7 +478,7 @@ async def _export_full_message(
     try:
         saved = await asyncio.to_thread(_save_export)
     except OSError as exc:
-        logger.error(f"[get_gmail_message_content] Failed to save message: {exc}")
+        logger.exception(f"[get_gmail_message_content] Failed to save message: {exc}")
         return f"Error: failed to save message to storage: {exc}"
 
     result_lines.append(f"Saved filename: {Path(saved.path).name}")
@@ -695,10 +702,10 @@ async def _get_send_as_signature_html(service, from_email: Optional[str] = None)
                 "Skipping Gmail signature fetch: missing auth/scope for settings endpoint."
             )
             return ""
-        logger.error(f"Failed to fetch Gmail send-as signatures: {e}", exc_info=True)
+        logger.exception(f"Failed to fetch Gmail send-as signatures: {e}")
         raise _signature_fetch_tool_error(e) from e
     except Exception as e:
-        logger.error(f"Failed to fetch Gmail send-as signatures: {e}", exc_info=True)
+        logger.exception(f"Failed to fetch Gmail send-as signatures: {e}")
         raise _signature_fetch_tool_error(e) from e
 
     send_as_entries = response.get("sendAs", [])
@@ -795,7 +802,7 @@ def _format_base64_content_block(urlsafe_b64_data: str) -> List[str]:
             f"\n📦 Base64 content ({len(standard_b64)} chars, standard base64):",
             standard_b64,
         ]
-    except (binascii.Error, ValueError) as e:
+    except ValueError as e:
         logger.warning(
             f"[get_gmail_attachment_content] Failed to convert attachment "
             f"to standard base64: {e}"
@@ -822,7 +829,7 @@ def _extract_attachments(payload: dict) -> List[Dict[str, Any]]:
             attachments.append(
                 {
                     "filename": part["filename"],
-                    "mimeType": part.get("mimeType", "application/octet-stream"),
+                    "mimeType": part.get("mimeType", MIME_OCTET_STREAM),
                     "size": part.get("body", {}).get("size", 0),
                     "attachmentId": part["body"]["attachmentId"],
                 }
@@ -1195,7 +1202,7 @@ async def _resolve_url_attachments(
             ct = resp.headers.get("content-type", "")
             # Strip parameters (e.g. "text/plain; charset=utf-8")
             ct_base = ct.split(";", 1)[0].strip()
-            if ct_base and ct_base != "application/octet-stream":
+            if ct_base and ct_base != MIME_OCTET_STREAM:
                 mime_type = ct_base
             elif filename:
                 mime_type, _ = mimetypes.guess_type(filename)
@@ -1319,7 +1326,7 @@ def _prepare_gmail_message(
                 if not filename:
                     filename = "attachment"
                 if not mime_type:
-                    mime_type = "application/octet-stream"
+                    mime_type = MIME_OCTET_STREAM
             elif file_path:
                 path_obj = validate_file_path(file_path)
                 if not path_obj.exists():
@@ -1335,7 +1342,7 @@ def _prepare_gmail_message(
                 if not mime_type:
                     mime_type, _ = mimetypes.guess_type(str(path_obj))
                     if not mime_type:
-                        mime_type = "application/octet-stream"
+                        mime_type = MIME_OCTET_STREAM
             elif content_base64:
                 if not filename:
                     logger.warning("Skipping attachment: missing filename")
@@ -1343,7 +1350,7 @@ def _prepare_gmail_message(
 
                 file_data = base64.b64decode(content_base64)
                 if not mime_type:
-                    mime_type = "application/octet-stream"
+                    mime_type = MIME_OCTET_STREAM
             else:
                 logger.warning("Skipping attachment: missing path, content, and url")
                 continue
@@ -1383,7 +1390,7 @@ def _prepare_gmail_message(
                         break
                 if target is None:
                     for part in message.walk():
-                        if part.get_content_type() == "text/html":
+                        if part.get_content_type() == MIME_TEXT_HTML:
                             target = part
                             break
                 if target is None:
@@ -1409,12 +1416,12 @@ def _prepare_gmail_message(
                 )
                 logger.info(f"Attached file: {safe_filename} ({len(file_data)} bytes)")
             attached_count += 1
-        except (binascii.Error, ValueError) as e:
-            logger.error(f"Failed to decode attachment {filename or file_path}: {e}")
+        except ValueError as e:
+            logger.exception(f"Failed to decode attachment {filename or file_path}: {e}")
             attachment_errors.append(_format_attachment_error(file_path, filename, e))
             continue
         except Exception as e:
-            logger.error(f"Failed to attach {filename or file_path}: {e}")
+            logger.exception(f"Failed to attach {filename or file_path}: {e}")
             attachment_errors.append(_format_attachment_error(file_path, filename, e))
             continue
 
@@ -1462,7 +1469,7 @@ async def _fetch_search_result_headers(
         ]
         results: Dict[str, Dict] = {}
 
-        def _batch_callback(request_id, response, exception):
+        def _batch_callback(request_id, response, exception, results=results):
             results[request_id] = {"data": response, "error": exception}
 
         try:
@@ -1597,7 +1604,7 @@ def _format_gmail_results_plain(
             else:
                 lines.extend(
                     [
-                        f"     Subject: {headers.get('Subject', '(no subject)')}",
+                        f"     Subject: {headers.get('Subject', NO_SUBJECT)}",
                         f"     From: {headers.get('From', '(unknown sender)')}",
                         f"     Date: {headers.get('Date', '(unknown date)')}",
                     ]
@@ -1933,7 +1940,7 @@ async def get_gmail_messages_content_batch(
     )
 
     if not message_ids:
-        raise Exception("No message IDs provided")
+        raise ValueError("No message IDs provided")
     _validate_message_batch_options(format, body_format)
 
     output_messages = []
@@ -1946,7 +1953,7 @@ async def get_gmail_messages_content_batch(
         chunk_ids = message_ids[chunk_start : chunk_start + GMAIL_BATCH_SIZE]
         results: Dict[str, Dict] = {}
 
-        def _batch_callback(request_id, response, exception):
+        def _batch_callback(request_id, response, exception, results=results):
             """Callback for batch requests"""
             results[request_id] = {"data": response, "error": exception}
 
@@ -2161,7 +2168,7 @@ async def get_gmail_attachment_content(
             .execute
         )
     except Exception as e:
-        logger.error(
+        logger.exception(
             f"[get_gmail_attachment_content] Failed to download attachment: {e}"
         )
         return (
@@ -2180,13 +2187,13 @@ async def get_gmail_attachment_content(
 
     if is_stateless_mode():
         result_lines = [
-            "Attachment downloaded successfully!",
+            ATTACHMENT_DOWNLOADED_MSG,
             f"Message ID: {message_id}",
             f"Size: {size_kb:.1f} KB ({size_bytes} bytes)",
             "\n⚠️ Stateless mode: File storage disabled.",
             "\nBase64-encoded content (first 100 characters shown):",
             f"{base64_data[:100]}...",
-            "\nNote: Attachment IDs are ephemeral. Always use IDs from the most recent message fetch.",
+            ATTACHMENT_ID_NOTE,
         ]
         if return_base64 and base64_data:
             result_lines.extend(_format_base64_content_block(base64_data))
@@ -2257,7 +2264,7 @@ async def get_gmail_attachment_content(
         saved_filename = Path(result.path).name
 
         result_lines = [
-            "Attachment downloaded successfully!",
+            ATTACHMENT_DOWNLOADED_MSG,
             f"Message ID: {message_id}",
             f"Filename: {filename or 'unknown'}",
             f"Saved filename: {saved_filename}",
@@ -2274,9 +2281,7 @@ async def get_gmail_attachment_content(
             result_lines.append(f"\n📎 Download URL: {download_url}")
             result_lines.append("\nThe file will expire after 1 hour.")
 
-        result_lines.append(
-            "\nNote: Attachment IDs are ephemeral. Always use IDs from the most recent message fetch."
-        )
+        result_lines.append(ATTACHMENT_ID_NOTE)
 
         if return_base64 and base64_data:
             result_lines.extend(_format_base64_content_block(base64_data))
@@ -2287,20 +2292,19 @@ async def get_gmail_attachment_content(
         return "\n".join(result_lines)
 
     except Exception as e:
-        logger.error(
+        logger.exception(
             f"[get_gmail_attachment_content] Failed to save attachment: {e}",
-            exc_info=True,
         )
         # Fallback to showing base64 preview
         result_lines = [
-            "Attachment downloaded successfully!",
+            ATTACHMENT_DOWNLOADED_MSG,
             f"Message ID: {message_id}",
             f"Size: {size_kb:.1f} KB ({size_bytes} bytes)",
             "\n⚠️ Failed to save attachment file. Showing preview instead.",
             "\nBase64-encoded content (first 100 characters shown):",
             f"{base64_data[:100]}...",
             f"\nError: {str(e)}",
-            "\nNote: Attachment IDs are ephemeral. Always use IDs from the most recent message fetch.",
+            ATTACHMENT_ID_NOTE,
         ]
         if return_base64 and base64_data:
             result_lines.extend(_format_base64_content_block(base64_data))
@@ -2699,7 +2703,7 @@ async def _forward_gmail_message_impl(
         # Fail loudly rather than silently delivering an incomplete forward when
         # the caller asked for the original attachments to be preserved.
         if failed_attachments:
-            raise Exception(
+            raise RuntimeError(
                 "Failed to include requested attachment(s): "
                 + ", ".join(failed_attachments)
             )
@@ -3043,7 +3047,7 @@ def _format_thread_content(
     # Extract thread subject from the first message
     first_message = messages[0]
     first_headers = _extract_headers(first_message.get("payload", {}), ["Subject"])
-    thread_subject = first_headers.get("Subject", "(no subject)")
+    thread_subject = first_headers.get("Subject", NO_SUBJECT)
 
     # Build the thread content
     content_lines = [
@@ -3061,7 +3065,7 @@ def _format_thread_content(
 
         sender = headers.get("From", "(unknown sender)")
         date = headers.get("Date", "(unknown date)")
-        subject = headers.get("Subject", "(no subject)")
+        subject = headers.get("Subject", NO_SUBJECT)
         to = headers.get("To", "")
         cc = headers.get("Cc", "")
         rfc822_message_id = headers.get("Message-ID", "")
@@ -3295,14 +3299,14 @@ async def get_gmail_threads_content_batch(
 
     output_threads = []
 
-    def _batch_callback(request_id, response, exception):
-        """Callback for batch requests"""
-        results[request_id] = {"data": response, "error": exception}
-
     # Process in smaller chunks to prevent SSL connection exhaustion
     for chunk_start in range(0, len(thread_ids), GMAIL_BATCH_SIZE):
         chunk_ids = thread_ids[chunk_start : chunk_start + GMAIL_BATCH_SIZE]
         results: Dict[str, Dict] = {}
+
+        def _batch_callback(request_id, response, exception, results=results):
+            """Callback for batch requests"""
+            results[request_id] = {"data": response, "error": exception}
 
         batch_completed = False
 
@@ -3490,10 +3494,10 @@ async def manage_gmail_label(
     )
 
     if action == "create" and not name:
-        raise Exception("Label name is required for create action.")
+        raise ValueError("Label name is required for create action.")
 
     if action in ["update", "delete"] and not label_id:
-        raise Exception("Label ID is required for update and delete actions.")
+        raise ValueError("Label ID is required for update and delete actions.")
 
     if action == "create":
         label_object = {
@@ -3744,7 +3748,7 @@ async def modify_gmail_message_labels(
     )
 
     if not add_label_ids and not remove_label_ids:
-        raise Exception(
+        raise ValueError(
             "At least one of add_label_ids or remove_label_ids must be provided."
         )
 
@@ -3808,7 +3812,7 @@ async def batch_modify_gmail_message_labels(
     )
 
     if not add_label_ids and not remove_label_ids:
-        raise Exception(
+        raise ValueError(
             "At least one of add_label_ids or remove_label_ids must be provided."
         )
 

@@ -1,47 +1,58 @@
 import re
 from typing import Dict, Optional, Tuple
 
+# API domain constants
+CALENDAR_API = "calendar-json.googleapis.com"
+DRIVE_API = "drive.googleapis.com"
+GMAIL_API = "gmail.googleapis.com"
+DOCS_API = "docs.googleapis.com"
+SHEETS_API = "sheets.googleapis.com"
+SLIDES_API = "slides.googleapis.com"
+FORMS_API = "forms.googleapis.com"
+TASKS_API = "tasks.googleapis.com"
+CHAT_API = "chat.googleapis.com"
+CUSTOMSEARCH_API = "customsearch.googleapis.com"
 
 API_ENABLEMENT_LINKS: Dict[str, str] = {
-    "calendar-json.googleapis.com": "https://console.cloud.google.com/flows/enableapi?apiid=calendar-json.googleapis.com",
-    "drive.googleapis.com": "https://console.cloud.google.com/flows/enableapi?apiid=drive.googleapis.com",
-    "gmail.googleapis.com": "https://console.cloud.google.com/flows/enableapi?apiid=gmail.googleapis.com",
-    "docs.googleapis.com": "https://console.cloud.google.com/flows/enableapi?apiid=docs.googleapis.com",
-    "sheets.googleapis.com": "https://console.cloud.google.com/flows/enableapi?apiid=sheets.googleapis.com",
-    "slides.googleapis.com": "https://console.cloud.google.com/flows/enableapi?apiid=slides.googleapis.com",
-    "forms.googleapis.com": "https://console.cloud.google.com/flows/enableapi?apiid=forms.googleapis.com",
-    "tasks.googleapis.com": "https://console.cloud.google.com/flows/enableapi?apiid=tasks.googleapis.com",
-    "chat.googleapis.com": "https://console.cloud.google.com/flows/enableapi?apiid=chat.googleapis.com",
-    "customsearch.googleapis.com": "https://console.cloud.google.com/flows/enableapi?apiid=customsearch.googleapis.com",
+    CALENDAR_API: f"https://console.cloud.google.com/flows/enableapi?apiid={CALENDAR_API}",
+    DRIVE_API: f"https://console.cloud.google.com/flows/enableapi?apiid={DRIVE_API}",
+    GMAIL_API: f"https://console.cloud.google.com/flows/enableapi?apiid={GMAIL_API}",
+    DOCS_API: f"https://console.cloud.google.com/flows/enableapi?apiid={DOCS_API}",
+    SHEETS_API: f"https://console.cloud.google.com/flows/enableapi?apiid={SHEETS_API}",
+    SLIDES_API: f"https://console.cloud.google.com/flows/enableapi?apiid={SLIDES_API}",
+    FORMS_API: f"https://console.cloud.google.com/flows/enableapi?apiid={FORMS_API}",
+    TASKS_API: f"https://console.cloud.google.com/flows/enableapi?apiid={TASKS_API}",
+    CHAT_API: f"https://console.cloud.google.com/flows/enableapi?apiid={CHAT_API}",
+    CUSTOMSEARCH_API: f"https://console.cloud.google.com/flows/enableapi?apiid={CUSTOMSEARCH_API}",
 }
 
 
 SERVICE_NAME_TO_API: Dict[str, str] = {
-    "Google Calendar": "calendar-json.googleapis.com",
-    "Google Drive": "drive.googleapis.com",
-    "Gmail": "gmail.googleapis.com",
-    "Google Docs": "docs.googleapis.com",
-    "Google Sheets": "sheets.googleapis.com",
-    "Google Slides": "slides.googleapis.com",
-    "Google Forms": "forms.googleapis.com",
-    "Google Tasks": "tasks.googleapis.com",
-    "Google Chat": "chat.googleapis.com",
-    "Google Custom Search": "customsearch.googleapis.com",
+    "Google Calendar": CALENDAR_API,
+    "Google Drive": DRIVE_API,
+    "Gmail": GMAIL_API,
+    "Google Docs": DOCS_API,
+    "Google Sheets": SHEETS_API,
+    "Google Slides": SLIDES_API,
+    "Google Forms": FORMS_API,
+    "Google Tasks": TASKS_API,
+    "Google Chat": CHAT_API,
+    "Google Custom Search": CUSTOMSEARCH_API,
 }
 
 
 INTERNAL_SERVICE_TO_API: Dict[str, str] = {
-    "calendar": "calendar-json.googleapis.com",
-    "drive": "drive.googleapis.com",
-    "gmail": "gmail.googleapis.com",
-    "docs": "docs.googleapis.com",
-    "sheets": "sheets.googleapis.com",
-    "slides": "slides.googleapis.com",
-    "forms": "forms.googleapis.com",
-    "tasks": "tasks.googleapis.com",
-    "chat": "chat.googleapis.com",
-    "customsearch": "customsearch.googleapis.com",
-    "search": "customsearch.googleapis.com",
+    "calendar": CALENDAR_API,
+    "drive": DRIVE_API,
+    "gmail": GMAIL_API,
+    "docs": DOCS_API,
+    "sheets": SHEETS_API,
+    "slides": SLIDES_API,
+    "forms": FORMS_API,
+    "tasks": TASKS_API,
+    "chat": CHAT_API,
+    "customsearch": CUSTOMSEARCH_API,
+    "search": CUSTOMSEARCH_API,
 }
 
 

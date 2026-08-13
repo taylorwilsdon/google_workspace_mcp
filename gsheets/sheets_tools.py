@@ -4,6 +4,8 @@ Google Sheets MCP Tools
 This module provides MCP tools for interacting with Google Sheets API.
 """
 
+from __future__ import annotations
+
 import logging
 import asyncio
 import json
@@ -343,7 +345,7 @@ async def modify_sheet_values(
     user_google_email: str,
     spreadsheet_id: str,
     range_name: str,
-    values: Optional[Union[str, List[List[str]]]] = None,
+    values: Union[str, List[List[str]]] | None = None,
     value_input_option: str = "USER_ENTERED",
     clear_values: bool = False,
 ) -> str:
@@ -479,7 +481,7 @@ async def _format_sheet_range_impl(
     bold: Optional[bool] = None,
     italic: Optional[bool] = None,
     font_size: Optional[int] = None,
-) -> str:
+) -> dict:
     """Internal implementation for format_sheet_range.
 
     Applies formatting to a Google Sheets range including colors, number formats,
@@ -809,11 +811,11 @@ async def manage_conditional_formatting(
     action: str,
     range_name: Optional[str] = None,
     condition_type: Optional[str] = None,
-    condition_values: Optional[Union[str, List[Union[str, int, float]]]] = None,
+    condition_values: Union[str, List[Union[str, int, float]]] | None = None,
     background_color: Optional[str] = None,
     text_color: Optional[str] = None,
     rule_index: Optional[int] = None,
-    gradient_points: Optional[Union[str, List[dict]]] = None,
+    gradient_points: Union[str, List[dict]] | None = None,
     sheet_name: Optional[str] = None,
 ) -> str:
     """
@@ -1640,23 +1642,23 @@ async def _resize_sheet_dimensions_impl(
     service,
     spreadsheet_id: str,
     sheet_name: Optional[str] = None,
-    column_sizes: Optional[Union[str, dict]] = None,
-    row_sizes: Optional[Union[str, dict]] = None,
-    auto_resize_columns: Optional[Union[str, List[str]]] = None,
-    auto_resize_rows: Optional[Union[str, List[int]]] = None,
+    column_sizes: Union[str, dict] | None = None,
+    row_sizes: Union[str, dict] | None = None,
+    auto_resize_columns: Union[str, List[str]] | None = None,
+    auto_resize_rows: Union[str, List[int]] | None = None,
     frozen_row_count: Optional[int] = None,
     frozen_column_count: Optional[int] = None,
-    hide_columns: Optional[Union[str, List[str]]] = None,
-    unhide_columns: Optional[Union[str, List[str]]] = None,
-    hide_rows: Optional[Union[str, List[int]]] = None,
-    unhide_rows: Optional[Union[str, List[int]]] = None,
+    hide_columns: Union[str, List[str]] | None = None,
+    unhide_columns: Union[str, List[str]] | None = None,
+    hide_rows: Union[str, List[int]] | None = None,
+    unhide_rows: Union[str, List[int]] | None = None,
     insert_rows: Optional[int] = None,
     insert_rows_at: Optional[int] = None,
     insert_columns: Optional[int] = None,
     insert_columns_at: Optional[str] = None,
-    delete_rows: Optional[Union[str, List[int]]] = None,
+    delete_rows: Union[str, List[int]] | None = None,
     delete_row_range: Optional[str] = None,
-    delete_columns: Optional[Union[str, List[str]]] = None,
+    delete_columns: Union[str, List[str]] | None = None,
 ) -> dict:
     """Internal implementation for resize_sheet_dimensions.
 
@@ -2182,23 +2184,23 @@ async def resize_sheet_dimensions(
     user_google_email: str,
     spreadsheet_id: str,
     sheet_name: Optional[str] = None,
-    column_sizes: Optional[Union[str, dict]] = None,
-    row_sizes: Optional[Union[str, dict]] = None,
-    auto_resize_columns: Optional[Union[str, List[str]]] = None,
-    auto_resize_rows: Optional[Union[str, List[int]]] = None,
+    column_sizes: Union[str, dict] | None = None,
+    row_sizes: Union[str, dict] | None = None,
+    auto_resize_columns: Union[str, List[str]] | None = None,
+    auto_resize_rows: Union[str, List[int]] | None = None,
     frozen_row_count: Optional[int] = None,
     frozen_column_count: Optional[int] = None,
-    hide_columns: Optional[Union[str, List[str]]] = None,
-    unhide_columns: Optional[Union[str, List[str]]] = None,
-    hide_rows: Optional[Union[str, List[int]]] = None,
-    unhide_rows: Optional[Union[str, List[int]]] = None,
+    hide_columns: Union[str, List[str]] | None = None,
+    unhide_columns: Union[str, List[str]] | None = None,
+    hide_rows: Union[str, List[int]] | None = None,
+    unhide_rows: Union[str, List[int]] | None = None,
     insert_rows: Optional[int] = None,
     insert_rows_at: Optional[int] = None,
     insert_columns: Optional[int] = None,
     insert_columns_at: Optional[str] = None,
-    delete_rows: Optional[Union[str, List[int]]] = None,
+    delete_rows: Union[str, List[int]] | None = None,
     delete_row_range: Optional[str] = None,
-    delete_columns: Optional[Union[str, List[str]]] = None,
+    delete_columns: Union[str, List[str]] | None = None,
 ) -> str:
     """
     Manages sheet-level dimension properties: resize columns/rows, auto-resize

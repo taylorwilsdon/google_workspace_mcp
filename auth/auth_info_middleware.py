@@ -88,8 +88,8 @@ class AuthInfoMiddleware(Middleware):
                 )
                 raise
             except Exception as e:
-                logger.error(
-                    f"[AuthInfoMiddleware] Error processing gateway identity assertion: {e}"
+                logger.exception(
+                    "[AuthInfoMiddleware] Error processing gateway identity assertion"
                 )
                 raise GatewayIdentityError(
                     "Trusted-gateway identity verification failed"
@@ -225,8 +225,8 @@ class AuthInfoMiddleware(Middleware):
                                             f"provider={type(auth_provider).__name__}"
                                         )
                                 except Exception as e:
-                                    logger.error(
-                                        f"[AuthInfoMiddleware] Token verification raised exception "
+                                    logger.exception(
+                                        "[AuthInfoMiddleware] Token verification raised exception "
                                         f"reason=verify_token_exception "
                                         f"token={_token_fingerprint(token_str)} "
                                         f"exc_type={type(e).__name__}"
@@ -402,7 +402,7 @@ class AuthInfoMiddleware(Middleware):
             ):
                 logger.info(f"Authentication check failed: {e}")
             else:
-                logger.error(f"Error in on_call_tool middleware: {e}", exc_info=True)
+                logger.exception("Error in on_call_tool middleware")
             raise
 
     async def on_get_prompt(self, context: MiddlewareContext, call_next):
@@ -426,5 +426,5 @@ class AuthInfoMiddleware(Middleware):
             ):
                 logger.info(f"Authentication check failed in prompt: {e}")
             else:
-                logger.error(f"Error in on_get_prompt middleware: {e}", exc_info=True)
+                logger.exception("Error in on_get_prompt middleware")
             raise

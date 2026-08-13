@@ -8,10 +8,8 @@ import asyncio
 import logging
 import io
 import base64
-import binascii
 
 from typing import Optional, List, Dict, Any
-from tempfile import NamedTemporaryFile, SpooledTemporaryFile
 from urllib.parse import urlparse
 from urllib.request import url2pathname
 from pathlib import Path
@@ -65,6 +63,14 @@ from gdrive.drive_helpers import (
 logger = logging.getLogger(__name__)
 
 SHARED_DRIVE_ORGANIZER_CONCURRENCY_LIMIT = 10
+
+# Repeated string constants (S1192)
+FIELDS_NAME_WEB_VIEW_LINK = "name, webViewLink"
+FIELDS_ID_NAME_WEB_VIEW_LINK = "id, name, webViewLink"
+FIELDS_PERMISSION_DETAILS = "id, type, role, emailAddress, domain, expirationTime"
+DEFAULT_FILE_NAME = "Unknown File"
+MIME_TEXT_PLAIN = "text/plain"
+MIME_APPLICATION_PDF = "application/pdf"
 
 IMPORT_FORMATS_BY_GOOGLE_MIME_TYPE = {
     GOOGLE_DOCS_MIME_TYPE: GOOGLE_DOCS_IMPORT_FORMATS,
@@ -321,15 +327,15 @@ async def get_drive_file_content(
     resolved_file_id, file_metadata = await resolve_drive_item(
         service,
         file_id,
-        extra_fields="name, webViewLink",
+        extra_fields=FIELDS_NAME_WEB_VIEW_LINK,
     )
     file_id = resolved_file_id
     mime_type = file_metadata.get("mimeType", "")
-    file_name = file_metadata.get("name", "Unknown File")
+    file_name = file_metadata.get("name", DEFAULT_FILE_NAME)
     export_mime_type = {
-        "application/vnd.google-apps.document": "text/plain",
+        "application/vnd.google-apps.document": MIME_TEXT_PLAIN,
         "application/vnd.google-apps.spreadsheet": "text/csv",
-        "application/vnd.google-apps.presentation": "text/plain",
+        "application/vnd.google-apps.presentation": MIME_TEXT_PLAIN,
     }.get(mime_type)
 
     file_content_bytes = await _download_file_bytes(service, file_id, export_mime_type)
@@ -357,7 +363,7 @@ async def get_drive_file_content(
                     f"[Binary or unsupported text encoding for mimeType '{mime_type}' - "
                     f"{len(file_content_bytes)} bytes]"
                 )
-    elif mime_type == "application/pdf":
+    elif mime_type == MIME_APPLICATION_PDF:
         # Offload PDF text extraction to a thread to avoid blocking the event loop
         pdf_text = await asyncio.to_thread(extract_pdf_text, file_content_bytes)
         if pdf_text:
@@ -443,7 +449,7 @@ async def get_drive_file_download_url(
     )
     file_id = resolved_file_id
     mime_type = file_metadata.get("mimeType", "")
-    file_name = file_metadata.get("name", "Unknown File")
+    file_name = file_metadata.get("name", DEFAULT_FILE_NAME)
 
     # Determine export format for Google native files
     export_mime_type = None
@@ -459,7 +465,7 @@ async def get_drive_file_download_url(
                 output_filename = f"{Path(output_filename).stem}.docx"
         else:
             # Default to PDF
-            export_mime_type = "application/pdf"
+            export_mime_type = MIME_APPLICATION_PDF
             output_mime_type = export_mime_type
             if not output_filename.endswith(".pdf"):
                 output_filename = f"{Path(output_filename).stem}.pdf"
@@ -472,7 +478,7 @@ async def get_drive_file_download_url(
             if not output_filename.endswith(".csv"):
                 output_filename = f"{Path(output_filename).stem}.csv"
         elif export_format == "pdf":
-            export_mime_type = "application/pdf"
+            export_mime_type = MIME_APPLICATION_PDF
             output_mime_type = export_mime_type
             if not output_filename.endswith(".pdf"):
                 output_filename = f"{Path(output_filename).stem}.pdf"
@@ -494,7 +500,7 @@ async def get_drive_file_download_url(
                 output_filename = f"{Path(output_filename).stem}.pptx"
         else:
             # Default to PDF
-            export_mime_type = "application/pdf"
+            export_mime_type = MIME_APPLICATION_PDF
             output_mime_type = export_mime_type
             if not output_filename.endswith(".pdf"):
                 output_filename = f"{Path(output_filename).stem}.pdf"
@@ -564,7 +570,7 @@ async def get_drive_file_download_url(
         return "\n".join(result_lines)
 
     except Exception as e:
-        logger.error(f"[get_drive_file_download_url] Failed to save file: {e}")
+        logger.exception(f"[get_drive_file_download_url] Failed to save file: {e}")
         return (
             f"Error: Failed to save file for download.\n"
             f"File was downloaded successfully ({size_kb:.1f} KB) but could not be saved.\n\n"
@@ -862,7 +868,7 @@ async def _create_drive_folder_impl(
         service.files()
         .create(
             body=file_metadata,
-            fields="id, name, webViewLink",
+            fields=FIELDS_ID_NAME_WEB_VIEW_LINK,
             supportsAllDrives=True,
         )
         .execute
@@ -928,8 +934,8 @@ async def create_drive_file(
     file_name: str,
     content: Optional[str] = None,  # Now explicitly Optional
     folder_id: str = "root",
-    mime_type: str = "text/plain",
-    fileUrl: Optional[str] = None,  # Now explicitly Optional
+    mime_type: str = MIME_TEXT_PLAIN,
+    file_url: Optional[str] = None,  # Now explicitly Optional
     base64_content: Optional[str] = None,
     content_mime_type: Optional[str] = None,
 ) -> str:
@@ -951,10 +957,10 @@ async def create_drive_file(
         str: Confirmation message of the successful file creation with file link.
     """
     logger.info(
-        f"[create_drive_file] Invoked. Email: '{user_google_email}', File Name: {file_name}, Folder ID: {folder_id}, fileUrl: {fileUrl}"
+        f"[create_drive_file] Invoked. Email: '{user_google_email}', File Name: {file_name}, Folder ID: {folder_id}, file_url: {file_url}"
     )
 
-    has_existing_content_source = content is not None or bool(fileUrl)
+    has_existing_content_source = content is not None or bool(file_url)
     if (
         not has_existing_content_source
         and base64_content is None
@@ -974,7 +980,7 @@ async def create_drive_file(
     if base64_content is not None:
         try:
             file_data = base64.b64decode(base64_content, validate=True)
-        except (binascii.Error, ValueError) as exc:
+        except ValueError as exc:
             raise ValueError("'base64_content' must be valid standard base64.") from exc
 
     # Create folder (no content or media_body). Prefer create_drive_folder for new code.
@@ -1005,18 +1011,18 @@ async def create_drive_file(
             .create(
                 body=file_metadata,
                 media_body=media,
-                fields="id, name, webViewLink",
+                fields=FIELDS_ID_NAME_WEB_VIEW_LINK,
                 supportsAllDrives=True,
             )
             .execute,
             num_retries=GOOGLE_API_WRITE_RETRIES,
         )
-    # Prefer fileUrl if both legacy sources are provided.
-    elif fileUrl:
-        logger.info(f"[create_drive_file] Fetching file from URL: {fileUrl}")
+    # Prefer file_url if both legacy sources are provided.
+    elif file_url:
+        logger.info(f"[create_drive_file] Fetching file from URL: {file_url}")
 
         # Check if this is a file:// URL
-        parsed_url = urlparse(fileUrl)
+        parsed_url = urlparse(file_url)
         if parsed_url.scheme == "file":
             # Handle file:// URL - read from local filesystem
             logger.info(
@@ -1044,14 +1050,14 @@ async def create_drive_file(
                     if running_streamable
                     else ""
                 )
-                raise Exception(f"Local file does not exist: {file_path}.{extra}")
+                raise FileNotFoundError(f"Local file does not exist: {file_path}.{extra}")
             if not path_obj.is_file():
                 extra = (
                     " In streamable-http/Docker deployments, mount the file into the container or provide an HTTP(S) URL."
                     if running_streamable
                     else ""
                 )
-                raise Exception(f"Path is not a file: {file_path}.{extra}")
+                raise ValueError(f"Path is not a file: {file_path}.{extra}")
 
             logger.info(f"[create_drive_file] Reading local file: {file_path}")
 
@@ -1073,7 +1079,7 @@ async def create_drive_file(
                 .create(
                     body=file_metadata,
                     media_body=media,
-                    fields="id, name, webViewLink",
+                    fields=FIELDS_ID_NAME_WEB_VIEW_LINK,
                     supportsAllDrives=True,
                 )
                 .execute,
@@ -1083,96 +1089,95 @@ async def create_drive_file(
         elif parsed_url.scheme in ("http", "https"):
             # when running in stateless mode, deployment may not have access to local file system
             if is_stateless_mode():
-                with SpooledTemporaryFile(max_size=UPLOAD_CHUNK_SIZE_BYTES) as spool:
+                spool = io.BytesIO()
 
-                    async def _write_spool(chunk: bytes) -> None:
-                        await asyncio.to_thread(spool.write, chunk)
+                async def _write_spool(chunk: bytes) -> None:
+                    spool.write(chunk)
 
-                    _total, content_type = await _stream_url_with_validation(
-                        fileUrl, _write_spool
-                    )
-                    await asyncio.to_thread(spool.seek, 0)
+                _total, content_type = await _stream_url_with_validation(
+                    file_url, _write_spool
+                )
+                spool.seek(0)
 
-                    # Try to get MIME type from Content-Type header
-                    if content_type and content_type != "application/octet-stream":
-                        mime_type = content_type
-                        file_metadata["mimeType"] = content_type
-                        logger.info(
-                            f"[create_drive_file] Using MIME type from Content-Type header: {content_type}"
-                        )
-
-                    media = MediaIoBaseUpload(
-                        spool,
-                        mimetype=mime_type,
-                        resumable=True,
-                        chunksize=UPLOAD_CHUNK_SIZE_BYTES,
+                # Try to get MIME type from Content-Type header
+                if content_type and content_type != "application/octet-stream":
+                    mime_type = content_type
+                    file_metadata["mimeType"] = content_type
+                    logger.info(
+                        f"[create_drive_file] Using MIME type from Content-Type header: {content_type}"
                     )
 
-                    created_file = await asyncio.to_thread(
-                        service.files()
-                        .create(
-                            body=file_metadata,
-                            media_body=media,
-                            fields="id, name, webViewLink",
-                            supportsAllDrives=True,
-                        )
-                        .execute,
-                        num_retries=GOOGLE_API_WRITE_RETRIES,
+                media = MediaIoBaseUpload(
+                    spool,
+                    mimetype=mime_type,
+                    resumable=True,
+                    chunksize=UPLOAD_CHUNK_SIZE_BYTES,
+                )
+
+                created_file = await asyncio.to_thread(
+                    service.files()
+                    .create(
+                        body=file_metadata,
+                        media_body=media,
+                        fields=FIELDS_ID_NAME_WEB_VIEW_LINK,
+                        supportsAllDrives=True,
                     )
+                    .execute,
+                    num_retries=GOOGLE_API_WRITE_RETRIES,
+                )
             else:
-                # Stream download to temp file with SSRF protection, then upload
-                with NamedTemporaryFile() as temp_file:
+                # Stream download to in-memory buffer with SSRF protection, then upload
+                buf = io.BytesIO()
 
-                    async def _write_chunk(chunk: bytes) -> None:
-                        await asyncio.to_thread(temp_file.write, chunk)
+                async def _write_chunk(chunk: bytes) -> None:
+                    buf.write(chunk)
 
-                    total_bytes, content_type = await _stream_url_with_validation(
-                        fileUrl, _write_chunk
-                    )
+                total_bytes, content_type = await _stream_url_with_validation(
+                    file_url, _write_chunk
+                )
 
+                logger.info(
+                    f"[create_drive_file] Downloaded {total_bytes} bytes "
+                    f"from URL before upload."
+                )
+
+                if content_type and content_type != "application/octet-stream":
+                    mime_type = content_type
+                    file_metadata["mimeType"] = mime_type
                     logger.info(
-                        f"[create_drive_file] Downloaded {total_bytes} bytes "
-                        f"from URL before upload."
+                        f"[create_drive_file] Using MIME type from "
+                        f"Content-Type header: {mime_type}"
                     )
 
-                    if content_type and content_type != "application/octet-stream":
-                        mime_type = content_type
-                        file_metadata["mimeType"] = mime_type
-                        logger.info(
-                            f"[create_drive_file] Using MIME type from "
-                            f"Content-Type header: {mime_type}"
-                        )
+                buf.seek(0)
 
-                    # Reset file pointer to beginning for upload
-                    temp_file.seek(0)
+                media = MediaIoBaseUpload(
+                    buf,
+                    mimetype=mime_type,
+                    resumable=True,
+                    chunksize=UPLOAD_CHUNK_SIZE_BYTES,
+                )
 
-                    media = MediaIoBaseUpload(
-                        temp_file,
-                        mimetype=mime_type,
-                        resumable=True,
-                        chunksize=UPLOAD_CHUNK_SIZE_BYTES,
+                logger.info(
+                    "[create_drive_file] Starting upload to Google Drive..."
+                )
+                created_file = await asyncio.to_thread(
+                    service.files()
+                    .create(
+                        body=file_metadata,
+                        media_body=media,
+                        fields=FIELDS_ID_NAME_WEB_VIEW_LINK,
+                        supportsAllDrives=True,
                     )
-
-                    logger.info(
-                        "[create_drive_file] Starting upload to Google Drive..."
-                    )
-                    created_file = await asyncio.to_thread(
-                        service.files()
-                        .create(
-                            body=file_metadata,
-                            media_body=media,
-                            fields="id, name, webViewLink",
-                            supportsAllDrives=True,
-                        )
-                        .execute,
-                        num_retries=GOOGLE_API_WRITE_RETRIES,
-                    )
+                    .execute,
+                    num_retries=GOOGLE_API_WRITE_RETRIES,
+                )
         else:
             if not parsed_url.scheme:
-                raise Exception(
-                    "fileUrl is missing a URL scheme. Use file://, http://, or https://."
+                raise ValueError(
+                    "file_url is missing a URL scheme. Use file://, http://, or https://."
                 )
-            raise Exception(
+            raise ValueError(
                 f"Unsupported URL scheme '{parsed_url.scheme}'. Only file://, http://, and https:// are supported."
             )
     elif content is not None:
@@ -1184,7 +1189,7 @@ async def create_drive_file(
             .create(
                 body=file_metadata,
                 media_body=MediaIoBaseUpload(media, mimetype=mime_type, resumable=True),
-                fields="id, name, webViewLink",
+                fields=FIELDS_ID_NAME_WEB_VIEW_LINK,
                 supportsAllDrives=True,
             )
             .execute,
@@ -1646,7 +1651,7 @@ async def get_drive_file_permissions(
         return "\n".join(output_parts)
 
     except Exception as e:
-        logger.error(f"Error getting file permissions: {e}")
+        logger.exception(f"Error getting file permissions: {e}")
         return f"Error getting file permissions: {e}"
 
 
@@ -1944,9 +1949,7 @@ async def update_drive_file(
             if format_map is None and target_mime_type.startswith(
                 GOOGLE_APPS_MIME_PREFIX
             ):
-                supported_targets = ", ".join(
-                    mime for mime in IMPORT_FORMATS_BY_GOOGLE_MIME_TYPE
-                )
+                supported_targets = ", ".join(IMPORT_FORMATS_BY_GOOGLE_MIME_TYPE)
                 raise ValueError(
                     "Content replacement is not supported for this Google Apps type "
                     f"({target_mime_type}). Editable Google types: {supported_targets}."
@@ -2238,7 +2241,7 @@ async def manage_drive_access(
             )
 
         resolved_file_id, file_metadata = await resolve_drive_item(
-            service, file_id, extra_fields="name, webViewLink"
+            service, file_id, extra_fields=FIELDS_NAME_WEB_VIEW_LINK
         )
         file_id = resolved_file_id
 
@@ -2262,7 +2265,7 @@ async def manage_drive_access(
             "fileId": file_id,
             "body": permission_body,
             "supportsAllDrives": True,
-            "fields": "id, type, role, emailAddress, domain, expirationTime",
+            "fields": FIELDS_PERMISSION_DETAILS,
         }
         if share_type in ("user", "group"):
             create_params["sendNotificationEmail"] = send_notification
@@ -2290,7 +2293,7 @@ async def manage_drive_access(
             raise ValueError("recipients list is required for 'grant_batch' action")
 
         resolved_file_id, file_metadata = await resolve_drive_item(
-            service, file_id, extra_fields="name, webViewLink"
+            service, file_id, extra_fields=FIELDS_NAME_WEB_VIEW_LINK
         )
         file_id = resolved_file_id
 
@@ -2353,7 +2356,7 @@ async def manage_drive_access(
                 "fileId": file_id,
                 "body": r_perm_body,
                 "supportsAllDrives": True,
-                "fields": "id, type, role, emailAddress, domain, expirationTime",
+                "fields": FIELDS_PERMISSION_DETAILS,
             }
             if r_share_type in ("user", "group"):
                 r_create_params["sendNotificationEmail"] = send_notification
@@ -2430,7 +2433,7 @@ async def manage_drive_access(
                 permissionId=permission_id,
                 body=update_body,
                 supportsAllDrives=True,
-                fields="id, type, role, emailAddress, domain, expirationTime",
+                fields=FIELDS_PERMISSION_DETAILS,
             )
             .execute
         )
@@ -2558,7 +2561,7 @@ async def copy_drive_file(
         service, file_id, extra_fields="name, webViewLink, mimeType"
     )
     file_id = resolved_file_id
-    original_name = file_metadata.get("name", "Unknown File")
+    original_name = file_metadata.get("name", DEFAULT_FILE_NAME)
 
     resolved_folder_id = await resolve_folder_id(service, parent_folder_id)
 
@@ -2663,7 +2666,7 @@ async def set_drive_file_permissions(
         )
 
     resolved_file_id, file_metadata = await resolve_drive_item(
-        service, file_id, extra_fields="name, webViewLink"
+        service, file_id, extra_fields=FIELDS_NAME_WEB_VIEW_LINK
     )
     file_id = resolved_file_id
     file_name = file_metadata.get("name", "Unknown")

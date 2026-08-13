@@ -110,7 +110,7 @@ class TestCreateUpdateTableCellStyleRequest:
 
 
 class TestValidateTableCellStyle:
-    @pytest.fixture()
+    @pytest.fixture
     def vm(self):
         return ValidationManager()
 
@@ -178,7 +178,7 @@ class TestBuildTableCellStylePadding:
 
 
 class TestValidateTableCellStylePaddingAndAlignment:
-    @pytest.fixture()
+    @pytest.fixture
     def vm(self):
         return ValidationManager()
 
@@ -216,7 +216,7 @@ class TestValidateTableCellStylePaddingAndAlignment:
 
 
 class TestBatchManagerIntegration:
-    @pytest.fixture()
+    @pytest.fixture
     def manager(self):
         from gdocs.managers.batch_operation_manager import BatchOperationManager
 
@@ -301,7 +301,7 @@ class TestBatchManagerIntegration:
 
 
 class TestPublicToolWiring:
-    @pytest.fixture()
+    @pytest.fixture
     def service(self):
         mock_service = Mock()
         mock_service.documents().batchUpdate().execute.return_value = {"replies": [{}]}

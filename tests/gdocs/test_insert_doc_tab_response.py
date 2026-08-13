@@ -183,8 +183,9 @@ async def test_populate_tab_rejects_missing_tab_before_batch_update():
         ]
     }
 
+    fn = _unwrap(docs_tools.manage_doc_tab)
     with pytest.raises(UserInputError, match="'t.missing' not found in document"):
-        await _unwrap(docs_tools.manage_doc_tab)(
+        await fn(
             service=service,
             user_google_email="test@example.com",
             document_id="doc-abc",
@@ -210,8 +211,9 @@ async def test_populate_tab_rejects_missing_tab_when_appending():
         ]
     }
 
+    fn = _unwrap(docs_tools.manage_doc_tab)
     with pytest.raises(UserInputError, match="'t.missing' not found in document"):
-        await _unwrap(docs_tools.manage_doc_tab)(
+        await fn(
             service=service,
             user_google_email="test@example.com",
             document_id="doc-abc",

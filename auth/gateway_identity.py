@@ -141,7 +141,7 @@ def verify_gateway_assertion(token: str) -> Optional[dict]:
         )
         return None
     except Exception as e:  # noqa: BLE001 - JWKS fetch / network / unexpected
-        logger.error(
+        logger.exception(
             "Error verifying gateway identity assertion (%s: %s)",
             type(e).__name__,
             e,

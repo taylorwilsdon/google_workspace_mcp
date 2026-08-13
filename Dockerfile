@@ -2,27 +2,36 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies and uv
 RUN apt-get update && apt-get install -y \
     curl \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir uv
 
-# Install uv for faster dependency management
-RUN pip install --no-cache-dir uv
+COPY pyproject.toml uv.lock ./
+COPY main.py fastmcp_server.py ./
+COPY auth/ auth/
+COPY core/ core/
+COPY gappsscript/ gappsscript/
+COPY gcalendar/ gcalendar/
+COPY gchat/ gchat/
+COPY gcontacts/ gcontacts/
+COPY gdocs/ gdocs/
+COPY gdrive/ gdrive/
+COPY gforms/ gforms/
+COPY gmail/ gmail/
+COPY gsearch/ gsearch/
+COPY gsheets/ gsheets/
+COPY gslides/ gslides/
+COPY gtasks/ gtasks/
 
-COPY . .
-
-# Install Python dependencies using uv sync
+# Install Python dependencies using uv sync, create non-root user, and set up store_creds volume
 # --extra otel ships the OpenTelemetry SDK/exporter so tracing can be enabled at
 # runtime via OTEL_* env vars; it stays a no-op unless an OTLP endpoint is set.
-RUN uv sync --frozen --no-dev --extra disk --extra otel
-
-# Create non-root user for security
-RUN useradd --create-home --shell /bin/bash app \
-    && chown -R app:app /app
-
-# Give read and write access to the store_creds volume
-RUN mkdir -p /app/store_creds \
+RUN uv sync --frozen --no-dev --extra disk --extra otel \
+    && useradd --create-home --shell /bin/bash app \
+    && chown -R app:app /app \
+    && mkdir -p /app/store_creds \
     && chown -R app:app /app/store_creds \
     && chmod 755 /app/store_creds
 
@@ -44,4 +53,4 @@ ENV TOOLS=""
 
 # Use entrypoint for the base command and CMD for args
 ENTRYPOINT ["/bin/sh", "-c"]
-CMD ["uv run main.py --transport streamable-http ${TOOL_TIER:+--tool-tier \"$TOOL_TIER\"} ${TOOLS:+--tools $TOOLS}"]
+CMD ["uv run main.py --transport streamable-http ${TOOL_TIER:+--tool-tier $TOOL_TIER} ${TOOLS:+--tools $TOOLS}"]

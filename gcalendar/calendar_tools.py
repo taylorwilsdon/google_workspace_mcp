@@ -4,6 +4,8 @@ Google Calendar MCP Tools
 This module provides MCP tools for interacting with Google Calendar API.
 """
 
+from __future__ import annotations
+
 import datetime
 import logging
 import asyncio
@@ -11,8 +13,8 @@ import re
 import uuid
 import json
 from typing import List, Optional, Dict, Any, Union
+from zoneinfo import ZoneInfo
 
-import pytz
 from googleapiclient.errors import HttpError
 from googleapiclient.discovery import build
 
@@ -31,9 +33,15 @@ from core.server import server
 # Configure module logger
 logger = logging.getLogger(__name__)
 
+# String constants (SonarQube S1192)
+UTC_OFFSET_SUFFIX = "+00:00"
+TIMEZONE_OFFSET_PATTERN = r"[+-]\d{2}:\d{2}$"
+_ERR_EVENT_ID_REQUIRED_UPDATE = "event_id is required for update action"
+_ERR_EVENT_ID_REQUIRED_DELETE = "event_id is required for delete action"
+
 
 def _parse_reminders_json(
-    reminders_input: Optional[Union[str, List[Dict[str, Any]]]], function_name: str
+    reminders_input: str | List[Dict[str, Any]] | None, function_name: str
 ) -> List[Dict[str, Any]]:
     """
     Parse reminders from JSON string or list object and validate them.
@@ -237,17 +245,16 @@ def _correct_time_format_for_api(
             # For date-only, convert using the provided timezone, or UTC if not provided
             if timezone:
                 try:
-                    tz = pytz.timezone(timezone)
                     # Parse the date and create a datetime at midnight in the specified timezone
                     date_obj = datetime.datetime.strptime(time_str, "%Y-%m-%d")
-                    dt = tz.localize(date_obj)
+                    dt = date_obj.replace(tzinfo=ZoneInfo(timezone))
                     # Convert to UTC and format as RFC3339
                     formatted = (
                         dt.astimezone(datetime.timezone.utc)
                         .isoformat()
-                        .replace("+00:00", "Z")
+                        .replace(UTC_OFFSET_SUFFIX, "Z")
                     )
-                except pytz.exceptions.UnknownTimeZoneError:
+                except KeyError:
                     logger.warning(
                         f"Could not apply timezone '{timezone}', falling back to UTC for {param_name}"
                     )
@@ -313,7 +320,7 @@ def _strip_utc_offset(datetime_str: str) -> str:
     if datetime_str.endswith("Z"):
         return datetime_str[:-1]
     # Strip +HH:MM or -HH:MM offset at end (e.g. -07:00, +05:30)
-    return re.sub(r"[+-]\d{2}:\d{2}$", "", datetime_str)
+    return re.sub(TIMEZONE_OFFSET_PATTERN, "", datetime_str)
 
 
 @server.tool(
@@ -420,7 +427,7 @@ async def get_events(
             effective_time_min = formatted_time_min
         else:
             utc_now = datetime.datetime.now(datetime.timezone.utc)
-            effective_time_min = utc_now.isoformat().replace("+00:00", "Z")
+            effective_time_min = utc_now.isoformat().replace(UTC_OFFSET_SUFFIX, "Z")
         if time_min is None:
             logger.info(
                 f"time_min not provided, defaulting to current UTC time: {effective_time_min}"
@@ -641,7 +648,7 @@ async def _create_event_impl(
     attachments: Optional[List[str]] = None,
     add_google_meet: bool = False,
     conference_data: Optional[Dict[str, Any]] = None,
-    reminders: Optional[Union[str, List[Dict[str, Any]]]] = None,
+    reminders: str | List[Dict[str, Any]] | None = None,
     use_default_reminders: bool = True,
     transparency: Optional[str] = None,
     visibility: Optional[str] = None,
@@ -792,10 +799,10 @@ async def _create_event_impl(
                     if drive_service:
                         try:
                             file_metadata = await asyncio.to_thread(
-                                lambda: (
+                                lambda fid=file_id: (
                                     drive_service.files()
                                     .get(
-                                        fileId=file_id,
+                                        fileId=fid,
                                         fields="mimeType,name",
                                         supportsAllDrives=True,
                                     )
@@ -870,7 +877,7 @@ async def _create_event_impl(
 
 
 def _normalize_attendees(
-    attendees: Optional[Union[List[str], List[Dict[str, Any]]]],
+    attendees: List[str] | List[Dict[str, Any]] | None,
 ) -> Optional[List[Dict[str, Any]]]:
     """
     Normalize attendees input to list of attendee objects.
@@ -908,11 +915,11 @@ async def _modify_event_impl(
     end_time: Optional[str] = None,
     description: Optional[str] = None,
     location: Optional[str] = None,
-    attendees: Optional[Union[List[str], List[Dict[str, Any]]]] = None,
+    attendees: List[str] | List[Dict[str, Any]] | None = None,
     timezone: Optional[str] = None,
     add_google_meet: Optional[bool] = None,
     conference_data: Optional[Dict[str, Any]] = None,
-    reminders: Optional[Union[str, List[Dict[str, Any]]]] = None,
+    reminders: str | List[Dict[str, Any]] | None = None,
     use_default_reminders: Optional[bool] = None,
     transparency: Optional[str] = None,
     visibility: Optional[str] = None,
@@ -1067,7 +1074,7 @@ async def _modify_event_impl(
     if not event_body:
         message = "No fields provided to modify the event."
         logger.warning(f"[modify_event] {message}")
-        raise Exception(message)
+        raise ValueError(message)
 
     # Log the event ID for debugging
     logger.info(
@@ -1107,11 +1114,11 @@ async def _modify_event_impl(
 
     except HttpError as get_error:
         if get_error.resp.status == 404:
-            logger.error(
+            logger.exception(
                 f"[modify_event] Event not found during pre-update verification: {get_error}"
             )
             message = f"Event not found during verification. The event with ID '{event_id}' could not be found in calendar '{calendar_id}'. This may be due to incorrect ID format or the event no longer exists."
-            raise Exception(message)
+            raise RuntimeError(message)
         else:
             logger.warning(
                 f"[modify_event] Error during pre-update verification, but proceeding with update: {get_error}"
@@ -1179,11 +1186,11 @@ async def _delete_event_impl(
         logger.info("[delete_event] Successfully verified event exists before deletion")
     except HttpError as get_error:
         if get_error.resp.status == 404:
-            logger.error(
+            logger.exception(
                 f"[delete_event] Event not found during pre-delete verification: {get_error}"
             )
             message = f"Event not found during verification. The event with ID '{event_id}' could not be found in calendar '{calendar_id}'. This may be due to incorrect ID format or the event no longer exists."
-            raise Exception(message)
+            raise RuntimeError(message)
         else:
             logger.warning(
                 f"[delete_event] Error during pre-delete verification, but proceeding with deletion: {get_error}"
@@ -1229,16 +1236,16 @@ async def _rsvp_event_impl(
 
     attendees = existing_event.get("attendees")
     if not attendees:
-        raise Exception("This event has no attendee list; cannot update RSVP.")
+        raise ValueError("This event has no attendee list; cannot update RSVP.")
 
     if existing_event.get("organizer", {}).get("self"):
-        raise Exception(
+        raise ValueError(
             "You are the organizer of this event. Organizers cannot respond to their own invitations."
         )
 
     user_index = next((i for i, a in enumerate(attendees) if a.get("self")), None)
     if user_index is None:
-        raise Exception(
+        raise ValueError(
             f"{user_google_email} was not found in the event's attendee list."
         )
 
@@ -1294,7 +1301,7 @@ async def manage_event(
     calendar_id: str = "primary",
     description: Optional[str] = None,
     location: Optional[str] = None,
-    attendees: Optional[Union[StringList, List[Dict[str, Any]]]] = None,
+    attendees: StringList | List[Dict[str, Any]] | None = None,
     timezone: Optional[str] = None,
     attachments: Optional[StringList] = None,
     add_google_meet: Optional[bool] = None,
@@ -1303,7 +1310,7 @@ async def manage_event(
     conference_uri: Optional[str] = None,
     conference_passcode: Optional[str] = None,
     conference_id: Optional[str] = None,
-    reminders: Optional[Union[str, List[Dict[str, Any]]]] = None,
+    reminders: str | List[Dict[str, Any]] | None = None,
     use_default_reminders: Optional[bool] = None,
     transparency: Optional[str] = None,
     visibility: Optional[str] = None,
@@ -1415,7 +1422,7 @@ async def manage_event(
         )
     elif action_lower == "update":
         if not event_id:
-            raise ValueError("event_id is required for update action")
+            raise ValueError(_ERR_EVENT_ID_REQUIRED_UPDATE)
         return await _modify_event_impl(
             service=service,
             user_google_email=user_google_email,
@@ -1443,7 +1450,7 @@ async def manage_event(
         )
     elif action_lower == "delete":
         if not event_id:
-            raise ValueError("event_id is required for delete action")
+            raise ValueError(_ERR_EVENT_ID_REQUIRED_DELETE)
         return await _delete_event_impl(
             service=service,
             user_google_email=user_google_email,
@@ -1477,7 +1484,7 @@ async def manage_event(
 
 
 def _ooo_time_entry(
-    time_str: str, is_end: bool = False, timezone: Optional[str] = None
+    time_str: str, _is_end: bool = False, timezone: Optional[str] = None
 ) -> Dict[str, str]:
     """Build a start/end dict for an OOO event.
 
@@ -1493,7 +1500,7 @@ def _ooo_time_entry(
         logger.info(f"[ooo_time_entry] Converted date-only to dateTime: {time_str}")
 
     has_explicit_offset = time_str.endswith("Z") or bool(
-        re.search(r"[+-]\d{2}:\d{2}$", time_str)
+        re.search(TIMEZONE_OFFSET_PATTERN, time_str)
     )
     if not has_explicit_offset and not timezone:
         raise ValueError(
@@ -1532,8 +1539,8 @@ async def _create_ooo_event_impl(
     event_body: Dict[str, Any] = {
         "eventType": "outOfOffice",
         "summary": effective_summary,
-        "start": _ooo_time_entry(start_time, is_end=False, timezone=timezone),
-        "end": _ooo_time_entry(end_time, is_end=True, timezone=timezone),
+        "start": _ooo_time_entry(start_time, _is_end=False, timezone=timezone),
+        "end": _ooo_time_entry(end_time, _is_end=True, timezone=timezone),
         "outOfOfficeProperties": {
             "autoDeclineMode": effective_decline_mode,
             "declineMessage": decline_message or "",
@@ -1596,22 +1603,21 @@ async def _list_ooo_events_impl(
     else:
         if timezone:
             try:
-                tz = pytz.timezone(timezone)
-                now = datetime.datetime.now(tz)
+                now = datetime.datetime.now(ZoneInfo(timezone))
                 effective_time_min = (
                     now.astimezone(datetime.timezone.utc)
                     .isoformat()
-                    .replace("+00:00", "Z")
+                    .replace(UTC_OFFSET_SUFFIX, "Z")
                 )
-            except pytz.exceptions.UnknownTimeZoneError:
+            except KeyError:
                 logger.warning(
                     f"Could not apply timezone '{timezone}', falling back to UTC"
                 )
                 utc_now = datetime.datetime.now(datetime.timezone.utc)
-                effective_time_min = utc_now.isoformat().replace("+00:00", "Z")
+                effective_time_min = utc_now.isoformat().replace(UTC_OFFSET_SUFFIX, "Z")
         else:
             utc_now = datetime.datetime.now(datetime.timezone.utc)
-            effective_time_min = utc_now.isoformat().replace("+00:00", "Z")
+            effective_time_min = utc_now.isoformat().replace(UTC_OFFSET_SUFFIX, "Z")
 
     effective_time_max = _correct_time_format_for_api(time_max, "time_max", timezone)
 
@@ -1692,10 +1698,10 @@ async def _update_ooo_event_impl(
         patch_body["summary"] = summary
     if start_time is not None:
         patch_body["start"] = _ooo_time_entry(
-            start_time, is_end=False, timezone=timezone
+            start_time, _is_end=False, timezone=timezone
         )
     if end_time is not None:
-        patch_body["end"] = _ooo_time_entry(end_time, is_end=True, timezone=timezone)
+        patch_body["end"] = _ooo_time_entry(end_time, _is_end=True, timezone=timezone)
     if recurrence is not None:
         patch_body["recurrence"] = recurrence
 
@@ -1771,7 +1777,7 @@ async def _delete_ooo_event_impl(
             )
     except HttpError as get_error:
         if get_error.resp.status == 404:
-            raise Exception(
+            raise RuntimeError(
                 f"Event not found. The event with ID '{event_id}' could not be found in calendar '{calendar_id}'."
             )
         else:
@@ -1869,7 +1875,7 @@ async def manage_out_of_office(
         )
     elif action_lower == "update":
         if not event_id:
-            raise ValueError("event_id is required for update action")
+            raise ValueError(_ERR_EVENT_ID_REQUIRED_UPDATE)
         return await _update_ooo_event_impl(
             service=service,
             user_google_email=user_google_email,
@@ -1885,7 +1891,7 @@ async def manage_out_of_office(
         )
     elif action_lower == "delete":
         if not event_id:
-            raise ValueError("event_id is required for delete action")
+            raise ValueError(_ERR_EVENT_ID_REQUIRED_DELETE)
         return await _delete_ooo_event_impl(
             service=service,
             user_google_email=user_google_email,
@@ -1904,7 +1910,7 @@ async def manage_out_of_office(
 
 
 def _focus_time_time_entry(
-    time_str: str, is_end: bool = False, timezone: Optional[str] = None
+    time_str: str, _is_end: bool = False, timezone: Optional[str] = None
 ) -> Dict[str, str]:
     """Build a start/end dict for a Focus Time event.
 
@@ -1920,7 +1926,7 @@ def _focus_time_time_entry(
         )
 
     has_explicit_offset = time_str.endswith("Z") or bool(
-        re.search(r"[+-]\d{2}:\d{2}$", time_str)
+        re.search(TIMEZONE_OFFSET_PATTERN, time_str)
     )
     if not has_explicit_offset and not timezone:
         raise ValueError(
@@ -1985,8 +1991,8 @@ async def _create_focus_time_event_impl(
     event_body: Dict[str, Any] = {
         "eventType": "focusTime",
         "summary": effective_summary,
-        "start": _focus_time_time_entry(start_time, is_end=False, timezone=timezone),
-        "end": _focus_time_time_entry(end_time, is_end=True, timezone=timezone),
+        "start": _focus_time_time_entry(start_time, _is_end=False, timezone=timezone),
+        "end": _focus_time_time_entry(end_time, _is_end=True, timezone=timezone),
         "focusTimeProperties": focus_time_props,
         "transparency": "opaque",
     }
@@ -2049,22 +2055,21 @@ async def _list_focus_time_events_impl(
     else:
         if timezone:
             try:
-                tz = pytz.timezone(timezone)
-                now = datetime.datetime.now(tz)
+                now = datetime.datetime.now(ZoneInfo(timezone))
                 effective_time_min = (
                     now.astimezone(datetime.timezone.utc)
                     .isoformat()
-                    .replace("+00:00", "Z")
+                    .replace(UTC_OFFSET_SUFFIX, "Z")
                 )
-            except pytz.exceptions.UnknownTimeZoneError:
+            except KeyError:
                 logger.warning(
                     f"Could not apply timezone '{timezone}', falling back to UTC"
                 )
                 utc_now = datetime.datetime.now(datetime.timezone.utc)
-                effective_time_min = utc_now.isoformat().replace("+00:00", "Z")
+                effective_time_min = utc_now.isoformat().replace(UTC_OFFSET_SUFFIX, "Z")
         else:
             utc_now = datetime.datetime.now(datetime.timezone.utc)
-            effective_time_min = utc_now.isoformat().replace("+00:00", "Z")
+            effective_time_min = utc_now.isoformat().replace(UTC_OFFSET_SUFFIX, "Z")
 
     effective_time_max = _correct_time_format_for_api(time_max, "time_max", timezone)
 
@@ -2152,11 +2157,11 @@ async def _update_focus_time_event_impl(
         patch_body["description"] = description
     if start_time is not None:
         patch_body["start"] = _focus_time_time_entry(
-            start_time, is_end=False, timezone=timezone
+            start_time, _is_end=False, timezone=timezone
         )
     if end_time is not None:
         patch_body["end"] = _focus_time_time_entry(
-            end_time, is_end=True, timezone=timezone
+            end_time, _is_end=True, timezone=timezone
         )
     if recurrence is not None:
         patch_body["recurrence"] = recurrence
@@ -2243,7 +2248,7 @@ async def _delete_focus_time_event_impl(
             )
     except HttpError as get_error:
         if get_error.resp.status == 404:
-            raise Exception(
+            raise RuntimeError(
                 f"Event not found. The event with ID '{event_id}' could not be found in calendar '{calendar_id}'."
             )
         else:
@@ -2348,7 +2353,7 @@ async def manage_focus_time(
         )
     elif action_lower == "update":
         if not event_id:
-            raise ValueError("event_id is required for update action")
+            raise ValueError(_ERR_EVENT_ID_REQUIRED_UPDATE)
         return await _update_focus_time_event_impl(
             service=service,
             user_google_email=user_google_email,
@@ -2366,7 +2371,7 @@ async def manage_focus_time(
         )
     elif action_lower == "delete":
         if not event_id:
-            raise ValueError("event_id is required for delete action")
+            raise ValueError(_ERR_EVENT_ID_REQUIRED_DELETE)
         return await _delete_focus_time_event_impl(
             service=service,
             user_google_email=user_google_email,

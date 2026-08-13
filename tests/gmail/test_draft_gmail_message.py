@@ -153,8 +153,9 @@ async def test_draft_gmail_message_raises_when_no_attachments_are_added(
     mock_service = Mock()
     mock_service.users().drafts().create().execute.return_value = {"id": "draft123"}
 
+    fn = _unwrap(draft_gmail_message)
     with pytest.raises(UserInputError, match="No valid attachments were added"):
-        await _unwrap(draft_gmail_message)(
+        await fn(
             service=mock_service,
             user_google_email="user@example.com",
             to="recipient@example.com",
@@ -180,8 +181,9 @@ async def test_draft_gmail_message_surfaces_guidance_for_paths_outside_allowed_d
     mock_service = Mock()
     mock_service.users().drafts().create().execute.return_value = {"id": "draft123"}
 
+    fn = _unwrap(draft_gmail_message)
     with pytest.raises(UserInputError) as exc_info:
-        await _unwrap(draft_gmail_message)(
+        await fn(
             service=mock_service,
             user_google_email="user@example.com",
             to="recipient@example.com",
@@ -325,8 +327,9 @@ async def test_send_gmail_message_surfaces_signature_rate_limit_error(status):
     )
     mock_service.users().settings().sendAs().list().execute.side_effect = http_error
 
+    fn = _unwrap(send_gmail_message)
     with pytest.raises(ToolError, match="Failed to fetch Gmail send-as signatures"):
-        await _unwrap(send_gmail_message)(
+        await fn(
             service=mock_service,
             user_google_email="user@example.com",
             to="recipient@example.com",

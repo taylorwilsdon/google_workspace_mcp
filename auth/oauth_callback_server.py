@@ -18,7 +18,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from typing import Optional
 from urllib.parse import urlparse
-from urllib.error import HTTPError, URLError
+from urllib.error import HTTPError
 from urllib.request import urlopen
 
 from auth.scopes import SCOPES, get_current_scopes  # noqa
@@ -94,7 +94,7 @@ class MinimalOAuthServer:
 
                 # Exchange code for credentials
                 redirect_uri = get_oauth_redirect_uri()
-                verified_user_id, credentials = await handle_auth_callback(
+                verified_user_id, _ = await handle_auth_callback(
                     scopes=get_current_scopes(),
                     authorization_response=str(request.url),
                     redirect_uri=redirect_uri,
@@ -112,7 +112,7 @@ class MinimalOAuthServer:
 
             except Exception as e:
                 error_message_detail = f"Error processing OAuth callback: {str(e)}"
-                logger.error(error_message_detail, exc_info=True)
+                logger.exception(error_message_detail)
                 return create_server_error_response(str(e))
 
     def _setup_attachment_route(self):
@@ -238,7 +238,7 @@ class MinimalOAuthServer:
             return status_code in {200, 400} and (
                 "Authentication Error" in body or "Authentication Successful" in body
             )
-        except (OSError, URLError, ValueError):
+        except (OSError, ValueError):
             return False
 
     def start(self) -> tuple[bool, str]:
@@ -308,7 +308,7 @@ class MinimalOAuthServer:
                 asyncio.run(self.server.serve())
 
             except Exception as e:
-                logger.error(f"Minimal OAuth server error: {e}", exc_info=True)
+                logger.exception("Minimal OAuth server error")
                 self.is_running = False
 
         # Start server in background thread
@@ -348,9 +348,8 @@ class MinimalOAuthServer:
             return
 
         try:
-            if self.server:
-                if hasattr(self.server, "should_exit"):
-                    self.server.should_exit = True
+            if self.server and hasattr(self.server, "should_exit"):
+                self.server.should_exit = True
 
             if self.server_thread and self.server_thread.is_alive():
                 self.server_thread.join(timeout=3.0)
@@ -360,7 +359,7 @@ class MinimalOAuthServer:
             logger.info("Minimal OAuth server stopped")
 
         except Exception as e:
-            logger.error(f"Error stopping minimal OAuth server: {e}", exc_info=True)
+            logger.exception("Error stopping minimal OAuth server")
 
 
 # Global instance for stdio mode
