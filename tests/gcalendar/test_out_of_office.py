@@ -64,7 +64,7 @@ class TestValidateAutoDeclineMode:
 class TestOooTimeEntry:
     def test_date_only_start_converts_to_midnight_when_timezone_provided(self):
         result = _ooo_time_entry(
-            "2026-04-05", is_end=False, timezone="America/New_York"
+            "2026-04-05", _is_end=False, timezone="America/New_York"
         )
         assert result == {
             "dateTime": "2026-04-05T00:00:00",
@@ -72,19 +72,19 @@ class TestOooTimeEntry:
         }
 
     def test_date_only_end_converts_to_midnight_when_timezone_provided(self):
-        result = _ooo_time_entry("2026-04-06", is_end=True, timezone="America/New_York")
+        result = _ooo_time_entry("2026-04-06", _is_end=True, timezone="America/New_York")
         assert result == {
             "dateTime": "2026-04-06T00:00:00",
             "timeZone": "America/New_York",
         }
 
     def test_datetime_passed_through_unchanged(self):
-        result = _ooo_time_entry("2026-04-05T09:00:00Z", is_end=False)
+        result = _ooo_time_entry("2026-04-05T09:00:00Z", _is_end=False)
         assert result == {"dateTime": "2026-04-05T09:00:00Z"}
 
     def test_timezone_added_when_provided(self):
         result = _ooo_time_entry(
-            "2026-04-05", is_end=False, timezone="America/New_York"
+            "2026-04-05", _is_end=False, timezone="America/New_York"
         )
         assert result == {
             "dateTime": "2026-04-05T00:00:00",
@@ -93,7 +93,7 @@ class TestOooTimeEntry:
 
     def test_timezone_added_to_datetime_input(self):
         result = _ooo_time_entry(
-            "2026-04-05T09:00:00", is_end=False, timezone="Europe/London"
+            "2026-04-05T09:00:00", _is_end=False, timezone="Europe/London"
         )
         assert result == {
             "dateTime": "2026-04-05T09:00:00",
@@ -102,11 +102,11 @@ class TestOooTimeEntry:
 
     def test_rejects_date_only_without_timezone(self):
         with pytest.raises(ValueError, match="require either a timezone"):
-            _ooo_time_entry("2026-04-05", is_end=False, timezone=None)
+            _ooo_time_entry("2026-04-05", _is_end=False, timezone=None)
 
     def test_rejects_naive_datetime_without_timezone(self):
         with pytest.raises(ValueError, match="require either a timezone"):
-            _ooo_time_entry("2026-04-05T09:00:00", is_end=False, timezone=None)
+            _ooo_time_entry("2026-04-05T09:00:00", _is_end=False, timezone=None)
 
 
 # ---------------------------------------------------------------------------
