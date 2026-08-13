@@ -1694,3 +1694,157 @@ async def manage_contact_group(
         f"Modified contact group members for {resource_name} for {user_google_email}"
     )
     return response
+
+
+@server.tool(
+    title="Search Directory People",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+@require_google_service("people", "directory_read")
+@handle_http_errors("search_directory_people", service_type="people")
+async def search_directory_people(
+    service: Resource,
+    user_google_email: str,
+    query: str,
+    page_size: int = 30,
+) -> str:
+    """
+    Search the Google Workspace domain directory (organization-wide people
+    lookup, not personal contacts).
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        query (str): Search query (name, email, or other profile fields).
+        page_size (int): Maximum number of results to return (default: 30, max: 50).
+
+    Returns:
+        str: Matching directory profiles with their basic information.
+    """
+    logger.info(
+        f"[search_directory_people] Invoked. Email: '{user_google_email}', Query: '{query}'"
+    )
+
+    if page_size < 1:
+        raise UserInputError("page_size must be >= 1")
+    page_size = min(page_size, 50)
+
+    result = await asyncio.to_thread(
+        service.people()
+        .searchDirectoryPeople(
+            query=query,
+            readMask=DEFAULT_PERSON_FIELDS,
+            sources=[
+                "DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE",
+                "DIRECTORY_SOURCE_TYPE_DOMAIN_CONTACT",
+            ],
+            pageSize=page_size,
+        )
+        .execute
+    )
+
+    people = result.get("people", [])
+
+    if not people:
+        return (
+            f"No directory people found matching '{query}' for {user_google_email}. "
+            "If this person is visible in Gmail autocomplete, check that Workspace "
+            "directory contact sharing is enabled for your organization."
+        )
+
+    response = f"Directory Search Results for '{query}' ({len(people)} found):\n\n"
+
+    for person in people:
+        response += _format_contact(person) + "\n\n"
+
+    logger.info(
+        f"Found {len(people)} directory people matching '{query}' for {user_google_email}"
+    )
+    return response
+
+
+@server.tool(
+    title="List Group Members",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+@require_google_service("cloudidentity", "cloud_identity_groups_read")
+@handle_http_errors("list_group_members", service_type="cloudidentity")
+async def list_group_members(
+    service: Resource,
+    user_google_email: str,
+    group_email: str,
+    max_results: int = 200,
+) -> str:
+    """
+    List the members of a Google Group (Cloud Identity Groups API).
+
+    Visibility is governed by the group's "Who can view members" setting; a
+    403 means the caller is not allowed to view that group's membership, not
+    that the tool is broken. Membership entries carry member emails and roles
+    (OWNER/MANAGER/MEMBER); use search_directory_people to resolve an email to
+    a display name.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        group_email (str): The email address of the Google Group.
+        max_results (int): Maximum number of members to return (default: 200).
+
+    Returns:
+        str: Member emails with their roles, one per line.
+    """
+    logger.info(
+        f"[list_group_members] Invoked. Email: '{user_google_email}', Group: '{group_email}'"
+    )
+
+    if max_results < 1:
+        raise UserInputError("max_results must be >= 1")
+
+    lookup = await asyncio.to_thread(
+        service.groups().lookup(groupKey_id=group_email).execute
+    )
+    group_name = lookup.get("name")
+    if not group_name:
+        return f"No group found for '{group_email}'."
+
+    members: List[Dict[str, Any]] = []
+    page_token: Optional[str] = None
+    while len(members) < max_results:
+        params: Dict[str, Any] = {
+            "parent": group_name,
+            "pageSize": min(max_results - len(members), 500),
+        }
+        if page_token:
+            params["pageToken"] = page_token
+        page = await asyncio.to_thread(
+            service.groups().memberships().list(**params).execute
+        )
+        members.extend(page.get("memberships", []))
+        page_token = page.get("nextPageToken")
+        if not page_token:
+            break
+
+    if not members:
+        return f"Group '{group_email}' has no visible members for {user_google_email}."
+
+    truncated = len(members) > max_results
+    members = members[:max_results]
+
+    response = f"Members of '{group_email}' ({len(members)} shown):\n\n"
+    for m in members:
+        email = m.get("preferredMemberKey", {}).get("id", "unknown")
+        roles = ", ".join(r.get("name", "") for r in m.get("roles", [])) or "MEMBER"
+        response += f"- {email} ({roles})\n"
+    if truncated:
+        response += "\n(Result truncated at max_results; raise it to see more.)\n"
+
+    logger.info(
+        f"Listed {len(members)} members of '{group_email}' for {user_google_email}"
+    )
+    return response

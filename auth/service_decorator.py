@@ -61,6 +61,8 @@ from auth.scopes import (
     TASKS_READONLY_SCOPE,
     CONTACTS_SCOPE,
     CONTACTS_READONLY_SCOPE,
+    DIRECTORY_READONLY_SCOPE,
+    CLOUD_IDENTITY_GROUPS_READONLY_SCOPE,
     CUSTOM_SEARCH_SCOPE,
     SCRIPT_PROJECTS_SCOPE,
     SCRIPT_PROJECTS_READONLY_SCOPE,
@@ -558,6 +560,7 @@ SERVICE_CONFIGS = {
     "people": {"service": "people", "version": "v1"},
     "customsearch": {"service": "customsearch", "version": "v1"},
     "script": {"service": "script", "version": "v1"},
+    "cloudidentity": {"service": "cloudidentity", "version": "v1"},
 }
 
 
@@ -603,6 +606,8 @@ SCOPE_GROUPS = {
     # Contacts scopes
     "contacts": CONTACTS_SCOPE,
     "contacts_read": CONTACTS_READONLY_SCOPE,
+    "directory_read": DIRECTORY_READONLY_SCOPE,
+    "cloud_identity_groups_read": CLOUD_IDENTITY_GROUPS_READONLY_SCOPE,
     # Custom Search scope
     "customsearch": CUSTOM_SEARCH_SCOPE,
     # Apps Script scopes
