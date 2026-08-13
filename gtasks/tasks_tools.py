@@ -22,6 +22,9 @@ from core.utils import UserInputError, handle_http_errors
 
 logger = logging.getLogger(__name__)
 
+# String constant (SonarQube S1192)
+UTC_OFFSET = "+00:00"
+
 LIST_TASKS_MAX_RESULTS_DEFAULT = 20
 LIST_TASKS_MAX_RESULTS_MAX = 10_000
 LIST_TASKS_MAX_POSITION = "99999999999999999999"
@@ -81,7 +84,7 @@ def _adjust_due_max_for_tasks_api(due_max: str) -> str:
     include tasks due on the requested date we bump the bound by one day.
     """
     try:
-        parsed = datetime.fromisoformat(due_max.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(due_max.replace("Z", UTC_OFFSET))
     except ValueError:
         logger.warning(
             "[list_tasks] Unable to parse due_max '%s'; sending unmodified value",
@@ -94,7 +97,7 @@ def _adjust_due_max_for_tasks_api(due_max: str) -> str:
 
     adjusted = parsed + timedelta(days=1)
     if adjusted.tzinfo == timezone.utc:
-        return adjusted.isoformat().replace("+00:00", "Z")
+        return adjusted.isoformat().replace(UTC_OFFSET, "Z")
     return adjusted.isoformat()
 
 
@@ -105,7 +108,7 @@ def _validate_rfc3339_date(due: str) -> None:
         raise UserInputError(error_msg)
     try:
         parsed = datetime.fromisoformat(
-            due[:-1] + "+00:00" if due.endswith("Z") else due
+            due[:-1] + UTC_OFFSET if due.endswith("Z") else due
         )
     except ValueError:
         raise UserInputError(error_msg) from None
@@ -171,12 +174,12 @@ async def list_task_lists(
 
     except HttpError as error:
         message = _format_reauth_message(error, user_google_email)
-        logger.error(message, exc_info=True)
-        raise Exception(message)
+        logger.exception(message)
+        raise RuntimeError(message)
     except Exception as e:
         message = f"Unexpected error: {e}."
         logger.exception(message)
-        raise Exception(message)
+        raise RuntimeError(message)
 
 
 @server.tool(
@@ -225,12 +228,12 @@ async def get_task_list(
 
     except HttpError as error:
         message = _format_reauth_message(error, user_google_email)
-        logger.error(message, exc_info=True)
-        raise Exception(message)
+        logger.exception(message)
+        raise RuntimeError(message)
     except Exception as e:
         message = f"Unexpected error: {e}."
         logger.exception(message)
-        raise Exception(message)
+        raise RuntimeError(message)
 
 
 # --- Task list _impl functions ---
@@ -526,12 +529,12 @@ async def list_tasks(
 
     except HttpError as error:
         message = _format_reauth_message(error, user_google_email)
-        logger.error(message, exc_info=True)
-        raise Exception(message)
+        logger.exception(message)
+        raise RuntimeError(message)
     except Exception as e:
         message = f"Unexpected error: {e}."
         logger.exception(message)
-        raise Exception(message)
+        raise RuntimeError(message)
 
 
 def get_structured_tasks(tasks: List[Dict[str, str]]) -> List[StructuredTask]:
@@ -711,12 +714,12 @@ async def get_task(
 
     except HttpError as error:
         message = _format_reauth_message(error, user_google_email)
-        logger.error(message, exc_info=True)
-        raise Exception(message)
+        logger.exception(message)
+        raise RuntimeError(message)
     except Exception as e:
         message = f"Unexpected error: {e}."
         logger.exception(message)
-        raise Exception(message)
+        raise RuntimeError(message)
 
 
 # --- Task _impl functions ---

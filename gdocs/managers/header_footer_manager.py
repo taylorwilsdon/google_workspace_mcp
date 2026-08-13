@@ -144,7 +144,7 @@ class HeaderFooterManager:
                 return False, replace_message
 
         except Exception as e:
-            logger.error(f"Failed to update {section_type}: {str(e)}")
+            logger.exception(f"Failed to update {section_type}: {str(e)}")
             return False, f"Failed to update {section_type}: {str(e)}"
 
     async def _get_document(self, document_id: str) -> dict[str, Any]:
@@ -190,7 +190,7 @@ class HeaderFooterManager:
 
         return doc, None
 
-    async def _find_target_section(
+    async def _find_target_section(  # intentionally async: all callers use await for a consistent coroutine interface
         self, doc: dict[str, Any], section_type: str, header_footer_type: str
     ) -> tuple[Optional[dict[str, Any]], Optional[str]]:
         """
@@ -342,7 +342,7 @@ class HeaderFooterManager:
             return True, "ok"
 
         except Exception as e:
-            logger.error(f"Failed to replace section content: {str(e)}")
+            logger.exception(f"Failed to replace section content: {str(e)}")
             return (
                 False,
                 f"Failed to write {section_id} segment content: {str(e)}",
@@ -388,7 +388,7 @@ class HeaderFooterManager:
                     )
                 except Exception:
                     pass
-            logger.error(f"Failed to create missing {section_type}: {str(e)}")
+            logger.exception(f"Failed to create missing {section_type}: {str(e)}")
             return None
 
         replies = result.get("replies", [])
@@ -438,7 +438,7 @@ class HeaderFooterManager:
             }
 
         except Exception as e:
-            logger.error(f"Failed to get header/footer info: {str(e)}")
+            logger.exception(f"Failed to get header/footer info: {str(e)}")
             return {"error": str(e)}
 
     def _extract_section_info(self, section_data: dict[str, Any]) -> dict[str, Any]:

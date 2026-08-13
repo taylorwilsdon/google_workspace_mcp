@@ -271,7 +271,7 @@ def check_credentials_directory_permissions(credentials_dir: str = None) -> None
         ) as probe:
             probe.write(b"test")
             probe.flush()
-    except (PermissionError, OSError) as e:
+    except OSError as e:
         raise PermissionError(
             f"Cannot create or write to credentials directory "
             f"'{os.path.abspath(credentials_dir)}': {e}"
@@ -332,15 +332,10 @@ def extract_office_xml_text(file_bytes: bytes, mime_type: str) -> Optional[str]:
                     logger.info(
                         "No sharedStrings.xml found in Excel file (this is optional)."
                     )
-                except ET.ParseError as e:
-                    logger.error(f"Error parsing sharedStrings.xml: {e}")
-                except (
-                    Exception
-                ) as e:  # Catch any other unexpected error during sharedStrings parsing
-                    logger.error(
-                        f"Unexpected error processing sharedStrings.xml: {e}",
-                        exc_info=True,
-                    )
+                except ET.ParseError:
+                    logger.exception("Error parsing sharedStrings.xml")
+                except Exception:  # Catch any other unexpected error during sharedStrings parsing
+                    logger.exception("Unexpected error processing sharedStrings.xml")
             else:
                 return None
 
@@ -404,10 +399,9 @@ def extract_office_xml_text(file_bytes: bytes, mime_type: str) -> Optional[str]:
                     logger.warning(
                         f"Could not parse XML in member '{member}' for {mime_type} file: {e}"
                     )
-                except Exception as e:
-                    logger.error(
-                        f"Error processing member '{member}' for {mime_type}: {e}",
-                        exc_info=True,
+                except Exception:
+                    logger.exception(
+                        f"Error processing member '{member}' for {mime_type}"
                     )
                     # continue processing other members
 
@@ -421,15 +415,11 @@ def extract_office_xml_text(file_bytes: bytes, mime_type: str) -> Optional[str]:
     except zipfile.BadZipFile:
         logger.warning(f"File is not a valid ZIP archive (mime_type: {mime_type}).")
         return None
-    except (
-        ET.ParseError
-    ) as e:  # Catch parsing errors at the top level if zipfile itself is XML-like
-        logger.error(f"XML parsing error at a high level for {mime_type}: {e}")
+    except ET.ParseError:  # Catch parsing errors at the top level if zipfile itself is XML-like
+        logger.exception(f"XML parsing error at a high level for {mime_type}")
         return None
-    except Exception as e:
-        logger.error(
-            f"Failed to extract office XML text for {mime_type}: {e}", exc_info=True
-        )
+    except Exception:
+        logger.exception(f"Failed to extract office XML text for {mime_type}")
         return None
 
 
@@ -525,8 +515,8 @@ def handle_http_errors(
                         )
                         await asyncio.sleep(delay)
                     else:
-                        logger.error(
-                            f"SSL error in {tool_name} on final attempt: {e}. Raising exception."
+                        logger.exception(
+                            f"SSL error in {tool_name} on final attempt. Raising exception."
                         )
                         raise TransientNetworkError(
                             f"A transient SSL error occurred in '{tool_name}' after {max_retries} attempts. "
@@ -587,8 +577,8 @@ def handle_http_errors(
                         # Other HTTP errors (400 Bad Request, etc.) - don't suggest re-auth
                         message = f"API error in {tool_name}: {error}"
 
-                    logger.error(f"API error in {tool_name}: {error}", exc_info=True)
-                    raise Exception(message) from error
+                    logger.exception(f"API error in {tool_name}")
+                    raise RuntimeError(message) from error
                 except TransientNetworkError:
                     # Re-raise without wrapping to preserve the specific error type
                     raise
@@ -601,7 +591,7 @@ def handle_http_errors(
                 except Exception as e:
                     message = f"An unexpected error occurred in {tool_name}: {e}"
                     logger.exception(message)
-                    raise Exception(message) from e
+                    raise RuntimeError(message) from e
 
         # Propagate _required_google_scopes if present (for tool filtering)
         if hasattr(func, "_required_google_scopes"):

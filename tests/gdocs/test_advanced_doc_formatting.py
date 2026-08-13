@@ -158,7 +158,7 @@ class TestAdvancedStructureParsing:
 
 
 class TestAdvancedValidation:
-    @pytest.fixture()
+    @pytest.fixture
     def vm(self):
         return ValidationManager()
 
@@ -185,7 +185,7 @@ class TestAdvancedValidation:
 
 
 class TestAdvancedBatchManagerIntegration:
-    @pytest.fixture()
+    @pytest.fixture
     def manager(self):
         from gdocs.managers.batch_operation_manager import BatchOperationManager
 
@@ -242,7 +242,7 @@ class TestAdvancedBatchManagerIntegration:
 
 
 class TestAdvancedPublicToolWiring:
-    @pytest.fixture()
+    @pytest.fixture
     def service(self):
         mock_service = Mock()
         mock_service.documents().batchUpdate().execute.return_value = {"replies": [{}]}

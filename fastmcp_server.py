@@ -132,8 +132,8 @@ if not is_stateless_mode():
         logger.info("Checking credentials directory permissions...")
         check_credentials_directory_permissions()
         logger.info("Credentials directory permissions verified")
-    except (PermissionError, OSError) as e:
-        logger.error(f"Credentials directory permission check failed: {e}")
+    except OSError as e:
+        logger.exception("Credentials directory permission check failed")
         logger.error(
             "   Please ensure the service has write permissions to create/access the credentials directory"
         )

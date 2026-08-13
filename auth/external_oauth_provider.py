@@ -146,7 +146,7 @@ class ExternalOAuthProvider(GoogleProvider):
                     return None
 
             except Exception as e:
-                logger.error(f"Error validating external access token: {e}")
+                logger.exception("Error validating external access token")
                 return None
 
         # For JWT tokens, use parent class implementation

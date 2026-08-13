@@ -406,8 +406,9 @@ async def test_get_gmail_messages_content_batch_rejects_metadata_with_body_forma
         }
     )
 
+    fn = _unwrap(get_gmail_messages_content_batch)
     with pytest.raises(UserInputError, match="require format='full'"):
-        await _unwrap(get_gmail_messages_content_batch)(
+        await fn(
             service=service,
             message_ids=["msg-1"],
             user_google_email="user@example.com",

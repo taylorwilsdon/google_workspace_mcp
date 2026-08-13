@@ -116,7 +116,7 @@ class TableOperationManager:
                 if header_rows <= 0:
                     raise
 
-                logger.error(
+                logger.exception(
                     "Table was created, but the population/header-pinning batch "
                     f"failed: {str(e)}"
                 )
@@ -150,7 +150,7 @@ class TableOperationManager:
             )
 
         except Exception as e:
-            logger.error(f"Failed to create and populate table: {str(e)}")
+            logger.exception(f"Failed to create and populate table: {str(e)}")
             return False, f"Table creation failed: {str(e)}", {}
 
     async def _create_empty_table(

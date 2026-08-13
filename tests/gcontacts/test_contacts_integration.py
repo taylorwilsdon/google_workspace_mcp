@@ -361,17 +361,16 @@ class TestEtagRetryOn412:
             http_412
         )
 
+        coro = manage_contact(
+            service=svc,
+            user_google_email="test@example.com",
+            action="update",
+            contact_id="c123",
+            phones=[{"number": "+79270000000", "type": "mobile"}],
+            phones_mode="replace",
+        )
         with pytest.raises(HttpError) as exc_info:
-            run(
-                manage_contact(
-                    service=svc,
-                    user_google_email="test@example.com",
-                    action="update",
-                    contact_id="c123",
-                    phones=[{"number": "+79270000000", "type": "mobile"}],
-                    phones_mode="replace",
-                )
-            )
+            run(coro)
         assert exc_info.value.resp.status == 412
 
 
@@ -540,21 +539,20 @@ class TestBatchUpdateWithoutFieldParam:
     def test_no_field_raises_user_input_error(self):
         svc = MagicMock()
 
+        coro = manage_contacts_batch(
+            service=svc,
+            user_google_email="test@example.com",
+            action="update",
+            updates=[
+                {
+                    "contact_id": "c1",
+                    "phones": [{"number": "+79270000000", "type": "mobile"}],
+                },
+            ],
+            field=None,
+        )
         with pytest.raises(UserInputError) as exc_info:
-            run(
-                manage_contacts_batch(
-                    service=svc,
-                    user_google_email="test@example.com",
-                    action="update",
-                    updates=[
-                        {
-                            "contact_id": "c1",
-                            "phones": [{"number": "+79270000000", "type": "mobile"}],
-                        },
-                    ],
-                    field=None,
-                )
-            )
+            run(coro)
 
         assert "field" in str(exc_info.value).lower()
         svc.people.return_value.batchUpdateContacts.assert_not_called()
@@ -562,21 +560,20 @@ class TestBatchUpdateWithoutFieldParam:
     def test_invalid_field_raises_user_input_error(self):
         svc = MagicMock()
 
+        coro = manage_contacts_batch(
+            service=svc,
+            user_google_email="test@example.com",
+            action="update",
+            updates=[
+                {
+                    "contact_id": "c1",
+                    "phones": [{"number": "+79270000000", "type": "mobile"}],
+                },
+            ],
+            field="invalidField",
+        )
         with pytest.raises(UserInputError) as exc_info:
-            run(
-                manage_contacts_batch(
-                    service=svc,
-                    user_google_email="test@example.com",
-                    action="update",
-                    updates=[
-                        {
-                            "contact_id": "c1",
-                            "phones": [{"number": "+79270000000", "type": "mobile"}],
-                        },
-                    ],
-                    field="invalidField",
-                )
-            )
+            run(coro)
 
         assert (
             "invalidField" in str(exc_info.value)
@@ -790,7 +787,8 @@ class TestNormalizePhoneInternal:
 
     def test_internal_dedup_works_correctly(self):
         """Two '250' entries normalize to same key — dedup works."""
-        assert _normalize_phone("250") == _normalize_phone("250")
+        first = _normalize_phone("250")
+        assert first == _normalize_phone("250")
 
     def test_different_internal_numbers_are_distinct(self):
         """250 and 301 normalize to different keys — they stay separate."""

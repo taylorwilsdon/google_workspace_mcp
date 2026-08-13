@@ -151,8 +151,9 @@ class TestHeaderFooterGuardrails:
             )
         )
 
+        fn = _unwrap(docs_tools.modify_doc_text)
         with pytest.raises(UserInputError) as exc_info:
-            await _unwrap(docs_tools.modify_doc_text)(
+            await fn(
                 service=service,
                 user_google_email="user@example.com",
                 document_id="c" * 25,

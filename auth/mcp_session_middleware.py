@@ -99,6 +99,6 @@ class MCPSessionMiddleware(BaseHTTPMiddleware):
                 return response
 
         except Exception as e:
-            logger.error(f"Error in MCP session middleware: {e}")
+            logger.exception("Error in MCP session middleware")
             # Continue without session context
             return await call_next(request)

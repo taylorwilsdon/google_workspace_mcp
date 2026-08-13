@@ -286,9 +286,10 @@ async def test_modify_event_attaches_conference_data():
 @pytest.mark.asyncio
 async def test_manage_event_rejects_conference_helper_without_uri():
     fn = _unwrap(manage_event)
+    service = Mock()
     with pytest.raises(ValueError, match="conference_provider and conference_uri"):
         await fn(
-            service=Mock(),
+            service=service,
             user_google_email="user@example.com",
             action="create",
             summary="x",
@@ -302,9 +303,10 @@ async def test_manage_event_rejects_conference_helper_without_uri():
 @pytest.mark.parametrize("action", ["create", "update", "delete", "rsvp"])
 async def test_manage_event_rejects_invalid_send_updates(action):
     fn = _unwrap(manage_event)
+    service = Mock()
     with pytest.raises(ValueError, match="Invalid send_updates 'invalid'"):
         await fn(
-            service=Mock(),
+            service=service,
             user_google_email="user@example.com",
             action=action,
             summary="x",

@@ -34,8 +34,9 @@ def test_extract_oauth20_user_email_falls_back_to_env(monkeypatch):
 def test_extract_oauth20_user_email_raises_without_arg_or_env(monkeypatch):
     monkeypatch.setattr(service_decorator, "_ENV_USER_EMAIL", None)
 
+    sig = _sample_sig()
     with pytest.raises(Exception, match="user_google_email"):
-        service_decorator._extract_oauth20_user_email((), {}, _sample_sig())
+        service_decorator._extract_oauth20_user_email((), {}, sig)
 
 
 @pytest.mark.asyncio

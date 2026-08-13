@@ -44,6 +44,13 @@ DETAILED_PERSON_FIELDS = (
 # Contact group fields
 CONTACT_GROUP_FIELDS = "name,groupType,memberCount,metadata"
 
+# Resource name prefix constants
+PEOPLE_PREFIX = "people/"
+CONTACT_GROUPS_PREFIX = "contactGroups/"
+
+# Validation message constants
+PAGE_SIZE_MIN_ERROR = "page_size must be >= 1"
+
 # Cache warmup tracking
 _search_cache_warmed_up: Dict[str, bool] = {}
 
@@ -594,11 +601,11 @@ async def list_contacts(
     logger.info(f"[list_contacts] Invoked. Email: '{user_google_email}'")
 
     if page_size < 1:
-        raise UserInputError("page_size must be >= 1")
+        raise UserInputError(PAGE_SIZE_MIN_ERROR)
     page_size = min(page_size, 1000)
 
     params: Dict[str, Any] = {
-        "resourceName": "people/me",
+        "resourceName": f"{PEOPLE_PREFIX}me",
         "personFields": DEFAULT_PERSON_FIELDS,
         "pageSize": page_size,
     }
@@ -660,8 +667,8 @@ async def get_contact(
         str: Detailed contact information.
     """
     # Normalize resource name
-    if not contact_id.startswith("people/"):
-        resource_name = f"people/{contact_id}"
+    if not contact_id.startswith(PEOPLE_PREFIX):
+        resource_name = f"{PEOPLE_PREFIX}{contact_id}"
     else:
         resource_name = contact_id
 
@@ -715,7 +722,7 @@ async def search_contacts(
     )
 
     if page_size < 1:
-        raise UserInputError("page_size must be >= 1")
+        raise UserInputError(PAGE_SIZE_MIN_ERROR)
     page_size = min(page_size, 30)
 
     # Warm up the search cache if needed
@@ -898,7 +905,7 @@ async def manage_contact(
         response = f"Contact Created for {user_google_email}:\n\n"
         response += _format_contact(result, detailed=True)
 
-        created_id = result.get("resourceName", "").replace("people/", "")
+        created_id = result.get("resourceName", "").replace(PEOPLE_PREFIX, "")
         logger.info(f"Created contact {created_id} for {user_google_email}")
         return response
 
@@ -907,8 +914,8 @@ async def manage_contact(
         raise UserInputError(f"contact_id is required for '{action}' action.")
 
     # Normalize resource name
-    if not contact_id.startswith("people/"):
-        resource_name = f"people/{contact_id}"
+    if not contact_id.startswith(PEOPLE_PREFIX):
+        resource_name = f"{PEOPLE_PREFIX}{contact_id}"
     else:
         resource_name = contact_id
 
@@ -925,7 +932,7 @@ async def manage_contact(
 
             etag = current.get("etag")
             if not etag:
-                raise Exception("Unable to get contact etag for update.")
+                raise ValueError("Unable to get contact etag for update.")
 
             # Build body from provided params (returns new values only)
             new_body = _build_person_body(
@@ -1102,7 +1109,7 @@ async def list_contact_groups(
     logger.info(f"[list_contact_groups] Invoked. Email: '{user_google_email}'")
 
     if page_size < 1:
-        raise UserInputError("page_size must be >= 1")
+        raise UserInputError(PAGE_SIZE_MIN_ERROR)
     page_size = min(page_size, 1000)
 
     params: Dict[str, Any] = {
@@ -1125,7 +1132,7 @@ async def list_contact_groups(
 
     for group in groups:
         resource_name = group.get("resourceName", "")
-        group_id = resource_name.replace("contactGroups/", "")
+        group_id = resource_name.replace(CONTACT_GROUPS_PREFIX, "")
         name = group.get("name", "Unnamed")
         group_type = group.get("groupType", "USER_CONTACT_GROUP")
         member_count = group.get("memberCount", 0)
@@ -1171,8 +1178,8 @@ async def get_contact_group(
         str: Contact group details including members.
     """
     # Normalize resource name
-    if not group_id.startswith("contactGroups/"):
-        resource_name = f"contactGroups/{group_id}"
+    if not group_id.startswith(CONTACT_GROUPS_PREFIX):
+        resource_name = f"{CONTACT_GROUPS_PREFIX}{group_id}"
     else:
         resource_name = group_id
 
@@ -1208,7 +1215,7 @@ async def get_contact_group(
     if member_resource_names:
         response += f"\nMembers ({len(member_resource_names)} shown):\n"
         for member in member_resource_names:
-            contact_id = member.replace("people/", "")
+            contact_id = member.replace(PEOPLE_PREFIX, "")
             response += f"  - {contact_id}\n"
 
     logger.info(f"Retrieved contact group {resource_name} for {user_google_email}")
@@ -1388,8 +1395,8 @@ async def manage_contacts_batch(
             cid = update.contact_id
             if not cid:
                 raise UserInputError("Each update must include a contact_id.")
-            if not cid.startswith("people/"):
-                cid = f"people/{cid}"
+            if not cid.startswith(PEOPLE_PREFIX):
+                cid = f"{PEOPLE_PREFIX}{cid}"
             resource_names.append(cid)
 
         batch_get_result = await asyncio.to_thread(
@@ -1430,8 +1437,8 @@ async def manage_contacts_batch(
 
         for update in updates:
             cid = update.contact_id
-            if not cid.startswith("people/"):
-                cid = f"people/{cid}"
+            if not cid.startswith(PEOPLE_PREFIX):
+                cid = f"{PEOPLE_PREFIX}{cid}"
 
             etag = etags.get(cid)
             if not etag:
@@ -1506,8 +1513,8 @@ async def manage_contacts_batch(
 
     resource_names = []
     for cid in contact_ids:
-        if not cid.startswith("people/"):
-            resource_names.append(f"people/{cid}")
+        if not cid.startswith(PEOPLE_PREFIX):
+            resource_names.append(f"{PEOPLE_PREFIX}{cid}")
         else:
             resource_names.append(cid)
 
@@ -1583,7 +1590,7 @@ async def manage_contact_group(
         )
 
         resource_name = result.get("resourceName", "")
-        created_group_id = resource_name.replace("contactGroups/", "")
+        created_group_id = resource_name.replace(CONTACT_GROUPS_PREFIX, "")
         created_name = result.get("name", name)
 
         response = f"Contact Group Created for {user_google_email}:\n\n"
@@ -1599,8 +1606,8 @@ async def manage_contact_group(
         raise UserInputError(f"group_id is required for '{action}' action.")
 
     # Normalize resource name
-    if not group_id.startswith("contactGroups/"):
-        resource_name = f"contactGroups/{group_id}"
+    if not group_id.startswith(CONTACT_GROUPS_PREFIX):
+        resource_name = f"{CONTACT_GROUPS_PREFIX}{group_id}"
     else:
         resource_name = group_id
 
@@ -1652,8 +1659,8 @@ async def manage_contact_group(
     if add_contact_ids:
         add_names = []
         for contact_id in add_contact_ids:
-            if not contact_id.startswith("people/"):
-                add_names.append(f"people/{contact_id}")
+            if not contact_id.startswith(PEOPLE_PREFIX):
+                add_names.append(f"{PEOPLE_PREFIX}{contact_id}")
             else:
                 add_names.append(contact_id)
         modify_body["resourceNamesToAdd"] = add_names
@@ -1661,8 +1668,8 @@ async def manage_contact_group(
     if remove_contact_ids:
         remove_names = []
         for contact_id in remove_contact_ids:
-            if not contact_id.startswith("people/"):
-                remove_names.append(f"people/{contact_id}")
+            if not contact_id.startswith(PEOPLE_PREFIX):
+                remove_names.append(f"{PEOPLE_PREFIX}{contact_id}")
             else:
                 remove_names.append(contact_id)
         modify_body["resourceNamesToRemove"] = remove_names

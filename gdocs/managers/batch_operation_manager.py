@@ -7,7 +7,7 @@ extracting complex validation and request building logic.
 
 import logging
 import asyncio
-from typing import Any, Union, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 from gdocs.docs_helpers import (
     create_insert_text_request,
@@ -226,7 +226,7 @@ class BatchOperationManager:
 
         return None
 
-    async def _validate_and_build_requests(
+    async def _validate_and_build_requests(  # intentionally async: all callers use await for a consistent coroutine interface
         self, operations: list[dict[str, Any]]
     ) -> tuple[list[dict[str, Any]], list[str]]:
         """
@@ -277,7 +277,7 @@ class BatchOperationManager:
 
     def _build_operation_request(
         self, op: dict[str, Any], op_type: str
-    ) -> Tuple[Union[Dict[str, Any], List[Dict[str, Any]]], str]:
+    ) -> Tuple[Dict[str, Any] | List[Dict[str, Any]], str]:
         """
         Build a single operation request.
 

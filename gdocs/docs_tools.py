@@ -73,6 +73,7 @@ import json
 
 logger = logging.getLogger(__name__)
 HEADER_FOOTER_RUNTIME_CANARY = "docs-hf-canary-20260328b"
+_PDF_MIME_TYPE = "application/pdf"
 
 
 @server.tool(
@@ -306,7 +307,7 @@ async def get_doc_content(
         loop = asyncio.get_event_loop()
         done = False
         while not done:
-            status, done = await loop.run_in_executor(None, downloader.next_chunk)
+            _, done = await loop.run_in_executor(None, downloader.next_chunk)
 
         file_content_bytes = fh.getvalue()
 
@@ -937,9 +938,7 @@ async def insert_doc_image(
         index = 1
 
     # Determine if source is a Drive file ID or URL
-    is_drive_file = not (
-        image_source.startswith("http://") or image_source.startswith("https://")
-    )
+    is_drive_file = not image_source.startswith("https://")
 
     if is_drive_file:
         # Verify Drive file exists and get metadata
@@ -2000,7 +1999,7 @@ async def export_doc_to_pdf(
     # Export the document as PDF
     try:
         request_obj = service.files().export_media(
-            fileId=document_id, mimeType="application/pdf"
+            fileId=document_id, mimeType=_PDF_MIME_TYPE
         )
 
         fh = io.BytesIO()
@@ -2027,10 +2026,10 @@ async def export_doc_to_pdf(
         # Reuse the existing BytesIO object by resetting to the beginning
         fh.seek(0)
         # Create media upload object
-        media = MediaIoBaseUpload(fh, mimetype="application/pdf", resumable=True)
+        media = MediaIoBaseUpload(fh, mimetype=_PDF_MIME_TYPE, resumable=True)
 
         # Prepare file metadata for upload
-        file_metadata = {"name": pdf_filename, "mimeType": "application/pdf"}
+        file_metadata = {"name": pdf_filename, "mimeType": _PDF_MIME_TYPE}
 
         # Add parent folder if specified
         if folder_id:

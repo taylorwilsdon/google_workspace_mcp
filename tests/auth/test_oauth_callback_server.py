@@ -46,7 +46,7 @@ class _AliveThread:
 
 
 def test_ensure_oauth_callback_recreates_server_when_endpoint_changes(monkeypatch):
-    _DummyMinimalOAuthServer.instances = []
+    monkeypatch.setattr(_DummyMinimalOAuthServer, "instances", [])
     monkeypatch.setattr(
         oauth_callback_server,
         "MinimalOAuthServer",
@@ -122,7 +122,7 @@ def test_is_actually_running_treats_eaddrinuse_as_callback_port_in_use(monkeypat
 
 
 def test_ensure_oauth_callback_skips_start_when_other_instance_owns_port(monkeypatch):
-    _DummyMinimalOAuthServer.instances = []
+    monkeypatch.setattr(_DummyMinimalOAuthServer, "instances", [])
     monkeypatch.setattr(oauth_callback_server, "_minimal_oauth_server", None)
 
     class _PortInUseServer(_DummyMinimalOAuthServer):
