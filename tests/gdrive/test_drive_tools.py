@@ -161,7 +161,7 @@ async def test_create_drive_file_rejects_content_mime_type_without_base64():
 
 @pytest.mark.asyncio
 async def test_create_drive_file_rejects_empty_file_url():
-    """An empty fileUrl is treated as no content source and rejected early."""
+    """An empty file_url is treated as no content source and rejected early."""
     mock_service = Mock()
     fn = _unwrap(create_drive_file)
 
@@ -170,7 +170,7 @@ async def test_create_drive_file_rejects_empty_file_url():
             service=mock_service,
             user_google_email="user@example.com",
             file_name="report.pdf",
-            fileUrl="",
+            file_url="",
         )
 
     mock_service.files.return_value.create.return_value.execute.assert_not_called()
