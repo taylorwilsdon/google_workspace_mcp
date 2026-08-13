@@ -116,7 +116,8 @@ def _patch_successful_callback(
         lambda credentials: {"email": google_email},  # noqa: ARG005
     )
     monkeypatch.setattr(
-        "auth.google_auth.save_credentials_to_session", lambda *args: None
+        "auth.google_auth.save_credentials_to_session",
+        lambda *args, **kwargs: None,  # noqa: ARG005
     )
     monkeypatch.setattr("auth.google_auth.is_stateless_mode", lambda: False)
     return oauth_store, credential_store
@@ -389,7 +390,8 @@ async def test_callback_missing_state_uses_explicit_single_user_stdio_fallback(
         lambda credentials: {"email": "user@gmail.com"},  # noqa: ARG005
     )
     monkeypatch.setattr(
-        "auth.google_auth.save_credentials_to_session", lambda *args: None
+        "auth.google_auth.save_credentials_to_session",
+        lambda *args, **kwargs: None,  # noqa: ARG005
     )
     monkeypatch.setattr("auth.google_auth.is_stateless_mode", lambda: False)
 
@@ -428,7 +430,8 @@ async def test_callback_preserves_refresh_token_from_credential_store(monkeypatc
         lambda credentials: {"email": "user@gmail.com"},  # noqa: ARG005
     )
     monkeypatch.setattr(
-        "auth.google_auth.save_credentials_to_session", lambda *args: None
+        "auth.google_auth.save_credentials_to_session",
+        lambda *args, **kwargs: None,  # noqa: ARG005
     )
     monkeypatch.setattr("auth.google_auth.is_stateless_mode", lambda: False)
 
@@ -471,7 +474,8 @@ async def test_callback_prefers_session_refresh_token_over_credential_store(
         lambda credentials: {"email": "user@gmail.com"},  # noqa: ARG005
     )
     monkeypatch.setattr(
-        "auth.google_auth.save_credentials_to_session", lambda *args: None
+        "auth.google_auth.save_credentials_to_session",
+        lambda *args, **kwargs: None,  # noqa: ARG005
     )
     monkeypatch.setattr("auth.google_auth.is_stateless_mode", lambda: False)
 
@@ -548,7 +552,7 @@ async def test_callback_aborts_session_persistence_when_store_write_fails(monkey
     )
     monkeypatch.setattr(
         "auth.google_auth.save_credentials_to_session",
-        lambda *args: session_cache_writes.append(args),
+        lambda *args, **kwargs: session_cache_writes.append(args),  # noqa: ARG005
     )
     monkeypatch.setattr("auth.google_auth.is_stateless_mode", lambda: False)
 
@@ -595,7 +599,7 @@ async def test_callback_binds_credentials_to_originating_session_when_session_mi
     )
     monkeypatch.setattr(
         "auth.google_auth.save_credentials_to_session",
-        lambda *args: session_cache_writes.append(args),
+        lambda *args, **kwargs: session_cache_writes.append(args),  # noqa: ARG005
     )
     monkeypatch.setattr("auth.google_auth.is_stateless_mode", lambda: False)
     caplog.set_level("INFO", logger="auth.google_auth")
