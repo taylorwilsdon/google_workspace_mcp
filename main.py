@@ -891,12 +891,22 @@ def main():
                 )
                 sys.exit(1)
 
+            ssl_certfile = os.getenv("WORKSPACE_MCP_SSL_CERTFILE") or None
+            ssl_keyfile = os.getenv("WORKSPACE_MCP_SSL_KEYFILE") or None
+            uvicorn_ssl: dict | None = None
+            if ssl_certfile and ssl_keyfile:
+                uvicorn_ssl = {
+                    "ssl_certfile": ssl_certfile,
+                    "ssl_keyfile": ssl_keyfile,
+                }
+
             server.run(
                 transport="streamable-http",
                 host=host,
                 port=port,
                 stateless_http=is_stateless_mode(),
                 show_banner=False,
+                uvicorn_config=uvicorn_ssl,
             )
         else:
             if http_port is not None:
