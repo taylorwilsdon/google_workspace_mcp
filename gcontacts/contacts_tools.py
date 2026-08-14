@@ -1705,7 +1705,7 @@ async def manage_contact_group(
     ),
 )
 @require_google_service("people", "directory_read")
-@handle_http_errors("search_directory_people", service_type="people")
+@handle_http_errors("search_directory_people", is_read_only=True, service_type="people")
 async def search_directory_people(
     service: Resource,
     user_google_email: str,
@@ -1775,7 +1775,7 @@ async def search_directory_people(
     ),
 )
 @require_google_service("cloudidentity", "cloud_identity_groups_read")
-@handle_http_errors("list_group_members", service_type="cloudidentity")
+@handle_http_errors("list_group_members", is_read_only=True, service_type="cloudidentity")
 async def list_group_members(
     service: Resource,
     user_google_email: str,
@@ -1794,7 +1794,7 @@ async def list_group_members(
     Args:
         user_google_email (str): The user's Google email address. Required.
         group_email (str): The email address of the Google Group.
-        max_results (int): Maximum number of members to return (default: 200).
+        max_results (int): Maximum number of members to return (default: 200, max: 1000).
 
     Returns:
         str: Member emails with their roles, one per line.
@@ -1805,6 +1805,7 @@ async def list_group_members(
 
     if max_results < 1:
         raise UserInputError("max_results must be >= 1")
+    max_results = min(max_results, 1000)
 
     lookup = await asyncio.to_thread(
         service.groups().lookup(groupKey_id=group_email).execute
@@ -1833,7 +1834,9 @@ async def list_group_members(
     if not members:
         return f"Group '{group_email}' has no visible members for {user_google_email}."
 
-    truncated = len(members) > max_results
+    # pageSize is capped at the remaining budget, so the leftover page token is
+    # the truncation signal (len(members) can never exceed max_results here)
+    truncated = page_token is not None
     members = members[:max_results]
 
     response = f"Members of '{group_email}' ({len(members)} shown):\n\n"
