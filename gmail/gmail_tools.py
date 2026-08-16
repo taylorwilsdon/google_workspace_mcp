@@ -68,6 +68,7 @@ from gmail.gmail_helpers import (
     _retryable_result_ids,
     _signature_fetch_tool_error,
     _signature_html_to_text,
+    html_to_text_preserving_breaks,
 )
 
 logger = logging.getLogger(__name__)
@@ -1258,8 +1259,11 @@ def _prepare_gmail_message(
 
     if normalized_format == "html":
         # Include a text/plain fallback so reply drafts and recipients don't
-        # depend on clients successfully parsing HTML-only bodies.
-        plain_body = _html_to_text(body).strip()
+        # depend on clients successfully parsing HTML-only bodies. This is what
+        # a non-HTML client actually displays, so block boundaries have to
+        # survive -- _html_to_text() flattens them and would run paragraphs
+        # together ("First paragraph.Second paragraph.").
+        plain_body = html_to_text_preserving_breaks(body).strip()
         message.set_content(plain_body)
         message.add_alternative(body, subtype="html")
     else:

@@ -9,6 +9,7 @@ import base64
 import logging
 import os
 import re
+import shutil
 import unicodedata
 import uuid
 from pathlib import Path
@@ -26,6 +27,17 @@ _default_dir = str(Path.home() / ".workspace-mcp" / "attachments")
 STORAGE_DIR = (
     Path(os.getenv("WORKSPACE_ATTACHMENT_DIR", _default_dir)).expanduser().resolve()
 )
+
+# Fallback extensions for attachments that arrive without a filename.
+_MIME_TO_EXTENSION = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/gif": ".gif",
+    "application/pdf": ".pdf",
+    "application/zip": ".zip",
+    "text/plain": ".txt",
+    "text/html": ".html",
+}
 
 _WINDOWS_RESERVED_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _WINDOWS_RESERVED_NAMES = {
@@ -62,6 +74,18 @@ def sanitize_attachment_filename(filename: Optional[str]) -> str:
         sanitized = f"_{sanitized}"
 
     return sanitized
+
+
+def _build_save_name(
+    file_id: str, filename: Optional[str], mime_type: Optional[str]
+) -> str:
+    """Build a collision-free on-disk name, keeping the original stem when given."""
+    if filename:
+        # The full file_id, not a prefix: a truncated one lets two distinct
+        # attachments land on the same path, silently overwriting the first.
+        safe_filename = Path(sanitize_attachment_filename(filename))
+        return f"{safe_filename.stem}_{file_id}{safe_filename.suffix}"
+    return f"{file_id}{_MIME_TO_EXTENSION.get(mime_type or '', '')}"
 
 
 class SavedAttachment(NamedTuple):
@@ -107,32 +131,7 @@ class AttachmentStorage:
             logger.error(f"Failed to decode base64 attachment data: {e}")
             raise ValueError(f"Invalid base64 data: {e}")
 
-        # Determine file extension from filename or mime type
-        extension = ""
-        safe_filename = sanitize_attachment_filename(filename)
-
-        if filename:
-            extension = Path(safe_filename).suffix
-        elif mime_type:
-            # Basic mime type to extension mapping
-            mime_to_ext = {
-                "image/jpeg": ".jpg",
-                "image/png": ".png",
-                "image/gif": ".gif",
-                "application/pdf": ".pdf",
-                "application/zip": ".zip",
-                "text/plain": ".txt",
-                "text/html": ".html",
-            }
-            extension = mime_to_ext.get(mime_type, "")
-
-        # Use original filename if available, with UUID suffix for uniqueness
-        if filename:
-            stem = Path(safe_filename).stem
-            ext = Path(safe_filename).suffix
-            save_name = f"{stem}_{file_id[:8]}{ext}"
-        else:
-            save_name = f"{file_id}{extension}"
+        save_name = _build_save_name(file_id, filename, mime_type)
 
         # Save file with restrictive permissions (sensitive email/drive content)
         file_path = STORAGE_DIR / save_name
@@ -165,18 +164,87 @@ class AttachmentStorage:
             )
             raise
 
-        # Store metadata
-        expires_at = datetime.now() + timedelta(seconds=self.expiration_seconds)
+        return self._record(
+            file_id, file_path, save_name, filename, mime_type, len(file_bytes)
+        )
+
+    def save_attachment_from_path(
+        self,
+        src_path: str,
+        filename: Optional[str] = None,
+        mime_type: Optional[str] = None,
+    ) -> SavedAttachment:
+        """
+        Adopt an already-downloaded file without loading it into memory.
+
+        The counterpart to save_attachment() for payloads that were streamed
+        straight to disk. Nothing here is proportional to the file size, so a
+        multi-gigabyte Drive download costs no RAM (see #994).
+
+        Args:
+            src_path: Path to the downloaded file. Consumed - it is moved into
+                storage, so the caller must not reuse it afterwards.
+            filename: Original filename (optional)
+            mime_type: MIME type (optional)
+
+        Returns:
+            SavedAttachment with file_id (UUID) and path (absolute file path)
+        """
+        _ensure_storage_dir()
+
+        file_id = str(uuid.uuid4())
+        save_name = _build_save_name(file_id, filename, mime_type)
+        file_path = STORAGE_DIR / save_name
+
+        try:
+            # shutil.move degrades to a streamed copy across filesystems, so it
+            # stays memory-safe when the temp dir is on another mount.
+            shutil.move(str(src_path), str(file_path))
+            os.chmod(file_path, 0o600)
+            size = file_path.stat().st_size
+            logger.info(
+                f"Saved attachment file_id={file_id} filename={filename or save_name} "
+                f"({size} bytes) to {file_path}"
+            )
+            return self._record(
+                file_id, file_path, save_name, filename, mime_type, size
+            )
+        except Exception as e:
+            # The move can land before a later finalization step fails, leaving a file in
+            # storage that no metadata entry will ever expire. Drop it rather
+            # than orphan it, but never let cleanup mask the original failure.
+            try:
+                file_path.unlink(missing_ok=True)
+            except OSError as cleanup_error:
+                logger.warning(
+                    f"Failed to remove partially saved attachment {file_path}: "
+                    f"{cleanup_error}"
+                )
+            logger.error(
+                f"Failed to save attachment file_id={file_id} "
+                f"filename={filename or save_name} to {file_path}: {e}"
+            )
+            raise
+
+    def _record(
+        self,
+        file_id: str,
+        file_path: Path,
+        save_name: str,
+        filename: Optional[str],
+        mime_type: Optional[str],
+        size: int,
+    ) -> SavedAttachment:
+        """Record a stored file's metadata and return its handle."""
         self._metadata[file_id] = {
             "file_path": str(file_path),
             "filename": save_name,
             "original_filename": filename,
             "mime_type": mime_type or "application/octet-stream",
-            "size": len(file_bytes),
+            "size": size,
             "created_at": datetime.now(),
-            "expires_at": expires_at,
+            "expires_at": datetime.now() + timedelta(seconds=self.expiration_seconds),
         }
-
         return SavedAttachment(file_id=file_id, path=str(file_path))
 
     def get_attachment_path(self, file_id: str) -> Optional[Path]:

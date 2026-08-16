@@ -75,6 +75,8 @@ IMPORT_FORMATS_BY_GOOGLE_MIME_TYPE = {
 }
 
 CONTENT_UPDATE_MODES = ("replace", "append", "prepend")
+# Bytes held in memory per streamed download chunk.
+DOWNLOAD_CHUNK_SIZE = 8 * 1024 * 1024
 _CONTENT_UPDATE_LOCKS: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
 
 
@@ -90,22 +92,61 @@ def _get_content_update_lock(file_id: str) -> asyncio.Lock:
     return lock
 
 
-async def _download_file_bytes(
-    service, file_id: str, export_mime_type: Optional[str] = None
-) -> bytes:
-    """Download a Drive file's bytes, exporting native Google types when requested."""
-    request_obj = (
+def _media_request(service, file_id: str, export_mime_type: Optional[str]):
+    """Build the media request, exporting native Google types when requested."""
+    return (
         service.files().export_media(fileId=file_id, mimeType=export_mime_type)
         if export_mime_type
         else service.files().get_media(fileId=file_id, supportsAllDrives=True)
     )
+
+
+async def _download_file_bytes(
+    service, file_id: str, export_mime_type: Optional[str] = None
+) -> bytes:
+    """Download a Drive file's bytes, exporting native Google types when requested.
+
+    Buffers the whole file in memory. Only use this for payloads that are about
+    to be parsed as text anyway; anything that ends up on disk should go through
+    _download_file_to_temp instead.
+    """
     fh = io.BytesIO()
-    downloader = MediaIoBaseDownload(fh, request_obj)
+    downloader = MediaIoBaseDownload(
+        fh, _media_request(service, file_id, export_mime_type)
+    )
     loop = asyncio.get_event_loop()
     done = False
     while not done:
         _status, done = await loop.run_in_executor(None, downloader.next_chunk)
     return fh.getvalue()
+
+
+async def _download_file_to_temp(
+    service, file_id: str, export_mime_type: Optional[str] = None
+) -> Path:
+    """Stream a Drive file to a temporary file and return its path.
+
+    Peak memory is one chunk rather than one copy of the file, so downloading a
+    multi-gigabyte file no longer exhausts RAM (see #994). The caller owns the
+    returned path and must move or delete it.
+    """
+    tmp_file = NamedTemporaryFile(prefix="wsmcp_dl_", delete=False)
+    tmp_path = Path(tmp_file.name)
+    loop = asyncio.get_event_loop()
+    try:
+        with tmp_file:
+            downloader = MediaIoBaseDownload(
+                tmp_file,
+                _media_request(service, file_id, export_mime_type),
+                chunksize=DOWNLOAD_CHUNK_SIZE,
+            )
+            done = False
+            while not done:
+                _status, done = await loop.run_in_executor(None, downloader.next_chunk)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+    return tmp_path
 
 
 def _splice_content(existing: str, addition: str, mode: str) -> str:
@@ -501,13 +542,19 @@ async def get_drive_file_download_url(
             if not output_filename.endswith(".pdf"):
                 output_filename = f"{Path(output_filename).stem}.pdf"
 
-    # Download the file
-    file_content_bytes = await _download_file_bytes(service, file_id, export_mime_type)
-    size_bytes = len(file_content_bytes)
+    # Stream the download straight to disk. The payload is never held in memory
+    # as a whole, so file size no longer bounds how much RAM this tool needs.
+    tmp_path = await _download_file_to_temp(service, file_id, export_mime_type)
+    size_bytes = tmp_path.stat().st_size
     size_kb = size_bytes / 1024 if size_bytes else 0
 
     # Check if we're in stateless mode (can't save files)
     if is_stateless_mode():
+        try:
+            with tmp_path.open("rb") as preview_fh:
+                preview_bytes = preview_fh.read(100)
+        finally:
+            tmp_path.unlink(missing_ok=True)
         result_lines = [
             "File downloaded successfully!",
             f"File: {file_name}",
@@ -516,23 +563,22 @@ async def get_drive_file_download_url(
             f"MIME Type: {output_mime_type}",
             "\n⚠️ Stateless mode: File storage disabled.",
             "\nBase64-encoded content (first 100 characters shown):",
-            f"{base64.b64encode(file_content_bytes[:100]).decode('utf-8')}...",
+            f"{base64.b64encode(preview_bytes).decode('utf-8')}...",
         ]
         logger.info(
             f"[get_drive_file_download_url] Successfully downloaded {size_kb:.1f} KB file (stateless mode)"
         )
         return "\n".join(result_lines)
 
-    # Save file to local disk and return file path
+    # Move the download into attachment storage and return its path/URL
     try:
         storage = get_attachment_storage()
-
-        # Encode bytes to base64 (as expected by AttachmentStorage)
-        base64_data = base64.urlsafe_b64encode(file_content_bytes).decode("utf-8")
-
-        # Save attachment to local disk
-        result = storage.save_attachment(
-            base64_data=base64_data,
+        # shutil.move falls back to a full streamed copy when the temp dir and
+        # the storage dir are on different mounts, which for a multi-gigabyte
+        # download would block the event loop for the length of that copy.
+        result = await asyncio.to_thread(
+            storage.save_attachment_from_path,
+            src_path=str(tmp_path),
             filename=output_filename,
             mime_type=output_mime_type,
         )
@@ -566,6 +612,9 @@ async def get_drive_file_download_url(
         return "\n".join(result_lines)
 
     except Exception as e:
+        # save_attachment_from_path consumes tmp_path on success only; if it
+        # raised before the move completed the temp file is still ours to drop.
+        tmp_path.unlink(missing_ok=True)
         logger.error(f"[get_drive_file_download_url] Failed to save file: {e}")
         return (
             f"Error: Failed to save file for download.\n"
