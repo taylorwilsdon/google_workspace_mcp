@@ -40,9 +40,8 @@ class TestJsonDictValidation:
         }
 
     def test_json_dict_rejects_non_object_json_string(self):
-        adapter = TypeAdapter(JsonDict)
         with pytest.raises(ValidationError):
-            adapter.validate_python('["a", "b"]')
+            TypeAdapter(JsonDict).validate_python('["a", "b"]')
 
     def test_manage_gmail_filter_signature_coerces_json_strings(self):
         criteria = _annotation_adapter("criteria").validate_python(

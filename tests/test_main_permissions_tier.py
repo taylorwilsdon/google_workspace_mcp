@@ -83,9 +83,7 @@ def test_resolve_callback_port_for_transport_skips_streamable_http(
     assert "WORKSPACE_MCP_RESOLVED_PORT" not in os.environ
 
 
-def test_resolve_bind_host_defaults_legacy_streamable_http_to_all_interfaces(
-    monkeypatch,
-):
+def test_resolve_bind_host_defaults_legacy_streamable_http_to_loopback(monkeypatch):
     monkeypatch.setattr(
         main,
         "get_oauth_config",
@@ -186,7 +184,7 @@ def test_main_skips_gcs_store_initialization_in_service_account_mode(monkeypatch
         raise SystemExit(0)
 
     monkeypatch.setattr(main, "configure_safe_logging", lambda: None)
-    monkeypatch.setattr(main, "import_module", lambda name: object())
+    monkeypatch.setattr(main, "import_module", lambda name: object())  # noqa: ARG005
     monkeypatch.setattr(main, "set_enabled_tool_names", lambda names: None)
     monkeypatch.setattr(main, "wrap_server_tool_method", lambda server: None)
     monkeypatch.setattr(main, "filter_server_tools", lambda server: None)

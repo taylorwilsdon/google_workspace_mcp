@@ -23,8 +23,7 @@ def test_elide_keeps_both_ends():
     assert elide("abcdefghij", 20) == "abcdefghij"
     elided = elide("abcdefghij", 5)
     assert len(elided) == 5
-    assert elided.startswith("ab")
-    assert elided.endswith("ij")
+    assert elided.startswith("ab") and elided.endswith("ij")
 
 
 def test_collapse_home(monkeypatch, tmp_path):
