@@ -262,7 +262,7 @@ def test_ensure_stdio_callback_starts_server_on_demand(monkeypatch):
     assert calls == [("stdio", 8042, "http://localhost")]
 
 
-def test_oauth_callback_missing_state_fallback_follows_single_user_mode(monkeypatch):
+def test_oauth_callback_missing_state_fallback_requires_explicit_opt_in(monkeypatch):
     calls = []
 
     async def fake_handle_auth_callback(**kwargs):
@@ -283,13 +283,21 @@ def test_oauth_callback_missing_state_fallback_follows_single_user_mode(monkeypa
     )
 
     monkeypatch.delenv("MCP_SINGLE_USER_MODE", raising=False)
+    monkeypatch.delenv("WORKSPACE_MCP_ALLOW_STATE_FALLBACK", raising=False)
     server = oauth_callback_server.MinimalOAuthServer(8000, "http://localhost")
     response = TestClient(server.app).get("/oauth2callback?code=code123")
 
     assert response.status_code == 200
     assert calls[-1]["allow_missing_state_fallback"] is False
 
+    # Single-user mode alone must not weaken CSRF state validation.
     monkeypatch.setenv("MCP_SINGLE_USER_MODE", "1")
+    response = TestClient(server.app).get("/oauth2callback?code=code123")
+
+    assert response.status_code == 200
+    assert calls[-1]["allow_missing_state_fallback"] is False
+
+    monkeypatch.setenv("WORKSPACE_MCP_ALLOW_STATE_FALLBACK", "1")
     response = TestClient(server.app).get("/oauth2callback?code=code123")
 
     assert response.status_code == 200
