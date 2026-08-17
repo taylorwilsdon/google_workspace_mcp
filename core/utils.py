@@ -271,7 +271,7 @@ def check_credentials_directory_permissions(credentials_dir: str = None) -> None
         ) as probe:
             probe.write(b"test")
             probe.flush()
-    except OSError as e:
+    except (PermissionError, OSError) as e:
         raise PermissionError(
             f"Cannot create or write to credentials directory "
             f"'{os.path.abspath(credentials_dir)}': {e}"

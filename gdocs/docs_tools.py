@@ -306,7 +306,7 @@ async def get_doc_content(
         loop = asyncio.get_event_loop()
         done = False
         while not done:
-            _, done = await loop.run_in_executor(None, downloader.next_chunk)
+            status, done = await loop.run_in_executor(None, downloader.next_chunk)
 
         file_content_bytes = fh.getvalue()
 
@@ -937,7 +937,9 @@ async def insert_doc_image(
         index = 1
 
     # Determine if source is a Drive file ID or URL
-    is_drive_file = not image_source.startswith("https://")
+    is_drive_file = not (
+        image_source.startswith("http://") or image_source.startswith("https://")
+    )
 
     if is_drive_file:
         # Verify Drive file exists and get metadata

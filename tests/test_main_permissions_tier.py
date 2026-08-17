@@ -186,7 +186,7 @@ def test_main_skips_gcs_store_initialization_in_service_account_mode(monkeypatch
         raise SystemExit(0)
 
     monkeypatch.setattr(main, "configure_safe_logging", lambda: None)
-    monkeypatch.setattr(main, "import_module", lambda name: object())  # noqa: ARG005
+    monkeypatch.setattr(main, "import_module", lambda name: object())
     monkeypatch.setattr(main, "set_enabled_tool_names", lambda names: None)
     monkeypatch.setattr(main, "wrap_server_tool_method", lambda server: None)
     monkeypatch.setattr(main, "filter_server_tools", lambda server: None)

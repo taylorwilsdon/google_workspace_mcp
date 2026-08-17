@@ -209,7 +209,7 @@ def test_start_rejects_eaddrinuse_when_callback_probe_does_not_match(
     monkeypatch.setattr(
         server,
         "_callback_endpoint_looks_like_workspace",
-        lambda hostname: False,  # noqa: ARG005
+        lambda hostname: False,
     )
 
     success, error = server.start()
