@@ -7,7 +7,7 @@ extracting complex validation and request building logic.
 
 import logging
 import asyncio
-from typing import Any, Dict, List, Tuple
+from typing import Any, Union, Dict, List, Optional, Tuple
 
 from gdocs.docs_helpers import (
     create_insert_text_request,
@@ -154,7 +154,7 @@ class BatchOperationManager:
 
     async def _preflight_create_header_footer_operations(
         self, document_id: str, operations: list[dict[str, Any]]
-    ) -> str | None:
+    ) -> Optional[str]:
         """
         Validate create_header_footer operations against the live document before
         sending low-level Docs API requests that often fail opaquely.
@@ -277,7 +277,7 @@ class BatchOperationManager:
 
     def _build_operation_request(
         self, op: dict[str, Any], op_type: str
-    ) -> Tuple[Dict[str, Any] | List[Dict[str, Any]], str]:
+    ) -> Tuple[Union[Dict[str, Any], List[Dict[str, Any]]], str]:
         """
         Build a single operation request.
 

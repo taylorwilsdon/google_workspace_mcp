@@ -28,7 +28,6 @@ from auth.oauth_config import is_external_oauth21_provider
 logger = logging.getLogger(__name__)
 
 
-
 def _lock_file_exclusive(file_handle: IO[str]) -> None:
     """Acquire an exclusive lock when supported by the platform."""
     if fcntl is None:

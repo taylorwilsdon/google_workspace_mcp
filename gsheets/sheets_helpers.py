@@ -5,7 +5,6 @@ Shared utilities for Google Sheets operations including A1 parsing and
 conditional formatting helpers.
 """
 
-from __future__ import annotations
 
 import asyncio
 import json
@@ -18,7 +17,6 @@ from core.utils import UserInputError
 logger = logging.getLogger(__name__)
 
 MAX_GRID_METADATA_CELLS = 5000
-UNKNOWN_CELL = "(unknown cell)"
 
 # Cap rows fetched by read_sheet_values before calling values().get.
 # Matches the tool default range (A1:Z1000). Open-ended or oversized A1
@@ -578,7 +576,7 @@ def _format_sheet_error_section(
 
     lines = []
     for item in errors[:max_details]:
-        cell = item.get("cell") or UNKNOWN_CELL
+        cell = item.get("cell") or "(unknown cell)"
         error_type = item.get("type")
         message = item.get("message")
         if error_type and message:
@@ -613,7 +611,7 @@ def _format_sheet_hyperlink_section(
 
     lines = []
     for item in hyperlinks[:max_details]:
-        cell = item.get("cell") or UNKNOWN_CELL
+        cell = item.get("cell") or "(unknown cell)"
         url = item.get("url") or "(missing url)"
         lines.append(f"- {cell}: {url}")
 
@@ -832,8 +830,8 @@ def _select_sheet(sheets: List[dict], sheet_name: Optional[str]) -> dict:
 
 
 def _parse_condition_values(
-    condition_values: Union[str, List[Union[str, int, float]]] | None,
-) -> List[Union[str, int, float]] | None:
+    condition_values: Optional[Union[str, List[Union[str, int, float]]]],
+) -> Optional[List[Union[str, int, float]]]:
     """
     Normalize and validate condition_values into a list of strings/numbers.
     """
@@ -860,8 +858,8 @@ def _parse_condition_values(
 
 
 def _parse_gradient_points(
-    gradient_points: Union[str, List[dict]] | None,
-) -> List[dict] | None:
+    gradient_points: Optional[Union[str, List[dict]]],
+) -> Optional[List[dict]]:
     """
     Normalize gradient points into a list of dicts with type/value/color.
     Each point must have a 'type' (MIN, MAX, NUMBER, PERCENT, PERCENTILE) and a color.
@@ -917,9 +915,9 @@ def _parse_gradient_points(
 def _build_boolean_rule(
     ranges: List[dict],
     condition_type: str,
-    condition_values: List[Union[str, int, float]] | None,
-    background_color: str | None,
-    text_color: str | None,
+    condition_values: Optional[List[Union[str, int, float]]],
+    background_color: Optional[str],
+    text_color: Optional[str],
 ) -> tuple[dict, str]:
     """
     Build a Sheets boolean conditional formatting rule payload.
@@ -1047,7 +1045,7 @@ def _format_sheet_notes_section(
 
     lines = []
     for item in notes[:max_details]:
-        cell = item.get("cell") or UNKNOWN_CELL
+        cell = item.get("cell") or "(unknown cell)"
         note = item.get("note") or "(empty note)"
         lines.append(f"- {cell}: {note}")
 
@@ -1125,7 +1123,7 @@ def _format_sheet_formula_section(
 
     lines = []
     for item in formulas[:max_details]:
-        cell = item.get("cell") or UNKNOWN_CELL
+        cell = item.get("cell") or "(unknown cell)"
         formula = item.get("formula") or "(empty formula)"
         lines.append(f"- {cell}: {formula}")
 

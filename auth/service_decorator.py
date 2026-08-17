@@ -6,7 +6,7 @@ import os
 
 import re
 from functools import wraps
-from typing import Dict, List, Optional, Any, Callable, Tuple
+from typing import Dict, List, Optional, Any, Callable, Union, Tuple
 from contextlib import ExitStack
 
 from google.auth.exceptions import RefreshError
@@ -616,7 +616,7 @@ SCOPE_GROUPS = {
 }
 
 
-def _resolve_scopes(scopes: str | List[str]) -> List[str]:
+def _resolve_scopes(scopes: Union[str, List[str]]) -> List[str]:
     """Resolve scope names to actual scope URLs."""
     if isinstance(scopes, str):
         if scopes in SCOPE_GROUPS:
@@ -713,8 +713,8 @@ def _handle_token_refresh_error(
 
 def require_google_service(
     service_type: str,
-    scopes: str | List[str],
-    version: str | None = None,
+    scopes: Union[str, List[str]],
+    version: Optional[str] = None,
 ):
     """
     Decorator that automatically handles Google service authentication and injection.

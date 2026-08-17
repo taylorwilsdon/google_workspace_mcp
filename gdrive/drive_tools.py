@@ -64,14 +64,6 @@ logger = logging.getLogger(__name__)
 
 SHARED_DRIVE_ORGANIZER_CONCURRENCY_LIMIT = 10
 
-# Repeated string constants (S1192)
-FIELDS_NAME_WEB_VIEW_LINK = "name, webViewLink"
-FIELDS_ID_NAME_WEB_VIEW_LINK = "id, name, webViewLink"
-FIELDS_PERMISSION_DETAILS = "id, type, role, emailAddress, domain, expirationTime"
-DEFAULT_FILE_NAME = "Unknown File"
-MIME_TEXT_PLAIN = "text/plain"
-MIME_APPLICATION_PDF = "application/pdf"
-
 IMPORT_FORMATS_BY_GOOGLE_MIME_TYPE = {
     GOOGLE_DOCS_MIME_TYPE: GOOGLE_DOCS_IMPORT_FORMATS,
     GOOGLE_SHEETS_MIME_TYPE: GOOGLE_SHEETS_IMPORT_FORMATS,
@@ -327,15 +319,15 @@ async def get_drive_file_content(
     resolved_file_id, file_metadata = await resolve_drive_item(
         service,
         file_id,
-        extra_fields=FIELDS_NAME_WEB_VIEW_LINK,
+        extra_fields="name, webViewLink",
     )
     file_id = resolved_file_id
     mime_type = file_metadata.get("mimeType", "")
-    file_name = file_metadata.get("name", DEFAULT_FILE_NAME)
+    file_name = file_metadata.get("name", "Unknown File")
     export_mime_type = {
-        "application/vnd.google-apps.document": MIME_TEXT_PLAIN,
+        "application/vnd.google-apps.document": "text/plain",
         "application/vnd.google-apps.spreadsheet": "text/csv",
-        "application/vnd.google-apps.presentation": MIME_TEXT_PLAIN,
+        "application/vnd.google-apps.presentation": "text/plain",
     }.get(mime_type)
 
     file_content_bytes = await _download_file_bytes(service, file_id, export_mime_type)
@@ -363,7 +355,7 @@ async def get_drive_file_content(
                     f"[Binary or unsupported text encoding for mimeType '{mime_type}' - "
                     f"{len(file_content_bytes)} bytes]"
                 )
-    elif mime_type == MIME_APPLICATION_PDF:
+    elif mime_type == "application/pdf":
         # Offload PDF text extraction to a thread to avoid blocking the event loop
         pdf_text = await asyncio.to_thread(extract_pdf_text, file_content_bytes)
         if pdf_text:
@@ -449,7 +441,7 @@ async def get_drive_file_download_url(
     )
     file_id = resolved_file_id
     mime_type = file_metadata.get("mimeType", "")
-    file_name = file_metadata.get("name", DEFAULT_FILE_NAME)
+    file_name = file_metadata.get("name", "Unknown File")
 
     # Determine export format for Google native files
     export_mime_type = None
@@ -465,7 +457,7 @@ async def get_drive_file_download_url(
                 output_filename = f"{Path(output_filename).stem}.docx"
         else:
             # Default to PDF
-            export_mime_type = MIME_APPLICATION_PDF
+            export_mime_type = "application/pdf"
             output_mime_type = export_mime_type
             if not output_filename.endswith(".pdf"):
                 output_filename = f"{Path(output_filename).stem}.pdf"
@@ -478,7 +470,7 @@ async def get_drive_file_download_url(
             if not output_filename.endswith(".csv"):
                 output_filename = f"{Path(output_filename).stem}.csv"
         elif export_format == "pdf":
-            export_mime_type = MIME_APPLICATION_PDF
+            export_mime_type = "application/pdf"
             output_mime_type = export_mime_type
             if not output_filename.endswith(".pdf"):
                 output_filename = f"{Path(output_filename).stem}.pdf"
@@ -500,7 +492,7 @@ async def get_drive_file_download_url(
                 output_filename = f"{Path(output_filename).stem}.pptx"
         else:
             # Default to PDF
-            export_mime_type = MIME_APPLICATION_PDF
+            export_mime_type = "application/pdf"
             output_mime_type = export_mime_type
             if not output_filename.endswith(".pdf"):
                 output_filename = f"{Path(output_filename).stem}.pdf"
@@ -868,7 +860,7 @@ async def _create_drive_folder_impl(
         service.files()
         .create(
             body=file_metadata,
-            fields=FIELDS_ID_NAME_WEB_VIEW_LINK,
+            fields="id, name, webViewLink",
             supportsAllDrives=True,
         )
         .execute
@@ -934,7 +926,7 @@ async def create_drive_file(
     file_name: str,
     content: Optional[str] = None,  # Now explicitly Optional
     folder_id: str = "root",
-    mime_type: str = MIME_TEXT_PLAIN,
+    mime_type: str = "text/plain",
     file_url: Optional[str] = None,  # Now explicitly Optional
     base64_content: Optional[str] = None,
     content_mime_type: Optional[str] = None,
@@ -1011,7 +1003,7 @@ async def create_drive_file(
             .create(
                 body=file_metadata,
                 media_body=media,
-                fields=FIELDS_ID_NAME_WEB_VIEW_LINK,
+                fields="id, name, webViewLink",
                 supportsAllDrives=True,
             )
             .execute,
@@ -1079,7 +1071,7 @@ async def create_drive_file(
                 .create(
                     body=file_metadata,
                     media_body=media,
-                    fields=FIELDS_ID_NAME_WEB_VIEW_LINK,
+                    fields="id, name, webViewLink",
                     supportsAllDrives=True,
                 )
                 .execute,
@@ -1119,7 +1111,7 @@ async def create_drive_file(
                     .create(
                         body=file_metadata,
                         media_body=media,
-                        fields=FIELDS_ID_NAME_WEB_VIEW_LINK,
+                        fields="id, name, webViewLink",
                         supportsAllDrives=True,
                     )
                     .execute,
@@ -1166,7 +1158,7 @@ async def create_drive_file(
                     .create(
                         body=file_metadata,
                         media_body=media,
-                        fields=FIELDS_ID_NAME_WEB_VIEW_LINK,
+                        fields="id, name, webViewLink",
                         supportsAllDrives=True,
                     )
                     .execute,
@@ -1189,7 +1181,7 @@ async def create_drive_file(
             .create(
                 body=file_metadata,
                 media_body=MediaIoBaseUpload(media, mimetype=mime_type, resumable=True),
-                fields=FIELDS_ID_NAME_WEB_VIEW_LINK,
+                fields="id, name, webViewLink",
                 supportsAllDrives=True,
             )
             .execute,
@@ -2241,7 +2233,7 @@ async def manage_drive_access(
             )
 
         resolved_file_id, file_metadata = await resolve_drive_item(
-            service, file_id, extra_fields=FIELDS_NAME_WEB_VIEW_LINK
+            service, file_id, extra_fields="name, webViewLink"
         )
         file_id = resolved_file_id
 
@@ -2265,7 +2257,7 @@ async def manage_drive_access(
             "fileId": file_id,
             "body": permission_body,
             "supportsAllDrives": True,
-            "fields": FIELDS_PERMISSION_DETAILS,
+            "fields": "id, type, role, emailAddress, domain, expirationTime",
         }
         if share_type in ("user", "group"):
             create_params["sendNotificationEmail"] = send_notification
@@ -2293,7 +2285,7 @@ async def manage_drive_access(
             raise ValueError("recipients list is required for 'grant_batch' action")
 
         resolved_file_id, file_metadata = await resolve_drive_item(
-            service, file_id, extra_fields=FIELDS_NAME_WEB_VIEW_LINK
+            service, file_id, extra_fields="name, webViewLink"
         )
         file_id = resolved_file_id
 
@@ -2356,7 +2348,7 @@ async def manage_drive_access(
                 "fileId": file_id,
                 "body": r_perm_body,
                 "supportsAllDrives": True,
-                "fields": FIELDS_PERMISSION_DETAILS,
+                "fields": "id, type, role, emailAddress, domain, expirationTime",
             }
             if r_share_type in ("user", "group"):
                 r_create_params["sendNotificationEmail"] = send_notification
@@ -2433,7 +2425,7 @@ async def manage_drive_access(
                 permissionId=permission_id,
                 body=update_body,
                 supportsAllDrives=True,
-                fields=FIELDS_PERMISSION_DETAILS,
+                fields="id, type, role, emailAddress, domain, expirationTime",
             )
             .execute
         )
@@ -2561,7 +2553,7 @@ async def copy_drive_file(
         service, file_id, extra_fields="name, webViewLink, mimeType"
     )
     file_id = resolved_file_id
-    original_name = file_metadata.get("name", DEFAULT_FILE_NAME)
+    original_name = file_metadata.get("name", "Unknown File")
 
     resolved_folder_id = await resolve_folder_id(service, parent_folder_id)
 
@@ -2666,7 +2658,7 @@ async def set_drive_file_permissions(
         )
 
     resolved_file_id, file_metadata = await resolve_drive_item(
-        service, file_id, extra_fields=FIELDS_NAME_WEB_VIEW_LINK
+        service, file_id, extra_fields="name, webViewLink"
     )
     file_id = resolved_file_id
     file_name = file_metadata.get("name", "Unknown")
