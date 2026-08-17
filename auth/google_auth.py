@@ -713,6 +713,13 @@ async def handle_auth_callback(
                 "The 'client_secrets_path' parameter is deprecated. Use GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET environment variables instead."
             )
 
+        # Allow HTTP for localhost in development
+        if "OAUTHLIB_INSECURE_TRANSPORT" not in os.environ:
+            logger.warning(
+                "OAUTHLIB_INSECURE_TRANSPORT not set. Setting it for localhost development."
+            )
+            os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+
         # Allow partial scope grants without raising an exception.
         # When users decline some scopes on Google's consent screen,
         # oauthlib raises because the granted scopes differ from requested.
@@ -772,13 +779,6 @@ async def handle_auth_callback(
             code_verifier=state_info.get("code_verifier"),
             autogenerate_code_verifier=False,
         )
-
-        # Allow HTTP for localhost in development
-        if "OAUTHLIB_INSECURE_TRANSPORT" not in os.environ:
-            logger.warning(
-                "OAUTHLIB_INSECURE_TRANSPORT not set. Setting it for localhost development."
-            )
-            os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 
         # Exchange the authorization code for credentials
         # Note: fetch_token will use the redirect_uri configured in the flow
