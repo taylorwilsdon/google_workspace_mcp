@@ -3108,10 +3108,24 @@ async def draft_gmail_message(
             description="When forwarding, whether to carry over the original message's attachments. Ignored unless forward_message_id is set.",
         ),
     ] = True,
+    action: Annotated[
+        Literal["create", "update", "delete"],
+        Field(
+            description="Draft lifecycle action. 'create' (default) makes a new draft. 'update' REPLACES the content of the draft named by draft_id in place — same draft ID, same thread; supply the full message again, unspecified content is not preserved. 'delete' PERMANENTLY deletes the draft named by draft_id — it does NOT go to Trash and cannot be recovered.",
+        ),
+    ] = "create",
+    draft_id: Annotated[
+        Optional[str],
+        Field(
+            description="Existing draft ID to operate on. Required for action='update' and action='delete'; must be omitted for action='create'.",
+        ),
+    ] = None,
 ) -> str:
     """
-    Creates a draft email in the user's Gmail account. Supports new drafts, reply drafts, and forward drafts, with optional attachments.
-    Supports Gmail's "Send As" feature to draft from configured alias addresses.
+    Creates, updates, or deletes a draft email in the user's Gmail account. Supports new
+    drafts, reply drafts, and forward drafts, with optional attachments; 'update' replaces
+    an existing draft's content in place (same draft ID and thread) and 'delete' permanently
+    removes a draft. Supports Gmail's "Send As" feature to draft from configured alias addresses.
 
     Args:
         user_google_email (str): The user's Google email address. Required for authentication.
@@ -3151,10 +3165,21 @@ async def draft_gmail_message(
             and 'body' becomes a note prepended above the forward.
         include_forwarded_attachments (bool): When forwarding, whether to carry over the
             original message's attachments. Ignored unless forward_message_id is set.
+        action (Literal['create', 'update', 'delete']): Draft lifecycle action, default
+            'create'. 'update' calls Gmail's drafts.update: the draft named by draft_id
+            keeps its ID and thread but its content is REPLACED wholesale — pass the full
+            message again, exactly as for create. 'delete' calls drafts.delete, which is
+            PERMANENT (unlike trashing a message, a deleted draft is unrecoverable) and
+            takes ONLY draft_id. All three actions are covered by the gmail.compose scope
+            the tool already holds — no new consent.
+        draft_id (Optional[str]): Existing draft ID for 'update'/'delete'. Note the ID a
+            draft had at creation rotates if the draft is edited in the Gmail UI — on a
+            404, list the thread's drafts to find the live ID.
 
     Returns:
-        str: Confirmation with the created draft's ID, message ID, and thread ID (pass the
-            thread ID to send_gmail_draft — it survives edits made to the draft).
+        str: Confirmation with the created/updated draft's ID, message ID, and thread ID
+            (pass the thread ID to send_gmail_draft — it survives edits made to the
+            draft), or a deletion confirmation.
 
     Examples:
         # Create a new draft
@@ -3207,10 +3232,84 @@ async def draft_gmail_message(
             in_reply_to="<message123@gmail.com>",
             references="<original@gmail.com> <message123@gmail.com>"
         )
+
+        # Revise an existing draft in place (same draft ID and thread; the content
+        # is replaced wholesale, so pass the full message again)
+        draft_gmail_message(
+            action="update",
+            draft_id="r-123",
+            subject="Hello (v2)",
+            body="Updated wording.",
+            to="user@example.com"
+        )
+
+        # Permanently delete a draft (does NOT go to Trash)
+        draft_gmail_message(action="delete", draft_id="r-123")
     """
     logger.info(
-        f"[draft_gmail_message] Invoked. Email: '{user_google_email}', Subject: '{subject}'"
+        f"[draft_gmail_message] Invoked. Action: '{action}', Email: '{user_google_email}', "
+        f"Subject: '{subject}'"
     )
+
+    if action == "create":
+        if draft_id:
+            raise UserInputError(
+                "draft_id was given with action='create'. To replace that draft's "
+                "content in place, pass action='update'; to make a separate new "
+                "draft, drop draft_id."
+            )
+    elif not draft_id:
+        raise UserInputError(f"action='{action}' requires 'draft_id'.")
+
+    if action == "delete":
+        # Deletion takes ONLY the draft handle. Rejecting content/addressing args
+        # (rather than silently ignoring them) catches the "meant update" mistake
+        # before an unrecoverable delete.
+        content_args = {
+            "subject": subject,
+            "body": body,
+            "to": to,
+            "cc": cc,
+            "bcc": bcc,
+            "from_name": from_name,
+            "from_email": from_email,
+            "thread_id": thread_id,
+            "in_reply_to": in_reply_to,
+            "references": references,
+            "attachments": attachments,
+            "forward_message_id": forward_message_id,
+        }
+        supplied = sorted(k for k, v in content_args.items() if v)
+        if supplied:
+            raise UserInputError(
+                "action='delete' takes only draft_id; got content/addressing "
+                f"argument(s): {', '.join(supplied)}. Did you mean action='update'?"
+            )
+        try:
+            await asyncio.to_thread(
+                service.users().drafts().delete(userId="me", id=draft_id).execute,
+                num_retries=GOOGLE_API_WRITE_RETRIES,
+            )
+        except HttpError as exc:
+            if getattr(getattr(exc, "resp", None), "status", None) == 404:
+                raise UserInputError(
+                    f"Draft '{draft_id}' was not found — it may have already been "
+                    "sent or deleted, or its ID rotated after an edit in the Gmail "
+                    "UI. List the thread's drafts to find the live ID."
+                ) from exc
+            raise
+        logger.info(f"[draft_gmail_message] Draft {draft_id} permanently deleted.")
+        return (
+            f"Draft {draft_id} permanently deleted for {user_google_email}. "
+            "Deleted drafts do not go to Trash and cannot be recovered."
+        )
+
+    if action == "update" and forward_message_id:
+        raise UserInputError(
+            "action='update' cannot be combined with forward_message_id — a forward "
+            "composes a NEW draft from the original message. Create the forward as a "
+            "fresh draft and delete the old one instead."
+        )
 
     # Prepare the email message
     # Use from_email (Send As alias) if provided, otherwise default to authenticated user
@@ -3336,21 +3435,44 @@ async def draft_gmail_message(
             f"{attached_count}/{requested_attachment_count} attached.{details}"
         )
 
-    # Create a draft instead of sending. Gmail requires message.threadId plus
-    # RFC-compliant In-Reply-To/References headers to add a draft to a thread.
-    # If we could not derive the headers, fall back to an unthreaded draft
-    # instead of sending an invalid thread request.
+    # Build the draft body. Gmail requires message.threadId plus RFC-compliant
+    # In-Reply-To/References headers to add a draft to a thread. If we could not
+    # derive the headers, fall back to an unthreaded draft instead of sending an
+    # invalid thread request.
     draft_body = {"message": {"raw": raw_message}}
     if thread_id and in_reply_to and references:
         draft_body["message"]["threadId"] = thread_id
 
-    # Create the draft
-    created_draft = await asyncio.to_thread(
-        service.users().drafts().create(userId="me", body=draft_body).execute,
-        num_retries=GOOGLE_API_WRITE_RETRIES,
-    )
-    draft_id = created_draft.get("id")
-    created_message = created_draft.get("message", {})
+    if action == "update":
+        # drafts.update replaces the draft's message wholesale, keeping the draft
+        # ID and (absent an explicit re-thread) its thread.
+        try:
+            saved_draft = await asyncio.to_thread(
+                service.users()
+                .drafts()
+                .update(userId="me", id=draft_id, body=draft_body)
+                .execute,
+                num_retries=GOOGLE_API_WRITE_RETRIES,
+            )
+        except HttpError as exc:
+            if getattr(getattr(exc, "resp", None), "status", None) == 404:
+                raise UserInputError(
+                    f"Draft '{draft_id}' was not found — it may have already been "
+                    "sent or deleted, or its ID rotated after an edit in the Gmail "
+                    "UI. List the thread's drafts to find the live ID, or create a "
+                    "new draft."
+                ) from exc
+            raise
+        verb = "updated"
+    else:
+        saved_draft = await asyncio.to_thread(
+            service.users().drafts().create(userId="me", body=draft_body).execute,
+            num_retries=GOOGLE_API_WRITE_RETRIES,
+        )
+        verb = "created"
+
+    draft_id = saved_draft.get("id")
+    created_message = saved_draft.get("message", {})
     message_id = created_message.get("id")
     result_thread_id = created_message.get("threadId")
     attachment_info = _format_attachment_result(
@@ -3359,7 +3481,7 @@ async def draft_gmail_message(
     # Return the thread_id too: it's the only handle that survives a later edit in the
     # Gmail UI (the draft_id and message_id both rotate on edit), so send_gmail_draft can
     # re-resolve the live draft by thread. See send_gmail_draft.
-    result = f"Draft created{attachment_info}! Draft ID: {draft_id}"
+    result = f"Draft {verb}{attachment_info}! Draft ID: {draft_id}"
     if message_id:
         result += f", Message ID: {message_id}"
     if result_thread_id:
