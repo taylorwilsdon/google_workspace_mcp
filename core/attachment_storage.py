@@ -64,7 +64,6 @@ def sanitize_attachment_filename(filename: Optional[str]) -> str:
     return sanitized
 
 
-
 class SavedAttachment(NamedTuple):
     """Result of saving an attachment: provides both the UUID and the absolute file path."""
 

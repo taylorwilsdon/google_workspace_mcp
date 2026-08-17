@@ -159,13 +159,11 @@ def _find_any_credentials(
 
 
 
-def save_credentials_to_session(
-    session_id: str,
-    credentials: Credentials,
-    user_email: Optional[str] = None,
-):
+def save_credentials_to_session(session_id: str, credentials: Credentials):
     """Saves user credentials using OAuth21SessionStore."""
-    if not user_email and credentials and credentials.id_token:
+    # Get user email from credentials if possible
+    user_email = None
+    if credentials and credentials.id_token:
         try:
             decoded_token = jwt.decode(
                 credentials.id_token, options={"verify_signature": False}
@@ -537,9 +535,6 @@ async def start_auth_flow(
     # Note: Caller should ensure OAuth callback is available before calling this function
 
     try:
-        oauth_state = os.urandom(16).hex()
-        current_scopes = get_current_scopes()
-
         if "OAUTHLIB_INSECURE_TRANSPORT" not in os.environ and (
             "localhost" in redirect_uri or "127.0.0.1" in redirect_uri
         ):  # Use passed redirect_uri
@@ -547,6 +542,9 @@ async def start_auth_flow(
                 "OAUTHLIB_INSECURE_TRANSPORT not set. Setting it for localhost/local development."
             )
             os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+
+        oauth_state = os.urandom(16).hex()
+        current_scopes = get_current_scopes()
 
         flow = create_oauth_flow(
             scopes=current_scopes,  # Use scopes for enabled tools only
@@ -956,7 +954,7 @@ async def handle_auth_callback(
 
         # If session_id is provided, also save to session cache for compatibility
         if session_id:
-            save_credentials_to_session(session_id, credentials, user_email=user_google_email)
+            save_credentials_to_session(session_id, credentials)
 
         return user_google_email, credentials
 
@@ -1439,13 +1437,26 @@ async def get_authenticated_google_service(
     try:
         service = build(service_name, version, http=_build_authorized_http(credentials))
 
-        # user_google_email is already validated via the userinfo endpoint earlier
-        # in this function — no need to re-derive identity from the id_token here.
+        log_user_email = user_google_email
+
+        # Try to get email from credentials if needed for validation
+        if credentials and credentials.id_token:
+            try:
+                # Decode without verification (just to get email for logging)
+                decoded_token = jwt.decode(
+                    credentials.id_token, options={"verify_signature": False}
+                )
+                token_email = decoded_token.get("email")
+                if token_email:
+                    log_user_email = token_email
+                    logger.info(f"[{tool_name}] Token email: {token_email}")
+            except Exception as e:
+                logger.debug(f"[{tool_name}] Could not decode id_token: {e}")
+
         logger.info(
-            "[%s] Successfully authenticated %s service for user: %s",
-            tool_name, service_name, user_google_email,
+            f"[{tool_name}] Successfully authenticated {service_name} service for user: {log_user_email}"
         )
-        return service, user_google_email
+        return service, log_user_email
 
     except Exception as e:
         error_msg = f"[{tool_name}] Failed to build {service_name} service: {str(e)}"
