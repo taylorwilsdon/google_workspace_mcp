@@ -99,7 +99,8 @@ class MinimalOAuthServer:
                     authorization_response=str(request.url),
                     redirect_uri=redirect_uri,
                     session_id=None,
-                    allow_missing_state_fallback=True,
+                    allow_missing_state_fallback=os.getenv("MCP_SINGLE_USER_MODE")
+                    == "1",
                 )
 
                 logger.info(

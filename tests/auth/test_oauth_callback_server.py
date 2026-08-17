@@ -282,11 +282,16 @@ def test_oauth_callback_enables_missing_state_fallback(monkeypatch):
         fake_handle_auth_callback,
     )
 
-    # The stdio callback always requests fallback. handle_auth_callback still
-    # gates recovery on MCP_SINGLE_USER_MODE=1 and a missing session_id.
     monkeypatch.delenv("MCP_SINGLE_USER_MODE", raising=False)
     server = oauth_callback_server.MinimalOAuthServer(8000, "http://localhost")
     response = TestClient(server.app).get("/oauth2callback?code=code123")
 
     assert response.status_code == 200
+    assert calls[-1]["allow_missing_state_fallback"] is False
+
+    monkeypatch.setenv("MCP_SINGLE_USER_MODE", "1")
+    server2 = oauth_callback_server.MinimalOAuthServer(8000, "http://localhost")
+    response2 = TestClient(server2.app).get("/oauth2callback?code=code123")
+
+    assert response2.status_code == 200
     assert calls[-1]["allow_missing_state_fallback"] is True

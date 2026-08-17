@@ -39,11 +39,8 @@ from gdrive.drive_helpers import (
     FOLDER_MIME_TYPE,
     GOOGLE_APPS_MIME_PREFIX,
     GOOGLE_DOCS_IMPORT_FORMATS,
-    GOOGLE_DOCS_MIME_TYPE,
     GOOGLE_SHEETS_IMPORT_FORMATS,
-    GOOGLE_SHEETS_MIME_TYPE,
     GOOGLE_SLIDES_IMPORT_FORMATS,
-    GOOGLE_SLIDES_MIME_TYPE,
     UPLOAD_CHUNK_SIZE_BYTES,
     _resolve_import_media,
     _stream_url_with_validation,
@@ -65,9 +62,9 @@ logger = logging.getLogger(__name__)
 SHARED_DRIVE_ORGANIZER_CONCURRENCY_LIMIT = 10
 
 IMPORT_FORMATS_BY_GOOGLE_MIME_TYPE = {
-    GOOGLE_DOCS_MIME_TYPE: GOOGLE_DOCS_IMPORT_FORMATS,
-    GOOGLE_SHEETS_MIME_TYPE: GOOGLE_SHEETS_IMPORT_FORMATS,
-    GOOGLE_SLIDES_MIME_TYPE: GOOGLE_SLIDES_IMPORT_FORMATS,
+    "application/vnd.google-apps.document": GOOGLE_DOCS_IMPORT_FORMATS,
+    "application/vnd.google-apps.spreadsheet": GOOGLE_SHEETS_IMPORT_FORMATS,
+    "application/vnd.google-apps.presentation": GOOGLE_SLIDES_IMPORT_FORMATS,
 }
 
 CONTENT_UPDATE_MODES = ("replace", "append", "prepend")
@@ -1355,7 +1352,7 @@ async def import_to_google_doc(
         tool_name="import_to_google_doc",
         target_label="Google Doc",
         id_label="Document ID",
-        target_mime_type=GOOGLE_DOCS_MIME_TYPE,
+        target_mime_type="application/vnd.google-apps.document",
         format_map=GOOGLE_DOCS_IMPORT_FORMATS,
         user_google_email=user_google_email,
         file_name=file_name,
@@ -1419,7 +1416,7 @@ async def import_to_google_slides(
         tool_name="import_to_google_slides",
         target_label="Google Slides presentation",
         id_label="Presentation ID",
-        target_mime_type=GOOGLE_SLIDES_MIME_TYPE,
+        target_mime_type="application/vnd.google-apps.presentation",
         format_map=GOOGLE_SLIDES_IMPORT_FORMATS,
         user_google_email=user_google_email,
         file_name=file_name,
@@ -1488,7 +1485,7 @@ async def import_to_google_sheets(
         tool_name="import_to_google_sheets",
         target_label="Google Sheets spreadsheet",
         id_label="Spreadsheet ID",
-        target_mime_type=GOOGLE_SHEETS_MIME_TYPE,
+        target_mime_type="application/vnd.google-apps.spreadsheet",
         format_map=GOOGLE_SHEETS_IMPORT_FORMATS,
         user_google_email=user_google_email,
         file_name=file_name,

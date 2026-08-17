@@ -291,9 +291,6 @@ def build_drive_list_params(
 GOOGLE_APPS_MIME_PREFIX = "application/vnd.google-apps."
 SHORTCUT_MIME_TYPE = "application/vnd.google-apps.shortcut"
 FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
-GOOGLE_DOCS_MIME_TYPE = "application/vnd.google-apps.document"
-GOOGLE_SHEETS_MIME_TYPE = "application/vnd.google-apps.spreadsheet"
-GOOGLE_SLIDES_MIME_TYPE = "application/vnd.google-apps.presentation"
 
 # RFC 6838 token-style MIME type validation (safe for Drive query interpolation).
 MIME_TYPE_PATTERN = re.compile(r"^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+$")
@@ -303,18 +300,18 @@ MIME_TYPE_PATTERN = re.compile(r"^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+$")
 FILE_TYPE_MIME_MAP: Dict[str, str] = {
     "folder": FOLDER_MIME_TYPE,
     "folders": FOLDER_MIME_TYPE,
-    "document": GOOGLE_DOCS_MIME_TYPE,
-    "doc": GOOGLE_DOCS_MIME_TYPE,
-    "documents": GOOGLE_DOCS_MIME_TYPE,
-    "docs": GOOGLE_DOCS_MIME_TYPE,
-    "spreadsheet": GOOGLE_SHEETS_MIME_TYPE,
-    "sheet": GOOGLE_SHEETS_MIME_TYPE,
-    "spreadsheets": GOOGLE_SHEETS_MIME_TYPE,
-    "sheets": GOOGLE_SHEETS_MIME_TYPE,
-    "presentation": GOOGLE_SLIDES_MIME_TYPE,
-    "presentations": GOOGLE_SLIDES_MIME_TYPE,
-    "slide": GOOGLE_SLIDES_MIME_TYPE,
-    "slides": GOOGLE_SLIDES_MIME_TYPE,
+    "document": "application/vnd.google-apps.document",
+    "doc": "application/vnd.google-apps.document",
+    "documents": "application/vnd.google-apps.document",
+    "docs": "application/vnd.google-apps.document",
+    "spreadsheet": "application/vnd.google-apps.spreadsheet",
+    "sheet": "application/vnd.google-apps.spreadsheet",
+    "spreadsheets": "application/vnd.google-apps.spreadsheet",
+    "sheets": "application/vnd.google-apps.spreadsheet",
+    "presentation": "application/vnd.google-apps.presentation",
+    "presentations": "application/vnd.google-apps.presentation",
+    "slide": "application/vnd.google-apps.presentation",
+    "slides": "application/vnd.google-apps.presentation",
     "form": "application/vnd.google-apps.form",
     "forms": "application/vnd.google-apps.form",
     "drawing": "application/vnd.google-apps.drawing",
@@ -408,11 +405,11 @@ async def resolve_drive_item(
         shortcut_details = metadata.get("shortcutDetails") or {}
         target_id = shortcut_details.get("targetId")
         if not target_id:
-            raise RuntimeError(f"Shortcut '{current_id}' is missing target details.")
+            raise Exception(f"Shortcut '{current_id}' is missing target details.")
 
         depth += 1
         if depth > max_depth:
-            raise RuntimeError(
+            raise Exception(
                 f"Shortcut resolution exceeded {max_depth} hops starting from '{file_id}'."
             )
         current_id = target_id
