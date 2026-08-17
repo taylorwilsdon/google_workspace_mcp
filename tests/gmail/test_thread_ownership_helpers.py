@@ -84,8 +84,7 @@ class TestDateParsing:
 
     def test_both_missing_returns_none(self):
         iso, dt = _parse_date_header("", None)
-        assert iso is None
-        assert dt is None
+        assert iso is None and dt is None
 
     def test_malformed_header_falls_back(self):
         iso, dt = _parse_date_header("not a date", "1713360000000")

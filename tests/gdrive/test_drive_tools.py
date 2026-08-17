@@ -2209,10 +2209,9 @@ async def test_update_drive_file_append_rejected_for_native_google_docs(
 @pytest.mark.asyncio
 async def test_update_drive_file_append_requires_content():
     """append/prepend fail fast when given a file_path instead of inline text."""
-    mock_service = Mock()
     with pytest.raises(ValueError, match="requires 'content'"):
         await _unwrap(update_drive_file)(
-            service=mock_service,
+            service=Mock(),
             user_google_email="user@example.com",
             file_id="md123",
             file_path="/tmp/note.md",
@@ -2224,10 +2223,9 @@ async def test_update_drive_file_append_requires_content():
 @pytest.mark.parametrize("mode", ["append", "prepend"])
 async def test_update_drive_file_splice_rejects_mime_type(mode):
     """append/prepend cannot change the MIME type while splicing existing text."""
-    mock_service = Mock()
     with pytest.raises(ValueError, match=f"mime_type cannot be set when mode='{mode}'"):
         await _unwrap(update_drive_file)(
-            service=mock_service,
+            service=Mock(),
             user_google_email="user@example.com",
             file_id="md123",
             content="More text",
