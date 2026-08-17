@@ -8,8 +8,6 @@ import logging
 import os
 import webbrowser
 
-from google.oauth2 import id_token as google_id_token
-
 from typing import List, Optional, Tuple, Dict, Any
 from urllib.parse import parse_qs, urlparse
 
@@ -170,41 +168,14 @@ def save_credentials_to_session(
     user_email: Optional[str] = None,
 ):
     """Saves user credentials using OAuth21SessionStore."""
-    # Prefer a caller-supplied verified email (e.g. from the userinfo endpoint).
-    # When only the id_token is available, verify its signature against Google's
-    # JWKS using GOOGLE_OAUTH_CLIENT_ID (injected at runtime by the deployment
-    # pipeline) as the expected audience.  Only fall back to an unverified decode
-    # when verification fails because the id_token is expired — Google does not
-    # reissue id_tokens on access-token refresh, so stored tokens are commonly
-    # >1 h old.  The email claim is immutable for a Google account, so an expired
-    # but otherwise valid id_token still carries the correct identity.
     if not user_email and credentials and credentials.id_token:
-        client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID")
-        verified = False
-        if client_id:
-            try:
-                claims = google_id_token.verify_oauth2_token(
-                    credentials.id_token,
-                    Request(),
-                    audience=client_id,
-                )
-                user_email = claims.get("email")
-                verified = True
-                logger.debug("id_token signature verified via Google JWKS")
-            except Exception as verify_err:
-                logger.debug(
-                    "id_token verification failed (%s); "
-                    "falling back to unverified decode for email extraction only",
-                    verify_err,
-                )
-        if not verified:
-            try:
-                decoded_token = jwt.decode(
-                    credentials.id_token, options={"verify_signature": False}
-                )
-                user_email = decoded_token.get("email")
-            except Exception as e:
-                logger.debug("Could not decode id_token to get email: %s", e)
+        try:
+            decoded_token = jwt.decode(
+                credentials.id_token, options={"verify_signature": False}
+            )
+            user_email = decoded_token.get("email")
+        except Exception as e:
+            logger.debug("Could not decode id_token to get email: %s", e)
 
     if user_email:
         store = get_oauth21_session_store()
