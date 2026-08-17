@@ -4,7 +4,6 @@ Google Calendar MCP Tools
 This module provides MCP tools for interacting with Google Calendar API.
 """
 
-
 import datetime
 import logging
 import asyncio
@@ -28,10 +27,8 @@ from mcp.types import ToolAnnotations
 
 from core.server import server
 
-
 # Configure module logger
 logger = logging.getLogger(__name__)
-
 
 
 def _parse_reminders_json(
@@ -239,7 +236,6 @@ def _correct_time_format_for_api(
             # For date-only, convert using the provided timezone, or UTC if not provided
             if timezone:
                 try:
-                    # Parse the date and create a datetime at midnight in the specified timezone
                     tz = pytz.timezone(timezone)
                     # Parse the date and create a datetime at midnight in the specified timezone
                     date_obj = datetime.datetime.strptime(time_str, "%Y-%m-%d")

@@ -5,11 +5,13 @@ This module provides MCP tools for interacting with Google Drive API.
 """
 
 import asyncio
+import binascii
 import logging
 import io
 import base64
 
 from typing import Optional, List, Dict, Any
+from tempfile import NamedTemporaryFile, SpooledTemporaryFile
 from urllib.parse import urlparse
 from urllib.request import url2pathname
 from pathlib import Path
@@ -972,7 +974,7 @@ async def create_drive_file(
     if base64_content is not None:
         try:
             file_data = base64.b64decode(base64_content, validate=True)
-        except ValueError as exc:
+        except (binascii.Error, ValueError) as exc:
             raise ValueError("'base64_content' must be valid standard base64.") from exc
 
     # Create folder (no content or media_body). Prefer create_drive_folder for new code.
