@@ -88,10 +88,9 @@ async def test_create_drive_file_uploads_base64_content(mock_resolve_folder):
 async def test_create_drive_file_rejects_mixed_base64_and_text_content():
     """create_drive_file accepts exactly one content source."""
     mock_service = Mock()
-    fn = _unwrap(create_drive_file)
 
     with pytest.raises(ValueError, match="base64_content"):
-        await fn(
+        await _unwrap(create_drive_file)(
             service=mock_service,
             user_google_email="user@example.com",
             file_name="report.pdf",
@@ -107,10 +106,9 @@ async def test_create_drive_file_rejects_mixed_base64_and_text_content():
 async def test_create_drive_file_requires_mime_type_for_base64_content():
     """Inline base64 uploads require an explicit source MIME type."""
     mock_service = Mock()
-    fn = _unwrap(create_drive_file)
 
     with pytest.raises(ValueError, match="content_mime_type"):
-        await fn(
+        await _unwrap(create_drive_file)(
             service=mock_service,
             user_google_email="user@example.com",
             file_name="report.pdf",
@@ -126,10 +124,9 @@ async def test_create_drive_file_rejects_invalid_base64_content(mock_resolve_fol
     """Invalid inline base64 fails before calling Drive create."""
     mock_resolve_folder.return_value = "folder123"
     mock_service = Mock()
-    fn = _unwrap(create_drive_file)
 
     with pytest.raises(ValueError, match="base64_content"):
-        await fn(
+        await _unwrap(create_drive_file)(
             service=mock_service,
             user_google_email="user@example.com",
             file_name="report.pdf",
@@ -145,10 +142,9 @@ async def test_create_drive_file_rejects_invalid_base64_content(mock_resolve_fol
 async def test_create_drive_file_rejects_content_mime_type_without_base64():
     """content_mime_type only applies to base64_content uploads."""
     mock_service = Mock()
-    fn = _unwrap(create_drive_file)
 
     with pytest.raises(ValueError, match="content_mime_type"):
-        await fn(
+        await _unwrap(create_drive_file)(
             service=mock_service,
             user_google_email="user@example.com",
             file_name="report.pdf",
@@ -161,16 +157,15 @@ async def test_create_drive_file_rejects_content_mime_type_without_base64():
 
 @pytest.mark.asyncio
 async def test_create_drive_file_rejects_empty_file_url():
-    """An empty file_url is treated as no content source and rejected early."""
+    """An empty fileUrl is treated as no content source and rejected early."""
     mock_service = Mock()
-    fn = _unwrap(create_drive_file)
 
     with pytest.raises(ValueError, match="content"):
-        await fn(
+        await _unwrap(create_drive_file)(
             service=mock_service,
             user_google_email="user@example.com",
             file_name="report.pdf",
-            file_url="",
+            fileUrl="",
         )
 
     mock_service.files.return_value.create.return_value.execute.assert_not_called()
@@ -1422,10 +1417,9 @@ async def test_search_file_type_structured_query_combined():
 async def test_search_file_type_unknown_raises_value_error():
     """An unrecognised friendly type name raises ValueError immediately."""
     mock_service = Mock()
-    fn = _unwrap(search_drive_files)
 
     with pytest.raises(ValueError, match="Unknown file_type"):
-        await fn(
+        await _unwrap(search_drive_files)(
             service=mock_service,
             user_google_email="user@example.com",
             query="something",
@@ -1523,10 +1517,9 @@ async def test_list_items_file_type_unknown_raises(mock_resolve_folder):
     """An unrecognised friendly type name raises ValueError."""
     mock_resolve_folder.return_value = "resolved_root"
     mock_service = Mock()
-    fn = _unwrap(list_drive_items)
 
     with pytest.raises(ValueError, match="Unknown file_type"):
-        await fn(
+        await _unwrap(list_drive_items)(
             service=mock_service,
             user_google_email="user@example.com",
             folder_id="root",
@@ -1642,10 +1635,9 @@ async def test_list_drive_items_shared_drives_can_include_organizers():
 async def test_list_drive_items_invalid_resource_type_raises():
     """Unknown resource types are rejected before calling Drive APIs."""
     mock_service = Mock()
-    fn = _unwrap(list_drive_items)
 
     with pytest.raises(ValueError, match="resource_type"):
-        await fn(
+        await _unwrap(list_drive_items)(
             service=mock_service,
             user_google_email="user@example.com",
             resource_type="calendars",
@@ -1792,9 +1784,8 @@ async def test_import_to_google_slides_detects_extension_before_url_query(
 async def test_import_to_google_slides_rejects_unsupported_format():
     """A spreadsheet source_format is rejected by the Slides tool."""
     mock_service = Mock()
-    fn = _unwrap(import_to_google_slides)
     with pytest.raises(ValueError, match="Unsupported source_format"):
-        await fn(
+        await _unwrap(import_to_google_slides)(
             service=mock_service,
             user_google_email="user@example.com",
             file_name="Deck",
@@ -1877,9 +1868,8 @@ async def test_import_rejects_content_for_binary_format(mock_resolve_folder):
     """
     mock_resolve_folder.return_value = "resolved_root"
     mock_service = Mock()
-    fn = _unwrap(import_to_google_sheets)
     with pytest.raises(ValueError, match="text-based source formats"):
-        await fn(
+        await _unwrap(import_to_google_sheets)(
             service=mock_service,
             user_google_email="user@example.com",
             file_name="Budget.xlsx",
@@ -1906,9 +1896,8 @@ async def test_import_to_google_slides_rejects_unsupported_source_via_allowlist(
     mock_validate_path.return_value = fake_path
 
     mock_service = Mock()
-    fn = _unwrap(import_to_google_slides)
     with pytest.raises(ValueError, match="not supported by this tool"):
-        await fn(
+        await _unwrap(import_to_google_slides)(
             service=mock_service,
             user_google_email="user@example.com",
             file_name="Deck",
@@ -2204,10 +2193,9 @@ async def test_update_drive_file_append_rejected_for_native_google_docs(
         {"name": "Living Doc", "mimeType": "application/vnd.google-apps.document"},
     )
     mock_service = Mock()
-    fn = _unwrap(update_drive_file)
 
     with pytest.raises(ValueError, match="only supported for non-Google files"):
-        await fn(
+        await _unwrap(update_drive_file)(
             service=mock_service,
             user_google_email="user@example.com",
             file_id="doc123",
@@ -2221,10 +2209,9 @@ async def test_update_drive_file_append_rejected_for_native_google_docs(
 @pytest.mark.asyncio
 async def test_update_drive_file_append_requires_content():
     """append/prepend fail fast when given a file_path instead of inline text."""
-    fn = _unwrap(update_drive_file)
     mock_service = Mock()
     with pytest.raises(ValueError, match="requires 'content'"):
-        await fn(
+        await _unwrap(update_drive_file)(
             service=mock_service,
             user_google_email="user@example.com",
             file_id="md123",
@@ -2237,10 +2224,9 @@ async def test_update_drive_file_append_requires_content():
 @pytest.mark.parametrize("mode", ["append", "prepend"])
 async def test_update_drive_file_splice_rejects_mime_type(mode):
     """append/prepend cannot change the MIME type while splicing existing text."""
-    fn = _unwrap(update_drive_file)
     mock_service = Mock()
     with pytest.raises(ValueError, match=f"mime_type cannot be set when mode='{mode}'"):
-        await fn(
+        await _unwrap(update_drive_file)(
             service=mock_service,
             user_google_email="user@example.com",
             file_id="md123",
@@ -2261,10 +2247,9 @@ async def test_update_drive_file_rejects_string_content_for_binary_targets(
         {"name": "Report.pdf", "mimeType": "application/pdf"},
     )
     mock_service = Mock()
-    fn = _unwrap(update_drive_file)
 
     with pytest.raises(ValueError, match="only valid for text-based source formats"):
-        await fn(
+        await _unwrap(update_drive_file)(
             service=mock_service,
             user_google_email="user@example.com",
             file_id="pdf123",
@@ -2285,10 +2270,9 @@ async def test_update_drive_file_rejects_content_for_non_editable_google_types(
         {"name": "Survey", "mimeType": "application/vnd.google-apps.form"},
     )
     mock_service = Mock()
-    fn = _unwrap(update_drive_file)
 
     with pytest.raises(ValueError, match="not supported for this Google Apps type"):
-        await fn(
+        await _unwrap(update_drive_file)(
             service=mock_service,
             user_google_email="user@example.com",
             file_id="form123",

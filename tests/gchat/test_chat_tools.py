@@ -462,9 +462,8 @@ async def test_search_messages_raises_transient_error_when_all_spaces_ssl_fail(
     chat_service.spaces().messages().list.side_effect = list_messages
     people_service = Mock()
 
-    fn = _unwrap(search_messages)
     with pytest.raises(TransientNetworkError, match="transient SSL error"):
-        await fn(
+        await _unwrap(search_messages)(
             chat_service=chat_service,
             people_service=people_service,
             user_google_email="test@example.com",

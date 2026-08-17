@@ -562,7 +562,7 @@ async def get_drive_file_download_url(
         return "\n".join(result_lines)
 
     except Exception as e:
-        logger.exception(f"[get_drive_file_download_url] Failed to save file: {e}")
+        logger.error(f"[get_drive_file_download_url] Failed to save file: {e}")
         return (
             f"Error: Failed to save file for download.\n"
             f"File was downloaded successfully ({size_kb:.1f} KB) but could not be saved.\n\n"
@@ -927,7 +927,7 @@ async def create_drive_file(
     content: Optional[str] = None,  # Now explicitly Optional
     folder_id: str = "root",
     mime_type: str = "text/plain",
-    file_url: Optional[str] = None,  # Now explicitly Optional
+    fileUrl: Optional[str] = None,  # Now explicitly Optional
     base64_content: Optional[str] = None,
     content_mime_type: Optional[str] = None,
 ) -> str:
@@ -949,10 +949,10 @@ async def create_drive_file(
         str: Confirmation message of the successful file creation with file link.
     """
     logger.info(
-        f"[create_drive_file] Invoked. Email: '{user_google_email}', File Name: {file_name}, Folder ID: {folder_id}, file_url: {file_url}"
+        f"[create_drive_file] Invoked. Email: '{user_google_email}', File Name: {file_name}, Folder ID: {folder_id}, fileUrl: {fileUrl}"
     )
 
-    has_existing_content_source = content is not None or bool(file_url)
+    has_existing_content_source = content is not None or bool(fileUrl)
     if (
         not has_existing_content_source
         and base64_content is None
@@ -1009,12 +1009,12 @@ async def create_drive_file(
             .execute,
             num_retries=GOOGLE_API_WRITE_RETRIES,
         )
-    # Prefer file_url if both legacy sources are provided.
-    elif file_url:
-        logger.info(f"[create_drive_file] Fetching file from URL: {file_url}")
+    # Prefer fileUrl if both legacy sources are provided.
+    elif fileUrl:
+        logger.info(f"[create_drive_file] Fetching file from URL: {fileUrl}")
 
         # Check if this is a file:// URL
-        parsed_url = urlparse(file_url)
+        parsed_url = urlparse(fileUrl)
         if parsed_url.scheme == "file":
             # Handle file:// URL - read from local filesystem
             logger.info(
@@ -1042,14 +1042,14 @@ async def create_drive_file(
                     if running_streamable
                     else ""
                 )
-                raise FileNotFoundError(f"Local file does not exist: {file_path}.{extra}")
+                raise Exception(f"Local file does not exist: {file_path}.{extra}")
             if not path_obj.is_file():
                 extra = (
                     " In streamable-http/Docker deployments, mount the file into the container or provide an HTTP(S) URL."
                     if running_streamable
                     else ""
                 )
-                raise ValueError(f"Path is not a file: {file_path}.{extra}")
+                raise Exception(f"Path is not a file: {file_path}.{extra}")
 
             logger.info(f"[create_drive_file] Reading local file: {file_path}")
 
@@ -1087,7 +1087,7 @@ async def create_drive_file(
                     spool.write(chunk)
 
                 _total, content_type = await _stream_url_with_validation(
-                    file_url, _write_spool
+                    fileUrl, _write_spool
                 )
                 spool.seek(0)
 
@@ -1125,7 +1125,7 @@ async def create_drive_file(
                     buf.write(chunk)
 
                 total_bytes, content_type = await _stream_url_with_validation(
-                    file_url, _write_chunk
+                    fileUrl, _write_chunk
                 )
 
                 logger.info(
@@ -1167,7 +1167,7 @@ async def create_drive_file(
         else:
             if not parsed_url.scheme:
                 raise ValueError(
-                    "file_url is missing a URL scheme. Use file://, http://, or https://."
+                    "fileUrl is missing a URL scheme. Use file://, http://, or https://."
                 )
             raise ValueError(
                 f"Unsupported URL scheme '{parsed_url.scheme}'. Only file://, http://, and https:// are supported."
@@ -1643,7 +1643,7 @@ async def get_drive_file_permissions(
         return "\n".join(output_parts)
 
     except Exception as e:
-        logger.exception(f"Error getting file permissions: {e}")
+        logger.error(f"Error getting file permissions: {e}")
         return f"Error getting file permissions: {e}"
 
 

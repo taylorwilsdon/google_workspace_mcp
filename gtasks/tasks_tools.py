@@ -171,12 +171,12 @@ async def list_task_lists(
 
     except HttpError as error:
         message = _format_reauth_message(error, user_google_email)
-        logger.exception(message)
-        raise RuntimeError(message)
+        logger.error(message, exc_info=True)
+        raise Exception(message)
     except Exception as e:
         message = f"Unexpected error: {e}."
-        logger.exception(message)
-        raise RuntimeError(message)
+        logger.error(message, exc_info=True)
+        raise Exception(message)
 
 
 @server.tool(
@@ -225,12 +225,12 @@ async def get_task_list(
 
     except HttpError as error:
         message = _format_reauth_message(error, user_google_email)
-        logger.exception(message)
-        raise RuntimeError(message)
+        logger.error(message, exc_info=True)
+        raise Exception(message)
     except Exception as e:
         message = f"Unexpected error: {e}."
-        logger.exception(message)
-        raise RuntimeError(message)
+        logger.error(message, exc_info=True)
+        raise Exception(message)
 
 
 # --- Task list _impl functions ---
@@ -526,12 +526,12 @@ async def list_tasks(
 
     except HttpError as error:
         message = _format_reauth_message(error, user_google_email)
-        logger.exception(message)
-        raise RuntimeError(message)
+        logger.error(message, exc_info=True)
+        raise Exception(message)
     except Exception as e:
         message = f"Unexpected error: {e}."
-        logger.exception(message)
-        raise RuntimeError(message)
+        logger.error(message, exc_info=True)
+        raise Exception(message)
 
 
 def get_structured_tasks(tasks: List[Dict[str, str]]) -> List[StructuredTask]:
@@ -711,12 +711,12 @@ async def get_task(
 
     except HttpError as error:
         message = _format_reauth_message(error, user_google_email)
-        logger.exception(message)
-        raise RuntimeError(message)
+        logger.error(message, exc_info=True)
+        raise Exception(message)
     except Exception as e:
         message = f"Unexpected error: {e}."
-        logger.exception(message)
-        raise RuntimeError(message)
+        logger.error(message, exc_info=True)
+        raise Exception(message)
 
 
 # --- Task _impl functions ---
