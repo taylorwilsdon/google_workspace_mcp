@@ -94,13 +94,20 @@ class MinimalOAuthServer:
 
                 # Exchange code for credentials
                 redirect_uri = get_oauth_redirect_uri()
+                # CSRF (Vuln 6): the state parameter is the primary CSRF defence
+                # in OAuth 2.0 and must always be validated.  The fallback that
+                # recovers from a missing state is a narrow opt-in for the rare
+                # Google edge-case where prompt=select_account drops the state
+                # parameter.  It is NOT enabled automatically by MCP_SINGLE_USER_MODE
+                # — operators must set WORKSPACE_MCP_ALLOW_STATE_FALLBACK=1 explicitly
+                # after understanding the trade-off.
+                allow_fallback = os.getenv("WORKSPACE_MCP_ALLOW_STATE_FALLBACK", "0").strip() == "1"
                 verified_user_id, _ = await handle_auth_callback(
                     scopes=get_current_scopes(),
                     authorization_response=str(request.url),
                     redirect_uri=redirect_uri,
                     session_id=None,
-                    allow_missing_state_fallback=os.getenv("MCP_SINGLE_USER_MODE")
-                    == "1",
+                    allow_missing_state_fallback=allow_fallback,
                 )
 
                 logger.info(
@@ -117,11 +124,15 @@ class MinimalOAuthServer:
 
     def _setup_attachment_route(self):
         """Setup the attachment serving route."""
-        from core.attachment_storage import get_attachment_storage
+        from core.attachment_storage import get_attachment_storage, verify_download_token
 
         @self.app.get("/attachments/{file_id}")
         async def serve_attachment(file_id: str, request: Request):
             """Serve a stored attachment file."""
+            token = request.query_params.get("token")
+            if not verify_download_token(file_id, token):
+                return JSONResponse({"error": "Forbidden"}, status_code=403)
+
             storage = get_attachment_storage()
             metadata = storage.get_attachment_metadata(file_id)
 

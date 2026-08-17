@@ -9,6 +9,8 @@ import logging
 import os
 import webbrowser
 
+from google.oauth2 import id_token as google_id_token
+
 from typing import List, Optional, Tuple, Dict, Any
 from urllib.parse import parse_qs, urlparse
 
@@ -193,17 +195,40 @@ def save_credentials_to_session(
 ):
     """Saves user credentials using OAuth21SessionStore."""
     # Prefer a caller-supplied verified email (e.g. from the userinfo endpoint).
-    # Fall back to JWT decode without signature verification only when no
-    # verified email is available, since the id_token is not checked against
-    # Google's JWKS here (Vuln 2 mitigation).
+    # When only the id_token is available, verify its signature against Google's
+    # JWKS using GOOGLE_OAUTH_CLIENT_ID (injected at runtime by the deployment
+    # pipeline) as the expected audience.  Only fall back to an unverified decode
+    # when verification fails because the id_token is expired — Google does not
+    # reissue id_tokens on access-token refresh, so stored tokens are commonly
+    # >1 h old.  The email claim is immutable for a Google account, so an expired
+    # but otherwise valid id_token still carries the correct identity.
     if not user_email and credentials and credentials.id_token:
-        try:
-            decoded_token = jwt.decode(
-                credentials.id_token, options={"verify_signature": False}
-            )
-            user_email = decoded_token.get("email")
-        except Exception as e:
-            logger.debug(f"Could not decode id_token to get email: {e}")
+        client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID")
+        verified = False
+        if client_id:
+            try:
+                claims = google_id_token.verify_oauth2_token(
+                    credentials.id_token,
+                    Request(),
+                    audience=client_id,
+                )
+                user_email = claims.get("email")
+                verified = True
+                logger.debug("id_token signature verified via Google JWKS")
+            except Exception as verify_err:
+                logger.debug(
+                    "id_token verification failed (%s); "
+                    "falling back to unverified decode for email extraction only",
+                    verify_err,
+                )
+        if not verified:
+            try:
+                decoded_token = jwt.decode(
+                    credentials.id_token, options={"verify_signature": False}
+                )
+                user_email = decoded_token.get("email")
+            except Exception as e:
+                logger.debug("Could not decode id_token to get email: %s", e)
 
     if user_email:
         store = get_oauth21_session_store()
@@ -1454,26 +1479,14 @@ async def get_authenticated_google_service(
 
     try:
         service = build(service_name, version, http=_build_authorized_http(credentials))
-        log_user_email = user_google_email
 
-        # Try to get email from credentials if needed for validation
-        if credentials and credentials.id_token:
-            try:
-                # Decode without verification (just to get email for logging)
-                decoded_token = jwt.decode(
-                    credentials.id_token, options={"verify_signature": False}
-                )
-                token_email = decoded_token.get("email")
-                if token_email:
-                    log_user_email = token_email
-                    logger.info(f"[{tool_name}] Token email: {token_email}")
-            except Exception as e:
-                logger.debug(f"[{tool_name}] Could not decode id_token: {e}")
-
+        # user_google_email is already validated via the userinfo endpoint earlier
+        # in this function — no need to re-derive identity from the id_token here.
         logger.info(
-            f"[{tool_name}] Successfully authenticated {service_name} service for user: {log_user_email}"
+            "[%s] Successfully authenticated %s service for user: %s",
+            tool_name, service_name, user_google_email,
         )
-        return service, log_user_email
+        return service, user_google_email
 
     except Exception as e:
         error_msg = f"[{tool_name}] Failed to build {service_name} service: {str(e)}"

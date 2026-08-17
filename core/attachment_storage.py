@@ -6,9 +6,12 @@ Files are automatically cleaned up after expiration (default 1 hour).
 """
 
 import base64
+import hashlib
+import hmac
 import logging
 import os
 import re
+import time
 import unicodedata
 import uuid
 from pathlib import Path
@@ -62,6 +65,76 @@ def sanitize_attachment_filename(filename: Optional[str]) -> str:
         sanitized = f"_{sanitized}"
 
     return sanitized
+
+
+def _attachment_secret() -> bytes:
+    """Return the HMAC secret used to sign attachment download tokens.
+
+    Priority (all injected at runtime by the deployment pipeline):
+      1. WORKSPACE_MCP_ATTACHMENT_SECRET  — dedicated attachment secret
+      2. FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY — already in Vault (≥32 chars)
+      3. GOOGLE_OAUTH_CLIENT_SECRET       — last resort
+
+    Returns empty bytes when no secret is configured (local dev without secrets).
+    In that case tokens are not issued and verification is skipped with a warning.
+    """
+    raw = (
+        os.getenv("WORKSPACE_MCP_ATTACHMENT_SECRET")
+        or os.getenv("FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY")
+        or os.getenv("GOOGLE_OAUTH_CLIENT_SECRET")
+        or ""
+    )
+    return raw.encode() if raw else b""
+
+
+def generate_download_token(file_id: str, expires_at: datetime) -> str:
+    """Return a URL-safe HMAC-SHA256 token authorising download of *file_id*.
+
+    Token format: ``<unix_expiry>.<sha256_hex>``
+
+    The expiry embedded in the token matches the attachment's own expiry so no
+    separate TTL is required. Using constant-time comparison in
+    ``verify_download_token`` prevents timing-based enumeration.
+    """
+    secret = _attachment_secret()
+    if not secret:
+        return ""
+    expiry_ts = int(expires_at.timestamp())
+    msg = f"{file_id}:{expiry_ts}".encode()
+    sig = hmac.new(secret, msg, hashlib.sha256).hexdigest()
+    return f"{expiry_ts}.{sig}"
+
+
+def verify_download_token(file_id: str, token: Optional[str]) -> bool:
+    """Return True when *token* is a valid, unexpired HMAC token for *file_id*.
+
+    When no secret is configured the function logs a warning and returns True so
+    that local development without a secrets backend is not broken.
+    """
+    secret = _attachment_secret()
+    if not secret:
+        logger.warning(
+            "WORKSPACE_MCP_ATTACHMENT_SECRET not configured; "
+            "attachment download token verification skipped"
+        )
+        return True
+
+    if not token:
+        return False
+
+    try:
+        expiry_str, provided_sig = token.split(".", 1)
+        expiry_ts = int(expiry_str)
+    except (ValueError, AttributeError):
+        return False
+
+    if time.time() > expiry_ts:
+        logger.debug("Attachment token expired for file_id=%s", file_id)
+        return False
+
+    msg = f"{file_id}:{expiry_ts}".encode()
+    expected_sig = hmac.new(secret, msg, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected_sig, provided_sig)
 
 
 class SavedAttachment(NamedTuple):
@@ -309,4 +382,17 @@ def get_attachment_url(file_id: str) -> str:
     else:
         base_url = f"{WORKSPACE_MCP_BASE_URI}:{WORKSPACE_MCP_PORT}"
 
-    return f"{base_url}/attachments/{file_id}"
+    # Embed a per-attachment HMAC token so the endpoint can authenticate the
+    # download without requiring a session cookie (Vuln 5).
+    storage = get_attachment_storage()
+    meta = storage.get_attachment_metadata(file_id)
+    expires_at = (
+        meta["expires_at"]
+        if meta
+        else datetime.now() + timedelta(seconds=DEFAULT_EXPIRATION_SECONDS)
+    )
+    token = generate_download_token(file_id, expires_at)
+    path = f"/attachments/{file_id}"
+    if token:
+        path = f"{path}?token={token}"
+    return f"{base_url}{path}"
