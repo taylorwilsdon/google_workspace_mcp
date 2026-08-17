@@ -12,13 +12,14 @@ MCP tools for managing Google Contacts and contact groups. All tools require `us
 ## Contacts
 
 ### search_contacts
-Search contacts by name, email, phone number, or other fields.
+Search personal contacts and/or the Workspace domain directory.
 
 | Parameter | Type | Required | Default | Notes |
 |-----------|------|----------|---------|-------|
 | query | string | yes | | Searches names, emails, phone numbers |
 | user_google_email | string | yes | | |
-| page_size | integer | no | 30 | Max 30 |
+| page_size | integer | no | 30 | Per source; max 30 for contacts, 50 for directory |
+| source | string | no | `contacts` | `contacts`, `directory` (organization-wide profiles), or `all` |
 
 ### list_contacts
 List contacts for the authenticated user.
@@ -79,11 +80,11 @@ List contact groups (labels).
 | page_token | any | no | | Pagination token |
 
 ### get_contact_group
-Get details of a specific contact group including its members.
+Get details of a contact group or Google Group, including its members.
 
 | Parameter | Type | Required | Default | Notes |
 |-----------|------|----------|---------|-------|
-| group_id | string | yes | | |
+| group_id | string | yes | | Contact group ID, or a Google Group email address (e.g. `team@example.com`) to read Workspace membership |
 | user_google_email | string | yes | | |
 | max_members | integer | no | 100 | Max 1000 |
 
@@ -109,3 +110,5 @@ Create, update, delete a contact group, or modify its members.
 **Batch organisation**: Use contact groups to organise contacts into categories. Create a group with `manage_contact_group`, then add contacts to it with the `modify_members` action.
 
 **Extra context**: The `notes` field on a contact is a free-text area useful for storing context that does not fit into structured fields (e.g. how you met, preferred contact method).
+
+**Colleagues and Google Groups**: To find a coworker who is not in the user's personal contacts, call `search_contacts` with `source="directory"` (or `"all"`). To see who belongs to a Google Group, pass the group's email address to `get_contact_group`. Both need the Cloud Identity API enabled and the directory/group scopes granted; directory visibility follows the organization's contact sharing setting and each group's **Who can view members** setting.

@@ -137,7 +137,7 @@ This project is [MIT licensed](LICENSE) — not "open core," not "source availab
 <tr>
 <td align="center" width="25%">
 <h3>👤</h3><a href="https://workspacemcp.com/google-contacts?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=services-google-contacts"><b>Contacts</b></a><br>
-<sub>10 tools - people, groups,<br>batch operations</sub>
+<sub>8 tools - people, groups,<br>batch operations</sub>
 </td>
 <td align="center" width="25%">
 <h3>💬</h3><a href="https://workspacemcp.com/google-chat?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=services-google-chat"><b>Chat</b></a><br>
@@ -158,7 +158,7 @@ Each page lists every tool with its tier, parameters, required scopes, and examp
 
 > 💬 **Google Chat** needs a one-time Chat app configuration and a Workspace account - see the [Chat setup FAQ](https://workspacemcp.com/welcome/faq?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=services-chat-faq).
 
-> 👤 **Workspace directory and group membership lookup** requires the People API and Cloud Identity API, the `directory.readonly` and `cloud-identity.groups.readonly` OAuth scopes, and Google Groups for Business for group membership lookup. Existing users must authenticate again once after upgrading to grant the new scopes. Group membership visibility remains subject to each group's **Who can view members** setting.
+> 👤 **Contacts** now reaches beyond personal contacts: `search_contacts` takes a `source` of `contacts`, `directory`, or `all`, and `get_contact_group` accepts a Google Group email address as well as a contact group ID. Those paths need the Cloud Identity API enabled alongside the People API, and add the `directory.readonly` and `cloud-identity.groups.readonly` scopes - existing users must authenticate once more after upgrading to grant them. Group membership visibility remains subject to each group's **Who can view members** setting.
 
 ## Quick Start
 

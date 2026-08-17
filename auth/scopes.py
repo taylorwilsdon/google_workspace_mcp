@@ -187,8 +187,8 @@ TASKS_SCOPES = [TASKS_SCOPE, TASKS_READONLY_SCOPE]
 CONTACTS_SCOPES = [
     CONTACTS_SCOPE,
     CONTACTS_READONLY_SCOPE,
-    DIRECTORY_READONLY_SCOPE,  # Required for search_directory_people
-    CLOUD_IDENTITY_GROUPS_READONLY_SCOPE,  # Required for list_group_members
+    DIRECTORY_READONLY_SCOPE,  # Required for search_contacts directory sources
+    CLOUD_IDENTITY_GROUPS_READONLY_SCOPE,  # Required for get_contact_group on a Google Group
 ]
 
 CUSTOM_SEARCH_SCOPES = [CUSTOM_SEARCH_SCOPE]

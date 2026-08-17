@@ -144,10 +144,8 @@ tasks:
 contacts:
   core:
     - search_contacts
-    - search_directory_people
     - get_contact
     - list_contacts
-    - list_group_members
     - manage_contact
   extended:
     - list_contact_groups

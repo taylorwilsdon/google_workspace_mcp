@@ -123,6 +123,19 @@ def _format_email_line(email: Dict[str, Any]) -> str:
     return value
 
 
+def _format_group_member_line(membership: Dict[str, Any]) -> str:
+    """
+    Format a Cloud Identity Membership resource into a display line.
+
+    Returns e.g. 'user@example.com (OWNER, MEMBER)'.
+    """
+    email = membership.get("preferredMemberKey", {}).get("id", "unknown")
+    roles = ", ".join(
+        r.get("name", "") for r in membership.get("roles", []) if r.get("name")
+    )
+    return f"{email} ({roles or 'MEMBER'})"
+
+
 def _format_contact(person: Dict[str, Any], detailed: bool = False) -> str:
     """
     Format a Person resource into a readable string.
