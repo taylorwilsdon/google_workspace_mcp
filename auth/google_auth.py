@@ -1,7 +1,6 @@
 # auth/google_auth.py
 
 import asyncio
-import contextlib
 import hashlib
 import json
 import jwt
@@ -163,29 +162,6 @@ def _find_any_credentials(
     logger.info("[single-user] No valid credentials found via credential store")
     return None, None
 
-
-@contextlib.contextmanager
-def _insecure_localhost_transport(redirect_uri: str):
-    """Scope OAUTHLIB_INSECURE_TRANSPORT to a single localhost OAuth operation.
-
-    Setting this env var globally (Vuln 1) silently downgrades every OAuthlib
-    operation in the process to allow plaintext HTTP. This context manager
-    sets it only while the specific localhost call is in flight, then restores
-    the previous value so the process-wide default is unaffected.
-    """
-    is_localhost = "localhost" in redirect_uri or "127.0.0.1" in redirect_uri
-    already_set = "OAUTHLIB_INSECURE_TRANSPORT" in os.environ
-    if not is_localhost or already_set:
-        yield
-        return
-    logger.warning(
-        "Temporarily enabling OAUTHLIB_INSECURE_TRANSPORT for localhost OAuth callback."
-    )
-    os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
-    try:
-        yield
-    finally:
-        os.environ.pop("OAUTHLIB_INSECURE_TRANSPORT", None)
 
 
 def save_credentials_to_session(
@@ -596,12 +572,14 @@ async def start_auth_flow(
         oauth_state = os.urandom(16).hex()
         current_scopes = get_current_scopes()
 
-        with _insecure_localhost_transport(redirect_uri):
-            flow = create_oauth_flow(
-                scopes=current_scopes,
-                redirect_uri=redirect_uri,
-                state=oauth_state,
-            )
+        if "localhost" in redirect_uri or "127.0.0.1" in redirect_uri:
+            os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+
+        flow = create_oauth_flow(
+            scopes=current_scopes,
+            redirect_uri=redirect_uri,
+            state=oauth_state,
+        )
 
         session_id = None
         try:
@@ -822,12 +800,12 @@ async def handle_auth_callback(
         )
 
         # Exchange the authorization code for credentials.
-        # Scope OAUTHLIB_INSECURE_TRANSPORT to this call only (Vuln 1).
+        if "localhost" in redirect_uri or "127.0.0.1" in redirect_uri:
+            os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
         try:
-            with _insecure_localhost_transport(redirect_uri):
-                await asyncio.to_thread(
-                    flow.fetch_token, authorization_response=authorization_response
-                )
+            await asyncio.to_thread(
+                flow.fetch_token, authorization_response=authorization_response
+            )
             credentials = flow.credentials
         except Exception as exc:
             if _is_pkce_verifier_not_needed_error(exc):
