@@ -3111,7 +3111,7 @@ async def draft_gmail_message(
     action: Annotated[
         Literal["create", "update", "delete"],
         Field(
-            description="Draft lifecycle action. 'create' (default) makes a new draft. 'update' REPLACES the content of the draft named by draft_id in place — same draft ID, same thread; supply the full message again, unspecified content is not preserved. 'delete' PERMANENTLY deletes the draft named by draft_id — it does NOT go to Trash and cannot be recovered.",
+            description="Draft lifecycle action. 'create' (default) makes a new draft. 'update' REPLACES the content of the draft named by draft_id in place — same draft ID, same thread; supply the full message again, unspecified content is not preserved. If the draft may have been edited outside this conversation (e.g. by the user in the Gmail UI), read its current content first and confirm before replacing — update overwrites those edits and Gmail has no conditional update to catch it. 'delete' PERMANENTLY deletes the draft named by draft_id — it does NOT go to Trash and cannot be recovered.",
         ),
     ] = "create",
     draft_id: Annotated[
@@ -3168,10 +3168,16 @@ async def draft_gmail_message(
         action (Literal['create', 'update', 'delete']): Draft lifecycle action, default
             'create'. 'update' calls Gmail's drafts.update: the draft named by draft_id
             keeps its ID and thread but its content is REPLACED wholesale — pass the full
-            message again, exactly as for create. 'delete' calls drafts.delete, which is
-            PERMANENT (unlike trashing a message, a deleted draft is unrecoverable) and
-            takes ONLY draft_id. All three actions are covered by the gmail.compose scope
-            the tool already holds — no new consent.
+            message again, exactly as for create. CAUTION — update replaces, it does not
+            merge: edits made to the draft outside this conversation (e.g. by the user in
+            the Gmail UI) are lost, and Gmail offers no conditional update (no etag) to
+            detect them. A UI edit usually rotates the draft ID, so updating with a stale
+            ID fails safely with a not-found error — but if you re-resolve the LIVE draft
+            ID (e.g. after such a 404), read the draft's current content first and, if it
+            differs from what you last wrote, confirm with the user before replacing.
+            'delete' calls drafts.delete, which is PERMANENT (unlike trashing a message,
+            a deleted draft is unrecoverable) and takes ONLY draft_id. All three actions
+            are covered by the gmail.compose scope the tool already holds — no new consent.
         draft_id (Optional[str]): Existing draft ID for 'update'/'delete'. Note the ID a
             draft had at creation rotates if the draft is edited in the Gmail UI — on a
             404, list the thread's drafts to find the live ID.
@@ -3460,7 +3466,9 @@ async def draft_gmail_message(
                     f"Draft '{draft_id}' was not found — it may have already been "
                     "sent or deleted, or its ID rotated after an edit in the Gmail "
                     "UI. List the thread's drafts to find the live ID, or create a "
-                    "new draft."
+                    "new draft. An ID that rotated means the draft WAS edited "
+                    "outside this conversation — read the live draft's content "
+                    "before replacing it, or you will overwrite those edits."
                 ) from exc
             raise
         verb = "updated"
