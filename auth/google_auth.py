@@ -53,9 +53,6 @@ def _session_id_log_fingerprint(session_id: Optional[str]) -> str:
 
 
 # Constants
-GOOGLE_ACCOUNTS_URL = "https://accounts.google.com"
-
-
 def get_default_credentials_dir():
     """Get the default credentials directory path, preferring user-specific locations.
 
@@ -120,7 +117,7 @@ else:
 
 
 def _find_any_credentials(
-    _base_dir: str = DEFAULT_CREDENTIALS_DIR,
+    base_dir: str = DEFAULT_CREDENTIALS_DIR,
 ) -> tuple[Optional[Credentials], Optional[str]]:
     """
     Find and load any valid credentials from the credentials directory.
@@ -672,7 +669,7 @@ async def handle_auth_callback(
     scopes: List[str],
     authorization_response: str,
     redirect_uri: str,
-    _credentials_base_dir: str = DEFAULT_CREDENTIALS_DIR,
+    credentials_base_dir: str = DEFAULT_CREDENTIALS_DIR,
     session_id: Optional[str] = None,
     *,
     allow_missing_state_fallback: bool = False,
@@ -689,7 +686,7 @@ async def handle_auth_callback(
         scopes: List of OAuth scopes requested.
         authorization_response: The full callback URL from Google.
         redirect_uri: The redirect URI.
-        _credentials_base_dir: Deprecated base directory for credential files (unused).
+        credentials_base_dir: Base directory for credential files.
         session_id: Optional MCP session ID to associate with the credentials.
         allow_missing_state_fallback: Whether to recover a missing callback state
             from the most recently stored OAuth state. Only enable for local stdio
@@ -943,7 +940,7 @@ async def handle_auth_callback(
             scopes=credentials.scopes,
             expiry=credentials.expiry,
             mcp_session_id=session_id,
-            issuer=GOOGLE_ACCOUNTS_URL,  # Add issuer for Google tokens
+            issuer="https://accounts.google.com",  # Add issuer for Google tokens
         )
 
         # Pass the userinfo-verified email so JWT decode without sig check is skipped.
@@ -1051,7 +1048,7 @@ def get_credentials(
                                         scopes=credentials.scopes,
                                         expiry=credentials.expiry,
                                         mcp_session_id=session_id,
-                                        issuer=GOOGLE_ACCOUNTS_URL,
+                                        issuer="https://accounts.google.com",
                                     )
                         except Exception as e:
                             logger.error(
@@ -1228,7 +1225,7 @@ def get_credentials(
                         scopes=credentials.scopes,
                         expiry=credentials.expiry,
                         mcp_session_id=session_id,
-                        issuer=GOOGLE_ACCOUNTS_URL,  # Add issuer for Google tokens
+                        issuer="https://accounts.google.com",  # Add issuer for Google tokens
                     )
 
             if session_id and (persist_succeeded or is_stateless_mode()):
