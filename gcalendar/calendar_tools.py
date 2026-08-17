@@ -33,8 +33,6 @@ from core.server import server
 # Configure module logger
 logger = logging.getLogger(__name__)
 
-UTC_OFFSET_SUFFIX = "+00:00"
-TIMEZONE_OFFSET_PATTERN = r"[+-]\d{2}:\d{2}$"
 
 
 def _parse_reminders_json(
@@ -249,7 +247,7 @@ def _correct_time_format_for_api(
                     formatted = (
                         dt.astimezone(datetime.timezone.utc)
                         .isoformat()
-                        .replace(UTC_OFFSET_SUFFIX, "Z")
+                        .replace("+00:00", "Z")
                     )
                 except KeyError:
                     logger.warning(
@@ -317,7 +315,7 @@ def _strip_utc_offset(datetime_str: str) -> str:
     if datetime_str.endswith("Z"):
         return datetime_str[:-1]
     # Strip +HH:MM or -HH:MM offset at end (e.g. -07:00, +05:30)
-    return re.sub(TIMEZONE_OFFSET_PATTERN, "", datetime_str)
+    return re.sub(r"[+-]\d{2}:\d{2}$", "", datetime_str)
 
 
 @server.tool(
@@ -424,7 +422,7 @@ async def get_events(
             effective_time_min = formatted_time_min
         else:
             utc_now = datetime.datetime.now(datetime.timezone.utc)
-            effective_time_min = utc_now.isoformat().replace(UTC_OFFSET_SUFFIX, "Z")
+            effective_time_min = utc_now.isoformat().replace("+00:00", "Z")
         if time_min is None:
             logger.info(
                 f"time_min not provided, defaulting to current UTC time: {effective_time_min}"
@@ -1497,7 +1495,7 @@ def _ooo_time_entry(
         logger.info(f"[ooo_time_entry] Converted date-only to dateTime: {time_str}")
 
     has_explicit_offset = time_str.endswith("Z") or bool(
-        re.search(TIMEZONE_OFFSET_PATTERN, time_str)
+        re.search(r"[+-]\d{2}:\d{2}$", time_str)
     )
     if not has_explicit_offset and not timezone:
         raise ValueError(
@@ -1604,17 +1602,17 @@ async def _list_ooo_events_impl(
                 effective_time_min = (
                     now.astimezone(datetime.timezone.utc)
                     .isoformat()
-                    .replace(UTC_OFFSET_SUFFIX, "Z")
+                    .replace("+00:00", "Z")
                 )
             except KeyError:
                 logger.warning(
                     f"Could not apply timezone '{timezone}', falling back to UTC"
                 )
                 utc_now = datetime.datetime.now(datetime.timezone.utc)
-                effective_time_min = utc_now.isoformat().replace(UTC_OFFSET_SUFFIX, "Z")
+                effective_time_min = utc_now.isoformat().replace("+00:00", "Z")
         else:
             utc_now = datetime.datetime.now(datetime.timezone.utc)
-            effective_time_min = utc_now.isoformat().replace(UTC_OFFSET_SUFFIX, "Z")
+            effective_time_min = utc_now.isoformat().replace("+00:00", "Z")
 
     effective_time_max = _correct_time_format_for_api(time_max, "time_max", timezone)
 
@@ -1923,7 +1921,7 @@ def _focus_time_time_entry(
         )
 
     has_explicit_offset = time_str.endswith("Z") or bool(
-        re.search(TIMEZONE_OFFSET_PATTERN, time_str)
+        re.search(r"[+-]\d{2}:\d{2}$", time_str)
     )
     if not has_explicit_offset and not timezone:
         raise ValueError(
@@ -2056,17 +2054,17 @@ async def _list_focus_time_events_impl(
                 effective_time_min = (
                     now.astimezone(datetime.timezone.utc)
                     .isoformat()
-                    .replace(UTC_OFFSET_SUFFIX, "Z")
+                    .replace("+00:00", "Z")
                 )
             except KeyError:
                 logger.warning(
                     f"Could not apply timezone '{timezone}', falling back to UTC"
                 )
                 utc_now = datetime.datetime.now(datetime.timezone.utc)
-                effective_time_min = utc_now.isoformat().replace(UTC_OFFSET_SUFFIX, "Z")
+                effective_time_min = utc_now.isoformat().replace("+00:00", "Z")
         else:
             utc_now = datetime.datetime.now(datetime.timezone.utc)
-            effective_time_min = utc_now.isoformat().replace(UTC_OFFSET_SUFFIX, "Z")
+            effective_time_min = utc_now.isoformat().replace("+00:00", "Z")
 
     effective_time_max = _correct_time_format_for_api(time_max, "time_max", timezone)
 

@@ -27,8 +27,6 @@ from auth.oauth_config import is_external_oauth21_provider
 
 logger = logging.getLogger(__name__)
 
-_OAUTH_STATE_PERMISSIONS_MSG = "Failed to update OAuth state file permissions"
-GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 
 
 def _lock_file_exclusive(file_handle: IO[str]) -> None:
@@ -260,7 +258,7 @@ class OAuth21SessionStore:
             try:
                 os.chmod(self._oauth_state_file, 0o600)
             except OSError:
-                logger.debug(_OAUTH_STATE_PERMISSIONS_MSG)
+                logger.debug("Failed to update OAuth state file permissions")
 
     def _serialize_oauth_state_entry(
         self, state_info: Dict[str, Any]
@@ -371,7 +369,7 @@ class OAuth21SessionStore:
         try:
             os.chmod(self._oauth_state_file, 0o600)
         except OSError:
-            logger.debug(_OAUTH_STATE_PERMISSIONS_MSG)
+            logger.debug("Failed to update OAuth state file permissions")
 
     def _update_shared_oauth_states(
         self,
@@ -383,7 +381,7 @@ class OAuth21SessionStore:
             try:
                 os.chmod(self._oauth_state_file, 0o600)
             except OSError:
-                logger.debug(_OAUTH_STATE_PERMISSIONS_MSG)
+                logger.debug("Failed to update OAuth state file permissions")
             _lock_file_exclusive(file_handle)
             try:
                 oauth_states, cleaned_expired = (
@@ -602,7 +600,7 @@ class OAuth21SessionStore:
         user_email: str,
         access_token: str,
         refresh_token: Optional[str] = None,
-        token_uri: str = GOOGLE_TOKEN_URL,
+        token_uri: str = "https://oauth2.googleapis.com/token",
         client_id: Optional[str] = None,
         client_secret: Optional[str] = None,
         scopes: Optional[list] = None,
@@ -1135,7 +1133,7 @@ async def _build_credentials_from_provider() -> Optional[Credentials]:
     return Credentials(
         token=upstream.access_token,
         refresh_token=upstream.refresh_token,
-        token_uri=GOOGLE_TOKEN_URL,
+        token_uri="https://oauth2.googleapis.com/token",
         client_id=client_id,
         client_secret=client_secret,
         scopes=upstream.scope.split() if upstream.scope else None,
@@ -1174,7 +1172,7 @@ async def ensure_session_from_access_token(
         credentials = Credentials(
             token=access_token.token,
             refresh_token=None,
-            token_uri=GOOGLE_TOKEN_URL,
+            token_uri="https://oauth2.googleapis.com/token",
             client_id=client_id,
             client_secret=client_secret,
             scopes=getattr(access_token, "scopes", None),
@@ -1246,7 +1244,7 @@ def get_credentials_from_token(
         credentials = Credentials(
             token=access_token,
             refresh_token=None,
-            token_uri=GOOGLE_TOKEN_URL,
+            token_uri="https://oauth2.googleapis.com/token",
             client_id=client_id,
             client_secret=client_secret,
             scopes=None,
@@ -1308,7 +1306,7 @@ def store_token_session(
             user_email=user_email,
             access_token=token_response.get("access_token"),
             refresh_token=token_response.get("refresh_token"),
-            token_uri=GOOGLE_TOKEN_URL,
+            token_uri="https://oauth2.googleapis.com/token",
             client_id=client_id,
             client_secret=client_secret,
             scopes=scopes_list,
