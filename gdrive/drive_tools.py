@@ -5,10 +5,10 @@ This module provides MCP tools for interacting with Google Drive API.
 """
 
 import asyncio
-import binascii
 import logging
 import io
 import base64
+import binascii
 
 from typing import Optional, List, Dict, Any
 from tempfile import NamedTemporaryFile, SpooledTemporaryFile
