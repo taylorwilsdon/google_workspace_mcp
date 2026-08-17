@@ -2446,3 +2446,23 @@ def test_has_explicit_trashed_clause_ignores_quoted_literals():
     assert not has_explicit_trashed_clause("name contains 'trashed != false'")
     assert not has_explicit_trashed_clause(r"name contains 'it\'s trashed=true'")
     assert not has_explicit_trashed_clause("budget")
+
+
+def test_has_explicit_trashed_clause_field_value_regex_does_not_cross_quote_boundaries():
+    """The [^'"]* character class prevents matching across multiple quoted literals.
+
+    The old .*? pattern could span quote boundaries in a query like
+    ``name = 'a' and name = 'b'``, potentially misidentifying non-trashed
+    predicates as a trashed clause if the value contained 'trashed'.
+    """
+    # A field-value predicate whose quoted string contains 'trashed' should NOT
+    # be mistaken for an explicit trashed clause.
+    assert not has_explicit_trashed_clause("name = 'trashed'")
+    assert not has_explicit_trashed_clause('modifiedTime > "trashed"')
+
+    # Cross-boundary scenario: two separate quoted values where the combined
+    # text would look like a trashed predicate with the old lazy .*? pattern.
+    assert not has_explicit_trashed_clause("name = 'foo' and name = 'trashed=false'")
+
+    # Real trashed predicates must still be detected.
+    assert has_explicit_trashed_clause("name = 'foo' and trashed = false")
