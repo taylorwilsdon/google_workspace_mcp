@@ -111,7 +111,7 @@ class MinimalOAuthServer:
 
             except Exception as e:
                 error_message_detail = f"Error processing OAuth callback: {str(e)}"
-                logger.exception(error_message_detail)
+                logger.error(error_message_detail, exc_info=True)
                 return create_server_error_response(str(e))
 
     def _setup_attachment_route(self):
@@ -311,7 +311,7 @@ class MinimalOAuthServer:
                 asyncio.run(self.server.serve())
 
             except Exception as e:
-                logger.exception("Minimal OAuth server error")
+                logger.error(f"Minimal OAuth server error: {e}", exc_info=True)
                 self.is_running = False
 
         # Start server in background thread
@@ -362,7 +362,7 @@ class MinimalOAuthServer:
             logger.info("Minimal OAuth server stopped")
 
         except Exception as e:
-            logger.exception("Error stopping minimal OAuth server")
+            logger.error(f"Error stopping minimal OAuth server: {e}", exc_info=True)
 
 
 # Global instance for stdio mode

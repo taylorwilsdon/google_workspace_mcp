@@ -739,7 +739,7 @@ class OAuth21SessionStore:
                 return credentials
 
             except Exception as e:
-                logger.exception(f"Failed to create credentials for {user_email}")
+                logger.error(f"Failed to create credentials for {user_email}: {e}")
                 return None
 
     def get_credentials_by_mcp_session(
@@ -837,7 +837,7 @@ class OAuth21SessionStore:
                         )
                         return None
                 except Exception as e:
-                    logger.exception("Failed to check transport mode")
+                    logger.error(f"Failed to check transport mode: {e}")
                     return None
 
                 logger.info(
@@ -1257,7 +1257,7 @@ def get_credentials_from_token(
         return credentials
 
     except Exception as e:
-        logger.exception("Failed to create Google credentials from token")
+        logger.error(f"Failed to create Google credentials from token: {e}")
         return None
 
 
@@ -1328,5 +1328,5 @@ def store_token_session(
         return session_id
 
     except Exception as e:
-        logger.exception("Failed to store token session")
+        logger.error(f"Failed to store token session: {e}")
         return ""

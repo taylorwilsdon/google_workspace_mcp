@@ -211,8 +211,8 @@ class LocalDirectoryCredentialStore(CredentialStore):
             return credentials
 
         except (IOError, json.JSONDecodeError, KeyError) as e:
-            logger.exception(
-                f"Error loading credentials for {user_email} from {creds_path}"
+            logger.error(
+                f"Error loading credentials for {user_email} from {creds_path}: {e}"
             )
             return None
 
@@ -237,8 +237,8 @@ class LocalDirectoryCredentialStore(CredentialStore):
             logger.info(f"Stored credentials for {user_email} to {creds_path}")
             return True
         except IOError as e:
-            logger.exception(
-                f"Error storing credentials for {user_email} to {creds_path}"
+            logger.error(
+                f"Error storing credentials for {user_email} to {creds_path}: {e}"
             )
             return False
 
@@ -257,8 +257,8 @@ class LocalDirectoryCredentialStore(CredentialStore):
                 )
                 return True  # Consider it a success if file doesn't exist
         except IOError as e:
-            logger.exception(
-                f"Error deleting credentials for {user_email} from {creds_path}"
+            logger.error(
+                f"Error deleting credentials for {user_email} from {creds_path}: {e}"
             )
             return False
 
@@ -287,7 +287,7 @@ class LocalDirectoryCredentialStore(CredentialStore):
                 f"Found {len(users)} users with credentials in {self.base_dir}"
             )
         except OSError as e:
-            logger.exception(f"Error listing credential files in {self.base_dir}")
+            logger.error(f"Error listing credential files in {self.base_dir}: {e}")
 
         return sorted(users)
 
@@ -403,13 +403,13 @@ class GCSCredentialStore(CredentialStore):
             logger.debug(f"No credentials object for {user_email}")
             return None
         except Exception as e:
-            logger.exception(f"Error downloading credentials for {user_email}")
+            logger.error(f"Error downloading credentials for {user_email}: {e}")
             raise
 
         try:
             creds_data = json.loads(raw)
         except json.JSONDecodeError as e:
-            logger.exception(f"Error parsing credentials for {user_email}")
+            logger.error(f"Error parsing credentials for {user_email}: {e}")
             return None
 
         expiry = None
@@ -474,7 +474,7 @@ class GCSCredentialStore(CredentialStore):
             )
             return False
         except Exception as e:
-            logger.exception(f"Error storing credentials for {user_email}")
+            logger.error(f"Error storing credentials for {user_email}: {e}")
             return False
 
     def delete_credential(self, user_email: str) -> bool:
@@ -487,7 +487,7 @@ class GCSCredentialStore(CredentialStore):
         except self._NotFound:
             return True
         except Exception as e:
-            logger.exception(f"Error deleting credentials for {user_email}")
+            logger.error(f"Error deleting credentials for {user_email}: {e}")
             return False
 
     def list_users(self) -> List[str]:

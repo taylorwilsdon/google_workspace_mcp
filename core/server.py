@@ -850,8 +850,10 @@ def configure_server_for_http():
             # Always set auth provider for token validation in middleware
             set_auth_provider(provider)
             _auth_provider = provider
-        except Exception:
-            logger.exception("Failed to initialize FastMCP GoogleProvider")
+        except Exception as exc:
+            logger.error(
+                "Failed to initialize FastMCP GoogleProvider: %s", exc, exc_info=True
+            )
             raise
     else:
         # Debug level: main.py surfaces the loopback default as a startup notice.
@@ -948,7 +950,7 @@ async def legacy_oauth2_callback(request: Request) -> HTMLResponse:
 
         return create_success_response(verified_user_id)
     except Exception as e:
-        logger.exception("Error processing OAuth callback")
+        logger.error(f"Error processing OAuth callback: {str(e)}", exc_info=True)
         return create_server_error_response(str(e))
 
 
@@ -1022,5 +1024,5 @@ async def start_google_auth(
         )
         return auth_message
     except Exception as e:
-        logger.exception("Failed to start Google authentication flow")
+        logger.error(f"Failed to start Google authentication flow: {e}", exc_info=True)
         return f"**Error:** An unexpected error occurred: {e}"

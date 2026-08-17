@@ -460,7 +460,7 @@ def _extract_oauth21_user_email(
         Exception: If no authenticated user found in OAuth 2.1 mode
     """
     if not authenticated_user:
-        raise RuntimeError(
+        raise Exception(
             f"OAuth 2.1 mode requires an authenticated user for {func_name}, but none was found."
         )
     return authenticated_user
@@ -505,7 +505,7 @@ def _extract_oauth20_user_email(
         # This allows callers (agents) to omit the parameter when a default is configured.
         user_google_email = _get_configured_user_google_email()
     if not user_google_email:
-        raise RuntimeError("'user_google_email' parameter is required but was not found.")
+        raise Exception("'user_google_email' parameter is required but was not found.")
     # Ensure the resolved email is visible to the original function via kwargs
     kwargs["user_google_email"] = user_google_email
     return user_google_email
@@ -778,7 +778,7 @@ def require_google_service(
 
             # Get service configuration from the decorator's arguments
             if service_type not in SERVICE_CONFIGS:
-                raise RuntimeError(f"Unknown service type: {service_type}")
+                raise Exception(f"Unknown service type: {service_type}")
 
             config = SERVICE_CONFIGS[service_type]
             service_name = config["service"]
@@ -827,7 +827,7 @@ def require_google_service(
                     authenticated_user,
                 )
             except GoogleAuthenticationError as e:
-                logger.exception(
+                logger.error(
                     f"[{tool_name}] Auth failed for {user_google_email} | "
                     f"{service_name}/{service_version} | "
                     f"method={auth_method or 'none'} | {e}"
@@ -942,7 +942,7 @@ def require_multiple_services(service_configs: List[Dict[str, Any]]):
                         version = config.get("version")
 
                         if service_type not in SERVICE_CONFIGS:
-                            raise RuntimeError(f"Unknown service type: {service_type}")
+                            raise Exception(f"Unknown service type: {service_type}")
 
                         service_config = SERVICE_CONFIGS[service_type]
                         service_name = service_config["service"]
@@ -986,7 +986,7 @@ def require_multiple_services(service_configs: List[Dict[str, Any]]):
                             services_created = True
 
                         except GoogleAuthenticationError as e:
-                            logger.exception(
+                            logger.error(
                                 f"[{tool_name}] Auth failed for {user_google_email} | "
                                 f"{service_name}/{service_version} | "
                                 f"method={auth_method or 'none'} | {e}"

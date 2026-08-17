@@ -1071,7 +1071,7 @@ async def _modify_event_impl(
     if not event_body:
         message = "No fields provided to modify the event."
         logger.warning(f"[modify_event] {message}")
-        raise ValueError(message)
+        raise Exception(message)
 
     # Log the event ID for debugging
     logger.info(
@@ -1111,11 +1111,11 @@ async def _modify_event_impl(
 
     except HttpError as get_error:
         if get_error.resp.status == 404:
-            logger.exception(
+            logger.error(
                 f"[modify_event] Event not found during pre-update verification: {get_error}"
             )
             message = f"Event not found during verification. The event with ID '{event_id}' could not be found in calendar '{calendar_id}'. This may be due to incorrect ID format or the event no longer exists."
-            raise RuntimeError(message)
+            raise Exception(message)
         else:
             logger.warning(
                 f"[modify_event] Error during pre-update verification, but proceeding with update: {get_error}"
@@ -1183,11 +1183,11 @@ async def _delete_event_impl(
         logger.info("[delete_event] Successfully verified event exists before deletion")
     except HttpError as get_error:
         if get_error.resp.status == 404:
-            logger.exception(
+            logger.error(
                 f"[delete_event] Event not found during pre-delete verification: {get_error}"
             )
             message = f"Event not found during verification. The event with ID '{event_id}' could not be found in calendar '{calendar_id}'. This may be due to incorrect ID format or the event no longer exists."
-            raise RuntimeError(message)
+            raise Exception(message)
         else:
             logger.warning(
                 f"[delete_event] Error during pre-delete verification, but proceeding with deletion: {get_error}"
@@ -1233,16 +1233,16 @@ async def _rsvp_event_impl(
 
     attendees = existing_event.get("attendees")
     if not attendees:
-        raise ValueError("This event has no attendee list; cannot update RSVP.")
+        raise Exception("This event has no attendee list; cannot update RSVP.")
 
     if existing_event.get("organizer", {}).get("self"):
-        raise ValueError(
+        raise Exception(
             "You are the organizer of this event. Organizers cannot respond to their own invitations."
         )
 
     user_index = next((i for i, a in enumerate(attendees) if a.get("self")), None)
     if user_index is None:
-        raise ValueError(
+        raise Exception(
             f"{user_google_email} was not found in the event's attendee list."
         )
 
@@ -1774,7 +1774,7 @@ async def _delete_ooo_event_impl(
             )
     except HttpError as get_error:
         if get_error.resp.status == 404:
-            raise RuntimeError(
+            raise Exception(
                 f"Event not found. The event with ID '{event_id}' could not be found in calendar '{calendar_id}'."
             )
         else:
@@ -2245,7 +2245,7 @@ async def _delete_focus_time_event_impl(
             )
     except HttpError as get_error:
         if get_error.resp.status == 404:
-            raise RuntimeError(
+            raise Exception(
                 f"Event not found. The event with ID '{event_id}' could not be found in calendar '{calendar_id}'."
             )
         else:
