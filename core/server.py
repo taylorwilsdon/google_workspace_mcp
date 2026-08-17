@@ -937,7 +937,7 @@ async def legacy_oauth2_callback(request: Request) -> HTMLResponse:
         if hasattr(request, "state") and hasattr(request.state, "session_id"):
             mcp_session_id = request.state.session_id
 
-        verified_user_id, _ = await handle_auth_callback(
+        verified_user_id, credentials = await handle_auth_callback(
             scopes=get_current_scopes(),
             authorization_response=str(request.url),
             redirect_uri=get_oauth_redirect_uri_for_current_mode(),

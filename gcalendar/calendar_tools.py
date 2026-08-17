@@ -12,8 +12,8 @@ import re
 import uuid
 import json
 from typing import List, Optional, Dict, Any, Union
-from zoneinfo import ZoneInfo
 
+import pytz
 from googleapiclient.errors import HttpError
 from googleapiclient.discovery import build
 
@@ -240,15 +240,17 @@ def _correct_time_format_for_api(
             if timezone:
                 try:
                     # Parse the date and create a datetime at midnight in the specified timezone
+                    tz = pytz.timezone(timezone)
+                    # Parse the date and create a datetime at midnight in the specified timezone
                     date_obj = datetime.datetime.strptime(time_str, "%Y-%m-%d")
-                    dt = date_obj.replace(tzinfo=ZoneInfo(timezone))
+                    dt = tz.localize(date_obj)
                     # Convert to UTC and format as RFC3339
                     formatted = (
                         dt.astimezone(datetime.timezone.utc)
                         .isoformat()
                         .replace("+00:00", "Z")
                     )
-                except KeyError:
+                except pytz.exceptions.UnknownTimeZoneError:
                     logger.warning(
                         f"Could not apply timezone '{timezone}', falling back to UTC for {param_name}"
                     )
@@ -793,10 +795,10 @@ async def _create_event_impl(
                     if drive_service:
                         try:
                             file_metadata = await asyncio.to_thread(
-                                lambda fid=file_id: (
+                                lambda: (
                                     drive_service.files()
                                     .get(
-                                        fileId=fid,
+                                        fileId=file_id,
                                         fields="mimeType,name",
                                         supportsAllDrives=True,
                                     )
@@ -1597,13 +1599,14 @@ async def _list_ooo_events_impl(
     else:
         if timezone:
             try:
-                now = datetime.datetime.now(ZoneInfo(timezone))
+                tz = pytz.timezone(timezone)
+                now = datetime.datetime.now(tz)
                 effective_time_min = (
                     now.astimezone(datetime.timezone.utc)
                     .isoformat()
                     .replace("+00:00", "Z")
                 )
-            except KeyError:
+            except pytz.exceptions.UnknownTimeZoneError:
                 logger.warning(
                     f"Could not apply timezone '{timezone}', falling back to UTC"
                 )
@@ -2049,13 +2052,14 @@ async def _list_focus_time_events_impl(
     else:
         if timezone:
             try:
-                now = datetime.datetime.now(ZoneInfo(timezone))
+                tz = pytz.timezone(timezone)
+                now = datetime.datetime.now(tz)
                 effective_time_min = (
                     now.astimezone(datetime.timezone.utc)
                     .isoformat()
                     .replace("+00:00", "Z")
                 )
-            except KeyError:
+            except pytz.exceptions.UnknownTimeZoneError:
                 logger.warning(
                     f"Could not apply timezone '{timezone}', falling back to UTC"
                 )
