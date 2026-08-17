@@ -263,7 +263,7 @@ def _render_inline_with_styles(
     stack: list[tuple] = []
 
     for tok in children:
-        if tok.type in ("text", "html_inline", "html_block"):
+        if tok.type == "text":
             text_parts.append(tok.content)
             local_pos += len(tok.content)
         elif tok.type == "softbreak":
@@ -337,6 +337,9 @@ def _render_inline_with_styles(
                         "link",
                         tab_id,
                     )
+        elif tok.type in ("html_inline", "html_block"):
+            text_parts.append(tok.content)
+            local_pos += len(tok.content)
 
     return "".join(text_parts), style_requests
 

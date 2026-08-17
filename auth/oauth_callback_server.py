@@ -18,7 +18,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from typing import Optional
 from urllib.parse import urlparse
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 
 from auth.scopes import SCOPES, get_current_scopes  # noqa
@@ -242,7 +242,7 @@ class MinimalOAuthServer:
             return status_code in {200, 400} and (
                 "Authentication Error" in body or "Authentication Successful" in body
             )
-        except (OSError, ValueError):
+        except (OSError, URLError, ValueError):
             return False
 
     def start(self) -> tuple[bool, str]:

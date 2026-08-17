@@ -298,8 +298,8 @@ MIME_TYPE_PATTERN = re.compile(r"^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+$")
 # Mapping from friendly type names to Google Drive MIME types.
 # Raw MIME type strings (containing '/') are always accepted as-is.
 FILE_TYPE_MIME_MAP: Dict[str, str] = {
-    "folder": FOLDER_MIME_TYPE,
-    "folders": FOLDER_MIME_TYPE,
+    "folder": "application/vnd.google-apps.folder",
+    "folders": "application/vnd.google-apps.folder",
     "document": "application/vnd.google-apps.document",
     "doc": "application/vnd.google-apps.document",
     "documents": "application/vnd.google-apps.document",
@@ -318,8 +318,8 @@ FILE_TYPE_MIME_MAP: Dict[str, str] = {
     "drawings": "application/vnd.google-apps.drawing",
     "pdf": "application/pdf",
     "pdfs": "application/pdf",
-    "shortcut": SHORTCUT_MIME_TYPE,
-    "shortcuts": SHORTCUT_MIME_TYPE,
+    "shortcut": "application/vnd.google-apps.shortcut",
+    "shortcuts": "application/vnd.google-apps.shortcut",
     "script": "application/vnd.google-apps.script",
     "scripts": "application/vnd.google-apps.script",
     "site": "application/vnd.google-apps.site",
@@ -431,7 +431,7 @@ async def resolve_folder_id(
     )
     mime_type = metadata.get("mimeType")
     if mime_type != FOLDER_MIME_TYPE:
-        raise ValueError(
+        raise Exception(
             f"Resolved ID '{resolved_id}' (from '{folder_id}') is not a folder; mimeType={mime_type}."
         )
     return resolved_id
