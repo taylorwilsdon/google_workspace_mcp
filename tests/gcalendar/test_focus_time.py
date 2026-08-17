@@ -50,7 +50,7 @@ class TestValidateChatStatus:
 class TestFocusTimeTimeEntry:
     def test_date_only_start_converts_to_midnight_when_timezone_provided(self):
         result = _focus_time_time_entry(
-            "2026-04-05", _is_end=False, timezone="America/New_York"
+            "2026-04-05", is_end=False, timezone="America/New_York"
         )
         assert result == {
             "dateTime": "2026-04-05T00:00:00",
@@ -59,7 +59,7 @@ class TestFocusTimeTimeEntry:
 
     def test_rejects_naive_datetime_without_timezone(self):
         with pytest.raises(ValueError, match="require either a timezone"):
-            _focus_time_time_entry("2026-04-05T09:00:00", _is_end=False, timezone=None)
+            _focus_time_time_entry("2026-04-05T09:00:00", is_end=False, timezone=None)
 
 
 @pytest.mark.asyncio

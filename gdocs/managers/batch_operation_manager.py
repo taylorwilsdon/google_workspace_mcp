@@ -226,7 +226,7 @@ class BatchOperationManager:
 
         return None
 
-    async def _validate_and_build_requests(  # intentionally async: all callers use await for a consistent coroutine interface
+    async def _validate_and_build_requests(
         self, operations: list[dict[str, Any]]
     ) -> tuple[list[dict[str, Any]], list[str]]:
         """
