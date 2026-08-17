@@ -1436,7 +1436,6 @@ async def get_authenticated_google_service(
 
     try:
         service = build(service_name, version, http=_build_authorized_http(credentials))
-
         log_user_email = user_google_email
 
         # Try to get email from credentials if needed for validation
