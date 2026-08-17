@@ -882,14 +882,9 @@ async def health_check(request: Request):
 @server.custom_route("/attachments/{file_id}", methods=["GET"])
 async def serve_attachment(request: Request):
     """Serve a stored attachment file."""
-    from core.attachment_storage import get_attachment_storage, verify_download_token
+    from core.attachment_storage import get_attachment_storage
 
     file_id = request.path_params["file_id"]
-    token = request.query_params.get("token")
-
-    if not verify_download_token(file_id, token):
-        return JSONResponse({"error": "Forbidden"}, status_code=403)
-
     storage = get_attachment_storage()
     metadata = storage.get_attachment_metadata(file_id)
 

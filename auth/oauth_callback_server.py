@@ -117,15 +117,11 @@ class MinimalOAuthServer:
 
     def _setup_attachment_route(self):
         """Setup the attachment serving route."""
-        from core.attachment_storage import get_attachment_storage, verify_download_token
+        from core.attachment_storage import get_attachment_storage
 
         @self.app.get("/attachments/{file_id}")
         async def serve_attachment(file_id: str, request: Request):
             """Serve a stored attachment file."""
-            token = request.query_params.get("token")
-            if not verify_download_token(file_id, token):
-                return JSONResponse({"error": "Forbidden"}, status_code=403)
-
             storage = get_attachment_storage()
             metadata = storage.get_attachment_metadata(file_id)
 
