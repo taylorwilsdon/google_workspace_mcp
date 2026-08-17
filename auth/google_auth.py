@@ -540,7 +540,12 @@ async def start_auth_flow(
         oauth_state = os.urandom(16).hex()
         current_scopes = get_current_scopes()
 
-        if "localhost" in redirect_uri or "127.0.0.1" in redirect_uri:
+        if "OAUTHLIB_INSECURE_TRANSPORT" not in os.environ and (
+            "localhost" in redirect_uri or "127.0.0.1" in redirect_uri
+        ):  # Use passed redirect_uri
+            logger.warning(
+                "OAUTHLIB_INSECURE_TRANSPORT not set. Setting it for localhost/local development."
+            )
             os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 
         flow = create_oauth_flow(
@@ -768,10 +773,15 @@ async def handle_auth_callback(
             autogenerate_code_verifier=False,
         )
 
+        # Allow HTTP for localhost in development
+        if "OAUTHLIB_INSECURE_TRANSPORT" not in os.environ:
+            logger.warning(
+                "OAUTHLIB_INSECURE_TRANSPORT not set. Setting it for localhost development."
+            )
+            os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+
         # Exchange the authorization code for credentials
         # Note: fetch_token will use the redirect_uri configured in the flow
-        if "localhost" in redirect_uri or "127.0.0.1" in redirect_uri:
-            os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
         try:
             await asyncio.to_thread(
                 flow.fetch_token, authorization_response=authorization_response
