@@ -522,6 +522,10 @@ GOOGLE_SHEETS_IMPORT_FORMATS = {
     ".tsv": "text/tab-separated-values",
 }
 
+GOOGLE_DOCS_MIME_TYPE = "application/vnd.google-apps.document"
+GOOGLE_SLIDES_MIME_TYPE = "application/vnd.google-apps.presentation"
+GOOGLE_SHEETS_MIME_TYPE = "application/vnd.google-apps.spreadsheet"
+
 # Source MIME types safe to build from an in-memory `content` string. Binary
 # Office/OpenDocument formats must come from file_path/file_url; UTF-8 encoding
 # their bytes from a string would corrupt the upload and its conversion.
