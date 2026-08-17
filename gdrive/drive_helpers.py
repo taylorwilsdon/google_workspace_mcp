@@ -199,13 +199,13 @@ def has_explicit_trashed_clause(query: str) -> bool:
 
 # Precompiled regex patterns for Drive query detection
 DRIVE_QUERY_PATTERNS = [
-    re.compile(r'\b\w+\s*(=|!=|>|<)\s*[\'"][^\'"]*[\'"]', re.IGNORECASE),
-    re.compile(r"\b\w+\s*(=|!=|>|<)\s*\d+", re.IGNORECASE),
+    re.compile(r'\b\w+\s*(=|!=|>|<)\s*[\'"][^\'"]*[\'"]', re.IGNORECASE),  # field = 'value'
+    re.compile(r"\b\w+\s*(=|!=|>|<)\s*\d+", re.IGNORECASE),  # field = number
     re.compile(r"\bcontains\b", re.IGNORECASE),  # contains operator
     re.compile(r"\bin\s+parents\b", re.IGNORECASE),  # in parents
     re.compile(r"\bhas\s*\{", re.IGNORECASE),  # has {properties}
     TRASHED_CLAUSE_PATTERN,  # trashed =/!= true/false
-    re.compile(r"\bstarred\s*=\s*(true|false)\b", re.IGNORECASE),
+    re.compile(r"\bstarred\s*=\s*(true|false)\b", re.IGNORECASE),  # starred=true/false
     re.compile(
         r'[\'"][^\'"]+[\'"]\s+in\s+parents', re.IGNORECASE
     ),  # 'parentId' in parents
