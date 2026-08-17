@@ -33,7 +33,7 @@ def test_validate_file_path_blocks_home_by_default(tmp_path, monkeypatch):
     secret_file = home_dir / ".bash_history"
     secret_file.write_text("secret", encoding="utf-8")
 
-    with pytest.raises(ValueError, match="outside permitted directories"):
+    with pytest.raises(ValueError, match="outside the SERVER's permitted directories"):
         validate_file_path(str(secret_file))
 
 

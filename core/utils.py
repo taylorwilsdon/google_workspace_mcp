@@ -19,7 +19,11 @@ from fastmcp.exceptions import ToolError
 from googleapiclient.errors import HttpError
 from .api_enablement import get_api_enablement_message
 from auth.google_auth import GoogleAuthenticationError
-from auth.oauth_config import is_oauth21_enabled, is_external_oauth21_provider
+from auth.oauth_config import (
+    get_transport_mode,
+    is_external_oauth21_provider,
+    is_oauth21_enabled,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +153,17 @@ def validate_file_path(file_path: str) -> Path:
     resolved = Path(file_path).resolve()
 
     if not resolved.exists():
+        # Name the boundary: paths resolve on the SERVER. On a remote transport
+        # a caller-side path can never exist here, and a bare "does not exist"
+        # sends the caller off checking typos instead of the topology. (Guarded
+        # call sites reject remote paths before reaching this; this phrasing is
+        # defense-in-depth for any unguarded path.)
+        if get_transport_mode() == "streamable-http":
+            raise FileNotFoundError(
+                f"Path does not exist on the MCP server: {resolved}. This server "
+                "runs remotely (streamable-http) and cannot see the caller's "
+                "local filesystem — a client-side path will never resolve here."
+            )
         raise FileNotFoundError(f"Path does not exist: {resolved}")
 
     # Block sensitive file patterns regardless of allowlist
@@ -240,8 +255,9 @@ def validate_file_path(file_path: str) -> Path:
 
     raise ValueError(
         f"Access to '{resolved_str}' is not allowed: "
-        f"path is outside permitted directories ({', '.join(str(d) for d in allowed_dirs)}). "
-        "Set ALLOWED_FILE_DIRS to adjust."
+        f"path is outside the SERVER's permitted directories ({', '.join(str(d) for d in allowed_dirs)}). "
+        "The server operator can broaden this via the ALLOWED_FILE_DIRS environment "
+        "variable; callers of a remote server cannot."
     )
 
 
