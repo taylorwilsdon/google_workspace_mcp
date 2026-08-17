@@ -146,29 +146,7 @@ def resolve_bind_host_for_transport(transport: str) -> str:
     """Choose a safe default bind host for the selected transport/auth mode."""
     configured_host = os.getenv("WORKSPACE_MCP_HOST")
     host = configured_host or "0.0.0.0"
-    if transport != "streamable-http":
-        return host
-
-    config = get_oauth_config()
-    if config.is_oauth21_enabled():
-        return host
-
-    if configured_host:
-        if configured_host not in {"localhost", "127.0.0.1", "::1"}:
-            add_startup_notice(
-                f"Legacy streamable-http mode has no MCP-level auth provider and is "
-                f"bound to {configured_host} because WORKSPACE_MCP_HOST was explicitly "
-                f"set. Use MCP_ENABLE_OAUTH21=true for remotely reachable HTTP "
-                f"deployments."
-            )
-        return configured_host
-
-    add_startup_notice(
-        "Legacy streamable-http mode has no MCP-level auth provider; binding to "
-        "127.0.0.1 by default. Set WORKSPACE_MCP_HOST explicitly only for trusted "
-        "networks, or use MCP_ENABLE_OAUTH21=true for remote HTTP deployments."
-    )
-    return "127.0.0.1"
+    return host
 
 
 def validate_streamable_http_auth(transport: str) -> None:
