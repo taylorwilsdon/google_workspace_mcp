@@ -179,7 +179,7 @@ class TestValidateOperation:
 
 
 class TestBatchManagerIntegration:
-    @pytest.fixture
+    @pytest.fixture()
     def manager(self):
         from gdocs.managers.batch_operation_manager import BatchOperationManager
 

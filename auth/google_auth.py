@@ -544,8 +544,8 @@ async def start_auth_flow(
             os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 
         flow = create_oauth_flow(
-            scopes=current_scopes,
-            redirect_uri=redirect_uri,
+            scopes=current_scopes,  # Use scopes for enabled tools only
+            redirect_uri=redirect_uri,  # Use passed redirect_uri
             state=oauth_state,
         )
 
@@ -768,7 +768,8 @@ async def handle_auth_callback(
             autogenerate_code_verifier=False,
         )
 
-        # Exchange the authorization code for credentials.
+        # Exchange the authorization code for credentials
+        # Note: fetch_token will use the redirect_uri configured in the flow
         if "localhost" in redirect_uri or "127.0.0.1" in redirect_uri:
             os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
         try:
@@ -943,7 +944,7 @@ async def handle_auth_callback(
             issuer="https://accounts.google.com",  # Add issuer for Google tokens
         )
 
-        # Pass the userinfo-verified email so JWT decode without sig check is skipped.
+        # If session_id is provided, also save to session cache for compatibility
         if session_id:
             save_credentials_to_session(session_id, credentials, user_email=user_google_email)
 
