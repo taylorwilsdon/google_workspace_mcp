@@ -21,6 +21,7 @@ except ImportError:  # pragma: no cover - Windows
     fcntl = None
 
 from fastmcp.server.auth import AccessToken
+from fastmcp.server.dependencies import get_http_headers
 from google.oauth2.credentials import Credentials
 from auth.oauth_config import is_external_oauth21_provider
 
@@ -261,9 +262,14 @@ class OAuth21SessionStore:
     def _serialize_oauth_state_entry(
         self, state_info: Dict[str, Any]
     ) -> Dict[str, Any]:
-        return {
+        serialized = {
             "session_id": state_info.get("session_id"),
             "code_verifier": state_info.get("code_verifier"),
+            "expected_user_email": state_info.get("expected_user_email"),
+            "principal_source": state_info.get("principal_source"),
+            # Retained for compatibility with state files written by the initial
+            # trusted-gateway implementation.
+            "user_email": state_info.get("user_email"),
             "created_at": (
                 state_info["created_at"].astimezone(timezone.utc).isoformat()
                 if state_info.get("created_at")
@@ -275,6 +281,14 @@ class OAuth21SessionStore:
                 else None
             ),
         }
+        # Preserve the absence of this marker on old state entries. Gateway callbacks
+        # intentionally reject such entries during an upgrade rather than silently
+        # converting them into explicitly unbound legacy flows.
+        if "enforce_user_email_match" in state_info:
+            serialized["enforce_user_email_match"] = bool(
+                state_info["enforce_user_email_match"]
+            )
+        return serialized
 
     def _deserialize_oauth_state_entry(
         self, state_info: Dict[str, Any]
@@ -454,8 +468,17 @@ class OAuth21SessionStore:
         session_id: Optional[str] = None,
         expires_in_seconds: int = 600,
         code_verifier: Optional[str] = None,
+        user_email: Optional[str] = None,
+        expected_user_email: Optional[str] = None,
+        enforce_user_email_match: bool = False,
+        principal_source: Optional[str] = None,
     ) -> None:
-        """Persist an OAuth state value for later validation."""
+        """Persist an OAuth state value for later validation.
+
+        Enforced identity bindings are explicit so callback security does not depend on
+        process-global configuration at callback time. ``user_email`` is retained only
+        for compatibility with state entries created by older releases.
+        """
         if not state:
             raise ValueError("OAuth state must be provided")
         if expires_in_seconds < 0:
@@ -470,6 +493,10 @@ class OAuth21SessionStore:
                 "expires_at": expiry,
                 "created_at": now,
                 "code_verifier": code_verifier,
+                "user_email": user_email,
+                "expected_user_email": expected_user_email,
+                "enforce_user_email_match": enforce_user_email_match,
+                "principal_source": principal_source,
             }
             self._oauth_states[state] = state_info
             self._persist_oauth_state_to_shared_store(state, state_info)
@@ -1032,51 +1059,88 @@ def _resolve_client_credentials() -> Tuple[Optional[str], Optional[str]]:
     return client_id, client_secret
 
 
-def _build_credentials_from_provider(
-    access_token: AccessToken,
-) -> Optional[Credentials]:
-    """Construct Google credentials from the provider cache."""
-    if not _auth_provider:
+def _inbound_bearer_token() -> Optional[str]:
+    """Return the raw bearer token from the active HTTP request, if present.
+
+    In OAuth proxy mode this is the FastMCP-issued reference JWT whose ``jti``
+    maps to the upstream Google tokens. It is deliberately distinct from the
+    already-swapped Google access token carried on the validated ``AccessToken``
+    object, which is what makes the upstream refresh token recoverable here.
+    """
+    try:
+        headers = get_http_headers(include={"authorization"})
+    except Exception:  # pragma: no cover - no active HTTP request context
         return None
 
-    access_entry = getattr(_auth_provider, "_access_tokens", {}).get(access_token.token)
-    if not access_entry:
-        access_entry = access_token
+    auth_header = (headers or {}).get("authorization", "")
+    if auth_header.startswith("Bearer "):
+        return auth_header[7:]
+    return None
 
-    client_id, client_secret = _resolve_client_credentials()
 
-    refresh_token_value = getattr(_auth_provider, "_access_to_refresh", {}).get(
-        access_token.token
-    )
-    refresh_token_obj = None
-    if refresh_token_value:
-        refresh_token_obj = getattr(_auth_provider, "_refresh_tokens", {}).get(
-            refresh_token_value
-        )
+async def _build_credentials_from_provider() -> Optional[Credentials]:
+    """Rebuild refreshable Google credentials from the FastMCP OAuth proxy stores.
+
+    FastMCP hands the client an opaque reference JWT and keeps the real Google
+    tokens server-side, keyed by that JWT's ``jti``:
+
+        request JWT ``jti`` -> ``_jti_mapping_store`` -> ``_upstream_token_store``
+
+    Walking that chain yields the upstream access **and refresh** tokens, so the
+    resulting credential can transparently refresh once Google's ~1h access token
+    expires — the missing piece that caused the endless re-auth loop in #886.
+
+    Returns ``None`` when the active provider is not a FastMCP OAuth proxy
+    (external OAuth 2.1 or single-user mode) or when the caller presented a raw
+    Google token directly, so callers fall back to a minimal, non-refreshable
+    credential.
+    """
+    provider = _auth_provider
+    jti_store = getattr(provider, "_jti_mapping_store", None)
+    upstream_store = getattr(provider, "_upstream_token_store", None)
+    if jti_store is None or upstream_store is None:
+        return None
+
+    raw_jwt = _inbound_bearer_token()
+    if not raw_jwt:
+        return None
+
+    try:
+        jti = provider.jwt_issuer.verify_token(raw_jwt).get("jti")
+        if not jti:
+            return None
+        jti_mapping = await jti_store.get(key=jti)
+        if jti_mapping is None:
+            return None
+        upstream = await upstream_store.get(key=jti_mapping.upstream_token_id)
+        if upstream is None:
+            return None
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug(f"Could not resolve upstream tokens from OAuth proxy: {exc}")
+        return None
 
     expiry = None
-    expires_at = getattr(access_entry, "expires_at", None)
-    if expires_at:
+    if upstream.expires_at:
         try:
-            expiry_candidate = datetime.fromtimestamp(expires_at, tz=timezone.utc)
-            expiry = _normalize_expiry_to_naive_utc(expiry_candidate)
+            expiry = _normalize_expiry_to_naive_utc(
+                datetime.fromtimestamp(upstream.expires_at, tz=timezone.utc)
+            )
         except Exception:  # pragma: no cover - defensive
             expiry = None
 
-    scopes = getattr(access_entry, "scopes", None)
-
+    client_id, client_secret = _resolve_client_credentials()
     return Credentials(
-        token=access_token.token,
-        refresh_token=refresh_token_obj.token if refresh_token_obj else None,
+        token=upstream.access_token,
+        refresh_token=upstream.refresh_token,
         token_uri="https://oauth2.googleapis.com/token",
         client_id=client_id,
         client_secret=client_secret,
-        scopes=scopes,
+        scopes=upstream.scope.split() if upstream.scope else None,
         expiry=expiry,
     )
 
 
-def ensure_session_from_access_token(
+async def ensure_session_from_access_token(
     access_token: AccessToken,
     user_email: Optional[str],
     mcp_session_id: Optional[str] = None,
@@ -1090,7 +1154,7 @@ def ensure_session_from_access_token(
     if not email and getattr(access_token, "claims", None):
         email = access_token.claims.get("email")
 
-    credentials = _build_credentials_from_provider(access_token)
+    credentials = await _build_credentials_from_provider()
     store_expiry: Optional[datetime] = None
 
     if credentials is None:
@@ -1163,16 +1227,13 @@ def get_credentials_from_token(
                 logger.debug(f"Found matching credentials from store for {user_email}")
                 return credentials
 
-        # If the FastMCP provider is managing tokens, sync from provider storage
-        if _auth_provider:
-            access_record = getattr(_auth_provider, "_access_tokens", {}).get(
-                access_token
-            )
-            if access_record:
-                logger.debug("Building credentials from FastMCP provider cache")
-                return ensure_session_from_access_token(access_record, user_email)
+        # Provider-managed (OAuth proxy) tokens are resolved to refreshable
+        # credentials during request authentication by
+        # ``ensure_session_from_access_token`` and cached in the session store,
+        # which is the ``store.get_credentials`` lookup above. There is no
+        # token-keyed provider cache to consult here on fastmcp 3.x.
 
-        # Otherwise, create minimal credentials with just the access token
+        # Create minimal credentials with just the access token
         # Assume token is valid for 1 hour (typical for Google tokens)
         expiry = _normalize_expiry_to_naive_utc(
             datetime.now(timezone.utc) + timedelta(hours=1)

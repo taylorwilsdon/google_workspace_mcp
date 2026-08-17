@@ -11,6 +11,7 @@ import os
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
+from core.utils import UserInputError
 from gsheets.sheets_tools import _resize_sheet_dimensions_impl
 
 
@@ -442,8 +443,6 @@ async def test_no_params_raises_error():
     """Test that calling with no dimension params raises UserInputError."""
     mock_service = create_mock_service()
 
-    from core.utils import UserInputError
-
     with pytest.raises(UserInputError):
         await _resize_sheet_dimensions_impl(
             service=mock_service,
@@ -456,8 +455,6 @@ async def test_invalid_column_letter_raises_error():
     """Test that invalid column letter raises UserInputError."""
     mock_service = create_mock_service()
 
-    from core.utils import UserInputError
-
     with pytest.raises(UserInputError):
         await _resize_sheet_dimensions_impl(
             service=mock_service,
@@ -467,11 +464,24 @@ async def test_invalid_column_letter_raises_error():
 
 
 @pytest.mark.asyncio
+async def test_cell_reference_column_raises_error():
+    """Test that cell references are rejected where bare column letters are expected."""
+    mock_service = create_mock_service()
+
+    with pytest.raises(UserInputError, match="Invalid column letter"):
+        await _resize_sheet_dimensions_impl(
+            service=mock_service,
+            spreadsheet_id="test_123",
+            delete_columns=["B2"],
+        )
+
+    mock_service.spreadsheets().batchUpdate().execute.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_negative_pixel_size_raises_error():
     """Test that negative pixel size raises UserInputError."""
     mock_service = create_mock_service()
-
-    from core.utils import UserInputError
 
     with pytest.raises(UserInputError):
         await _resize_sheet_dimensions_impl(
@@ -485,8 +495,6 @@ async def test_negative_pixel_size_raises_error():
 async def test_sheet_not_found_raises_error():
     """Test that targeting a non-existent sheet raises UserInputError."""
     mock_service = create_mock_service()
-
-    from core.utils import UserInputError
 
     with pytest.raises(UserInputError, match="not found"):
         await _resize_sheet_dimensions_impl(
@@ -502,8 +510,6 @@ async def test_negative_frozen_row_count_raises_error():
     """Test that negative frozen_row_count raises UserInputError."""
     mock_service = create_mock_service()
 
-    from core.utils import UserInputError
-
     with pytest.raises(UserInputError):
         await _resize_sheet_dimensions_impl(
             service=mock_service,
@@ -516,8 +522,6 @@ async def test_negative_frozen_row_count_raises_error():
 async def test_row_sizes_non_integer_key_raises_user_input_error():
     """Test row_sizes rejects non-integer row keys with UserInputError."""
     mock_service = create_mock_service()
-
-    from core.utils import UserInputError
 
     with pytest.raises(
         UserInputError, match=r"Row number must be an integer >= 1, got abc\."
@@ -534,8 +538,6 @@ async def test_auto_resize_rows_non_integer_value_raises_user_input_error():
     """Test auto_resize_rows rejects non-integer values with UserInputError."""
     mock_service = create_mock_service()
 
-    from core.utils import UserInputError
-
     with pytest.raises(
         UserInputError, match=r"Row number must be an integer >= 1, got abc\."
     ):
@@ -551,8 +553,6 @@ async def test_hide_rows_non_integer_value_raises_user_input_error():
     """Test hide_rows rejects non-integer values with UserInputError."""
     mock_service = create_mock_service()
 
-    from core.utils import UserInputError
-
     with pytest.raises(
         UserInputError, match=r"Row number must be an integer in hide_rows, got abc\."
     ):
@@ -567,8 +567,6 @@ async def test_hide_rows_non_integer_value_raises_user_input_error():
 async def test_delete_rows_non_integer_value_raises_user_input_error():
     """Test delete_rows rejects non-integer values with UserInputError."""
     mock_service = create_mock_service()
-
-    from core.utils import UserInputError
 
     with pytest.raises(
         UserInputError,

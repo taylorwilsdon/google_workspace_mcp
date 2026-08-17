@@ -1,4 +1,5 @@
 import json
+from pathlib import PurePath
 from unittest.mock import Mock
 
 import pytest
@@ -337,7 +338,19 @@ class TestHeaderFooterGuardrails:
                 {
                     "tabProperties": {"tabId": "t.0"},
                     "documentTab": {
-                        "body": {"content": []},
+                        "body": {
+                            "content": [
+                                {
+                                    "startIndex": 1,
+                                    "endIndex": 19,
+                                    "paragraph": {
+                                        "elements": [
+                                            {"textRun": {"content": "Tabbed body text"}}
+                                        ]
+                                    },
+                                }
+                            ]
+                        },
                         "headers": {
                             "hdr-tab-1": {
                                 "content": [
@@ -385,6 +398,10 @@ class TestHeaderFooterGuardrails:
         payload = result.split("\n\n", 1)[1].rsplit("\n\nLink:", 1)[0]
         parsed = json.loads(payload)
 
+        assert parsed["total_length"] == 19
+        assert parsed["statistics"]["elements"] == 1
+        assert parsed["statistics"]["paragraphs"] == 1
+        assert parsed["elements"][0]["text_preview"] == "Tabbed body text"
         assert parsed["headers"][0]["segment_id"] == "hdr-tab-1"
         assert parsed["headers"][0]["content_preview"] == "Hello"
         assert parsed["footers"][0]["segment_id"] == "ftr-tab-1"
@@ -401,7 +418,12 @@ class TestHeaderFooterGuardrails:
 
         parsed = json.loads(result)
         assert parsed["runtime_canary"] == docs_tools.HEADER_FOOTER_RUNTIME_CANARY
-        assert parsed["docs_tools_file"].endswith("gdocs/docs_tools.py")
-        assert parsed["header_footer_manager_file"].endswith(
-            "gdocs/managers/header_footer_manager.py"
+        assert PurePath(parsed["docs_tools_file"]).parts[-2:] == (
+            "gdocs",
+            "docs_tools.py",
+        )
+        assert PurePath(parsed["header_footer_manager_file"]).parts[-3:] == (
+            "gdocs",
+            "managers",
+            "header_footer_manager.py",
         )

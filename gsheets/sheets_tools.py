@@ -18,7 +18,9 @@ from core.utils import handle_http_errors, UserInputError, StringList
 from core.comments import create_comment_tools
 from gsheets.sheets_helpers import (
     CONDITION_TYPES,
+    MAX_READ_SHEET_ROWS,
     _a1_range_for_values,
+    _clamp_a1_read_rows,
     _column_to_index,
     _build_boolean_rule,
     _build_gradient_rule,
@@ -213,7 +215,9 @@ async def read_sheet_values(
     Args:
         user_google_email (str): The user's Google email address. Required.
         spreadsheet_id (str): The ID of the spreadsheet. Required.
-        range_name (str): The range to read (e.g., "Sheet1!A1:D10", "A1:D10"). Defaults to "A1:Z1000".
+        range_name (str): The range to read (e.g., "Sheet1!A1:D10", "A1:D10").
+            Defaults to "A1:Z1000". Open-ended or oversized ranges are clamped to
+            at most 1000 rows before the Sheets API request to bound memory use.
         include_hyperlinks (bool): If True, also fetch hyperlink metadata for the range.
             Defaults to False to avoid expensive includeGridData requests.
         include_notes (bool): If True, also fetch cell notes for the range.
@@ -229,10 +233,19 @@ async def read_sheet_values(
         f"[read_sheet_values] Invoked. Email: '{user_google_email}', Spreadsheet: {spreadsheet_id}, Range: {range_name}"
     )
 
+    fetch_range, clamp_note = _clamp_a1_read_rows(range_name, MAX_READ_SHEET_ROWS)
+    if clamp_note:
+        logger.info(
+            "[read_sheet_values] Clamped range '%s' -> '%s' (max %s rows)",
+            range_name,
+            fetch_range,
+            MAX_READ_SHEET_ROWS,
+        )
+
     result = await asyncio.to_thread(
         service.spreadsheets()
         .values()
-        .get(spreadsheetId=spreadsheet_id, range=range_name)
+        .get(spreadsheetId=spreadsheet_id, range=fetch_range)
         .execute
     )
 
@@ -256,7 +269,9 @@ async def read_sheet_values(
         )
 
     if not values and not formula_values:
-        return f"No data found in range '{range_name}' for {user_google_email}."
+        return f"No data found in range '{range_name}' for {user_google_email}." + (
+            clamp_note or ""
+        )
 
     if not values:
         logger.info(
@@ -267,6 +282,7 @@ async def read_sheet_values(
             f"No displayed values found in range '{range_name}' in spreadsheet {spreadsheet_id} "
             f"for {user_google_email}. The range contains formula cells."
             + formula_section
+            + (clamp_note or "")
         )
 
     detailed_range = _a1_range_for_values(resolved_range, values) or resolved_range
@@ -296,9 +312,10 @@ async def read_sheet_values(
 
     text_output = (
         f"Successfully read {len(values)} rows from range '{range_name}' in spreadsheet {spreadsheet_id} for {user_google_email}:\n"
-        + "\n".join(formatted_rows[:50])  # Limit to first 50 rows for readability
-        + (f"\n... and {len(values) - 50} more rows" if len(values) > 50 else "")
+        + "\n".join(formatted_rows)
     )
+    if clamp_note:
+        text_output += clamp_note
 
     logger.info(f"Successfully read {len(values)} rows for {user_google_email}.")
     return (

@@ -12,6 +12,7 @@ from auth.google_auth import get_user_info
 def test_build_authorized_http_uses_explicit_timeout():
     mock_credentials = MagicMock()
     mock_http = MagicMock()
+    mock_http.redirect_codes = {300, 301, 302, 303, 307, 308}
     mock_authorized = MagicMock()
 
     with (
@@ -27,6 +28,7 @@ def test_build_authorized_http_uses_explicit_timeout():
 
     mock_http_cls.assert_called_once_with(timeout=42)
     mock_auth_http_cls.assert_called_once_with(mock_credentials, http=mock_http)
+    assert mock_http.redirect_codes == {300, 301, 302, 303, 307}
     assert result is mock_authorized
 
 

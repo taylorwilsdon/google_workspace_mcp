@@ -22,7 +22,12 @@ import google_auth_httplib2
 from auth.scopes import SCOPES, get_current_scopes, has_required_scopes  # noqa
 from auth.oauth21_session_store import get_oauth21_session_store
 from auth.credential_store import get_credential_store
-from auth.oauth_config import is_oauth21_enabled, is_stateless_mode
+from auth.gateway_identity import normalize_principal_email
+from auth.oauth_config import (
+    is_oauth21_enabled,
+    is_stateless_mode,
+    is_trust_gateway_identity,
+)
 from core.config import (
     get_transport_mode,
     get_oauth_redirect_uri,
@@ -91,6 +96,8 @@ def _build_authorized_http(
 ) -> google_auth_httplib2.AuthorizedHttp:
     """Return credentialed HTTP with an explicit socket timeout."""
     http = httplib2.Http(timeout=timeout)
+    # Drive uses 308 Resume Incomplete with Range during resumable uploads, not a redirect.
+    http.redirect_codes = http.redirect_codes - {308}
     return google_auth_httplib2.AuthorizedHttp(credentials, http=http)
 
 
@@ -482,6 +489,8 @@ async def start_auth_flow(
     user_google_email: Optional[str],
     service_name: str,  # e.g., "Google Calendar", "Gmail" for user messages
     redirect_uri: str,  # Added redirect_uri as a required parameter
+    *,
+    principal_source: Optional[str] = None,
 ) -> str:
     """
     Initiates the Google OAuth flow and returns an actionable message for the user.
@@ -490,6 +499,7 @@ async def start_auth_flow(
         user_google_email: The user's specified Google email, if provided.
         service_name: The name of the Google service requiring auth (for user messages).
         redirect_uri: The URI Google will redirect to after authorization.
+        principal_source: Verified source of an enforced principal binding, if any.
 
     Returns:
         A formatted string containing guidance for the LLM/user.
@@ -497,6 +507,17 @@ async def start_auth_flow(
     Raises:
         Exception: If the OAuth flow cannot be initiated.
     """
+    if principal_source not in (None, "gateway_assertion"):
+        raise ValueError(f"Unsupported OAuth principal source: {principal_source}")
+
+    enforce_user_email_match = principal_source == "gateway_assertion"
+    if enforce_user_email_match:
+        user_google_email = normalize_principal_email(user_google_email)
+        if not user_google_email:
+            raise GoogleAuthenticationError(
+                "Trusted-gateway OAuth flow requires a verified email principal."
+            )
+
     initial_email_provided = bool(
         user_google_email
         and user_google_email.strip()
@@ -575,12 +596,32 @@ async def start_auth_flow(
             oauth_state,
             session_id=session_id,
             code_verifier=flow.code_verifier,
+            expected_user_email=(
+                user_google_email if enforce_user_email_match else None
+            ),
+            enforce_user_email_match=enforce_user_email_match,
+            principal_source=principal_source,
         )
 
         logger.info(
             f"Auth flow started for {user_display_name}. State: {oauth_state[:8]}... "
             f"Browser opened automatically: {browser_opened}"
         )
+
+        # Trusted-gateway identity: the principal is verified and fixed, so give a clear,
+        # identity-specific instruction — no "tell me your email" step, no generic
+        # "must match" footnote that confuses the client.
+        if enforce_user_email_match:
+            return "\n".join(
+                [
+                    f"**ACTION REQUIRED: Google sign-in needed for {user_display_name}**\n",
+                    f"You're authenticated at the gateway as **{user_google_email}**. To authorize Google access:",
+                    f"1. Open this URL and sign in to Google as **{user_google_email}** — it must be that exact account (your verified gateway identity):",
+                    f"   Authorization URL: {auth_url}",
+                    "2. After authorizing, retry your original request.",
+                    f"\nOnly the Google account matching your gateway identity (**{user_google_email}**) can be authorized — signing in with a different account is rejected.",
+                ]
+            )
 
         if browser_opened:
             message_lines = [
@@ -786,6 +827,48 @@ async def handle_auth_callback(
 
         user_google_email = user_info["email"]
         logger.info(f"Identified user_google_email: {user_google_email}")
+
+        enforcement_marker = state_info.get("enforce_user_email_match")
+        if is_trust_gateway_identity():
+            if enforcement_marker is not True:
+                raise GoogleAuthenticationError(
+                    "OAuth consent state predates trusted-gateway principal binding. "
+                    "Please restart authentication."
+                )
+        elif enforcement_marker not in (True, False):
+            # State entries created before explicit binding markers existed are not
+            # enforcing outside trusted-gateway mode.
+            enforcement_marker = False
+        if enforcement_marker is True:
+            # Normalization is confined to the enforced gateway path so legacy flows
+            # keep Google's email byte-for-byte as the credential key.
+            expected_email = normalize_principal_email(
+                state_info.get("expected_user_email")
+            )
+            principal_source = state_info.get("principal_source")
+            if principal_source != "gateway_assertion" or not expected_email:
+                logger.error(
+                    "SECURITY: OAuth state requires principal enforcement but its "
+                    "gateway binding is missing or invalid; rejecting."
+                )
+                raise GoogleAuthenticationError(
+                    "OAuth consent state is missing its verified gateway principal."
+                )
+            consented_email = normalize_principal_email(user_google_email)
+            if consented_email != expected_email:
+                logger.error(
+                    "SECURITY: OAuth consent account '%s' does not match the gateway "
+                    "identity '%s'; rejecting (no credentials stored).",
+                    user_google_email,
+                    expected_email,
+                )
+                raise GoogleAuthenticationError(
+                    f"Google account mismatch: you signed in as {user_google_email}, "
+                    f"but your verified gateway identity is {expected_email}. Please "
+                    f"sign in to Google as {expected_email}."
+                )
+            # Use the exact canonical key selected by the gateway for every store.
+            user_google_email = expected_email
 
         stateless_mode = is_stateless_mode()
         credential_store = None
@@ -1344,6 +1427,9 @@ async def get_authenticated_google_service(
             user_google_email=user_google_email,
             service_name=f"Google {service_name.title()}",
             redirect_uri=redirect_uri,
+            principal_source=(
+                "gateway_assertion" if is_trust_gateway_identity() else None
+            ),
         )
 
         # Extract the auth URL from the response and raise with it

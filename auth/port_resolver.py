@@ -111,7 +111,8 @@ def resolve_port(
     for port in candidates:
         if _is_port_free(host, port):
             if port == preferred:
-                logger.info("Port resolver: bound preferred port %d", port)
+                # Debug level: the startup screen shows the resolved callback URL.
+                logger.debug("Port resolver: bound preferred port %d", port)
             else:
                 logger.warning(
                     "Port resolver: preferred port %d unavailable; falling back to %d "

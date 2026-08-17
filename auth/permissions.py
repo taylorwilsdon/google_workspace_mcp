@@ -169,7 +169,8 @@ def set_permissions(permissions: Optional[Dict[str, str]]) -> None:
     global _PERMISSIONS
     _PERMISSIONS = permissions
     if permissions is not None:
-        logger.info("Granular permissions set: %s", permissions)
+        # Debug level: the startup screen lists the per-service levels.
+        logger.debug("Granular permissions set: %s", permissions)
 
 
 def get_permissions() -> Optional[Dict[str, str]]:

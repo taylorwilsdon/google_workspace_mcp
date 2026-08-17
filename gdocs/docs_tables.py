@@ -285,6 +285,7 @@ def build_table_style_requests(
         background_color=style_options.get("background_color"),
         border_color=style_options.get("border_color"),
         border_width=style_options.get("border_width"),
+        border_edges=style_options.get("border_edges"),
     )
     if style_request:
         requests.append(style_request)

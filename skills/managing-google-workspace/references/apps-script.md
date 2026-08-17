@@ -63,13 +63,14 @@ Retrieves content of a specific file within a project.
 | file_name | string | yes | | |
 
 ### update_script_content
-Updates or creates files in a script project.
+Merge or replace files in a script project. Defaults to merging supplied files by name into the existing project; set `merge=false` to replace the full project (omitted files are deleted).
 
 | Parameter | Type | Required | Default | Notes |
 |-----------|------|----------|---------|-------|
 | user_google_email | string | yes | | |
 | script_id | string | yes | | |
-| files | array | yes | | List of objects with `name`, `type`, and `source` |
+| files | array | yes | | Objects with `name`, `type`, and `source` |
+| merge | boolean | no | true | `true` overlays updates; `false` replaces the entire project |
 
 ---
 

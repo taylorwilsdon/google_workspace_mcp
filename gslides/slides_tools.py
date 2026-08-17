@@ -6,7 +6,7 @@ This module provides MCP tools for interacting with Google Slides API.
 
 import logging
 import asyncio
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from mcp.types import ToolAnnotations
 
@@ -147,6 +147,38 @@ def _describe_elements(
     return info
 
 
+def _speaker_notes_shape(slide: Dict[str, Any]) -> Tuple[Optional[str], str]:
+    """Return ``(speaker_notes_object_id, current_notes_text)`` for a slide resource.
+
+    A slide's speaker notes live in the single BODY placeholder shape on its notes
+    page, identified by ``notesProperties.speakerNotesObjectId``. Only that shape's
+    text is writable; the rest of the notes page and the notes master are read-only.
+    The shape itself is occasionally absent for slides that have never had notes, in
+    which case the ID resolves but no text element exists yet. See:
+    https://developers.google.com/slides/api/guides/notes
+    """
+    notes_page = slide.get("slideProperties", {}).get("notesPage", {})
+    notes_object_id = notes_page.get("notesProperties", {}).get("speakerNotesObjectId")
+    if not notes_object_id:
+        return None, ""
+    for element in notes_page.get("pageElements", []):
+        if element.get("objectId") == notes_object_id:
+            return notes_object_id, _extract_shape_text(element.get("shape"))
+    return notes_object_id, ""
+
+
+def _describe_speaker_notes(slide: Dict[str, Any], indent: str = "    ") -> List[str]:
+    """Build lines describing a slide's speaker notes shape ID and current notes text."""
+    notes_object_id, notes_text = _speaker_notes_shape(slide)
+    if not notes_object_id:
+        return [f"{indent}Speaker Notes: none (slide has no notes placeholder)"]
+    lines = [line.rstrip() for line in notes_text.split("\n") if line.strip()]
+    header = f"{indent}Speaker Notes Shape ID: {notes_object_id}"
+    if not lines:
+        return [f"{header}, Notes: empty"]
+    return [f"{header}, Notes:"] + [f"{indent}  > {line}" for line in lines]
+
+
 @server.tool(
     title="Create Presentation",
     annotations=ToolAnnotations(
@@ -204,7 +236,10 @@ async def create_presentation(
 @handle_http_errors("get_presentation", is_read_only=True, service_type="slides")
 @require_google_service("slides", "slides_read")
 async def get_presentation(
-    service, user_google_email: str, presentation_id: str
+    service,
+    user_google_email: str,
+    presentation_id: str,
+    include_speaker_notes: bool = False,
 ) -> str:
     """
     Get details about a Google Slides presentation.
@@ -212,12 +247,18 @@ async def get_presentation(
     Args:
         user_google_email (str): The user's Google email address. Required.
         presentation_id (str): The ID of the presentation to retrieve.
+        include_speaker_notes (bool): Also report each slide's speaker (presenter)
+            notes and the object ID of the shape holding them. Pass True when you
+            need to read or edit notes: that shape ID is the only valid target for
+            insertText/deleteText on notes, and batch_update_presentation writes
+            notes by deleting the shape's existing text and inserting new text.
+            Defaults to False.
 
     Returns:
         str: Details about the presentation including title, slides count, and metadata.
     """
     logger.info(
-        f"[get_presentation] Invoked. Email: '{user_google_email}', ID: '{presentation_id}'"
+        f"[get_presentation] Invoked. Email: '{user_google_email}', ID: '{presentation_id}', Notes: {include_speaker_notes}"
     )
 
     result = await asyncio.to_thread(
@@ -257,6 +298,10 @@ async def get_presentation(
         slides_info.append(
             f"  Slide {i}: ID {slide_id}, {len(page_elements)} element(s), text: {slide_text if slide_text else 'empty'}"
         )
+        # The unfiltered presentations.get response already carries each slide's
+        # notesPage, so reporting notes costs no extra API call.
+        if include_speaker_notes:
+            slides_info.extend(_describe_speaker_notes(slide))
 
     confirmation_message = f"""Presentation Details for {user_google_email}:
 - Title: {title}
@@ -302,6 +347,13 @@ async def batch_update_presentation(
         or shape first with createShape, set elementProperties.pageObjectId to
         the slide ID, and then insertText into that shape objectId. To edit
         existing text, call get_page and use a Shape or Table element ID.
+
+        To write speaker (presenter) notes, call get_presentation with
+        include_speaker_notes=True to get the slide's speaker notes shape ID,
+        then target that ID: deleteText with textRange {"type": "ALL"} to clear
+        the existing notes (omit this when they are already empty, which errors),
+        followed by insertText at insertionIndex 0. The notes page ID is not a
+        valid target.
 
     Args:
         user_google_email (str): The user's Google email address. Required.

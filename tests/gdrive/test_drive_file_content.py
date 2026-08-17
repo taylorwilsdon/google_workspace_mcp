@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from tests.helpers import _make_minimal_pdf
-from gdrive.drive_tools import get_drive_file_content
+from gdrive.drive_tools import _download_file_bytes, get_drive_file_content
 
 
 def _unwrap(tool):
@@ -59,6 +59,34 @@ def _patch_downloader(content_bytes):
     return patch(
         "gdrive.drive_tools.MediaIoBaseDownload",
         side_effect=lambda fh, req: _FakeDownloader(fh, content_bytes),
+    )
+
+
+@pytest.mark.asyncio
+async def test_download_file_bytes_supports_shared_drives():
+    mock_service = Mock()
+    mock_service.files().get_media.return_value = "req"
+
+    with _patch_downloader(b"content"):
+        result = await _download_file_bytes(mock_service, "file123")
+
+    assert result == b"content"
+    mock_service.files.return_value.get_media.assert_called_once_with(
+        fileId="file123", supportsAllDrives=True
+    )
+
+
+@pytest.mark.asyncio
+async def test_download_file_bytes_leaves_export_request_unchanged():
+    mock_service = Mock()
+    mock_service.files().export_media.return_value = "req"
+
+    with _patch_downloader(b"exported"):
+        result = await _download_file_bytes(mock_service, "doc123", "text/plain")
+
+    assert result == b"exported"
+    mock_service.files.return_value.export_media.assert_called_once_with(
+        fileId="doc123", mimeType="text/plain"
     )
 
 

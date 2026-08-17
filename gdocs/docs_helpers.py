@@ -51,6 +51,23 @@ VALID_DASH_STYLES = (
     "DASH",
 )
 
+# Border edge name -> ParagraphStyle/TableCellStyle field. Paragraphs additionally
+# support "between"; table cells do not.
+PARAGRAPH_BORDER_EDGE_MAP = {
+    "top": "borderTop",
+    "bottom": "borderBottom",
+    "left": "borderLeft",
+    "right": "borderRight",
+    "between": "borderBetween",
+}
+
+TABLE_BORDER_EDGE_MAP = {
+    "top": "borderTop",
+    "bottom": "borderBottom",
+    "left": "borderLeft",
+    "right": "borderRight",
+}
+
 VALID_SECTION_TYPES = (
     "CONTINUOUS",
     "NEXT_PAGE",
@@ -209,7 +226,7 @@ def build_text_style(
     italic: bool = None,
     underline: bool = None,
     strikethrough: bool = None,
-    font_size: int = None,
+    font_size: float = None,
     font_family: str = None,
     font_weight: int = None,
     text_color: str = None,
@@ -324,6 +341,11 @@ def build_paragraph_style(
     page_break_before: Optional[bool] = None,
     spacing_mode: Optional[str] = None,
     shading_color: Optional[str] = None,
+    border_edges: Optional[List[str]] = None,
+    border_color: Optional[str] = None,
+    border_width: Optional[float] = None,
+    border_padding: Optional[float] = None,
+    border_dash: Optional[str] = None,
 ) -> tuple[Dict[str, Any], list[str]]:
     """
     Build paragraph style object for Google Docs API requests.
@@ -346,12 +368,20 @@ def build_paragraph_style(
         page_break_before: Always start paragraph on a new page
         spacing_mode: Paragraph spacing mode - NEVER_COLLAPSE or COLLAPSE_LISTS
         shading_color: Paragraph shading/background color as hex string "#RRGGBB"
+        border_edges: Border edges to update; omit for all four outer edges
+        border_color: Border color as hex string "#RRGGBB"
+        border_width: Border width in points
+        border_padding: Border padding in points
+        border_dash: Border dash style (SOLID, DOT, or DASH)
 
     Returns:
         Tuple of (paragraph_style_dict, list_of_field_names)
     """
     paragraph_style = {}
     fields = []
+
+    if border_edges is not None and not border_edges:
+        raise ValueError("border_edges must contain at least one edge")
 
     if named_style_type is not None:
         if named_style_type not in VALID_NAMED_STYLE_TYPES:
@@ -449,6 +479,50 @@ def build_paragraph_style(
         }
         fields.append("shading")
 
+    # ParagraphBorder requires color, width, padding and dashStyle all set.
+    if (
+        border_color is not None
+        or border_width is not None
+        or border_padding is not None
+        or border_dash is not None
+        or border_edges is not None
+    ):
+        dash = (border_dash or "SOLID").upper()
+        if dash not in VALID_DASH_STYLES:
+            raise ValueError(
+                f"border_dash must be one of {', '.join(VALID_DASH_STYLES)}, got '{border_dash}'"
+            )
+        para_border = {
+            "color": _build_optional_color(
+                border_color if border_color is not None else "#000000",
+                "border_color",
+            ),
+            "width": {
+                "magnitude": border_width if border_width is not None else 1,
+                "unit": "PT",
+            },
+            "padding": {
+                "magnitude": border_padding if border_padding is not None else 4,
+                "unit": "PT",
+            },
+            "dashStyle": dash,
+        }
+        edge_map = PARAGRAPH_BORDER_EDGE_MAP
+        if border_edges is not None:
+            selected = []
+            for edge in border_edges:
+                edge_key = str(edge).strip().lower()
+                if edge_key not in edge_map:
+                    raise ValueError(
+                        f"border_edges entries must be one of {sorted(edge_map)}, got '{edge}'"
+                    )
+                selected.append(edge_map[edge_key])
+        else:
+            selected = ["borderTop", "borderBottom", "borderLeft", "borderRight"]
+        for border_name in selected:
+            paragraph_style[border_name] = dict(para_border)
+            fields.append(border_name)
+
     return paragraph_style, fields
 
 
@@ -473,9 +547,10 @@ def build_document_style(
     fields: List[str] = []
 
     if background_color is not None:
-        document_style["background"] = _build_optional_color(
-            background_color, "background_color"
-        )
+        # DocumentStyle.background wraps an OptionalColor in a Background object.
+        document_style["background"] = {
+            "color": _build_optional_color(background_color, "background_color")
+        }
         fields.append("background")
 
     for value, field_name in (
@@ -617,6 +692,7 @@ def build_table_cell_style(
     padding_left: float = None,
     padding_right: float = None,
     content_alignment: str = None,
+    border_edges: Optional[List[str]] = None,
 ) -> tuple[Dict[str, Any], list[str]]:
     """
     Build a table cell style object for Google Docs API requests.
@@ -630,6 +706,7 @@ def build_table_cell_style(
         padding_left: Left padding in points
         padding_right: Right padding in points
         content_alignment: Vertical content alignment ("TOP", "MIDDLE", "BOTTOM")
+        border_edges: Border edges to update; omit for all four edges
 
     Returns:
         Tuple of (table_cell_style_dict, list_of_field_names)
@@ -637,17 +714,38 @@ def build_table_cell_style(
     table_cell_style = {}
     fields = []
 
-    if border_color is not None or border_width is not None:
-        border_style = {}
+    if border_edges is not None and not border_edges:
+        raise ValueError("border_edges must contain at least one edge")
 
-        if border_width is not None:
-            border_style["width"] = {"magnitude": border_width, "unit": "PT"}
+    if border_color is not None or border_width is not None or border_edges is not None:
+        # TableCellBorder requires color, width and dashStyle. Default missing
+        # members so color-only or width-only calls still form valid borders.
+        border_style = {"dashStyle": "SOLID"}
 
-        if border_color is not None:
-            rgb = _normalize_color(border_color, "border_color")
-            border_style["color"] = {"color": {"rgbColor": rgb}}
+        border_style["width"] = {
+            "magnitude": border_width if border_width is not None else 1,
+            "unit": "PT",
+        }
 
-        for border_name in ("borderTop", "borderBottom", "borderLeft", "borderRight"):
+        rgb = _normalize_color(
+            border_color if border_color is not None else "#000000", "border_color"
+        )
+        border_style["color"] = {"color": {"rgbColor": rgb}}
+
+        edge_map = TABLE_BORDER_EDGE_MAP
+        if border_edges is not None:
+            selected = []
+            for edge in border_edges:
+                edge_key = str(edge).strip().lower()
+                if edge_key not in edge_map:
+                    raise ValueError(
+                        f"border_edges entries must be one of {sorted(edge_map)}, got '{edge}'"
+                    )
+                selected.append(edge_map[edge_key])
+        else:
+            selected = list(edge_map.values())
+
+        for border_name in selected:
             table_cell_style[border_name] = border_style.copy()
             fields.append(border_name)
 
@@ -757,7 +855,7 @@ def create_format_text_request(
     italic: bool = None,
     underline: bool = None,
     strikethrough: bool = None,
-    font_size: int = None,
+    font_size: float = None,
     font_family: str = None,
     font_weight: int = None,
     text_color: str = None,
@@ -838,6 +936,11 @@ def create_update_paragraph_style_request(
     page_break_before: Optional[bool] = None,
     spacing_mode: Optional[str] = None,
     shading_color: Optional[str] = None,
+    border_edges: Optional[List[str]] = None,
+    border_color: Optional[str] = None,
+    border_width: Optional[float] = None,
+    border_padding: Optional[float] = None,
+    border_dash: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """
     Create an updateParagraphStyle request for Google Docs API.
@@ -877,6 +980,11 @@ def create_update_paragraph_style_request(
         page_break_before=page_break_before,
         spacing_mode=spacing_mode,
         shading_color=shading_color,
+        border_edges=border_edges,
+        border_color=border_color,
+        border_width=border_width,
+        border_padding=border_padding,
+        border_dash=border_dash,
     )
 
     if not paragraph_style:
@@ -974,6 +1082,7 @@ def create_update_table_cell_style_request(
     row_span: int = None,
     column_span: int = None,
     tab_id: Optional[str] = None,
+    border_edges: Optional[List[str]] = None,
 ) -> Optional[Dict[str, Any]]:
     """
     Create an updateTableCellStyle request for Google Docs API.
@@ -1007,6 +1116,7 @@ def create_update_table_cell_style_request(
         padding_left=padding_left,
         padding_right=padding_right,
         content_alignment=content_alignment,
+        border_edges=border_edges,
     )
     if not table_cell_style:
         return None
@@ -1664,6 +1774,87 @@ def create_update_table_column_properties_request(
     }
 
 
+def create_update_table_row_style_request(
+    table_start_index: int,
+    row_indices: list,
+    min_row_height: float = None,
+    tab_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Build an updateTableRowStyle request. Returns None if no properties set.
+
+    Args:
+        table_start_index: Index of the table's start location.
+        row_indices: Zero-based row indices to style (e.g. [0] for the header row).
+        min_row_height: Minimum row height in points.
+        tab_id: Optional tab ID.
+
+    Note: ``tableHeader`` is exposed on TableRowStyle when reading a document,
+    but it cannot be updated through updateTableRowStyle. The Docs API rejects
+    that field on this request with a 400 error ("Unallowed field: tableHeader").
+    Use create_pin_table_header_rows_request instead.
+
+    Reference:
+        https://developers.google.com/workspace/docs/api/reference/rest/v1/documents/request#UpdateTableRowStyleRequest
+        https://developers.google.com/workspace/docs/api/reference/rest/v1/documents#TableRowStyle
+    """
+    location: Dict[str, Any] = {"index": table_start_index}
+    if tab_id:
+        location["tabId"] = tab_id
+
+    row_style: Dict[str, Any] = {}
+    fields = []
+
+    if min_row_height is not None:
+        row_style["minRowHeight"] = _build_dimension(min_row_height)
+        fields.append("minRowHeight")
+
+    if not fields:
+        return None
+
+    return {
+        "updateTableRowStyle": {
+            "tableStartLocation": location,
+            "rowIndices": row_indices,
+            "tableRowStyle": row_style,
+            "fields": ",".join(fields),
+        }
+    }
+
+
+def create_pin_table_header_rows_request(
+    table_start_index: int,
+    pinned_header_rows_count: int,
+    tab_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build a pinTableHeaderRows request to repeat the leading table rows on each page.
+
+    This is a dedicated Docs API request distinct from updateTableRowStyle. Although
+    TableRowStyle reports whether a row is a header, the writable request sets the
+    number of leading rows to pin for the table as a whole (0 unpins all rows).
+
+    Args:
+        table_start_index: Index of the table's start location.
+        pinned_header_rows_count: Number of leading rows to pin as a repeating header.
+        tab_id: Optional tab ID.
+
+    Reference:
+        https://developers.google.com/workspace/docs/api/reference/rest/v1/documents/request#PinTableHeaderRowsRequest
+    """
+    if pinned_header_rows_count < 0:
+        raise ValueError("pinned_header_rows_count must be non-negative")
+
+    location: Dict[str, Any] = {"index": table_start_index}
+    if tab_id:
+        location["tabId"] = tab_id
+
+    return {
+        "pinTableHeaderRows": {
+            "tableStartLocation": location,
+            "pinnedHeaderRowsCount": pinned_header_rows_count,
+        }
+    }
+
+
 def validate_operation(operation: Dict[str, Any]) -> tuple[bool, str]:
     """
     Validate a batch operation dictionary.
@@ -1720,6 +1911,8 @@ def validate_operation(operation: Dict[str, Any]) -> tuple[bool, str]:
             "column_span",
         ],
         "update_table_column_properties": ["table_start_index", "column_indices"],
+        "update_table_row_style": ["table_start_index", "row_indices"],
+        "pin_table_header_rows": ["table_start_index", "pinned_header_rows_count"],
     }
 
     if op_type not in required_fields:

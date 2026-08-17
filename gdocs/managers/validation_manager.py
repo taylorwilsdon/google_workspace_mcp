@@ -6,6 +6,7 @@ extracting validation patterns from individual tool functions.
 """
 
 import logging
+import math
 from typing import Dict, Any, List, Tuple, Optional
 from urllib.parse import urlparse
 
@@ -20,6 +21,9 @@ from gdocs.docs_helpers import (
     VALID_COLUMN_SEPARATOR_STYLES,
     VALID_DOCUMENT_MODES,
     VALID_BULLET_PRESETS,
+    VALID_DASH_STYLES,
+    PARAGRAPH_BORDER_EDGE_MAP,
+    TABLE_BORDER_EDGE_MAP,
 )
 
 logger = logging.getLogger(__name__)
@@ -169,7 +173,7 @@ class ValidationManager:
         italic: Optional[bool] = None,
         underline: Optional[bool] = None,
         strikethrough: Optional[bool] = None,
-        font_size: Optional[int] = None,
+        font_size: Optional[float] = None,
         font_family: Optional[str] = None,
         font_weight: Optional[int] = None,
         text_color: Optional[str] = None,
@@ -243,10 +247,10 @@ class ValidationManager:
 
         # Validate font size
         if font_size is not None:
-            if not isinstance(font_size, int):
+            if not isinstance(font_size, (int, float)) or isinstance(font_size, bool):
                 return (
                     False,
-                    f"font_size must be an integer, got {type(font_size).__name__}",
+                    f"font_size must be a number, got {type(font_size).__name__}",
                 )
 
             min_size, max_size = self.validation_rules["font_size_range"]
@@ -354,6 +358,11 @@ class ValidationManager:
         page_break_before: Optional[bool] = None,
         spacing_mode: Optional[str] = None,
         shading_color: Optional[str] = None,
+        border_edges: Optional[list] = None,
+        border_color: Optional[str] = None,
+        border_width: Optional[float] = None,
+        border_padding: Optional[float] = None,
+        border_dash: Optional[str] = None,
     ) -> Tuple[bool, str]:
         """
         Validate paragraph style parameters.
@@ -368,6 +377,11 @@ class ValidationManager:
             space_above: Space above paragraph in points
             space_below: Space below paragraph in points
             named_style_type: Direct named style (TITLE, SUBTITLE, HEADING_1..6, NORMAL_TEXT)
+            border_edges: Paragraph border edges to update
+            border_color: Paragraph border color as #RRGGBB
+            border_width: Paragraph border width in points
+            border_padding: Paragraph border padding in points
+            border_dash: Paragraph border dash style
 
         Returns:
             Tuple of (is_valid, error_message)
@@ -389,11 +403,16 @@ class ValidationManager:
             page_break_before,
             spacing_mode,
             shading_color,
+            border_edges,
+            border_color,
+            border_width,
+            border_padding,
+            border_dash,
         ]
         if all(param is None for param in style_params):
             return (
                 False,
-                "At least one paragraph style parameter must be provided (heading_level, alignment, line_spacing, indent_first_line, indent_start, indent_end, space_above, space_below, named_style_type, direction, keep_lines_together, keep_with_next, avoid_widow_and_orphan, page_break_before, spacing_mode, or shading_color)",
+                "At least one paragraph style parameter must be provided (heading_level, alignment, line_spacing, indent_first_line, indent_start, indent_end, space_above, space_below, named_style_type, direction, keep_lines_together, keep_with_next, avoid_widow_and_orphan, page_break_before, spacing_mode, shading_color, border_edges, border_color, border_width, border_padding, or border_dash)",
             )
 
         if heading_level is not None and named_style_type is not None:
@@ -502,6 +521,84 @@ class ValidationManager:
         is_valid, error_msg = self.validate_color_param(shading_color, "shading_color")
         if not is_valid:
             return False, error_msg
+
+        is_valid, error_msg = self.validate_border_edges(
+            border_edges, PARAGRAPH_BORDER_EDGE_MAP
+        )
+        if not is_valid:
+            return False, error_msg
+
+        is_valid, error_msg = self.validate_color_param(border_color, "border_color")
+        if not is_valid:
+            return False, error_msg
+
+        if border_width is not None:
+            if isinstance(border_width, bool) or not isinstance(
+                border_width, (int, float)
+            ):
+                return (
+                    False,
+                    f"border_width must be a number, got {type(border_width).__name__}",
+                )
+            if not math.isfinite(border_width):
+                return False, f"border_width must be finite, got {border_width}"
+            if border_width <= 0:
+                return False, f"border_width must be positive, got {border_width}"
+
+        if border_padding is not None:
+            if isinstance(border_padding, bool) or not isinstance(
+                border_padding, (int, float)
+            ):
+                return (
+                    False,
+                    f"border_padding must be a number, got {type(border_padding).__name__}",
+                )
+            if not math.isfinite(border_padding):
+                return False, f"border_padding must be finite, got {border_padding}"
+            if border_padding < 0:
+                return (
+                    False,
+                    f"border_padding must be non-negative, got {border_padding}",
+                )
+
+        if border_dash is not None:
+            if not isinstance(border_dash, str):
+                return (
+                    False,
+                    f"border_dash must be a string, got {type(border_dash).__name__}",
+                )
+            if border_dash.upper() not in VALID_DASH_STYLES:
+                return (
+                    False,
+                    "border_dash must be one of: "
+                    f"{', '.join(VALID_DASH_STYLES)}, got '{border_dash}'",
+                )
+
+        return True, ""
+
+    def validate_border_edges(
+        self, border_edges: Optional[list], edge_map: Dict[str, str]
+    ) -> Tuple[bool, str]:
+        """Validate a border_edges list against the allowed edge names."""
+        if border_edges is None:
+            return True, ""
+
+        if not isinstance(border_edges, (list, tuple)):
+            return (
+                False,
+                f"border_edges must be a list, got {type(border_edges).__name__}",
+            )
+
+        if not border_edges:
+            return False, "border_edges must contain at least one edge"
+
+        for edge in border_edges:
+            if not isinstance(edge, str) or edge.strip().lower() not in edge_map:
+                return (
+                    False,
+                    f"border_edges entries must be one of: {', '.join(sorted(edge_map))}, "
+                    f"got '{edge}'",
+                )
 
         return True, ""
 
@@ -755,6 +852,7 @@ class ValidationManager:
         column_index: Optional[int] = None,
         row_span: Optional[int] = None,
         column_span: Optional[int] = None,
+        border_edges: Optional[list] = None,
     ) -> Tuple[bool, str]:
         """
         Validate table cell style parameters for updateTableCellStyle requests.
@@ -772,6 +870,8 @@ class ValidationManager:
             column_index: Optional starting column index for a targeted cell range
             row_span: Optional row span for a targeted cell range
             column_span: Optional column span for a targeted cell range
+            border_edges: Optional list of edges to border ("top", "bottom",
+                "left", "right"); defaults to all four
 
         Returns:
             Tuple of (is_valid, error_message)
@@ -787,14 +887,21 @@ class ValidationManager:
                 padding_left,
                 padding_right,
                 content_alignment,
+                border_edges,
             )
         ):
             return (
                 False,
                 "At least one table cell style parameter must be provided "
-                "(background_color, border_color, border_width, padding_top, "
+                "(background_color, border_color, border_width, border_edges, padding_top, "
                 "padding_bottom, padding_left, padding_right, or content_alignment)",
             )
+
+        is_valid, error_msg = self.validate_border_edges(
+            border_edges, TABLE_BORDER_EDGE_MAP
+        )
+        if not is_valid:
+            return False, error_msg
 
         is_valid, error_msg = self.validate_color_param(
             background_color, "background_color"
@@ -1156,6 +1263,11 @@ class ValidationManager:
                     op.get("page_break_before"),
                     op.get("spacing_mode"),
                     op.get("shading_color"),
+                    border_edges=op.get("border_edges"),
+                    border_color=op.get("border_color"),
+                    border_width=op.get("border_width"),
+                    border_padding=op.get("border_padding"),
+                    border_dash=op.get("border_dash"),
                 )
                 if not is_valid:
                     return (
@@ -1195,6 +1307,7 @@ class ValidationManager:
                     op.get("column_index"),
                     op.get("row_span"),
                     op.get("column_span"),
+                    border_edges=op.get("border_edges"),
                 )
                 if not is_valid:
                     return (

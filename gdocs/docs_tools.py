@@ -60,7 +60,7 @@ from gdocs.docs_markdown import (
     parse_drive_comments,
 )
 from gdocs.docs_markdown_writer import markdown_to_docs_requests
-from gdocs.operation_schemas import BatchDocOperations
+from gdocs.operation_schemas import BatchDocOperations, ParagraphBorderEdge
 
 # Import operation managers for complex business logic
 from gdocs.managers import (
@@ -466,7 +466,7 @@ async def modify_doc_text(
     italic: bool = None,
     underline: bool = None,
     strikethrough: bool = None,
-    font_size: int = None,
+    font_size: float = None,
     font_family: str = None,
     font_weight: int = None,
     text_color: str = None,
@@ -1165,14 +1165,17 @@ async def batch_update_doc(
                                    space_above, space_below, named_style_type,
                                    direction, keep_lines_together, keep_with_next,
                                    avoid_widow_and_orphan, page_break_before,
-                                   spacing_mode, shading_color, tab_id, segment_id
+                                   spacing_mode, shading_color, border_edges,
+                                   border_color, border_width, border_padding,
+                                   border_dash, tab_id, segment_id
       update_table_cell_style
                        - required: table_start_index (int)
                          optional: background_color, border_color, border_width,
                                    padding_top, padding_bottom, padding_left,
                                    padding_right (float, points),
                                    content_alignment ("TOP"|"MIDDLE"|"BOTTOM"),
-                                   row_index, column_index, row_span, column_span
+                                   row_index, column_index, row_span, column_span,
+                                   border_edges ("top"|"bottom"|"left"|"right")
                          Use inspect_doc_structure to find table_start_index from
                          table_details[].start_index. If row/column values are
                          omitted, the style is applied to the entire table.
@@ -1200,6 +1203,17 @@ async def batch_update_doc(
                        - required: table_start_index (int), column_indices (list[int])
                          optional: width (float, points), width_type
                                    (FIXED_WIDTH|EVENLY_DISTRIBUTED), tab_id
+      update_table_row_style
+                       - required: table_start_index (int), row_indices (list[int])
+                         optional: min_row_height (float, points), tab_id
+      pin_table_header_rows
+                       - required: table_start_index (int),
+                                   pinned_header_rows_count (int)
+                         optional: tab_id
+                         Set pinned_header_rows_count=1 to repeat the first row as
+                         a header across page breaks (0 unpins all rows). This is
+                         the writable request for the tableHeader state reported
+                         in TableRowStyle.
       insert_page_break- optional: index (int), end_of_segment, tab_id
       insert_section_break
                        - optional: index (int), end_of_segment, section_type
@@ -1451,6 +1465,8 @@ async def inspect_doc_structure(
 
         first_tab_doc = first_document_tab(doc.get("tabs", []))
         if first_tab_doc:
+            analysis_doc["body"] = first_tab_doc.get("body", {})
+            analysis_doc["namedRanges"] = first_tab_doc.get("namedRanges", {})
             analysis_doc["headers"] = first_tab_doc.get("headers", {})
             analysis_doc["footers"] = first_tab_doc.get("footers", {})
             analysis_doc["documentStyle"] = first_tab_doc.get("documentStyle", {})
@@ -1729,6 +1745,7 @@ async def create_table_with_data(
     index: int,
     bold_headers: bool = True,
     tab_id: Optional[str] = None,
+    header_rows: int = 0,
 ) -> str:
     """
     Creates a table and populates it with data in one reliable operation.
@@ -1768,6 +1785,9 @@ async def create_table_with_data(
         index: Document position (MANDATORY: get from inspect_doc_structure 'total_length')
         bold_headers: Whether to make first row bold (default: true)
         tab_id: Optional tab ID to create the table in a specific tab
+        header_rows: Number of leading rows to mark as a repeating header that
+            reappears after each page break. Must be between 0 and the number of
+            table rows (default: 0 = none)
 
     Returns:
         str: Confirmation with table details and link
@@ -1793,8 +1813,9 @@ async def create_table_with_data(
     table_manager = TableOperationManager(service)
 
     # Try to create the table, and if it fails due to index being at document end, retry with index-1
+    effective_index = index
     success, message, metadata = await table_manager.create_and_populate_table(
-        document_id, table_data, index, bold_headers, tab_id
+        document_id, table_data, index, bold_headers, tab_id, header_rows
     )
 
     # If it failed due to index being at or beyond document end, retry with adjusted index
@@ -1802,18 +1823,23 @@ async def create_table_with_data(
         logger.debug(
             f"Index {index} is at document boundary, retrying with index {index - 1}"
         )
+        effective_index = index - 1
         success, message, metadata = await table_manager.create_and_populate_table(
-            document_id, table_data, index - 1, bold_headers, tab_id
+            document_id,
+            table_data,
+            effective_index,
+            bold_headers,
+            tab_id,
+            header_rows,
         )
 
     if success:
         link = f"https://docs.google.com/document/d/{document_id}/edit"
         rows = metadata.get("rows", 0)
         columns = metadata.get("columns", 0)
+        status = "PARTIAL SUCCESS" if metadata.get("partial_success") else "SUCCESS"
 
-        return (
-            f"SUCCESS: {message}. Table: {rows}x{columns}, Index: {index}. Link: {link}"
-        )
+        return f"{status}: {message}. Table: {rows}x{columns}, Index: {effective_index}. Link: {link}"
     else:
         return f"ERROR: {message}"
 
@@ -2112,6 +2138,11 @@ async def update_paragraph_style(
     page_break_before: bool = None,
     spacing_mode: str = None,
     shading_color: str = None,
+    border_edges: list[ParagraphBorderEdge] = None,
+    border_color: str = None,
+    border_width: float = None,
+    border_padding: float = None,
+    border_dash: str = None,
     list_type: str = None,
     list_nesting_level: int = None,
     bullet_preset: str = None,
@@ -2151,6 +2182,12 @@ async def update_paragraph_style(
         page_break_before: Start the paragraph on a new page
         spacing_mode: 'NEVER_COLLAPSE' or 'COLLAPSE_LISTS'
         shading_color: Paragraph shading/background color (#RRGGBB)
+        border_edges: Paragraph border edges to update ('top', 'bottom', 'left',
+                      'right', or 'between'); omit to update all four outer edges
+        border_color: Border color (#RRGGBB; defaults to black)
+        border_width: Border width in points (defaults to 1)
+        border_padding: Border padding in points (defaults to 4)
+        border_dash: Border dash style ('SOLID', 'DOT', or 'DASH'; defaults to 'SOLID')
         list_type: Create a list from existing paragraphs ('UNORDERED' for bullets, 'ORDERED' for numbers, 'CHECKBOX' for checklists)
         list_nesting_level: Nesting level for lists (0-8, where 0 is top level, default is 0)
                            Use higher levels for nested/indented list items
@@ -2214,6 +2251,30 @@ async def update_paragraph_style(
     if named_style_type is not None and heading_level is not None:
         return "Error: heading_level and named_style_type are mutually exclusive; provide only one"
 
+    paragraph_style_params = [
+        heading_level,
+        alignment,
+        line_spacing,
+        indent_first_line,
+        indent_start,
+        indent_end,
+        space_above,
+        space_below,
+        named_style_type,
+        direction,
+        keep_lines_together,
+        keep_with_next,
+        avoid_widow_and_orphan,
+        page_break_before,
+        spacing_mode,
+        shading_color,
+        border_edges,
+        border_color,
+        border_width,
+        border_padding,
+        border_dash,
+    ]
+
     validator = ValidationManager()
     is_valid, error_msg = validator.validate_paragraph_style_params(
         heading_level=heading_level,
@@ -2232,8 +2293,14 @@ async def update_paragraph_style(
         page_break_before=page_break_before,
         spacing_mode=spacing_mode,
         shading_color=shading_color,
+        border_edges=border_edges,
+        border_color=border_color,
+        border_width=border_width,
+        border_padding=border_padding,
+        border_dash=border_dash,
     )
-    if not is_valid and list_type_value is None:
+    has_paragraph_style = any(param is not None for param in paragraph_style_params)
+    if not is_valid and (has_paragraph_style or list_type_value is None):
         return f"Error: {error_msg}"
 
     # Create batch update requests
@@ -2261,6 +2328,11 @@ async def update_paragraph_style(
         page_break_before,
         spacing_mode,
         shading_color,
+        border_edges,
+        border_color,
+        border_width,
+        border_padding,
+        border_dash,
     )
     if paragraph_style_request:
         requests.append(paragraph_style_request)
@@ -2324,6 +2396,11 @@ async def update_paragraph_style(
             ("page_break_before", page_break_before),
             ("spacing_mode", spacing_mode),
             ("shading_color", shading_color),
+            ("border_edges", border_edges),
+            ("border_color", border_color),
+            ("border_width", border_width),
+            ("border_padding", border_padding),
+            ("border_dash", border_dash),
         ]
         if value is not None
     ]
