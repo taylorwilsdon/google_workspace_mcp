@@ -280,7 +280,7 @@ def _decode_raw_mime_content(raw_data: str) -> str:
         decoded_raw = base64.urlsafe_b64decode(padded_raw).decode(
             "utf-8", errors="replace"
         )
-    except ValueError as exc:
+    except (binascii.Error, ValueError) as exc:
         return f"[Failed to decode raw MIME: {exc}]"
 
     return _truncate_content(decoded_raw, RAW_BODY_TRUNCATE_LIMIT)
@@ -377,7 +377,7 @@ async def _export_full_message(
         padded_raw = raw_data + "=" * (-len(raw_data) % 4)
         try:
             content_bytes = base64.urlsafe_b64decode(padded_raw)
-        except ValueError as exc:
+        except (binascii.Error, ValueError) as exc:
             return f"Error: failed to decode raw MIME content: {exc}"
         mime_type = "message/rfc822"
         extension = ".eml"
@@ -795,7 +795,7 @@ def _format_base64_content_block(urlsafe_b64_data: str) -> List[str]:
             f"\n📦 Base64 content ({len(standard_b64)} chars, standard base64):",
             standard_b64,
         ]
-    except ValueError as e:
+    except (binascii.Error, ValueError) as e:
         logger.warning(
             f"[get_gmail_attachment_content] Failed to convert attachment "
             f"to standard base64: {e}"
