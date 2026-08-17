@@ -16,12 +16,6 @@ from pydantic import BaseModel, ConfigDict, Field, BeforeValidator, model_valida
 ParagraphBorderEdge = Literal["top", "bottom", "left", "right", "between"]
 TableBorderEdge = Literal["top", "bottom", "left", "right"]
 
-_INDEX_FIELD_DESCRIPTION = "Insertion index. Omit when end_of_segment=true."
-_END_OF_SEGMENT_DESCRIPTION = (
-    "Append to the end of the targeted body/segment instead of using index."
-)
-_VALIDATE_INDEX_MSG = "Provide exactly one of 'index' or 'end_of_segment=true'."
-
 
 def _coerce_json_str_to_list(v: Any) -> Any:
     """Accept JSON-encoded lists for MCP clients that serialize arrays as strings."""
@@ -64,17 +58,17 @@ class InsertTextOperation(SegmentTargetDocOperation):
     text: str = Field(description="Text to insert.")
     index: Optional[int] = Field(
         default=None,
-        description=_INDEX_FIELD_DESCRIPTION,
+        description="Insertion index. Omit when end_of_segment=true.",
     )
     end_of_segment: bool = Field(
         default=False,
-        description=_END_OF_SEGMENT_DESCRIPTION,
+        description="Append to the end of the targeted body/segment instead of using index.",
     )
 
     @model_validator(mode="after")
     def validate_location(self) -> "InsertTextOperation":
         if self.end_of_segment == (self.index is not None):
-            raise ValueError(_VALIDATE_INDEX_MSG)
+            raise ValueError("Provide exactly one of 'index' or 'end_of_segment=true'.")
         return self
 
 
@@ -169,17 +163,17 @@ class InsertTableOperation(SegmentTargetDocOperation):
     columns: int
     index: Optional[int] = Field(
         default=None,
-        description=_INDEX_FIELD_DESCRIPTION,
+        description="Insertion index. Omit when end_of_segment=true.",
     )
     end_of_segment: bool = Field(
         default=False,
-        description=_END_OF_SEGMENT_DESCRIPTION,
+        description="Append to the end of the targeted body/segment instead of using index.",
     )
 
     @model_validator(mode="after")
     def validate_location(self) -> "InsertTableOperation":
         if self.end_of_segment == (self.index is not None):
-            raise ValueError(_VALIDATE_INDEX_MSG)
+            raise ValueError("Provide exactly one of 'index' or 'end_of_segment=true'.")
         return self
 
 
@@ -263,7 +257,7 @@ class InsertPageBreakOperation(StrictDocOperation):
     type: Literal["insert_page_break"]
     index: Optional[int] = Field(
         default=None,
-        description=_INDEX_FIELD_DESCRIPTION,
+        description="Insertion index. Omit when end_of_segment=true.",
     )
     end_of_segment: bool = Field(
         default=False,
@@ -273,7 +267,7 @@ class InsertPageBreakOperation(StrictDocOperation):
     @model_validator(mode="after")
     def validate_location(self) -> "InsertPageBreakOperation":
         if self.end_of_segment == (self.index is not None):
-            raise ValueError(_VALIDATE_INDEX_MSG)
+            raise ValueError("Provide exactly one of 'index' or 'end_of_segment=true'.")
         return self
 
 
@@ -281,7 +275,7 @@ class InsertSectionBreakOperation(StrictDocOperation):
     type: Literal["insert_section_break"]
     index: Optional[int] = Field(
         default=None,
-        description=_INDEX_FIELD_DESCRIPTION,
+        description="Insertion index. Omit when end_of_segment=true.",
     )
     end_of_segment: bool = Field(
         default=False,
@@ -292,7 +286,7 @@ class InsertSectionBreakOperation(StrictDocOperation):
     @model_validator(mode="after")
     def validate_location(self) -> "InsertSectionBreakOperation":
         if self.end_of_segment == (self.index is not None):
-            raise ValueError(_VALIDATE_INDEX_MSG)
+            raise ValueError("Provide exactly one of 'index' or 'end_of_segment=true'.")
         return self
 
 
@@ -406,19 +400,19 @@ class InsertImageOperation(SegmentTargetDocOperation):
     image_uri: str = Field(description="Image URL or resolvable image URI.")
     index: Optional[int] = Field(
         default=None,
-        description=_INDEX_FIELD_DESCRIPTION,
+        description="Insertion index. Omit when end_of_segment=true.",
     )
     width: Optional[int] = None
     height: Optional[int] = None
     end_of_segment: bool = Field(
         default=False,
-        description=_END_OF_SEGMENT_DESCRIPTION,
+        description="Append to the end of the targeted body/segment instead of using index.",
     )
 
     @model_validator(mode="after")
     def validate_location(self) -> "InsertImageOperation":
         if self.end_of_segment == (self.index is not None):
-            raise ValueError(_VALIDATE_INDEX_MSG)
+            raise ValueError("Provide exactly one of 'index' or 'end_of_segment=true'.")
         return self
 
 

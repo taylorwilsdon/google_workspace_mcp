@@ -4,7 +4,6 @@ Google Calendar MCP Tools
 This module provides MCP tools for interacting with Google Calendar API.
 """
 
-from __future__ import annotations
 
 import datetime
 import logging
@@ -36,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 
 def _parse_reminders_json(
-    reminders_input: str | List[Dict[str, Any]] | None, function_name: str
+    reminders_input: Optional[Union[str, List[Dict[str, Any]]]], function_name: str
 ) -> List[Dict[str, Any]]:
     """
     Parse reminders from JSON string or list object and validate them.
@@ -643,7 +642,7 @@ async def _create_event_impl(
     attachments: Optional[List[str]] = None,
     add_google_meet: bool = False,
     conference_data: Optional[Dict[str, Any]] = None,
-    reminders: str | List[Dict[str, Any]] | None = None,
+    reminders: Optional[Union[str, List[Dict[str, Any]]]] = None,
     use_default_reminders: bool = True,
     transparency: Optional[str] = None,
     visibility: Optional[str] = None,
@@ -872,7 +871,7 @@ async def _create_event_impl(
 
 
 def _normalize_attendees(
-    attendees: List[str] | List[Dict[str, Any]] | None,
+    attendees: Optional[Union[List[str], List[Dict[str, Any]]]],
 ) -> Optional[List[Dict[str, Any]]]:
     """
     Normalize attendees input to list of attendee objects.
@@ -910,11 +909,11 @@ async def _modify_event_impl(
     end_time: Optional[str] = None,
     description: Optional[str] = None,
     location: Optional[str] = None,
-    attendees: List[str] | List[Dict[str, Any]] | None = None,
+    attendees: Optional[Union[List[str], List[Dict[str, Any]]]] = None,
     timezone: Optional[str] = None,
     add_google_meet: Optional[bool] = None,
     conference_data: Optional[Dict[str, Any]] = None,
-    reminders: str | List[Dict[str, Any]] | None = None,
+    reminders: Optional[Union[str, List[Dict[str, Any]]]] = None,
     use_default_reminders: Optional[bool] = None,
     transparency: Optional[str] = None,
     visibility: Optional[str] = None,
@@ -1296,7 +1295,7 @@ async def manage_event(
     calendar_id: str = "primary",
     description: Optional[str] = None,
     location: Optional[str] = None,
-    attendees: StringList | List[Dict[str, Any]] | None = None,
+    attendees: Optional[Union[StringList, List[Dict[str, Any]]]] = None,
     timezone: Optional[str] = None,
     attachments: Optional[StringList] = None,
     add_google_meet: Optional[bool] = None,
@@ -1305,7 +1304,7 @@ async def manage_event(
     conference_uri: Optional[str] = None,
     conference_passcode: Optional[str] = None,
     conference_id: Optional[str] = None,
-    reminders: str | List[Dict[str, Any]] | None = None,
+    reminders: Optional[Union[str, List[Dict[str, Any]]]] = None,
     use_default_reminders: Optional[bool] = None,
     transparency: Optional[str] = None,
     visibility: Optional[str] = None,

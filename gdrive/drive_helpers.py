@@ -294,7 +294,6 @@ FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 GOOGLE_DOCS_MIME_TYPE = "application/vnd.google-apps.document"
 GOOGLE_SHEETS_MIME_TYPE = "application/vnd.google-apps.spreadsheet"
 GOOGLE_SLIDES_MIME_TYPE = "application/vnd.google-apps.presentation"
-GOOGLE_JAM_MIME_TYPE = "application/vnd.google-apps.jam"
 
 # RFC 6838 token-style MIME type validation (safe for Drive query interpolation).
 MIME_TYPE_PATTERN = re.compile(r"^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+$")
@@ -328,9 +327,9 @@ FILE_TYPE_MIME_MAP: Dict[str, str] = {
     "scripts": "application/vnd.google-apps.script",
     "site": "application/vnd.google-apps.site",
     "sites": "application/vnd.google-apps.site",
-    "jam": GOOGLE_JAM_MIME_TYPE,
-    "jamboard": GOOGLE_JAM_MIME_TYPE,
-    "jamboards": GOOGLE_JAM_MIME_TYPE,
+    "jam": "application/vnd.google-apps.jam",
+    "jamboard": "application/vnd.google-apps.jam",
+    "jamboards": "application/vnd.google-apps.jam",
 }
 
 
@@ -495,18 +494,15 @@ async def _download_url_to_bytes(url: str) -> Tuple[BinaryIO, Optional[str]]:
         raise
 
 
-TEXT_MARKDOWN_MIME_TYPE = "text/markdown"
-TEXT_PLAIN_MIME_TYPE = "text/plain"
-TEXT_HTML_MIME_TYPE = "text/html"
 
 # Mapping of file extensions to source MIME types for Google Docs conversion
 GOOGLE_DOCS_IMPORT_FORMATS = {
-    ".md": TEXT_MARKDOWN_MIME_TYPE,
-    ".markdown": TEXT_MARKDOWN_MIME_TYPE,
-    ".txt": TEXT_PLAIN_MIME_TYPE,
-    ".text": TEXT_PLAIN_MIME_TYPE,
-    ".html": TEXT_HTML_MIME_TYPE,
-    ".htm": TEXT_HTML_MIME_TYPE,
+    ".md": "text/markdown",
+    ".markdown": "text/markdown",
+    ".txt": "text/plain",
+    ".text": "text/plain",
+    ".html": "text/html",
+    ".htm": "text/html",
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     ".doc": "application/msword",
     ".rtf": "application/rtf",
@@ -533,9 +529,9 @@ GOOGLE_SHEETS_IMPORT_FORMATS = {
 # Office/OpenDocument formats must come from file_path/file_url; UTF-8 encoding
 # their bytes from a string would corrupt the upload and its conversion.
 TEXT_BASED_IMPORT_MIME_TYPES = {
-    TEXT_PLAIN_MIME_TYPE,
-    TEXT_MARKDOWN_MIME_TYPE,
-    TEXT_HTML_MIME_TYPE,
+    "text/plain",
+    "text/markdown",
+    "text/html",
     "text/csv",
     "text/tab-separated-values",
     "application/rtf",
@@ -571,9 +567,9 @@ def _detect_source_format(
         return format_map[ext]
 
     if content and (content.startswith("#") or "```" in content or "**" in content):
-        return TEXT_MARKDOWN_MIME_TYPE
+        return "text/markdown"
 
-    return TEXT_PLAIN_MIME_TYPE
+    return "text/plain"
 
 
 async def _resolve_import_media(

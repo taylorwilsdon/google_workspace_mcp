@@ -73,7 +73,6 @@ import json
 
 logger = logging.getLogger(__name__)
 HEADER_FOOTER_RUNTIME_CANARY = "docs-hf-canary-20260328b"
-_PDF_MIME_TYPE = "application/pdf"
 
 
 @server.tool(
@@ -1999,7 +1998,7 @@ async def export_doc_to_pdf(
     # Export the document as PDF
     try:
         request_obj = service.files().export_media(
-            fileId=document_id, mimeType=_PDF_MIME_TYPE
+            fileId=document_id, mimeType="application/pdf"
         )
 
         fh = io.BytesIO()
@@ -2026,10 +2025,10 @@ async def export_doc_to_pdf(
         # Reuse the existing BytesIO object by resetting to the beginning
         fh.seek(0)
         # Create media upload object
-        media = MediaIoBaseUpload(fh, mimetype=_PDF_MIME_TYPE, resumable=True)
+        media = MediaIoBaseUpload(fh, mimetype="application/pdf", resumable=True)
 
         # Prepare file metadata for upload
-        file_metadata = {"name": pdf_filename, "mimeType": _PDF_MIME_TYPE}
+        file_metadata = {"name": pdf_filename, "mimeType": "application/pdf"}
 
         # Add parent folder if specified
         if folder_id:

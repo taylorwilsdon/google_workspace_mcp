@@ -22,9 +22,6 @@ from core.utils import UserInputError, handle_http_errors
 
 logger = logging.getLogger(__name__)
 
-# String constant (SonarQube S1192)
-UTC_OFFSET = "+00:00"
-
 LIST_TASKS_MAX_RESULTS_DEFAULT = 20
 LIST_TASKS_MAX_RESULTS_MAX = 10_000
 LIST_TASKS_MAX_POSITION = "99999999999999999999"
@@ -84,7 +81,7 @@ def _adjust_due_max_for_tasks_api(due_max: str) -> str:
     include tasks due on the requested date we bump the bound by one day.
     """
     try:
-        parsed = datetime.fromisoformat(due_max.replace("Z", UTC_OFFSET))
+        parsed = datetime.fromisoformat(due_max.replace("Z", "+00:00"))
     except ValueError:
         logger.warning(
             "[list_tasks] Unable to parse due_max '%s'; sending unmodified value",
@@ -97,7 +94,7 @@ def _adjust_due_max_for_tasks_api(due_max: str) -> str:
 
     adjusted = parsed + timedelta(days=1)
     if adjusted.tzinfo == timezone.utc:
-        return adjusted.isoformat().replace(UTC_OFFSET, "Z")
+        return adjusted.isoformat().replace("+00:00", "Z")
     return adjusted.isoformat()
 
 
@@ -108,7 +105,7 @@ def _validate_rfc3339_date(due: str) -> None:
         raise UserInputError(error_msg)
     try:
         parsed = datetime.fromisoformat(
-            due[:-1] + UTC_OFFSET if due.endswith("Z") else due
+            due[:-1] + "+00:00" if due.endswith("Z") else due
         )
     except ValueError:
         raise UserInputError(error_msg) from None
