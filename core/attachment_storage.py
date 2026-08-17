@@ -177,7 +177,7 @@ class AttachmentStorage:
         try:
             file_bytes = base64.urlsafe_b64decode(base64_data)
         except Exception as e:
-            logger.exception("Failed to decode base64 attachment data")
+            logger.error(f"Failed to decode base64 attachment data: {e}")
             raise ValueError(f"Invalid base64 data: {e}")
 
         # Determine file extension from filename or mime type
@@ -231,10 +231,10 @@ class AttachmentStorage:
                 f"Saved attachment file_id={file_id} filename={filename or save_name} "
                 f"({len(file_bytes)} bytes) to {file_path}"
             )
-        except Exception:
-            logger.exception(
+        except Exception as e:
+            logger.error(
                 f"Failed to save attachment file_id={file_id} "
-                f"filename={filename or save_name} to {file_path}"
+                f"filename={filename or save_name} to {file_path}: {e}"
             )
             raise
 

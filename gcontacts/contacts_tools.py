@@ -929,7 +929,7 @@ async def manage_contact(
 
             etag = current.get("etag")
             if not etag:
-                raise ValueError("Unable to get contact etag for update.")
+                raise Exception("Unable to get contact etag for update.")
 
             # Build body from provided params (returns new values only)
             new_body = _build_person_body(

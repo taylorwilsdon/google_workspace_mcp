@@ -153,8 +153,8 @@ def _find_any_credentials(
             )
 
     except Exception as e:
-        logger.exception(
-            "[single-user] Error finding credentials via credential store"
+        logger.error(
+            f"[single-user] Error finding credentials via credential store: {e}"
         )
 
     logger.info("[single-user] No valid credentials found via credential store")
@@ -175,7 +175,7 @@ def save_credentials_to_session(
             )
             user_email = decoded_token.get("email")
         except Exception as e:
-            logger.debug("Could not decode id_token to get email: %s", e)
+            logger.debug(f"Could not decode id_token to get email: {e}")
 
     if user_email:
         store = get_oauth21_session_store()
@@ -310,7 +310,7 @@ def load_client_secrets(client_secrets_path: str) -> Dict[str, Any]:
                 )
                 raise ValueError("Invalid client secrets file format")
     except (IOError, json.JSONDecodeError) as e:
-        logger.exception(f"Error loading client secrets file {client_secrets_path}")
+        logger.error(f"Error loading client secrets file {client_secrets_path}: {e}")
         raise
 
 
@@ -657,14 +657,15 @@ async def start_auth_flow(
 
     except FileNotFoundError as e:
         error_text = f"OAuth client credentials not found: {e}. Please either:\n1. Set environment variables: GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET\n2. Ensure '{CONFIG_CLIENT_SECRETS_PATH}' file exists"
-        logger.exception(error_text)
-        raise RuntimeError(error_text)
+        logger.error(error_text, exc_info=True)
+        raise Exception(error_text)
     except Exception as e:
         error_text = f"Could not initiate authentication for {user_display_name} due to an unexpected error: {str(e)}"
-        logger.exception(
-            f"Failed to start the OAuth flow for {user_display_name}",
+        logger.error(
+            f"Failed to start the OAuth flow for {user_display_name}: {e}",
+            exc_info=True,
         )
-        raise RuntimeError(error_text)
+        raise Exception(error_text)
 
 
 async def handle_auth_callback(
@@ -952,7 +953,7 @@ async def handle_auth_callback(
         return user_google_email, credentials
 
     except Exception as e:  # Catch specific exceptions like FlowExchangeError if needed
-        logger.exception("Error handling auth callback")
+        logger.error(f"Error handling auth callback: {e}")
         raise  # Re-raise for the caller
 
 
@@ -1053,8 +1054,8 @@ def get_credentials(
                                         issuer=GOOGLE_ACCOUNTS_URL,
                                     )
                         except Exception as e:
-                            logger.exception(
-                                "[get_credentials] Failed to refresh OAuth 2.1 credentials"
+                            logger.error(
+                                f"[get_credentials] Failed to refresh OAuth 2.1 credentials: {e}"
                             )
                             return None
 
@@ -1240,8 +1241,9 @@ def get_credentials(
             # For RefreshError, we should return None to trigger reauthentication
             return None
         except Exception as e:
-            logger.exception(
-                f"[get_credentials] Error refreshing credentials. User: '{user_google_email}', Session: '{session_id}'"
+            logger.error(
+                f"[get_credentials] Error refreshing credentials: {e}. User: '{user_google_email}', Session: '{session_id}'",
+                exc_info=True,
             )
             return None  # Failed to refresh
     else:
@@ -1283,11 +1285,11 @@ def get_user_info(
         logger.info(f"Successfully fetched user info: {user_info.get('email')}")
         return user_info
     except HttpError as e:
-        logger.exception(f"HttpError fetching user info: {e.status_code} {e.reason}")
+        logger.error(f"HttpError fetching user info: {e.status_code} {e.reason}")
         # Handle specific errors, e.g., 401 Unauthorized might mean token issue
         return None
     except Exception as e:
-        logger.exception("Unexpected error fetching user info")
+        logger.error(f"Unexpected error fetching user info: {e}")
         return None
     finally:
         if service:
@@ -1439,5 +1441,5 @@ async def get_authenticated_google_service(
 
     except Exception as e:
         error_msg = f"[{tool_name}] Failed to build {service_name} service: {str(e)}"
-        logger.exception(error_msg)
+        logger.error(error_msg, exc_info=True)
         raise GoogleAuthenticationError(error_msg)
