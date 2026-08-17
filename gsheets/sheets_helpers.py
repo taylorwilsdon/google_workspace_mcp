@@ -671,9 +671,15 @@ def _grid_range_to_a1(grid_range: dict, sheet_titles: dict[int, str]) -> str:
     end_label = f"{col_label(end_col - 1 if end_col is not None else None)}{row_label(end_row - 1 if end_row is not None else None)}"
 
     if start_label and end_label:
-        range_ref = start_label if start_label == end_label else f"{start_label}:{end_label}"
+        range_ref = (
+            start_label if start_label == end_label else f"{start_label}:{end_label}"
+        )
+    elif start_label:
+        range_ref = start_label
+    elif end_label:
+        range_ref = end_label
     else:
-        range_ref = start_label or end_label or ""
+        range_ref = ""
 
     return f"{sheet_title}!{range_ref}" if range_ref else sheet_title
 
