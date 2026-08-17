@@ -262,7 +262,7 @@ def test_ensure_stdio_callback_starts_server_on_demand(monkeypatch):
     assert calls == [("stdio", 8042, "http://localhost")]
 
 
-def test_oauth_callback_enables_missing_state_fallback(monkeypatch):
+def test_oauth_callback_missing_state_fallback_follows_single_user_mode(monkeypatch):
     calls = []
 
     async def fake_handle_auth_callback(**kwargs):
@@ -290,8 +290,7 @@ def test_oauth_callback_enables_missing_state_fallback(monkeypatch):
     assert calls[-1]["allow_missing_state_fallback"] is False
 
     monkeypatch.setenv("MCP_SINGLE_USER_MODE", "1")
-    server2 = oauth_callback_server.MinimalOAuthServer(8000, "http://localhost")
-    response2 = TestClient(server2.app).get("/oauth2callback?code=code123")
+    response = TestClient(server.app).get("/oauth2callback?code=code123")
 
-    assert response2.status_code == 200
+    assert response.status_code == 200
     assert calls[-1]["allow_missing_state_fallback"] is True
