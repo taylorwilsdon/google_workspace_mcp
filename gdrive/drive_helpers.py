@@ -8,9 +8,9 @@ remote content download, and import-time format conversion.
 import asyncio
 import io
 import logging
-from tempfile import SpooledTemporaryFile
 import re
 from pathlib import Path
+from tempfile import SpooledTemporaryFile
 from typing import List, Dict, Any, Awaitable, BinaryIO, Callable, Optional, Tuple
 from urllib.parse import urlparse
 from urllib.request import url2pathname
@@ -490,7 +490,6 @@ async def _download_url_to_bytes(url: str) -> Tuple[BinaryIO, Optional[str]]:
     except Exception:
         spool.close()
         raise
-
 
 
 # Mapping of file extensions to source MIME types for Google Docs conversion
