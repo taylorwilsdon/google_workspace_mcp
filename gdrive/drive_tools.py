@@ -1083,95 +1083,96 @@ async def create_drive_file(
         elif parsed_url.scheme in ("http", "https"):
             # when running in stateless mode, deployment may not have access to local file system
             if is_stateless_mode():
-                spool = io.BytesIO()
+                with SpooledTemporaryFile(max_size=UPLOAD_CHUNK_SIZE_BYTES) as spool:
 
-                async def _write_spool(chunk: bytes) -> None:
-                    spool.write(chunk)
+                    async def _write_spool(chunk: bytes) -> None:
+                        await asyncio.to_thread(spool.write, chunk)
 
-                _total, content_type = await _stream_url_with_validation(
-                    fileUrl, _write_spool
-                )
-                spool.seek(0)
+                    _total, content_type = await _stream_url_with_validation(
+                        fileUrl, _write_spool
+                    )
+                    await asyncio.to_thread(spool.seek, 0)
 
-                # Try to get MIME type from Content-Type header
-                if content_type and content_type != "application/octet-stream":
-                    mime_type = content_type
-                    file_metadata["mimeType"] = content_type
-                    logger.info(
-                        f"[create_drive_file] Using MIME type from Content-Type header: {content_type}"
+                    # Try to get MIME type from Content-Type header
+                    if content_type and content_type != "application/octet-stream":
+                        mime_type = content_type
+                        file_metadata["mimeType"] = content_type
+                        logger.info(
+                            f"[create_drive_file] Using MIME type from Content-Type header: {content_type}"
+                        )
+
+                    media = MediaIoBaseUpload(
+                        spool,
+                        mimetype=mime_type,
+                        resumable=True,
+                        chunksize=UPLOAD_CHUNK_SIZE_BYTES,
                     )
 
-                media = MediaIoBaseUpload(
-                    spool,
-                    mimetype=mime_type,
-                    resumable=True,
-                    chunksize=UPLOAD_CHUNK_SIZE_BYTES,
-                )
-
-                created_file = await asyncio.to_thread(
-                    service.files()
-                    .create(
-                        body=file_metadata,
-                        media_body=media,
-                        fields="id, name, webViewLink",
-                        supportsAllDrives=True,
+                    created_file = await asyncio.to_thread(
+                        service.files()
+                        .create(
+                            body=file_metadata,
+                            media_body=media,
+                            fields="id, name, webViewLink",
+                            supportsAllDrives=True,
+                        )
+                        .execute,
+                        num_retries=GOOGLE_API_WRITE_RETRIES,
                     )
-                    .execute,
-                    num_retries=GOOGLE_API_WRITE_RETRIES,
-                )
             else:
-                # Stream download to in-memory buffer with SSRF protection, then upload
-                buf = io.BytesIO()
+                # Stream download to temp file with SSRF protection, then upload
+                with NamedTemporaryFile() as temp_file:
 
-                async def _write_chunk(chunk: bytes) -> None:
-                    buf.write(chunk)
+                    async def _write_chunk(chunk: bytes) -> None:
+                        await asyncio.to_thread(temp_file.write, chunk)
 
-                total_bytes, content_type = await _stream_url_with_validation(
-                    fileUrl, _write_chunk
-                )
+                    total_bytes, content_type = await _stream_url_with_validation(
+                        fileUrl, _write_chunk
+                    )
 
-                logger.info(
-                    f"[create_drive_file] Downloaded {total_bytes} bytes "
-                    f"from URL before upload."
-                )
-
-                if content_type and content_type != "application/octet-stream":
-                    mime_type = content_type
-                    file_metadata["mimeType"] = mime_type
                     logger.info(
-                        f"[create_drive_file] Using MIME type from "
-                        f"Content-Type header: {mime_type}"
+                        f"[create_drive_file] Downloaded {total_bytes} bytes "
+                        f"from URL before upload."
                     )
 
-                buf.seek(0)
+                    if content_type and content_type != "application/octet-stream":
+                        mime_type = content_type
+                        file_metadata["mimeType"] = mime_type
+                        logger.info(
+                            f"[create_drive_file] Using MIME type from "
+                            f"Content-Type header: {mime_type}"
+                        )
 
-                media = MediaIoBaseUpload(
-                    buf,
-                    mimetype=mime_type,
-                    resumable=True,
-                    chunksize=UPLOAD_CHUNK_SIZE_BYTES,
-                )
+                    # Reset file pointer to beginning for upload
+                    temp_file.seek(0)
 
-                logger.info(
-                    "[create_drive_file] Starting upload to Google Drive..."
-                )
-                created_file = await asyncio.to_thread(
-                    service.files()
-                    .create(
-                        body=file_metadata,
-                        media_body=media,
-                        fields="id, name, webViewLink",
-                        supportsAllDrives=True,
+                    media = MediaIoBaseUpload(
+                        temp_file,
+                        mimetype=mime_type,
+                        resumable=True,
+                        chunksize=UPLOAD_CHUNK_SIZE_BYTES,
                     )
-                    .execute,
-                    num_retries=GOOGLE_API_WRITE_RETRIES,
-                )
+
+                    logger.info(
+                        "[create_drive_file] Starting upload to Google Drive..."
+                    )
+                    created_file = await asyncio.to_thread(
+                        service.files()
+                        .create(
+                            body=file_metadata,
+                            media_body=media,
+                            fields="id, name, webViewLink",
+                            supportsAllDrives=True,
+                        )
+                        .execute,
+                        num_retries=GOOGLE_API_WRITE_RETRIES,
+                    )
         else:
             if not parsed_url.scheme:
-                raise ValueError(
+                raise Exception(
                     "fileUrl is missing a URL scheme. Use file://, http://, or https://."
                 )
-            raise ValueError(
+            raise Exception(
                 f"Unsupported URL scheme '{parsed_url.scheme}'. Only file://, http://, and https:// are supported."
             )
     elif content is not None:
