@@ -175,7 +175,7 @@ async def list_task_lists(
         raise Exception(message)
     except Exception as e:
         message = f"Unexpected error: {e}."
-        logger.error(message, exc_info=True)
+        logger.exception(message)
         raise Exception(message)
 
 
@@ -229,7 +229,7 @@ async def get_task_list(
         raise Exception(message)
     except Exception as e:
         message = f"Unexpected error: {e}."
-        logger.error(message, exc_info=True)
+        logger.exception(message)
         raise Exception(message)
 
 
@@ -530,7 +530,7 @@ async def list_tasks(
         raise Exception(message)
     except Exception as e:
         message = f"Unexpected error: {e}."
-        logger.error(message, exc_info=True)
+        logger.exception(message)
         raise Exception(message)
 
 
@@ -715,7 +715,7 @@ async def get_task(
         raise Exception(message)
     except Exception as e:
         message = f"Unexpected error: {e}."
-        logger.error(message, exc_info=True)
+        logger.exception(message)
         raise Exception(message)
 
 
