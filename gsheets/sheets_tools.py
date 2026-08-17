@@ -4,7 +4,6 @@ Google Sheets MCP Tools
 This module provides MCP tools for interacting with Google Sheets API.
 """
 
-
 import logging
 import asyncio
 import json
@@ -480,7 +479,7 @@ async def _format_sheet_range_impl(
     bold: Optional[bool] = None,
     italic: Optional[bool] = None,
     font_size: Optional[int] = None,
-) -> dict:
+) -> str:
     """Internal implementation for format_sheet_range.
 
     Applies formatting to a Google Sheets range including colors, number formats,
