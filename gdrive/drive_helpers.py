@@ -8,6 +8,7 @@ remote content download, and import-time format conversion.
 import asyncio
 import io
 import logging
+from tempfile import SpooledTemporaryFile
 import re
 from pathlib import Path
 from typing import List, Dict, Any, Awaitable, BinaryIO, Callable, Optional, Tuple
@@ -476,18 +477,18 @@ async def _stream_url_with_validation(
 
 
 async def _download_url_to_bytes(url: str) -> Tuple[BinaryIO, Optional[str]]:
-    """Download a remote file into an in-memory buffer with bounded streaming."""
-    buffer = io.BytesIO()
+    """Download a remote file into a spooled temporary file with bounded streaming."""
+    spool = SpooledTemporaryFile(max_size=UPLOAD_CHUNK_SIZE_BYTES)
     try:
 
         async def _collect(chunk: bytes) -> None:
-            buffer.write(chunk)
+            await asyncio.to_thread(spool.write, chunk)
 
         _total_bytes, content_type = await _stream_url_with_validation(url, _collect)
-        buffer.seek(0)
-        return buffer, content_type
+        await asyncio.to_thread(spool.seek, 0)
+        return spool, content_type
     except Exception:
-        buffer.close()
+        spool.close()
         raise
 
 
