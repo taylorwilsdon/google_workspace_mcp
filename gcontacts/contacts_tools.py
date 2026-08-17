@@ -15,6 +15,7 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from mcp.types import ToolAnnotations
 
+from auth.scopes import CLOUD_IDENTITY_GROUPS_READONLY_SCOPE
 from auth.service_decorator import require_google_service
 from core.server import server
 from core.utils import UserInputError, handle_http_errors, StringList
@@ -1700,6 +1701,7 @@ async def manage_contact_group(
     title="Search Directory People",
     annotations=ToolAnnotations(
         readOnlyHint=True,
+        destructiveHint=False,
         idempotentHint=True,
         openWorldHint=True,
     ),
@@ -1770,12 +1772,15 @@ async def search_directory_people(
     title="List Group Members",
     annotations=ToolAnnotations(
         readOnlyHint=True,
+        destructiveHint=False,
         idempotentHint=True,
         openWorldHint=True,
     ),
 )
 @require_google_service("cloudidentity", "cloud_identity_groups_read")
-@handle_http_errors("list_group_members", is_read_only=True, service_type="cloudidentity")
+@handle_http_errors(
+    "list_group_members", is_read_only=True, service_type="cloudidentity"
+)
 async def list_group_members(
     service: Resource,
     user_google_email: str,
@@ -1785,11 +1790,11 @@ async def list_group_members(
     """
     List the members of a Google Group (Cloud Identity Groups API).
 
-    Visibility is governed by the group's "Who can view members" setting; a
-    403 means the caller is not allowed to view that group's membership, not
-    that the tool is broken. Membership entries carry member emails and roles
-    (OWNER/MANAGER/MEMBER); use search_directory_people to resolve an email to
-    a display name.
+    Visibility is governed by the group's "Who can view members" setting. A
+    403 response can also mean that the Cloud Identity API is disabled or the
+    token lacks the required scope; the response explains all three conditions.
+    Membership entries carry member emails and roles (OWNER/MANAGER/MEMBER);
+    use search_directory_people to resolve an email to a display name.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
@@ -1807,9 +1812,16 @@ async def list_group_members(
         raise UserInputError("max_results must be >= 1")
     max_results = min(max_results, 1000)
 
-    lookup = await asyncio.to_thread(
-        service.groups().lookup(groupKey_id=group_email).execute
-    )
+    try:
+        lookup = await asyncio.to_thread(
+            service.groups().lookup(groupKey_id=group_email).execute
+        )
+    except HttpError as error:
+        if error.resp.status != 403:
+            raise
+        return _format_group_membership_permission_denied(
+            group_email, user_google_email
+        )
     group_name = lookup.get("name")
     if not group_name:
         return f"No group found for '{group_email}'."
@@ -1823,9 +1835,16 @@ async def list_group_members(
         }
         if page_token:
             params["pageToken"] = page_token
-        page = await asyncio.to_thread(
-            service.groups().memberships().list(**params).execute
-        )
+        try:
+            page = await asyncio.to_thread(
+                service.groups().memberships().list(**params).execute
+            )
+        except HttpError as error:
+            if error.resp.status != 403:
+                raise
+            return _format_group_membership_permission_denied(
+                group_email, user_google_email
+            )
         members.extend(page.get("memberships", []))
         page_token = page.get("nextPageToken")
         if not page_token:
@@ -1851,3 +1870,17 @@ async def list_group_members(
         f"Listed {len(members)} members of '{group_email}' for {user_google_email}"
     )
     return response
+
+
+def _format_group_membership_permission_denied(
+    group_email: str, user_google_email: str
+) -> str:
+    """Return actionable guidance for an expected Cloud Identity 403 response."""
+    return (
+        f"Permission denied while reading members of '{group_email}' for "
+        f"{user_google_email}. Confirm that the Cloud Identity API is enabled, "
+        f"the authenticated token includes {CLOUD_IDENTITY_GROUPS_READONLY_SCOPE}, "
+        "and the group's 'Who can view members' setting grants this user access. "
+        "If the server was recently upgraded, re-authenticate once to grant the "
+        "new scope."
+    )

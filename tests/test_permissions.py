@@ -29,6 +29,10 @@ from auth.scopes import (
     TASKS_READONLY_SCOPE,
     TASKS_SCOPE,
     DRIVE_FILE_SCOPE,
+    CONTACTS_SCOPE,
+    CONTACTS_READONLY_SCOPE,
+    DIRECTORY_READONLY_SCOPE,
+    CLOUD_IDENTITY_GROUPS_READONLY_SCOPE,
 )
 
 
@@ -137,6 +141,19 @@ class TestGetScopesForPermission:
         scopes = get_scopes_for_permission("tasks", "full")
         assert TASKS_SCOPE in scopes
         assert TASKS_READONLY_SCOPE in scopes
+
+    @pytest.mark.parametrize("level", ["readonly", "full"])
+    def test_contacts_permissions_include_directory_scopes(self, level):
+        scopes = get_scopes_for_permission("contacts", level)
+
+        assert CONTACTS_READONLY_SCOPE in scopes
+        assert DIRECTORY_READONLY_SCOPE in scopes
+        assert CLOUD_IDENTITY_GROUPS_READONLY_SCOPE in scopes
+
+    def test_contacts_full_also_includes_write_scope(self):
+        scopes = get_scopes_for_permission("contacts", "full")
+
+        assert CONTACTS_SCOPE in scopes
 
 
 @pytest.fixture(autouse=True)
