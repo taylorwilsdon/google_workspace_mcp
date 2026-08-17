@@ -190,7 +190,7 @@ class HeaderFooterManager:
 
         return doc, None
 
-    async def _find_target_section(  # intentionally async: all callers use await for a consistent coroutine interface
+    async def _find_target_section(
         self, doc: dict[str, Any], section_type: str, header_footer_type: str
     ) -> tuple[Optional[dict[str, Any]], Optional[str]]:
         """

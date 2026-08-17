@@ -20,7 +20,6 @@ logger = logging.getLogger(__name__)
 DEFAULT_SERVICE_NAME = "google-workspace-mcp"
 _OTLP_PROTOCOL_GRPC = "grpc"
 _OTLP_PROTOCOL_HTTP = "http/protobuf"
-_OTEL_SERVICE_NAME_ATTR = "service.name"
 
 # Recording the authenticated user's email on spans is personally identifying,
 # so it is strictly opt-in and off by default. FastMCP's own spans already
@@ -98,9 +97,9 @@ def _build_resource():
     from opentelemetry.sdk.resources import Resource
 
     resource = Resource.create()
-    service_name = str(resource.attributes.get(_OTEL_SERVICE_NAME_ATTR, ""))
+    service_name = str(resource.attributes.get("service.name", ""))
     if not service_name or service_name.startswith("unknown_service"):
-        resource = resource.merge(Resource({_OTEL_SERVICE_NAME_ATTR: DEFAULT_SERVICE_NAME}))
+        resource = resource.merge(Resource({"service.name": DEFAULT_SERVICE_NAME}))
     return resource
 
 
@@ -156,7 +155,7 @@ def configure_telemetry() -> bool:
 
     logger.info(
         "OpenTelemetry tracing enabled (service=%s, protocol=%s)",
-        resource.attributes.get(_OTEL_SERVICE_NAME_ATTR),
+        resource.attributes.get("service.name"),
         protocol,
     )
     return True

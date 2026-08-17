@@ -33,11 +33,8 @@ from core.server import server
 # Configure module logger
 logger = logging.getLogger(__name__)
 
-# String constants (SonarQube S1192)
 UTC_OFFSET_SUFFIX = "+00:00"
 TIMEZONE_OFFSET_PATTERN = r"[+-]\d{2}:\d{2}$"
-_ERR_EVENT_ID_REQUIRED_UPDATE = "event_id is required for update action"
-_ERR_EVENT_ID_REQUIRED_DELETE = "event_id is required for delete action"
 
 
 def _parse_reminders_json(
@@ -1422,7 +1419,7 @@ async def manage_event(
         )
     elif action_lower == "update":
         if not event_id:
-            raise ValueError(_ERR_EVENT_ID_REQUIRED_UPDATE)
+            raise ValueError("event_id is required for update action")
         return await _modify_event_impl(
             service=service,
             user_google_email=user_google_email,
@@ -1450,7 +1447,7 @@ async def manage_event(
         )
     elif action_lower == "delete":
         if not event_id:
-            raise ValueError(_ERR_EVENT_ID_REQUIRED_DELETE)
+            raise ValueError("event_id is required for delete action")
         return await _delete_event_impl(
             service=service,
             user_google_email=user_google_email,
@@ -1484,7 +1481,7 @@ async def manage_event(
 
 
 def _ooo_time_entry(
-    time_str: str, _is_end: bool = False, timezone: Optional[str] = None
+    time_str: str, is_end: bool = False, timezone: Optional[str] = None
 ) -> Dict[str, str]:
     """Build a start/end dict for an OOO event.
 
@@ -1539,8 +1536,8 @@ async def _create_ooo_event_impl(
     event_body: Dict[str, Any] = {
         "eventType": "outOfOffice",
         "summary": effective_summary,
-        "start": _ooo_time_entry(start_time, _is_end=False, timezone=timezone),
-        "end": _ooo_time_entry(end_time, _is_end=True, timezone=timezone),
+        "start": _ooo_time_entry(start_time, is_end=False, timezone=timezone),
+        "end": _ooo_time_entry(end_time, is_end=True, timezone=timezone),
         "outOfOfficeProperties": {
             "autoDeclineMode": effective_decline_mode,
             "declineMessage": decline_message or "",
@@ -1698,10 +1695,10 @@ async def _update_ooo_event_impl(
         patch_body["summary"] = summary
     if start_time is not None:
         patch_body["start"] = _ooo_time_entry(
-            start_time, _is_end=False, timezone=timezone
+            start_time, is_end=False, timezone=timezone
         )
     if end_time is not None:
-        patch_body["end"] = _ooo_time_entry(end_time, _is_end=True, timezone=timezone)
+        patch_body["end"] = _ooo_time_entry(end_time, is_end=True, timezone=timezone)
     if recurrence is not None:
         patch_body["recurrence"] = recurrence
 
@@ -1875,7 +1872,7 @@ async def manage_out_of_office(
         )
     elif action_lower == "update":
         if not event_id:
-            raise ValueError(_ERR_EVENT_ID_REQUIRED_UPDATE)
+            raise ValueError("event_id is required for update action")
         return await _update_ooo_event_impl(
             service=service,
             user_google_email=user_google_email,
@@ -1891,7 +1888,7 @@ async def manage_out_of_office(
         )
     elif action_lower == "delete":
         if not event_id:
-            raise ValueError(_ERR_EVENT_ID_REQUIRED_DELETE)
+            raise ValueError("event_id is required for delete action")
         return await _delete_ooo_event_impl(
             service=service,
             user_google_email=user_google_email,
@@ -1910,7 +1907,7 @@ async def manage_out_of_office(
 
 
 def _focus_time_time_entry(
-    time_str: str, _is_end: bool = False, timezone: Optional[str] = None
+    time_str: str, is_end: bool = False, timezone: Optional[str] = None
 ) -> Dict[str, str]:
     """Build a start/end dict for a Focus Time event.
 
@@ -1991,8 +1988,8 @@ async def _create_focus_time_event_impl(
     event_body: Dict[str, Any] = {
         "eventType": "focusTime",
         "summary": effective_summary,
-        "start": _focus_time_time_entry(start_time, _is_end=False, timezone=timezone),
-        "end": _focus_time_time_entry(end_time, _is_end=True, timezone=timezone),
+        "start": _focus_time_time_entry(start_time, is_end=False, timezone=timezone),
+        "end": _focus_time_time_entry(end_time, is_end=True, timezone=timezone),
         "focusTimeProperties": focus_time_props,
         "transparency": "opaque",
     }
@@ -2157,11 +2154,11 @@ async def _update_focus_time_event_impl(
         patch_body["description"] = description
     if start_time is not None:
         patch_body["start"] = _focus_time_time_entry(
-            start_time, _is_end=False, timezone=timezone
+            start_time, is_end=False, timezone=timezone
         )
     if end_time is not None:
         patch_body["end"] = _focus_time_time_entry(
-            end_time, _is_end=True, timezone=timezone
+            end_time, is_end=True, timezone=timezone
         )
     if recurrence is not None:
         patch_body["recurrence"] = recurrence
@@ -2353,7 +2350,7 @@ async def manage_focus_time(
         )
     elif action_lower == "update":
         if not event_id:
-            raise ValueError(_ERR_EVENT_ID_REQUIRED_UPDATE)
+            raise ValueError("event_id is required for update action")
         return await _update_focus_time_event_impl(
             service=service,
             user_google_email=user_google_email,
@@ -2371,7 +2368,7 @@ async def manage_focus_time(
         )
     elif action_lower == "delete":
         if not event_id:
-            raise ValueError(_ERR_EVENT_ID_REQUIRED_DELETE)
+            raise ValueError("event_id is required for delete action")
         return await _delete_focus_time_event_impl(
             service=service,
             user_google_email=user_google_email,

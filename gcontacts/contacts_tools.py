@@ -48,9 +48,6 @@ CONTACT_GROUP_FIELDS = "name,groupType,memberCount,metadata"
 PEOPLE_PREFIX = "people/"
 CONTACT_GROUPS_PREFIX = "contactGroups/"
 
-# Validation message constants
-PAGE_SIZE_MIN_ERROR = "page_size must be >= 1"
-
 # Cache warmup tracking
 _search_cache_warmed_up: Dict[str, bool] = {}
 
@@ -601,7 +598,7 @@ async def list_contacts(
     logger.info(f"[list_contacts] Invoked. Email: '{user_google_email}'")
 
     if page_size < 1:
-        raise UserInputError(PAGE_SIZE_MIN_ERROR)
+        raise UserInputError("page_size must be >= 1")
     page_size = min(page_size, 1000)
 
     params: Dict[str, Any] = {
@@ -722,7 +719,7 @@ async def search_contacts(
     )
 
     if page_size < 1:
-        raise UserInputError(PAGE_SIZE_MIN_ERROR)
+        raise UserInputError("page_size must be >= 1")
     page_size = min(page_size, 30)
 
     # Warm up the search cache if needed
@@ -1109,7 +1106,7 @@ async def list_contact_groups(
     logger.info(f"[list_contact_groups] Invoked. Email: '{user_google_email}'")
 
     if page_size < 1:
-        raise UserInputError(PAGE_SIZE_MIN_ERROR)
+        raise UserInputError("page_size must be >= 1")
     page_size = min(page_size, 1000)
 
     params: Dict[str, Any] = {
