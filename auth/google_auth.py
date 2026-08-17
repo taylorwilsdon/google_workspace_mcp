@@ -158,7 +158,6 @@ def _find_any_credentials(
     return None, None
 
 
-
 def save_credentials_to_session(session_id: str, credentials: Credentials):
     """Saves user credentials using OAuth21SessionStore."""
     # Get user email from credentials if possible

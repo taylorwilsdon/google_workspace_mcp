@@ -94,7 +94,7 @@ def test_resolve_bind_host_defaults_legacy_streamable_http_to_loopback(monkeypat
     )
     monkeypatch.delenv("WORKSPACE_MCP_HOST", raising=False)
 
-    assert main.resolve_bind_host_for_transport("streamable-http") == "0.0.0.0"
+    assert main.resolve_bind_host_for_transport("streamable-http") == "127.0.0.1"
 
 
 def test_resolve_bind_host_preserves_explicit_legacy_streamable_http_host(
