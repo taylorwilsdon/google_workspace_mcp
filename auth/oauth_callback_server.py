@@ -351,8 +351,9 @@ class MinimalOAuthServer:
             return
 
         try:
-            if self.server and hasattr(self.server, "should_exit"):
-                self.server.should_exit = True
+            if self.server:
+                if hasattr(self.server, "should_exit"):
+                    self.server.should_exit = True
 
             if self.server_thread and self.server_thread.is_alive():
                 self.server_thread.join(timeout=3.0)

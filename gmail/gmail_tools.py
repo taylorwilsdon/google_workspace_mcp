@@ -471,7 +471,7 @@ async def _export_full_message(
     try:
         saved = await asyncio.to_thread(_save_export)
     except OSError as exc:
-        logger.exception(f"[get_gmail_message_content] Failed to save message: {exc}")
+        logger.error(f"[get_gmail_message_content] Failed to save message: {exc}")
         return f"Error: failed to save message to storage: {exc}"
 
     result_lines.append(f"Saved filename: {Path(saved.path).name}")
@@ -695,10 +695,10 @@ async def _get_send_as_signature_html(service, from_email: Optional[str] = None)
                 "Skipping Gmail signature fetch: missing auth/scope for settings endpoint."
             )
             return ""
-        logger.exception(f"Failed to fetch Gmail send-as signatures: {e}")
+        logger.error(f"Failed to fetch Gmail send-as signatures: {e}", exc_info=True)
         raise _signature_fetch_tool_error(e) from e
     except Exception as e:
-        logger.exception(f"Failed to fetch Gmail send-as signatures: {e}")
+        logger.error(f"Failed to fetch Gmail send-as signatures: {e}", exc_info=True)
         raise _signature_fetch_tool_error(e) from e
 
     send_as_entries = response.get("sendAs", [])
@@ -1409,12 +1409,12 @@ def _prepare_gmail_message(
                 )
                 logger.info(f"Attached file: {safe_filename} ({len(file_data)} bytes)")
             attached_count += 1
-        except ValueError as e:
-            logger.exception(f"Failed to decode attachment {filename or file_path}: {e}")
+        except (binascii.Error, ValueError) as e:
+            logger.error(f"Failed to decode attachment {filename or file_path}: {e}")
             attachment_errors.append(_format_attachment_error(file_path, filename, e))
             continue
         except Exception as e:
-            logger.exception(f"Failed to attach {filename or file_path}: {e}")
+            logger.error(f"Failed to attach {filename or file_path}: {e}")
             attachment_errors.append(_format_attachment_error(file_path, filename, e))
             continue
 
@@ -1933,7 +1933,7 @@ async def get_gmail_messages_content_batch(
     )
 
     if not message_ids:
-        raise ValueError("No message IDs provided")
+        raise Exception("No message IDs provided")
     _validate_message_batch_options(format, body_format)
 
     output_messages = []
@@ -2161,7 +2161,7 @@ async def get_gmail_attachment_content(
             .execute
         )
     except Exception as e:
-        logger.exception(
+        logger.error(
             f"[get_gmail_attachment_content] Failed to download attachment: {e}"
         )
         return (
@@ -2285,8 +2285,9 @@ async def get_gmail_attachment_content(
         return "\n".join(result_lines)
 
     except Exception as e:
-        logger.exception(
+        logger.error(
             f"[get_gmail_attachment_content] Failed to save attachment: {e}",
+            exc_info=True,
         )
         # Fallback to showing base64 preview
         result_lines = [
@@ -2696,7 +2697,7 @@ async def _forward_gmail_message_impl(
         # Fail loudly rather than silently delivering an incomplete forward when
         # the caller asked for the original attachments to be preserved.
         if failed_attachments:
-            raise RuntimeError(
+            raise Exception(
                 "Failed to include requested attachment(s): "
                 + ", ".join(failed_attachments)
             )
@@ -3487,10 +3488,10 @@ async def manage_gmail_label(
     )
 
     if action == "create" and not name:
-        raise ValueError("Label name is required for create action.")
+        raise Exception("Label name is required for create action.")
 
     if action in ["update", "delete"] and not label_id:
-        raise ValueError("Label ID is required for update and delete actions.")
+        raise Exception("Label ID is required for update and delete actions.")
 
     if action == "create":
         label_object = {
@@ -3741,7 +3742,7 @@ async def modify_gmail_message_labels(
     )
 
     if not add_label_ids and not remove_label_ids:
-        raise ValueError(
+        raise Exception(
             "At least one of add_label_ids or remove_label_ids must be provided."
         )
 
@@ -3805,7 +3806,7 @@ async def batch_modify_gmail_message_labels(
     )
 
     if not add_label_ids and not remove_label_ids:
-        raise ValueError(
+        raise Exception(
             "At least one of add_label_ids or remove_label_ids must be provided."
         )
 

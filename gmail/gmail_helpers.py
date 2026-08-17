@@ -274,8 +274,9 @@ def _analyze_thread_ownership_impl(
         _iso, dt = _parse_date_header(
             headers.get("date", ""), message.get("internalDate")
         )
-        if dt is not None and (last_non_draft is None or dt >= last_non_draft[0]):
-            last_non_draft = (dt, message, headers)
+        if dt is not None:
+            if last_non_draft is None or dt >= last_non_draft[0]:
+                last_non_draft = (dt, message, headers)
 
     if last_non_draft is None:
         # All messages were drafts - no sent state to reason about

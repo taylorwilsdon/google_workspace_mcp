@@ -49,10 +49,9 @@ def _build_slides_service(presentation=None, batch_update_response=None):
 )
 async def test_batch_update_rejects_invalid_request_objects(requests, expected_message):
     service, presentations = _build_slides_service()
-    fn = _unwrap(batch_update_presentation)
 
     with pytest.raises(UserInputError) as exc_info:
-        await fn(
+        await _unwrap(batch_update_presentation)(
             service=service,
             user_google_email="user@example.com",
             presentation_id="presentation-1",
@@ -70,10 +69,9 @@ async def test_batch_update_rejects_invalid_request_objects(requests, expected_m
 @pytest.mark.asyncio
 async def test_batch_update_rejects_insert_text_targeting_slide_id():
     service, presentations = _build_slides_service()
-    fn = _unwrap(batch_update_presentation)
 
     with pytest.raises(UserInputError) as exc_info:
-        await fn(
+        await _unwrap(batch_update_presentation)(
             service=service,
             user_google_email="user@example.com",
             presentation_id="presentation-1",
@@ -108,10 +106,9 @@ async def test_batch_update_rejects_insert_text_targeting_other_page_ids():
             "notesMaster": {"objectId": "notes_master_1"},
         }
     )
-    fn = _unwrap(batch_update_presentation)
 
     with pytest.raises(UserInputError) as exc_info:
-        await fn(
+        await _unwrap(batch_update_presentation)(
             service=service,
             user_google_email="user@example.com",
             presentation_id="presentation-1",
@@ -206,10 +203,9 @@ async def test_batch_update_allows_insert_text_targeting_created_shape():
 @pytest.mark.asyncio
 async def test_batch_update_rejects_insert_text_targeting_new_slide_id():
     service, presentations = _build_slides_service(presentation={"slides": []})
-    fn = _unwrap(batch_update_presentation)
 
     with pytest.raises(UserInputError) as exc_info:
-        await fn(
+        await _unwrap(batch_update_presentation)(
             service=service,
             user_google_email="user@example.com",
             presentation_id="presentation-1",
@@ -529,10 +525,9 @@ async def test_batch_update_redirects_insert_text_from_notes_page_to_notes_shape
             "slides": [_slide_with_notes("slide_1", "notes_shape_1")],
         }
     )
-    fn = _unwrap(batch_update_presentation)
 
     with pytest.raises(UserInputError) as exc_info:
-        await fn(
+        await _unwrap(batch_update_presentation)(
             service=service,
             user_google_email="user@example.com",
             presentation_id="presentation-1",
@@ -561,10 +556,9 @@ async def test_batch_update_keeps_shape_guidance_when_a_slide_id_is_also_targete
     service, _ = _build_slides_service(
         presentation={"slides": [_slide_with_notes("slide_1", "notes_shape_1")]}
     )
-    fn = _unwrap(batch_update_presentation)
 
     with pytest.raises(UserInputError) as exc_info:
-        await fn(
+        await _unwrap(batch_update_presentation)(
             service=service,
             user_google_email="user@example.com",
             presentation_id="presentation-1",
