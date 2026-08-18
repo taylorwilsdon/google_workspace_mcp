@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 from gmail.gmail_helpers import _is_retryable_error
 from gmail.gmail_tools import (
     _fetch_message_with_retry,
+    _fetch_search_result_headers,
     get_gmail_messages_content_batch,
     get_gmail_threads_content_batch,
 )
@@ -350,3 +351,109 @@ async def test_thread_batch_failure_does_not_restart_exhausted_retries(monkeypat
 
     assert "⚠️ Thread thread-1" in result
     assert attempts == 4
+
+
+# ---------------------------------------------------------------------------
+# Multi-chunk isolation: verifies the _batch_callback closure-capture fix.
+#
+# Each chunk iteration rebinds `results` to a fresh dict and defines
+# _batch_callback with `results=results` as a default argument so the
+# callback captures the VALUE of results at definition time, not the live
+# name in the enclosing scope. Without this, a deferred callback from chunk N
+# could write into chunk N+1's results dict.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_multi_chunk_messages_all_returned(monkeypatch):
+    """With 4 messages chunked into 2 groups of 2, all IDs appear in the output."""
+    monkeypatch.setattr("gmail.gmail_tools.GMAIL_BATCH_SIZE", 2)
+    monkeypatch.setattr("gmail.gmail_tools.GMAIL_RATE_LIMIT_BACKOFF", 0)
+    monkeypatch.setattr("gmail.gmail_tools.GMAIL_REQUEST_DELAY", 0)
+
+    all_ids = ["msg-a", "msg-b", "msg-c", "msg-d"]
+
+    def message_get(**kwargs):
+        request = Mock()
+        request.execute.return_value = _message_response(kwargs["id"])
+        return request
+
+    service = Mock()
+    service.users().messages().get.side_effect = message_get
+    service.new_batch_http_request.side_effect = lambda callback: _FakeBatch(callback)
+
+    result = await _unwrap(get_gmail_messages_content_batch)(
+        service=service,
+        message_ids=all_ids,
+        user_google_email="user@example.com",
+    )
+
+    for mid in all_ids:
+        assert f"Subject {mid}" in result, f"Missing output for {mid}"
+    assert "⚠️" not in result
+
+
+@pytest.mark.asyncio
+async def test_multi_chunk_threads_all_returned(monkeypatch):
+    """With 4 threads chunked into 2 groups of 2, all thread IDs appear in the output."""
+    monkeypatch.setattr("gmail.gmail_tools.GMAIL_BATCH_SIZE", 2)
+    monkeypatch.setattr("gmail.gmail_tools.GMAIL_RATE_LIMIT_BACKOFF", 0)
+    monkeypatch.setattr("gmail.gmail_tools.GMAIL_REQUEST_DELAY", 0)
+
+    all_ids = ["thread-a", "thread-b", "thread-c", "thread-d"]
+
+    def thread_get(**kwargs):
+        tid = kwargs["id"]
+        request = Mock()
+        request.execute.return_value = _thread_response(tid, f"msg-{tid}")
+        return request
+
+    service = Mock()
+    service.users().threads().get.side_effect = thread_get
+    service.new_batch_http_request.side_effect = lambda callback: _FakeBatch(callback)
+
+    result = await _unwrap(get_gmail_threads_content_batch)(
+        service=service,
+        thread_ids=all_ids,
+        user_google_email="user@example.com",
+    )
+
+    for tid in all_ids:
+        assert f"Subject {tid}" in result, f"Missing output for thread {tid}"
+    assert "⚠️" not in result
+
+
+@pytest.mark.asyncio
+async def test_multi_chunk_search_headers_all_resolved(monkeypatch):
+    """_fetch_search_result_headers returns headers for IDs spanning multiple chunks."""
+    monkeypatch.setattr("gmail.gmail_tools.GMAIL_SEARCH_HEADER_BATCH_SIZE", 2)
+    monkeypatch.setattr("gmail.gmail_tools.GMAIL_REQUEST_DELAY", 0)
+
+    all_ids = ["hdr-1", "hdr-2", "hdr-3", "hdr-4"]
+
+    def message_get(**kwargs):
+        mid = kwargs["id"]
+        request = Mock()
+        request.execute.return_value = {
+            "id": mid,
+            "payload": {
+                "headers": [
+                    {"name": "Subject", "value": f"Subject {mid}"},
+                    {"name": "From", "value": "a@example.com"},
+                    {"name": "To", "value": "b@example.com"},
+                    {"name": "Message-ID", "value": f"<{mid}@example.com>"},
+                    {"name": "Date", "value": "Mon, 1 Jan 2026 00:00:00 +0000"},
+                ]
+            },
+        }
+        return request
+
+    service = Mock()
+    service.users().messages().get.side_effect = message_get
+    service.new_batch_http_request.side_effect = lambda callback: _FakeBatch(callback)
+
+    headers = await _fetch_search_result_headers(service, all_ids)
+
+    for mid in all_ids:
+        assert mid in headers, f"No entry for {mid}"
+        assert headers[mid] is not None, f"Entry for {mid} resolved to None"

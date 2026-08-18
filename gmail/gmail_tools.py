@@ -1462,6 +1462,9 @@ async def _fetch_search_result_headers(
         ]
         results: Dict[str, Dict] = {}
 
+        # results=results captures the current chunk's dict by value, not by name.
+        # Without this default-arg snapshot a deferred callback from chunk N
+        # would write into chunk N+1's freshly-assigned results dict.
         def _batch_callback(request_id, response, exception, results=results):
             results[request_id] = {"data": response, "error": exception}
 
@@ -1946,8 +1949,10 @@ async def get_gmail_messages_content_batch(
         chunk_ids = message_ids[chunk_start : chunk_start + GMAIL_BATCH_SIZE]
         results: Dict[str, Dict] = {}
 
+        # results=results captures the current chunk's dict by value, not by name.
+        # Without this default-arg snapshot a deferred callback from chunk N
+        # would write into chunk N+1's freshly-assigned results dict.
         def _batch_callback(request_id, response, exception, results=results):
-            """Callback for batch requests"""
             results[request_id] = {"data": response, "error": exception}
 
         batch_completed = False
@@ -3300,8 +3305,10 @@ async def get_gmail_threads_content_batch(
         chunk_ids = thread_ids[chunk_start : chunk_start + GMAIL_BATCH_SIZE]
         results: Dict[str, Dict] = {}
 
+        # results=results captures the current chunk's dict by value, not by name.
+        # Without this default-arg snapshot a deferred callback from chunk N
+        # would write into chunk N+1's freshly-assigned results dict.
         def _batch_callback(request_id, response, exception, results=results):
-            """Callback for batch requests"""
             results[request_id] = {"data": response, "error": exception}
 
         batch_completed = False
