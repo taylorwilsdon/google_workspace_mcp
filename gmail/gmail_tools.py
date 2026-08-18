@@ -2288,9 +2288,13 @@ async def get_gmail_attachment_content(
     ),
 )
 @handle_http_errors("send_gmail_message", service_type="gmail")
-# gmail_read: reply derivation/quoting fetch the thread. GMAIL_COMPOSE_SCOPE:
-# drafts.send (the draft_id path) is compose-scope — gmail.send does not cover it.
-@require_google_service("gmail", ["gmail_read", GMAIL_SEND_SCOPE, GMAIL_COMPOSE_SCOPE])
+# gmail_read: reply derivation/quoting fetch the thread. gmail.compose is NOT
+# declared here even though drafts.send (the draft_id path) needs it: requiring
+# it at the tool boundary would force re-consent on every existing credential
+# before an ORDINARY send. Anyone drafting via this server already holds it
+# (draft_gmail_message declares it); a compose-less credential gets Google's
+# 403 on drafts.send, translated below into re-auth guidance.
+@require_google_service("gmail", ["gmail_read", GMAIL_SEND_SCOPE])
 async def send_gmail_message(
     service,
     user_google_email: str,
@@ -2591,11 +2595,23 @@ async def send_gmail_message(
                 num_retries=GOOGLE_API_WRITE_RETRIES,
             )
         except HttpError as exc:
-            if getattr(getattr(exc, "resp", None), "status", None) in (400, 404):
+            status = getattr(getattr(exc, "resp", None), "status", None)
+            if status in (400, 404):
                 raise UserInputError(
                     f"Draft '{draft_id}' was not found — it may have already been "
                     "sent or deleted, or its ID rotated after an edit in the Gmail "
                     "UI. Use list_drafts to find the live draft."
+                ) from exc
+            if status == 403:
+                # drafts.send is compose-scope; gmail.send does not cover it. The
+                # scope is deliberately not declared at the tool boundary (see the
+                # decorator note), so a pre-drafts credential can land here.
+                raise UserInputError(
+                    "Sending an existing draft uses drafts.send, which needs the "
+                    "gmail.compose scope — this account's stored credential does "
+                    "not include it (it predates draft support). Re-authenticate "
+                    "this account to add it; drafting with draft_gmail_message "
+                    "grants it as part of the same consent."
                 ) from exc
             raise
         message_id = sent.get("id")
@@ -3414,11 +3430,12 @@ async def draft_gmail_message(
     if message_id:
         result += f", Message ID: {message_id}"
     if result_thread_id:
-        result += (
-            f", Thread ID: {result_thread_id}. To send later: "
-            f"send_gmail_message(draft_id='{draft_id}'). Note the draft ID can rotate "
-            f"if the draft is edited in the Gmail UI — list_drafts re-finds the live one."
-        )
+        result += f", Thread ID: {result_thread_id}"
+    result += (
+        f". To send later: send_gmail_message(draft_id='{draft_id}'). "
+        f"Note the draft ID can rotate if the draft is edited in the Gmail UI — "
+        f"list_drafts re-finds the live one."
+    )
     return result
 
 

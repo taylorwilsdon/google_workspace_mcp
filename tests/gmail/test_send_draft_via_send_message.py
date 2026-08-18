@@ -75,6 +75,17 @@ class TestSendDraft:
         with pytest.raises(UserInputError, match="not found"):
             await _send(service, draft_id="not-a-draft-id")
 
+    async def test_missing_compose_scope_becomes_reauth_guidance(self):
+        """gmail.compose is deliberately NOT declared at the tool boundary (it
+        would force re-consent before ordinary sends), so a pre-drafts
+        credential reaches Google and gets 403 on drafts.send — which must
+        come back as re-auth guidance, not a bare HttpError."""
+        service = Mock()
+        service.users().drafts().send().execute.side_effect = _http_error(403)
+
+        with pytest.raises(UserInputError, match="gmail.compose"):
+            await _send(service, draft_id="r-1")
+
     async def test_server_errors_pass_through(self):
         service = Mock()
         service.users().drafts().send().execute.side_effect = _http_error(500)
