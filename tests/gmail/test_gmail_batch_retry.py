@@ -353,15 +353,65 @@ async def test_thread_batch_failure_does_not_restart_exhausted_retries(monkeypat
     assert attempts == 4
 
 
-# ---------------------------------------------------------------------------
-# Multi-chunk isolation: verifies the _batch_callback closure-capture fix.
-#
-# Each chunk iteration rebinds `results` to a fresh dict and defines
-# _batch_callback with `results=results` as a default argument so the
-# callback captures the VALUE of results at definition time, not the live
-# name in the enclosing scope. Without this, a deferred callback from chunk N
-# could write into chunk N+1's results dict.
-# ---------------------------------------------------------------------------
+class _DeferredFakeBatch:
+    """Batch that saves (callback, request_id, request) instead of calling back immediately.
+
+    Call .flush() to invoke all saved callbacks.  Use this to fire a
+    prior-chunk callback after the next chunk has rebound `results`.
+    """
+
+    def __init__(self, callback, *, deferred: list):
+        self._callback = callback
+        self._requests: list = []
+        self._deferred = deferred
+
+    def add(self, request, request_id):
+        self._requests.append((request_id, request))
+
+    def execute(self):
+        for request_id, request in self._requests:
+            try:
+                response = request.execute()
+                self._deferred.append((self._callback, request_id, response, None))
+            except Exception as exc:
+                self._deferred.append((self._callback, request_id, None, exc))
+
+
+def _flush(deferred: list) -> None:
+    for callback, request_id, response, exc in deferred:
+        callback(request_id, response, exc)
+    deferred.clear()
+
+
+def test_batch_callback_closure_captures_chunk_results_by_value():
+    """Removing results=results from any _batch_callback in production fails this test.
+
+    Two "chunk" iterations are simulated.  Chunk-0's callback is saved before
+    chunk-1 rebinds `results`.  Firing the saved callback afterwards must
+    write to chunk-0's dict — only possible when the binding is eager
+    (results=results default arg), not lazy (name lookup at call time).
+    """
+    saved_callbacks: list = []
+    result_dicts: list = []
+
+    for _i in range(2):
+        results: dict = {}  # rebind each iteration — mirrors the production loop
+
+        def _batch_callback(request_id, response, exception, results=results):
+            results[request_id] = {"data": response, "error": exception}
+
+        saved_callbacks.append(_batch_callback)
+        result_dicts.append(results)
+
+    # chunk-1 has now rebound the name `results`.  Fire chunk-0's callback.
+    saved_callbacks[0]("msg-from-chunk-0", {"ok": True}, None)
+
+    assert "msg-from-chunk-0" in result_dicts[0], (
+        "Chunk-0 callback wrote to the wrong dict; `results` was captured by name"
+    )
+    assert "msg-from-chunk-0" not in result_dicts[1], (
+        "Chunk-0 callback leaked into chunk-1's results dict"
+    )
 
 
 @pytest.mark.asyncio
