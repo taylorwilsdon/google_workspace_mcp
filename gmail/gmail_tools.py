@@ -2288,7 +2288,9 @@ async def get_gmail_attachment_content(
     ),
 )
 @handle_http_errors("send_gmail_message", service_type="gmail")
-@require_google_service("gmail", ["gmail_read", GMAIL_SEND_SCOPE])
+# gmail_read: reply derivation/quoting fetch the thread. GMAIL_COMPOSE_SCOPE:
+# drafts.send (the draft_id path) is compose-scope — gmail.send does not cover it.
+@require_google_service("gmail", ["gmail_read", GMAIL_SEND_SCOPE, GMAIL_COMPOSE_SCOPE])
 async def send_gmail_message(
     service,
     user_google_email: str,
@@ -2388,16 +2390,29 @@ async def send_gmail_message(
             description="Whether to derive reply-all recipients from the thread: To = the sender being replied to, Cc = the other participants, excluding the authenticated account and from_email. Requires thread_id. Explicit to/cc win; when cc is omitted the sender being replied to is added to the derived Cc if they are not already in To. Defaults to false.",
         ),
     ] = False,
+    draft_id: Annotated[
+        Optional[str],
+        Field(
+            description="Send an EXISTING draft (as returned by draft_gmail_message) instead of composing. The draft already contains its recipients, subject, body and attachments, so pass ONLY draft_id — combining it with content/addressing arguments is rejected. Note a draft's ID can rotate if the draft is edited in the Gmail UI; on a not-found error, use list_drafts to find the live ID.",
+        ),
+    ] = None,
 ) -> str:
     """
     Sends an email using the user's Gmail account. Supports new emails, replies, and
-    forwards, with optional attachments. Supports Gmail's "Send As" feature to send
-    from configured alias addresses.
+    forwards, with optional attachments — or, via draft_id, sends an EXISTING draft
+    as-is. Supports Gmail's "Send As" feature to send from configured alias addresses.
 
     To forward an existing message, pass forward_message_id. The original subject,
     body (quoted with a "Forwarded message" header), and attachments are carried over.
     In forward mode, body (if any) is prepended as a note and subject is optional.
     Threading, reply, and signature options do not apply when forwarding.
+
+    To send a previously composed draft (the "commit" half of a compose-review-send
+    split), pass ONLY draft_id: the draft is sent exactly as it stands via Gmail's
+    drafts.send. Edit safety (measured): a draft's message_id rotates on every edit —
+    never cache it; draft_id survives web/mobile body, subject, and attachment edits,
+    and only a discard-recreate rotates it. If it no longer resolves, list_drafts
+    re-finds the live draft.
 
     Args:
         to (str): Recipient email address.
@@ -2439,6 +2454,9 @@ async def send_gmail_message(
             values; when cc is omitted, the sender being replied to is added to the derived Cc
             unless they are already in To (so an explicit 'to' that redirects the reply still
             keeps them on it).
+        draft_id (Optional[str]): Send this EXISTING draft instead of composing. Takes
+            ONLY draft_id — the draft already carries its content, so content/addressing
+            arguments are rejected alongside it. Uses drafts.send (gmail.compose scope).
 
     Returns:
         str: Confirmation message with the sent email's message ID.
@@ -2446,6 +2464,9 @@ async def send_gmail_message(
     Examples:
         # Send a new email
         send_gmail_message(to="user@example.com", subject="Hello", body="Hi there!")
+
+        # Send an existing draft, exactly as composed/reviewed
+        send_gmail_message(draft_id="r-123")
 
         # Send with a custom display name
         send_gmail_message(to="user@example.com", subject="Hello", body="Hi there!", from_name="John Doe")
@@ -2533,6 +2554,60 @@ async def send_gmail_message(
     """
     # Forwarding reuses the original message's content, so it follows a dedicated
     # path that fetches and quotes the source message.
+    if draft_id:
+        # Draft send: the draft already contains everything, so any content or
+        # addressing argument alongside draft_id is almost certainly a mistake —
+        # the caller may believe those values will be applied. Reject by name
+        # rather than silently ignoring them.
+        content_args = {
+            "to": to,
+            "subject": subject,
+            "body": body,
+            "cc": cc,
+            "bcc": bcc,
+            "from_name": from_name,
+            "from_email": from_email,
+            "thread_id": thread_id,
+            "in_reply_to": in_reply_to,
+            "references": references,
+            "attachments": attachments,
+            "forward_message_id": forward_message_id,
+            "reply_all": reply_all,
+            "quote_original": quote_original,
+        }
+        supplied = sorted(k for k, v in content_args.items() if v)
+        if supplied:
+            raise UserInputError(
+                "draft_id sends an existing draft AS-IS; it cannot be combined "
+                f"with content/addressing argument(s): {', '.join(supplied)}. To "
+                "change the draft first, use draft_gmail_message(action='update')."
+            )
+        try:
+            sent = await asyncio.to_thread(
+                service.users()
+                .drafts()
+                .send(userId="me", body={"id": draft_id})
+                .execute,
+                num_retries=GOOGLE_API_WRITE_RETRIES,
+            )
+        except HttpError as exc:
+            if getattr(getattr(exc, "resp", None), "status", None) in (400, 404):
+                raise UserInputError(
+                    f"Draft '{draft_id}' was not found — it may have already been "
+                    "sent or deleted, or its ID rotated after an edit in the Gmail "
+                    "UI. Use list_drafts to find the live draft."
+                ) from exc
+            raise
+        message_id = sent.get("id")
+        sent_thread_id = sent.get("threadId")
+        logger.info(
+            f"[send_gmail_message] Draft {draft_id} sent as message {message_id}."
+        )
+        return (
+            f"Draft {draft_id} sent for {user_google_email}. "
+            f"Message ID: {message_id}, Thread ID: {sent_thread_id}."
+        )
+
     if forward_message_id:
         # 'to' is optional on the signature only so a reply_all send can derive it;
         # a forward has no thread to derive from, so it still requires one.
@@ -2848,162 +2923,6 @@ async def _forward_gmail_message_impl(
     return f"Email forwarded{attachment_info}! Message ID: {sent_message_id}"
 
 
-async def _draft_exists(service, draft_id: str) -> bool:
-    """True if draft_id still resolves to a live draft (else False on 404)."""
-    try:
-        await asyncio.to_thread(
-            service.users()
-            .drafts()
-            .get(userId="me", id=draft_id, format="minimal")
-            .execute
-        )
-        return True
-    except HttpError as e:
-        # 404 = draft gone; 400 = malformed/invalid id. Either way the draft_id is
-        # unusable, so report it missing and let the caller fall back to thread_id.
-        if e.resp.status in (400, 404):
-            return False
-        raise
-
-
-@server.tool(
-    title="Send Gmail Draft",
-    annotations=ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=False,
-        idempotentHint=False,
-        openWorldHint=True,
-    ),
-)
-@handle_http_errors("send_gmail_draft", service_type="gmail")
-@require_google_service("gmail", GMAIL_COMPOSE_SCOPE)
-async def send_gmail_draft(
-    service,
-    user_google_email: str,
-    draft_id: Annotated[
-        Optional[str],
-        Field(
-            description=(
-                "Primary handle for the draft to send (as returned by draft_gmail_message). "
-                "In practice the most stable handle — it survives body edits on Gmail web and "
-                "mobile; only a rare discard-recreate rotates it. Pass this when you have it. "
-                "Provide draft_id, thread_id, or both (both = draft_id preferred, thread_id "
-                "used only as a fallback if draft_id no longer resolves)."
-            ),
-        ),
-    ] = None,
-    thread_id: Annotated[
-        Optional[str],
-        Field(
-            description=(
-                "Fallback handle: send the unique draft in this Gmail thread when draft_id is "
-                "absent or no longer resolves. CAVEAT: a draft's thread_id changes if the user "
-                "edits its SUBJECT (Gmail re-threads by subject), so a subject edit can move the "
-                "draft out of this thread and this lookup will miss it — draft_id is preferred. "
-                "Errors if the thread has more than one draft. Provide draft_id, thread_id, or both."
-            ),
-        ),
-    ] = None,
-) -> str:
-    """
-    Sends an existing Gmail draft, by draft_id or (edit-proof) thread_id.
-
-    This is the "commit" half of a compose-then-send split: a draft is composed
-    separately (draft_gmail_message, which can reply or forward), reviewed, and then
-    sent here. Sending requires the gmail.compose scope (drafts.send is not covered by
-    gmail.send).
-
-    **Edit safety (measured):** message_id rotates on *every* edit — never cache it.
-    draft_id is the most stable handle (unchanged across web/mobile body edits, subject
-    changes, and attachments in testing); only a rare discard-recreate rotates it.
-    thread_id is stable for body/attachment edits but MOVES if the subject is edited
-    (Gmail re-threads by subject). So prefer draft_id; thread_id is only a fallback and
-    can miss a draft whose subject changed.
-
-    Args:
-        draft_id (Optional[str]): Primary handle for the draft to send.
-        thread_id (Optional[str]): Fallback — send the unique draft in this thread.
-        user_google_email (str): The user's Google email address. Required.
-
-    Returns:
-        str: Confirmation with the sent message's ID and thread ID.
-    """
-    if not draft_id and not thread_id:
-        raise UserInputError("Provide 'draft_id', 'thread_id', or both.")
-
-    resolved_id = None
-
-    # Prefer draft_id — empirically the most stable handle across edits (web + mobile).
-    if draft_id and await _draft_exists(service, draft_id):
-        resolved_id = draft_id
-
-    # Fall back to a thread scan when draft_id is missing or no longer resolves. drafts.list
-    # returns each draft's message.threadId, so we can match without extra get() calls.
-    # NOTE: thread_id moves if the user edited the draft's SUBJECT, so this can legitimately
-    # find nothing even though the draft still exists — hence draft_id is preferred. Paginate
-    # so accounts with many drafts don't yield a false "no draft found"; stop early once
-    # the result is already ambiguous.
-    if resolved_id is None and thread_id:
-        logger.info(
-            f"[send_gmail_draft] Resolving draft in thread '{thread_id}' for '{user_google_email}'"
-        )
-        matches = []
-        page_token = None
-        while True:
-            drafts_resp = await asyncio.to_thread(
-                service.users()
-                .drafts()
-                .list(userId="me", maxResults=500, pageToken=page_token)
-                .execute
-            )
-            matches.extend(
-                d
-                for d in drafts_resp.get("drafts", [])
-                if d.get("message", {}).get("threadId") == thread_id
-            )
-            page_token = drafts_resp.get("nextPageToken")
-            if len(matches) > 1 or not page_token:
-                break
-        if len(matches) > 1:
-            ids = ", ".join(d.get("id", "?") for d in matches)
-            raise UserInputError(
-                f"Thread '{thread_id}' has {len(matches)} drafts ({ids}); ambiguous. "
-                "Pass a specific draft_id."
-            )
-        if matches:
-            resolved_id = matches[0].get("id")
-
-    if resolved_id is None:
-        hint = (
-            " If the draft's subject was edited it may have moved to a different thread — "
-            "pass draft_id instead."
-            if thread_id and not draft_id
-            else ""
-        )
-        raise UserInputError(
-            f"No draft found for the given handle(s). It may have already been sent "
-            f"or discarded.{hint}"
-        )
-
-    draft_id = resolved_id
-
-    logger.info(
-        f"[send_gmail_draft] Invoked. Draft ID: '{draft_id}', Email: '{user_google_email}'"
-    )
-
-    sent = await asyncio.to_thread(
-        service.users().drafts().send(userId="me", body={"id": draft_id}).execute,
-        num_retries=GOOGLE_API_WRITE_RETRIES,
-    )
-    message_id = sent.get("id")
-    sent_thread_id = sent.get("threadId")
-    logger.info(f"[send_gmail_draft] Draft {draft_id} sent as message {message_id}.")
-    return (
-        f"Draft {draft_id} sent for {user_google_email}. "
-        f"Message ID: {message_id}, Thread ID: {sent_thread_id}."
-    )
-
-
 @server.tool(
     title="Draft Gmail Message",
     annotations=ToolAnnotations(
@@ -3099,7 +3018,7 @@ async def draft_gmail_message(
     forward_message_id: Annotated[
         Optional[str],
         Field(
-            description="Set to a Gmail message ID to draft a FORWARD of that message. The original subject, quoted body, and (optionally) attachments are carried over; 'body' becomes an optional note prepended above the forward. The result is a normal draft — nothing is sent until send_gmail_draft is called.",
+            description="Set to a Gmail message ID to draft a FORWARD of that message. The original subject, quoted body, and (optionally) attachments are carried over; 'body' becomes an optional note prepended above the forward. The result is a normal draft — nothing is sent until send_gmail_message(draft_id=...) is called.",
         ),
     ] = None,
     include_forwarded_attachments: Annotated[
@@ -3186,9 +3105,11 @@ async def draft_gmail_message(
             404, list the thread's drafts to find the live ID.
 
     Returns:
-        str: Confirmation with the created/updated draft's ID, message ID, and thread ID
-            (pass the thread ID to send_gmail_draft — it survives edits made to the
-            draft), or a deletion confirmation.
+        str: Confirmation with the created/updated draft's ID, message ID, and thread ID.
+            To send the draft later, pass the draft ID to
+            send_gmail_message(draft_id=...); if the draft is edited in the Gmail UI its
+            ID can rotate — list_drafts re-finds the live one. For deletions, a
+            confirmation of the permanent delete.
 
     Examples:
         # Create a new draft
@@ -3489,18 +3410,14 @@ async def draft_gmail_message(
     attachment_info = _format_attachment_result(
         attached_count, requested_attachment_count
     )
-    # Return the thread_id too: it's the only handle that survives a later edit in the
-    # Gmail UI (the draft_id and message_id both rotate on edit), so send_gmail_draft can
-    # re-resolve the live draft by thread. See send_gmail_draft.
     result = f"Draft {verb}{attachment_info}! Draft ID: {draft_id}"
     if message_id:
         result += f", Message ID: {message_id}"
     if result_thread_id:
         result += (
-            f", Thread ID: {result_thread_id}. To send later, prefer "
-            f"send_gmail_draft(thread_id='{result_thread_id}') — it survives edits made to "
-            f"the draft in Gmail; send_gmail_draft(draft_id='{draft_id}') works only if the "
-            f"draft is not edited first."
+            f", Thread ID: {result_thread_id}. To send later: "
+            f"send_gmail_message(draft_id='{draft_id}'). Note the draft ID can rotate "
+            f"if the draft is edited in the Gmail UI — list_drafts re-finds the live one."
         )
     return result
 
