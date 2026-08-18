@@ -5,7 +5,6 @@ Shared utilities for Google Sheets operations including A1 parsing and
 conditional formatting helpers.
 """
 
-
 import asyncio
 import json
 import logging
