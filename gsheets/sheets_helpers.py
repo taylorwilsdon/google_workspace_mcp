@@ -24,7 +24,7 @@ MAX_GRID_METADATA_CELLS = 5000
 MAX_READ_SHEET_ROWS = 1000
 
 A1_PART_REGEX = re.compile(r"^([A-Za-z]*)(\d*)$")
-SHEET_TITLE_SAFE_RE = re.compile(r"^\w+$")
+SHEET_TITLE_SAFE_RE = re.compile(r"^[A-Za-z0-9_]+$")
 COLUMN_LETTER_REGEX = re.compile(r"^[A-Za-z]+$")
 QUOTED_SHEET_ONLY_REGEX = re.compile(r"^'(?:[^']|'')+'$")
 

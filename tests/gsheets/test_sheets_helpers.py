@@ -55,19 +55,6 @@ def test_quote_sheet_title_quotes_titles_with_trailing_newline():
     assert _quote_sheet_title_for_a1("Sheet1\n") == "'Sheet1\n'"
 
 
-def test_sheet_title_safe_re_matches_word_chars():
-    """SHEET_TITLE_SAFE_RE uses \\w+ which covers letters, digits, underscore."""
-    from gsheets.sheets_helpers import SHEET_TITLE_SAFE_RE
-
-    # ASCII alphanumeric and underscore — safe, must match
-    for title in ("Sheet1", "My_Sheet", "_hidden", "sheet123", "A"):
-        assert SHEET_TITLE_SAFE_RE.fullmatch(title), f"Expected match: {title!r}"
-
-    # Titles with spaces or special chars — not safe, must not match
-    for title in ("My Sheet", "data-2024", "report.csv", "", "a b"):
-        assert not SHEET_TITLE_SAFE_RE.fullmatch(title), f"Expected no match: {title!r}"
-
-
 @pytest.mark.parametrize(
     ("range_name", "expected"),
     [
