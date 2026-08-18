@@ -225,7 +225,8 @@ class SecureFastMCP(FastMCP):
         # Rebuild middleware stack
         app.middleware_stack = app.build_middleware_stack()
         logger.debug(
-            "Added middleware stack: WellKnownCacheControl, OriginValidation, SessionManagement"
+            "Added middleware stack: WellKnownCacheControl, OriginValidation, "
+            "Session Management"
         )
         return app
 
@@ -734,7 +735,17 @@ def get_auth_provider() -> Optional[GoogleProvider]:
 @server.custom_route("/", methods=["GET"])
 @server.custom_route("/health", methods=["GET"])
 async def health_check(request: Request):
-    return JSONResponse({"status": "ok"}
+    try:
+        version = metadata.version("workspace-mcp")
+    except metadata.PackageNotFoundError:
+        version = "dev"
+    return JSONResponse(
+        {
+            "status": "healthy",
+            "service": "workspace-mcp",
+            "version": version,
+            "transport": get_transport_mode(),
+        }
     )
 
 
