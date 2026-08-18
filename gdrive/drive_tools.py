@@ -28,6 +28,8 @@ from core.attachment_storage import get_attachment_storage, get_attachment_url
 from core.utils import (
     GOOGLE_API_WRITE_RETRIES,
     IMAGE_MIME_TYPES,
+    UserInputError,
+    stdio_only_args,
     encode_image_content,
     extract_office_xml_text,
     extract_pdf_text,
@@ -1263,6 +1265,7 @@ async def _import_with_conversion(
     file_url: Optional[str],
     source_format: Optional[str],
     folder_id: str,
+    content_supported: bool = True,
 ) -> str:
     """
     Shared implementation for the import_to_google_* tools.
@@ -1277,11 +1280,30 @@ async def _import_with_conversion(
         id_label: Label for the created file's ID in the confirmation message.
         target_mime_type: The ``application/vnd.google-apps.*`` destination type.
         format_map: Extension -> source MIME type allowlist for this destination.
+        content_supported: Whether the calling tool exposes a ``content`` param
+            (Slides takes binary formats only), so the remote-mode error can name
+            the routes that actually exist on that tool.
     """
     logger.info(
         f"[{tool_name}] Invoked. Email: '{user_google_email}', "
         f"File Name: '{file_name}', Source Format: '{source_format}', Folder ID: '{folder_id}'"
     )
+
+    # A client-side path can NEVER resolve on a remote server — without this
+    # guard it falls through to validate_file_path() and fails with a bare
+    # "Path does not exist", which reads as a typo rather than a topology
+    # mismatch and sends callers off checking spelling and permissions.
+    if file_path is not None and get_transport_mode() == "streamable-http":
+        alternatives = (
+            "pass the text via 'content', or host the file and pass 'file_url'"
+            if content_supported
+            else "host the file somewhere the server can reach and pass 'file_url'"
+        )
+        raise UserInputError(
+            f"'file_path' is unavailable in remote (streamable-http) mode: it "
+            f"resolves on the MCP server's filesystem, which is not the "
+            f"caller's. Instead, {alternatives}."
+        )
 
     media, source_mime_type, remote_file_data = await _resolve_import_media(
         tool_name=tool_name,
@@ -1351,6 +1373,9 @@ async def _import_with_conversion(
 
 @server.tool(
     title="Import to Google Doc",
+    # Remote (streamable-http) servers hide file_path entirely: a client-side
+    # path can never resolve here, so it is not advertised (stdio_only_args).
+    exclude_args=stdio_only_args("file_path"),
     annotations=ToolAnnotations(
         readOnlyHint=False,
         destructiveHint=False,
@@ -1375,14 +1400,17 @@ async def import_to_google_doc(
 
     Google Drive automatically converts the source file to native Google Docs format,
     preserving formatting like headings, lists, bold, italic, etc.
-    For batch operations, prefer file_path for files on disk so callers do not need
-    to load full file contents into their context.
+    Transport note: 'file_path' resolves on the machine the SERVER runs on, so
+    only local (stdio) servers offer it — remote (streamable-http) servers omit
+    the parameter from this tool's schema entirely (and reject it with guidance
+    if an out-of-date client still sends it). Remote routes: 'file_url', or
+    'content' where this tool supports it.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
         file_name (str): The name for the new Google Doc (extension will be ignored).
         content (Optional[str]): Text content for text-based formats. Use only for short snippets or content already in memory.
-        file_path (Optional[str]): Local file path or file:// URL for any supported format (MD, TXT, HTML, DOCX, ODT, RTF). Appropriate for larger files than content, but file_path may still load the file into memory or perform non-streaming reads. Avoid very large files that could exceed memory or time limits; use streaming/chunked uploads or an alternative API for huge files.
+        file_path (Optional[str]): Offered by LOCAL (stdio) servers only — remote servers omit this parameter. Server-side file path or file:// URL for any supported format (MD, TXT, HTML, DOCX, ODT, RTF). Appropriate for larger files than content, but file_path may still load the file into memory or perform non-streaming reads. Avoid very large files that could exceed memory or time limits; use streaming/chunked uploads or an alternative API for huge files.
         file_url (Optional[str]): Remote URL to fetch the file from (http/https).
         source_format (Optional[str]): Source format hint ('md', 'markdown', 'docx', 'txt', 'html', 'rtf', 'odt').
                                        Auto-detected from file_name extension if not provided.
@@ -1392,7 +1420,7 @@ async def import_to_google_doc(
         str: Confirmation message with the new Google Doc link.
 
     Examples:
-        # Import a markdown file from disk (preferred for batch operations)
+        # Import a file from the server's own disk (local/stdio servers only)
         import_to_google_doc(file_name="My Doc.md", file_path="/path/to/my-doc.md", source_format="md")
 
         # Import markdown content directly
@@ -1423,6 +1451,9 @@ async def import_to_google_doc(
 
 @server.tool(
     title="Import to Google Slides",
+    # Remote (streamable-http) servers hide file_path entirely: a client-side
+    # path can never resolve here, so it is not advertised (stdio_only_args).
+    exclude_args=stdio_only_args("file_path"),
     annotations=ToolAnnotations(
         readOnlyHint=False,
         destructiveHint=False,
@@ -1446,13 +1477,16 @@ async def import_to_google_slides(
 
     Google Drive automatically converts the source presentation to native Google Slides format,
     preserving slides, layouts, text, and images.
-    For batch operations, prefer file_path for files on disk so callers do not need
-    to load full file contents into their context.
+    Transport note: 'file_path' resolves on the machine the SERVER runs on, so
+    only local (stdio) servers offer it — remote (streamable-http) servers omit
+    the parameter from this tool's schema entirely (and reject it with guidance
+    if an out-of-date client still sends it). Remote routes: 'file_url', or
+    'content' where this tool supports it.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
         file_name (str): The name for the new Google Slides presentation (extension will be ignored).
-        file_path (Optional[str]): Local file path or file:// URL for any supported format (PPTX, PPT, ODP). Appropriate for larger files than content, but file_path may still load the file into memory or perform non-streaming reads. Avoid very large files that could exceed memory or time limits; use streaming/chunked uploads or an alternative API for huge files.
+        file_path (Optional[str]): Offered by LOCAL (stdio) servers only — remote servers omit this parameter. Server-side file path or file:// URL for any supported format (PPTX, PPT, ODP). Appropriate for larger files than content, but file_path may still load the file into memory or perform non-streaming reads. Avoid very large files that could exceed memory or time limits; use streaming/chunked uploads or an alternative API for huge files.
         file_url (Optional[str]): Remote URL to fetch the presentation from (http/https).
         source_format (Optional[str]): Source format hint ('pptx', 'ppt', 'odp').
                                        Auto-detected from file_name extension if not provided.
@@ -1462,7 +1496,7 @@ async def import_to_google_slides(
         str: Confirmation message with the new Google Slides link.
 
     Examples:
-        # Import a local PowerPoint file (preferred for batch operations)
+        # Import a PowerPoint file from the server's own disk (local/stdio servers only)
         import_to_google_slides(file_name="Deck", file_path="/path/to/deck.pptx")
 
         # Import from URL
@@ -1482,11 +1516,15 @@ async def import_to_google_slides(
         file_url=file_url,
         source_format=source_format,
         folder_id=folder_id,
+        content_supported=False,
     )
 
 
 @server.tool(
     title="Import to Google Sheets",
+    # Remote (streamable-http) servers hide file_path entirely: a client-side
+    # path can never resolve here, so it is not advertised (stdio_only_args).
+    exclude_args=stdio_only_args("file_path"),
     annotations=ToolAnnotations(
         readOnlyHint=False,
         destructiveHint=False,
@@ -1511,14 +1549,17 @@ async def import_to_google_sheets(
 
     Google Drive automatically converts the source spreadsheet to native Google Sheets format,
     preserving rows, columns, sheets, and values.
-    For batch operations, prefer file_path for files on disk so callers do not need
-    to load full file contents into their context.
+    Transport note: 'file_path' resolves on the machine the SERVER runs on, so
+    only local (stdio) servers offer it — remote (streamable-http) servers omit
+    the parameter from this tool's schema entirely (and reject it with guidance
+    if an out-of-date client still sends it). Remote routes: 'file_url', or
+    'content' where this tool supports it.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
         file_name (str): The name for the new Google Sheets spreadsheet (extension will be ignored).
         content (Optional[str]): Text content for text-based formats (CSV, TSV). Use only for short snippets or content already in memory.
-        file_path (Optional[str]): Local file path or file:// URL for any supported format (XLSX, XLS, ODS, CSV, TSV). Appropriate for larger files than content, but file_path may still load the file into memory or perform non-streaming reads. Avoid very large files that could exceed memory or time limits; use streaming/chunked uploads or an alternative API for huge files.
+        file_path (Optional[str]): Offered by LOCAL (stdio) servers only — remote servers omit this parameter. Server-side file path or file:// URL for any supported format (XLSX, XLS, ODS, CSV, TSV). Appropriate for larger files than content, but file_path may still load the file into memory or perform non-streaming reads. Avoid very large files that could exceed memory or time limits; use streaming/chunked uploads or an alternative API for huge files.
         file_url (Optional[str]): Remote URL to fetch the spreadsheet from (http/https).
         source_format (Optional[str]): Source format hint ('xlsx', 'xls', 'ods', 'csv', 'tsv').
                                        Auto-detected from file_name extension if not provided.
@@ -1528,7 +1569,7 @@ async def import_to_google_sheets(
         str: Confirmation message with the new Google Sheets link.
 
     Examples:
-        # Import a local Excel file (preferred for batch operations)
+        # Import an Excel file from the server's own disk (local/stdio servers only)
         import_to_google_sheets(file_name="Budget", file_path="/path/to/budget.xlsx")
 
         # Import CSV content directly
@@ -1831,6 +1872,9 @@ async def check_drive_file_public_access(
 
 @server.tool(
     title="Update Drive File",
+    # Remote (streamable-http) servers hide file_path entirely: a client-side
+    # path can never resolve here, so it is not advertised (stdio_only_args).
+    exclude_args=stdio_only_args("file_path"),
     annotations=ToolAnnotations(
         readOnlyHint=False,
         destructiveHint=True,
@@ -1922,6 +1966,16 @@ async def update_drive_file(
         raise ValueError(
             f"mode='{mode}' requires 'content' (the text to add). "
             "'file_path' and 'file_url' are only supported with mode='replace'."
+        )
+
+    # Same guard as _import_with_conversion: exclude_args hides file_path from
+    # the remote schema, but a client with a cached schema can still send it —
+    # and the path would resolve on the SERVER's filesystem, not the caller's.
+    if file_path is not None and get_transport_mode() == "streamable-http":
+        raise UserInputError(
+            "'file_path' is unavailable in remote (streamable-http) mode: it "
+            "reads from the MCP server's filesystem, not yours. Pass the text "
+            "via 'content', or host the file and pass 'file_url'."
         )
 
     current_file_fields = (

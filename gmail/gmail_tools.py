@@ -746,13 +746,22 @@ def _format_attachment_error(
     detail = str(error)
 
     if file_path and isinstance(error, ValueError):
-        if "outside permitted directories" in detail:
-            detail = (
-                "local file access is limited to the server's permitted directories, "
-                f"so '{file_path}' could not be read. Files on external mounts such as "
-                "/run/media may be blocked; move the file into the managed attachment "
-                "directory or another allowed directory, or set ALLOWED_FILE_DIRS."
-            )
+        if "permitted directories" in detail:
+            if get_transport_mode() == "streamable-http":
+                # Remote server: the path was never going to resolve here, and
+                # ALLOWED_FILE_DIRS is operator advice a caller can't act on.
+                detail = (
+                    f"'{file_path}' is a path on the SERVER, which runs remotely "
+                    "and cannot see the caller's filesystem. Supply the file as "
+                    "base64 'content' (with 'filename') instead of a 'path'."
+                )
+            else:
+                detail = (
+                    "local file access is limited to the server's permitted directories, "
+                    f"so '{file_path}' could not be read. Files on external mounts such as "
+                    "/run/media may be blocked; move the file into the managed attachment "
+                    "directory or another allowed directory, or set ALLOWED_FILE_DIRS."
+                )
 
     return f"{label}: {detail}"
 

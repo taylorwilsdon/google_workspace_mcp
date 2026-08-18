@@ -548,6 +548,13 @@ def main():
         else:
             args.transport = "stdio"
 
+    # Set the transport BEFORE tools are imported (they are imported further down
+    # in main): tool registration adapts to it — e.g. file-path parameters are
+    # excluded from tool schemas on remote transports, where a client-side path
+    # can never resolve. Setting it here (rather than at server start) is what
+    # makes that decoration-time decision possible.
+    set_transport_mode(args.transport)
+
     _env_http_port = os.getenv("WORKSPACE_MCP_HTTP_PORT", "").strip()
     http_port = None
     if _env_http_port:
@@ -871,8 +878,8 @@ def main():
             sys.exit(1)
 
     try:
-        # Set transport mode for OAuth callback handling
-        set_transport_mode(args.transport)
+        # (transport mode was set just after argument resolution, before tool
+        # imports — see above)
 
         # Configure auth initialization for FastMCP lifecycle events
         if args.transport == "streamable-http":
