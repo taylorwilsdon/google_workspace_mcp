@@ -35,6 +35,7 @@ class TestTlsEnvVarLogic:
         return None
 
     def test_both_vars_set_returns_ssl_config(self):
+        """Both cert and key present returns a uvicorn-compatible SSL dict."""
         config = self._build_ssl_config("/certs/server.pem", "/certs/server.key")
         assert config == {
             "ssl_certfile": "/certs/server.pem",
@@ -42,18 +43,23 @@ class TestTlsEnvVarLogic:
         }
 
     def test_only_certfile_set_returns_none(self):
+        """Cert without key returns None — partial config is not usable."""
         assert self._build_ssl_config("/certs/server.pem", None) is None
 
     def test_only_keyfile_set_returns_none(self):
+        """Key without cert returns None — partial config is not usable."""
         assert self._build_ssl_config(None, "/certs/server.key") is None
 
     def test_neither_set_returns_none(self):
+        """Neither var set returns None — plaintext HTTP is the default."""
         assert self._build_ssl_config(None, None) is None
 
     def test_empty_string_certfile_treated_as_unset(self):
+        """Empty-string certfile is coerced to None by the `or None` guard."""
         assert self._build_ssl_config("", "/certs/server.key") is None
 
     def test_empty_string_keyfile_treated_as_unset(self):
+        """Empty-string keyfile is coerced to None by the `or None` guard."""
         assert self._build_ssl_config("/certs/server.pem", "") is None
 
 
@@ -65,14 +71,17 @@ class TestTlsEnvVarReading:
     """
 
     def test_absent_env_var_gives_none(self, monkeypatch):
+        """Unset env var returns None after the `or None` coercion."""
         monkeypatch.delenv("WORKSPACE_MCP_SSL_CERTFILE", raising=False)
         assert (os.getenv("WORKSPACE_MCP_SSL_CERTFILE") or None) is None
 
     def test_empty_env_var_gives_none(self, monkeypatch):
+        """Empty-string env var is treated the same as absent."""
         monkeypatch.setenv("WORKSPACE_MCP_SSL_CERTFILE", "")
         assert (os.getenv("WORKSPACE_MCP_SSL_CERTFILE") or None) is None
 
     def test_set_env_var_returns_value(self, monkeypatch):
+        """A non-empty env var passes through unchanged."""
         monkeypatch.setenv("WORKSPACE_MCP_SSL_CERTFILE", "/path/to/cert.pem")
         assert (os.getenv("WORKSPACE_MCP_SSL_CERTFILE") or None) == "/path/to/cert.pem"
 
@@ -295,6 +304,7 @@ class TestDefaultSchemeSelection:
         return "https" if (tls_enabled and transport == "streamable-http") else "http"
 
     def test_streamable_http_with_tls_uses_https(self):
+        """TLS + streamable-http → https:// scheme."""
         assert self._scheme(True, "streamable-http") == "https"
 
     def test_stdio_with_tls_uses_http(self):
@@ -302,9 +312,11 @@ class TestDefaultSchemeSelection:
         assert self._scheme(True, "stdio") == "http"
 
     def test_streamable_http_without_tls_uses_http(self):
+        """No TLS → http:// scheme regardless of transport."""
         assert self._scheme(False, "streamable-http") == "http"
 
     def test_stdio_without_tls_uses_http(self):
+        """stdio without TLS → http:// scheme."""
         assert self._scheme(False, "stdio") == "http"
 
 
