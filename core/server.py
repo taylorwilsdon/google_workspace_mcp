@@ -4,10 +4,7 @@ import asyncio
 import hashlib
 import logging
 import os
-import threading
-import time
-from collections import deque
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional
 from importlib import metadata
 from urllib.parse import urlparse, ParseResult
 
@@ -141,140 +138,6 @@ def _is_same_origin_as_host(origin: str, host_header: Optional[str]) -> bool:
     return parsed.hostname == host.hostname and origin_port == host_port
 
 
-class RateLimitMiddleware:
-    """Sliding-window per-source-IP rate limiter with tiered per-endpoint limits.
-
-    Three tiers, each configurable via env var (requests per minute per IP):
-      WORKSPACE_MCP_RATE_LIMIT_OAUTH_RPM   — OAuth/DCR endpoints  (default: 20)
-      WORKSPACE_MCP_RATE_LIMIT_TOOLS_RPM   — MCP tool endpoints   (default: 120)
-      WORKSPACE_MCP_RATE_LIMIT_DEFAULT_RPM — Everything else      (default: 300)
-
-    Set WORKSPACE_MCP_RATE_LIMIT_ENABLED=false to disable entirely (e.g. local dev).
-
-    Health/liveness probes (/health, /) are always exempted so they never
-    consume tokens that would cause Kubernetes to mark the pod unhealthy.
-
-    Counters are in-process (per-pod). Combined with the HAProxy route
-    annotations (rate-limit-connections.*), this provides two independent
-    enforcement layers for multi-replica deployments.
-
-    X-Forwarded-For is trusted because all traffic arrives via the OpenShift
-    HAProxy router, which sets the header to the original client IP.
-    """
-
-    _PROBE_PATHS = frozenset({"/health", "/"})
-    _OAUTH_PREFIXES = (
-        "/oauth2callback",
-        "/.well-known/oauth",
-        "/oauth/",
-        "/register",
-        "/authorize",
-        "/token",
-    )
-    _MCP_PREFIXES = ("/mcp", "/sse", "/messages")
-
-    # Bound the tracked-IP table to prevent unbounded memory growth.
-    _MAX_TRACKED_KEYS = 10_000
-
-    def __init__(self, app: ASGIApp) -> None:
-        self.app = app
-
-        enabled_raw = os.getenv("WORKSPACE_MCP_RATE_LIMIT_ENABLED", "true").strip().lower()
-        self.enabled = enabled_raw not in ("false", "0", "no", "off")
-
-        self._oauth_rpm = int(os.getenv("WORKSPACE_MCP_RATE_LIMIT_OAUTH_RPM", "20"))
-        self._tools_rpm = int(os.getenv("WORKSPACE_MCP_RATE_LIMIT_TOOLS_RPM", "120"))
-        self._default_rpm = int(os.getenv("WORKSPACE_MCP_RATE_LIMIT_DEFAULT_RPM", "300"))
-
-        # {(ip, category): deque of monotonic timestamps within the last 60 s}
-        self._windows: Dict[Tuple[str, str], deque] = {}
-        self._lock = threading.Lock()
-        self._request_count = 0  # used to trigger periodic cleanup
-
-        if self.enabled:
-            logger.info(
-                "RateLimitMiddleware enabled — oauth=%d/min tools=%d/min default=%d/min",
-                self._oauth_rpm,
-                self._tools_rpm,
-                self._default_rpm,
-            )
-
-    def _classify(self, path: str) -> tuple[str, int]:
-        """Return (category, limit_per_minute) for the given request path."""
-        if any(path == p or path.startswith(p) for p in self._OAUTH_PREFIXES):
-            return "oauth", self._oauth_rpm
-        if any(path == p or path.startswith(p) for p in self._MCP_PREFIXES):
-            return "tools", self._tools_rpm
-        return "default", self._default_rpm
-
-    def _client_ip(self, scope: "Scope") -> str:
-        headers = dict(scope.get("headers") or [])
-        xff = headers.get(b"x-forwarded-for")
-        if xff:
-            return xff.decode("latin-1").split(",")[0].strip()
-        client = scope.get("client")
-        return client[0] if client else "unknown"
-
-    def _check_and_record(self, ip: str, category: str, limit_rpm: int) -> bool:
-        """Return True (allow) or False (deny). Thread-safe sliding window."""
-        now = time.monotonic()
-        cutoff = now - 60.0
-        key = (ip, category)
-
-        with self._lock:
-            self._request_count += 1
-
-            # Periodic eviction: drop stale keys when the table is too large.
-            if self._request_count % 500 == 0 and len(self._windows) > self._MAX_TRACKED_KEYS:
-                stale = [k for k, dq in self._windows.items() if not dq or dq[-1] < cutoff]
-                for k in stale:
-                    del self._windows[k]
-
-            window = self._windows.get(key)
-            if window is None:
-                self._windows[key] = window = deque()
-
-            while window and window[0] < cutoff:
-                window.popleft()
-
-            if len(window) >= limit_rpm:
-                return False
-
-            window.append(now)
-            return True
-
-    async def __call__(self, scope: "Scope", receive: "Receive", send: "Send") -> None:
-        if not self.enabled or scope["type"] != "http":
-            await self.app(scope, receive, send)
-            return
-
-        path = scope.get("path", "/")
-        if path in self._PROBE_PATHS:
-            await self.app(scope, receive, send)
-            return
-
-        category, limit = self._classify(path)
-        ip = self._client_ip(scope)
-
-        if not self._check_and_record(ip, category, limit):
-            logger.warning(
-                "Rate limit exceeded: ip=%s category=%s path=%s limit=%d/min",
-                ip, category, path, limit,
-            )
-            response = JSONResponse(
-                {"error": "Too Many Requests", "retry_after": 60},
-                status_code=429,
-                headers={"Retry-After": "60"},
-            )
-            await response(scope, receive, send)
-            return
-
-        await self.app(scope, receive, send)
-
-
-rate_limit_middleware = Middleware(RateLimitMiddleware)
-
-
 class OriginValidationMiddleware:
     """Reject browser-originated HTTP requests from untrusted origins."""
 
@@ -353,19 +216,16 @@ class SecureFastMCP(FastMCP):
         app = super().http_app(**kwargs)
 
         # Add middleware in order (first added = outermost layer)
-        # RateLimit is outermost so floods are shed before any other processing.
-        app.user_middleware.insert(0, rate_limit_middleware)
-        app.user_middleware.insert(1, well_known_cache_control_middleware)
-        app.user_middleware.insert(2, origin_validation_middleware)
+        app.user_middleware.insert(0, well_known_cache_control_middleware)
+        app.user_middleware.insert(1, origin_validation_middleware)
 
         # Session Management - extracts session info for MCP context
-        app.user_middleware.insert(3, session_middleware)
+        app.user_middleware.insert(2, session_middleware)
 
         # Rebuild middleware stack
         app.middleware_stack = app.build_middleware_stack()
         logger.debug(
-            "Added middleware stack: RateLimit, WellKnownCacheControl, "
-            "OriginValidation, SessionManagement"
+            "Added middleware stack: WellKnownCacheControl, OriginValidation, SessionManagement"
         )
         return app
 
