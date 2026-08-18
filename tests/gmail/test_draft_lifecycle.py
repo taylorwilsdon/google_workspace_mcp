@@ -221,3 +221,53 @@ class TestCreateUnchanged:
         assert service.users().drafts().create.call_args.kwargs["userId"] == "me"
         service.users().drafts().update.assert_not_called()
         assert "Draft created" in result and "r-new" in result
+
+
+@pytest.mark.asyncio
+class TestTrashDraftNotice:
+    """modify_gmail_message_labels warns when TRASH hits a message backing a DRAFT.
+
+    Trashing a draft's underlying message leaves the draft listed — the trap that
+    produced duplicate 'Draft, Draft' threads twice in real use. The notice costs
+    nothing: the modify response already carries the post-modify labelIds.
+    """
+
+    async def _modify(self, service, **kwargs):
+        from gmail.gmail_tools import modify_gmail_message_labels
+
+        kwargs.setdefault("user_google_email", "user@example.com")
+        return await _unwrap(modify_gmail_message_labels)(service=service, **kwargs)
+
+    async def test_trashing_a_draft_message_appends_the_notice(self):
+        service = Mock()
+        service.users().messages().modify().execute.return_value = {
+            "id": "m1",
+            "labelIds": ["DRAFT", "TRASH"],
+        }
+
+        result = await self._modify(service, message_id="m1", add_label_ids=["TRASH"])
+
+        assert "does NOT" in result and "remove the draft" in result
+        assert "action='delete'" in result
+
+    async def test_trashing_a_normal_message_stays_quiet(self):
+        service = Mock()
+        service.users().messages().modify().execute.return_value = {
+            "id": "m2",
+            "labelIds": ["TRASH"],
+        }
+
+        result = await self._modify(service, message_id="m2", add_label_ids=["TRASH"])
+
+        assert "DRAFT" not in result
+
+    async def test_non_trash_modify_on_a_draft_stays_quiet(self):
+        service = Mock()
+        service.users().messages().modify().execute.return_value = {
+            "id": "m3",
+            "labelIds": ["DRAFT", "STARRED"],
+        }
+
+        result = await self._modify(service, message_id="m3", add_label_ids=["STARRED"])
+
+        assert "remove the draft" not in result

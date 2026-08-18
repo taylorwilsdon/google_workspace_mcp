@@ -3125,7 +3125,10 @@ async def draft_gmail_message(
     Creates, updates, or deletes a draft email in the user's Gmail account. Supports new
     drafts, reply drafts, and forward drafts, with optional attachments; 'update' replaces
     an existing draft's content in place (same draft ID and thread) and 'delete' permanently
-    removes a draft. Supports Gmail's "Send As" feature to draft from configured alias addresses.
+    removes a draft. To REVISE an existing draft, use action='update' — do not compose a
+    replacement and trash the old one: trashing a draft's message does not remove the
+    draft, and sibling drafts piling up on one thread can make Gmail's UI render none of
+    them. Supports Gmail's "Send As" feature to draft from configured alias addresses.
 
     Args:
         user_google_email (str): The user's Google email address. Required for authentication.
@@ -4214,6 +4217,12 @@ async def modify_gmail_message_labels(
     To archive an email, remove the INBOX label.
     To delete an email, add the TRASH label.
 
+    ⚠️ Do NOT use TRASH to get rid of a DRAFT: trashing a draft's underlying message
+    does not remove the draft — it stays in the Drafts list (and several drafts on one
+    thread can make Gmail's UI render none of them). Delete drafts with
+    draft_gmail_message(action='delete', draft_id=...), or revise one in place with
+    action='update' instead of composing a replacement.
+
     Args:
         user_google_email (str): The user's Google email address. Required.
         message_id (str): The ID of the message to modify.
@@ -4238,7 +4247,7 @@ async def modify_gmail_message_labels(
     if remove_label_ids:
         body["removeLabelIds"] = remove_label_ids
 
-    await asyncio.to_thread(
+    modified = await asyncio.to_thread(
         service.users().messages().modify(userId="me", id=message_id, body=body).execute
     )
 
@@ -4248,7 +4257,25 @@ async def modify_gmail_message_labels(
     if remove_label_ids:
         actions.append(f"Removed labels: {', '.join(remove_label_ids)}")
 
-    return f"Message labels updated successfully!\nMessage ID: {message_id}\n{'; '.join(actions)}"
+    result = f"Message labels updated successfully!\nMessage ID: {message_id}\n{'; '.join(actions)}"
+
+    # Trashing a DRAFT's message is a known trap: the draft entry survives. Say so
+    # in the moment, using the labelIds the modify response already carries — the
+    # caller almost certainly wanted the draft GONE, and without this notice they
+    # walk away believing it is.
+    if (
+        add_label_ids
+        and "TRASH" in add_label_ids
+        and "DRAFT" in ((modified or {}).get("labelIds") or [])
+    ):
+        result += (
+            "\n⚠️ This message backs a DRAFT, and trashing the message does NOT "
+            "remove the draft — it remains in the Drafts list. To delete the draft, "
+            "use draft_gmail_message(action='delete', draft_id=...); to revise it, "
+            "prefer action='update' over composing a replacement."
+        )
+
+    return result
 
 
 @server.tool(
@@ -4277,6 +4304,10 @@ async def batch_modify_gmail_message_labels(
 ) -> str:
     """
     Adds or removes labels from multiple Gmail messages in a single batch request.
+
+    ⚠️ Do NOT use TRASH to get rid of DRAFTs: trashing a draft's underlying message
+    does not remove the draft from the Drafts list. Delete drafts with
+    draft_gmail_message(action='delete', draft_id=...) instead.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
