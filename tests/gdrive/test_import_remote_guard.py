@@ -192,3 +192,20 @@ class TestValidateFilePathNamesTheBoundary:
         with pytest.raises(FileNotFoundError) as exc:
             validate_file_path("/definitely/not/here.md")
         assert "on the MCP server" not in str(exc.value)
+
+
+class TestStdioOnlyArgsHelper:
+    """stdio_only_args drives schema-level hiding of server-side path params."""
+
+    @patch("core.utils.get_transport_mode", return_value="streamable-http")
+    def test_remote_returns_the_names_to_exclude(self, _mode):
+        from core.utils import stdio_only_args
+
+        assert stdio_only_args("file_path") == ["file_path"]
+        assert stdio_only_args("a", "b") == ["a", "b"]
+
+    @patch("core.utils.get_transport_mode", return_value="stdio")
+    def test_stdio_returns_none_so_params_stay_advertised(self, _mode):
+        from core.utils import stdio_only_args
+
+        assert stdio_only_args("file_path") is None

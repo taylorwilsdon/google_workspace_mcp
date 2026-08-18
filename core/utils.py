@@ -30,6 +30,29 @@ logger = logging.getLogger(__name__)
 GOOGLE_API_WRITE_RETRIES = 3
 
 
+def stdio_only_args(*names: str) -> list[str] | None:
+    """Tool-registration helper: hide these parameters on remote transports.
+
+    Server-side file paths (``file_path`` and friends) resolve on the machine the
+    SERVER runs on, so on a remote (streamable-http) deployment they can never
+    work for the caller. Rather than advertising a dead parameter plus warning
+    text — schema the client pays context for on every session — the parameter is
+    excluded from the tool schema entirely via FastMCP's ``exclude_args``. Local
+    (stdio) servers keep it. Same deployment-adaptive-schema idiom as the managed
+    identity handling of ``user_google_email``.
+
+    Runtime guards on these parameters stay in place as defense-in-depth: a
+    client holding a cached schema can still send the argument.
+
+    Returns the names as a list when the transport is remote (hide them), or
+    ``None`` for local transports (advertise normally). Transport must be set
+    before tool modules are imported — main() and fastmcp_server both do.
+    """
+    if get_transport_mode() == "streamable-http":
+        return list(names)
+    return None
+
+
 class TransientNetworkError(Exception):
     """Custom exception for transient network errors after retries."""
 
