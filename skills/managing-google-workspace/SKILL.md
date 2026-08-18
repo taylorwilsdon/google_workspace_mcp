@@ -204,11 +204,12 @@ For parameters: [references/tasks.md](references/tasks.md)
 | Task | Tool |
 |------|------|
 | Search contacts | `search_contacts` |
+| Search the Workspace directory | `search_contacts` (`source="directory"`) |
 | Get contact | `get_contact` |
 | Manage contact (CRUD) | `manage_contact` |
 | Batch manage contacts | `manage_contacts_batch` |
 | List contact groups | `list_contact_groups` |
-| Get contact group | `get_contact_group` |
+| Get contact group or Google Group members | `get_contact_group` |
 | Manage contact group | `manage_contact_group` |
 | List all contacts | `list_contacts` |
 

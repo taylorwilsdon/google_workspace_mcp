@@ -158,6 +158,8 @@ Each page lists every tool with its tier, parameters, required scopes, and examp
 
 > 💬 **Google Chat** needs a one-time Chat app configuration and a Workspace account - see the [Chat setup FAQ](https://workspacemcp.com/welcome/faq?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=services-chat-faq).
 
+> 👤 **Contacts** now reaches beyond personal contacts: `search_contacts` takes a `source` of `contacts`, `directory`, or `all`, and `get_contact_group` accepts a Google Group email address as well as a contact group ID. Those paths need the Cloud Identity API enabled alongside the People API, and add the `directory.readonly` and `cloud-identity.groups.readonly` scopes - existing users must authenticate once more after upgrading to grant them. Group membership visibility remains subject to each group's **Who can view members** setting.
+
 ## Quick Start
 
 > Set credentials → pick a launch command → connect your client. Full walkthrough with screenshots: **[workspacemcp.com/quick-start](https://workspacemcp.com/quick-start?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=quickstart-hero)**

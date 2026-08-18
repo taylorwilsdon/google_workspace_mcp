@@ -7,7 +7,7 @@ This module provides MCP tools for interacting with Google Contacts via the Peop
 import asyncio
 import logging
 import warnings
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, Iterable, List, Literal, Optional
 
 from googleapiclient.errors import HttpError
 from mcp import Resource
@@ -15,11 +15,12 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from mcp.types import ToolAnnotations
 
-from auth.service_decorator import require_google_service
+from auth.service_decorator import require_google_service, require_multiple_services
 from core.server import server
 from core.utils import UserInputError, handle_http_errors, StringList
 from gcontacts.contacts_helpers import (
     _format_contact,
+    _format_group_member_line,
     _merge_emails,
     _merge_nicknames,
     _merge_organizations,
@@ -43,6 +44,26 @@ DETAILED_PERSON_FIELDS = (
 
 # Contact group fields
 CONTACT_GROUP_FIELDS = "name,groupType,memberCount,metadata"
+
+# Directory sources searched when a search includes the Workspace directory
+DIRECTORY_SOURCES = [
+    "DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE",
+    "DIRECTORY_SOURCE_TYPE_DOMAIN_CONTACT",
+]
+
+# Per-source page size ceilings imposed by the People API
+MAX_CONTACTS_PAGE_SIZE = 30
+MAX_DIRECTORY_PAGE_SIZE = 50
+
+# Page size ceiling imposed by the Cloud Identity memberships API
+MAX_GROUP_MEMBERSHIP_PAGE_SIZE = 500
+
+# Human-readable labels for the search sources, used in "nothing found" replies
+SEARCH_SOURCE_LABELS = {
+    "contacts": "contacts",
+    "directory": "directory profiles",
+    "all": "contacts or directory profiles",
+}
 
 # Cache warmup tracking
 _search_cache_warmed_up: Dict[str, bool] = {}
@@ -556,6 +577,88 @@ async def _warmup_search_cache(service: Resource, user_google_email: str) -> Non
         logger.warning(f"[contacts] Search cache warmup failed: {e}")
 
 
+def _index_people(
+    people: Dict[str, Dict[str, Any]], persons: Iterable[Dict[str, Any]]
+) -> None:
+    """
+    Add Person resources to a result map keyed by resource name.
+
+    Keying by resource name collapses anyone returned by more than one search
+    source; a person without one falls back to a positional key so it is never
+    silently dropped.
+    """
+    for person in persons:
+        people.setdefault(person.get("resourceName") or f"#{len(people)}", person)
+
+
+async def _get_google_group_members(
+    service: Resource,
+    user_google_email: str,
+    group_email: str,
+    max_members: int,
+) -> str:
+    """
+    List the members of a Google Group via the Cloud Identity Groups API.
+
+    Args:
+        service: Authenticated Cloud Identity service.
+        user_google_email: User's email, used in the response text.
+        group_email: Email address of the Google Group.
+        max_members: Maximum number of members to return.
+
+    Returns:
+        Formatted group membership listing.
+    """
+    logger.info(
+        f"[get_contact_group] Invoked. Email: '{user_google_email}', Google Group: {group_email}"
+    )
+
+    lookup = await asyncio.to_thread(
+        service.groups().lookup(groupKey_id=group_email).execute
+    )
+    group_name = lookup.get("name")
+    if not group_name:
+        return f"No Google Group found for '{group_email}'."
+
+    members: List[Dict[str, Any]] = []
+    page_token: Optional[str] = None
+    while len(members) < max_members:
+        params: Dict[str, Any] = {
+            "parent": group_name,
+            "pageSize": min(max_members - len(members), MAX_GROUP_MEMBERSHIP_PAGE_SIZE),
+        }
+        if page_token:
+            params["pageToken"] = page_token
+        page = await asyncio.to_thread(
+            service.groups().memberships().list(**params).execute
+        )
+        members.extend(page.get("memberships", []))
+        page_token = page.get("nextPageToken")
+        if not page_token:
+            break
+
+    if not members:
+        return (
+            f"Google Group '{group_email}' has no members visible to {user_google_email}. "
+            "Membership visibility follows the group's 'Who can view members' setting."
+        )
+
+    # pageSize is capped at the remaining budget, so a leftover page token is the
+    # truncation signal (len(members) can never exceed max_members here)
+    response = f"Google Group Details for {user_google_email}:\n\n"
+    response += f"Email: {group_email}\n"
+    response += f"Members ({len(members)} shown):\n"
+    for membership in members:
+        response += f"  - {_format_group_member_line(membership)}\n"
+    if page_token:
+        response += "\n(Truncated at max_members; raise it to see more.)\n"
+
+    logger.info(
+        f"Listed {len(members)} members of '{group_email}' for {user_google_email}"
+    )
+    return response
+
+
 # =============================================================================
 # Core Tier Tools
 # =============================================================================
@@ -691,59 +794,83 @@ async def get_contact(
         openWorldHint=True,
     ),
 )
-@require_google_service("people", "contacts_read")
-@handle_http_errors("search_contacts", service_type="people")
+@require_google_service("people", ["contacts_read", "directory_read"])
+@handle_http_errors("search_contacts", is_read_only=True, service_type="people")
 async def search_contacts(
     service: Resource,
     user_google_email: str,
     query: str,
     page_size: int = 30,
+    source: Literal["contacts", "directory", "all"] = "contacts",
 ) -> str:
     """
-    Search contacts by name, email, phone number, or other fields.
+    Search personal contacts and/or the Google Workspace domain directory.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
         query (str): Search query string (searches names, emails, phone numbers).
-        page_size (int): Maximum number of results to return (default: 30, max: 30).
+        page_size (int): Maximum number of results per source (default: 30, max: 30 for contacts, 50 for directory).
+        source (str): Where to search: "contacts" (personal contacts, default), "directory" (organization-wide profiles), or "all" (both).
 
     Returns:
-        str: Matching contacts with their basic information.
+        str: Matching people with their basic information.
     """
     logger.info(
-        f"[search_contacts] Invoked. Email: '{user_google_email}', Query: '{query}'"
+        f"[search_contacts] Invoked. Email: '{user_google_email}', Query: '{query}', Source: '{source}'"
     )
 
     if page_size < 1:
         raise UserInputError("page_size must be >= 1")
-    page_size = min(page_size, 30)
 
-    # Warm up the search cache if needed
-    await _warmup_search_cache(service, user_google_email)
+    # Keyed by resource name so a person matched by both sources appears once
+    people: Dict[str, Dict[str, Any]] = {}
 
-    result = await asyncio.to_thread(
-        service.people()
-        .searchContacts(
-            query=query,
-            readMask=DEFAULT_PERSON_FIELDS,
-            pageSize=page_size,
+    if source in ("contacts", "all"):
+        # Warm up the search cache if needed
+        await _warmup_search_cache(service, user_google_email)
+
+        result = await asyncio.to_thread(
+            service.people()
+            .searchContacts(
+                query=query,
+                readMask=DEFAULT_PERSON_FIELDS,
+                pageSize=min(page_size, MAX_CONTACTS_PAGE_SIZE),
+            )
+            .execute
         )
-        .execute
-    )
+        _index_people(
+            people, (item.get("person", {}) for item in result.get("results", []))
+        )
 
-    results = result.get("results", [])
+    if source in ("directory", "all"):
+        result = await asyncio.to_thread(
+            service.people()
+            .searchDirectoryPeople(
+                query=query,
+                readMask=DEFAULT_PERSON_FIELDS,
+                sources=DIRECTORY_SOURCES,
+                pageSize=min(page_size, MAX_DIRECTORY_PAGE_SIZE),
+            )
+            .execute
+        )
+        _index_people(people, result.get("people", []))
 
-    if not results:
-        return f"No contacts found matching '{query}' for {user_google_email}."
+    if not people:
+        message = f"No {SEARCH_SOURCE_LABELS[source]} found matching '{query}' for {user_google_email}."
+        if source != "contacts":
+            message += (
+                " Directory results require Workspace directory contact sharing to be "
+                "enabled for your organization."
+            )
+        return message
 
-    response = f"Search Results for '{query}' ({len(results)} found):\n\n"
+    response = f"Search Results for '{query}' ({len(people)} found):\n\n"
 
-    for item in results:
-        person = item.get("person", {})
+    for person in people.values():
         response += _format_contact(person) + "\n\n"
 
     logger.info(
-        f"Found {len(results)} contacts matching '{query}' for {user_google_email}"
+        f"Found {len(people)} people matching '{query}' in {source} for {user_google_email}"
     )
     return response
 
@@ -1151,25 +1278,50 @@ async def list_contact_groups(
         openWorldHint=True,
     ),
 )
-@require_google_service("people", "contacts_read")
-@handle_http_errors("get_contact_group", service_type="people")
+@require_multiple_services(
+    [
+        {
+            "service_type": "people",
+            "scopes": "contacts_read",
+            "param_name": "people_service",
+        },
+        {
+            "service_type": "cloudidentity",
+            "scopes": "cloud_identity_groups_read",
+            "param_name": "cloudidentity_service",
+        },
+    ]
+)
+@handle_http_errors("get_contact_group", is_read_only=True, service_type="people")
 async def get_contact_group(
-    service: Resource,
+    people_service: Resource,
+    cloudidentity_service: Resource,
     user_google_email: str,
     group_id: str,
     max_members: int = 100,
 ) -> str:
     """
-    Get details of a specific contact group including its members.
+    Get details of a contact group or Google Group, including its members.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
-        group_id (str): The contact group ID.
+        group_id (str): A personal contact group ID (e.g. "myContacts" or "contactGroups/abc123"), or the email address of a Google Group (e.g. "team@example.com") to read its Workspace membership.
         max_members (int): Maximum number of members to return (default: 100, max: 1000).
 
     Returns:
-        str: Contact group details including members.
+        str: Group details including members. Google Group membership is subject to that group's "Who can view members" setting.
     """
+    if max_members < 1:
+        raise UserInputError("max_members must be >= 1")
+    max_members = min(max_members, 1000)
+
+    # An email address identifies a Workspace group, which lives in Cloud
+    # Identity rather than in the user's personal contact groups.
+    if "@" in group_id:
+        return await _get_google_group_members(
+            cloudidentity_service, user_google_email, group_id, max_members
+        )
+
     # Normalize resource name
     if not group_id.startswith("contactGroups/"):
         resource_name = f"contactGroups/{group_id}"
@@ -1180,12 +1332,8 @@ async def get_contact_group(
         f"[get_contact_group] Invoked. Email: '{user_google_email}', Group: {resource_name}"
     )
 
-    if max_members < 1:
-        raise UserInputError("max_members must be >= 1")
-    max_members = min(max_members, 1000)
-
     result = await asyncio.to_thread(
-        service.contactGroups()
+        people_service.contactGroups()
         .get(
             resourceName=resource_name,
             maxMembers=max_members,

@@ -65,6 +65,12 @@ TASKS_READONLY_SCOPE = "https://www.googleapis.com/auth/tasks.readonly"
 # Google Contacts (People API) scopes
 CONTACTS_SCOPE = "https://www.googleapis.com/auth/contacts"
 CONTACTS_READONLY_SCOPE = "https://www.googleapis.com/auth/contacts.readonly"
+DIRECTORY_READONLY_SCOPE = "https://www.googleapis.com/auth/directory.readonly"
+
+# Cloud Identity (Google Groups membership) scopes
+CLOUD_IDENTITY_GROUPS_READONLY_SCOPE = (
+    "https://www.googleapis.com/auth/cloud-identity.groups.readonly"
+)
 
 # Google Custom Search API scope
 CUSTOM_SEARCH_SCOPE = "https://www.googleapis.com/auth/cse"
@@ -178,7 +184,12 @@ SLIDES_SCOPES = [SLIDES_SCOPE, SLIDES_READONLY_SCOPE]
 
 TASKS_SCOPES = [TASKS_SCOPE, TASKS_READONLY_SCOPE]
 
-CONTACTS_SCOPES = [CONTACTS_SCOPE, CONTACTS_READONLY_SCOPE]
+CONTACTS_SCOPES = [
+    CONTACTS_SCOPE,
+    CONTACTS_READONLY_SCOPE,
+    DIRECTORY_READONLY_SCOPE,  # Required for search_contacts directory sources
+    CLOUD_IDENTITY_GROUPS_READONLY_SCOPE,  # Required for get_contact_group on a Google Group
+]
 
 CUSTOM_SEARCH_SCOPES = [CUSTOM_SEARCH_SCOPE]
 
@@ -221,7 +232,11 @@ TOOL_READONLY_SCOPES_MAP = {
     "forms": [FORMS_BODY_READONLY_SCOPE, FORMS_RESPONSES_READONLY_SCOPE],
     "slides": [SLIDES_READONLY_SCOPE],
     "tasks": [TASKS_READONLY_SCOPE],
-    "contacts": [CONTACTS_READONLY_SCOPE],
+    "contacts": [
+        CONTACTS_READONLY_SCOPE,
+        DIRECTORY_READONLY_SCOPE,
+        CLOUD_IDENTITY_GROUPS_READONLY_SCOPE,
+    ],
     "search": CUSTOM_SEARCH_SCOPES,
     "appscript": [
         SCRIPT_PROJECTS_READONLY_SCOPE,
