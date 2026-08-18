@@ -966,9 +966,6 @@ async def create_drive_folder(
 
 @server.tool(
     title="Create Drive File",
-    # Remote (streamable-http) servers hide file_path entirely: a client-side
-    # path can never resolve here, so it is not advertised (stdio_only_args).
-    exclude_args=stdio_only_args("file_path"),
     annotations=ToolAnnotations(
         readOnlyHint=False,
         destructiveHint=False,

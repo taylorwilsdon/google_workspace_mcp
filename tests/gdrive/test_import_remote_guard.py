@@ -12,6 +12,7 @@ in its own errors as defense-in-depth for any unguarded path.
 """
 
 import os
+import subprocess
 import sys
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -192,6 +193,32 @@ class TestValidateFilePathNamesTheBoundary:
         with pytest.raises(FileNotFoundError) as exc:
             validate_file_path("/definitely/not/here.md")
         assert "on the MCP server" not in str(exc.value)
+
+
+class TestRemoteDecorationBoots:
+    """exclude_args is validated by FastMCP at DECORATION time, and only when
+    it is non-None — i.e. only on a streamable-http server. The rest of this
+    suite imports the module under the stdio default, so a stale exclude_args
+    naming a parameter that doesn't exist would pass every in-process test and
+    then crash the real remote server at boot. Import in a subprocess with the
+    transport pre-set to catch that class of bug."""
+
+    def test_tool_module_imports_under_streamable_http(self):
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+        code = (
+            "from core.server import set_transport_mode; "
+            "set_transport_mode('streamable-http'); "
+            "import gdrive.drive_tools"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, (
+            f"gdrive.drive_tools failed to import on streamable-http:\n{result.stderr}"
+        )
 
 
 class TestStdioOnlyArgsHelper:
