@@ -200,7 +200,7 @@ def has_explicit_trashed_clause(query: str) -> bool:
 
 # Precompiled regex patterns for Drive query detection
 DRIVE_QUERY_PATTERNS = [
-    re.compile(r'\b\w+\s*(=|!=|>|<)\s*[\'"][^\'"]*[\'"]', re.IGNORECASE),  # field = 'value'
+    re.compile(r'\b\w+\s*(=|!=|>|<)\s*[\'"].*?[\'"]', re.IGNORECASE),  # field = 'value'
     re.compile(r"\b\w+\s*(=|!=|>|<)\s*\d+", re.IGNORECASE),  # field = number
     re.compile(r"\bcontains\b", re.IGNORECASE),  # contains operator
     re.compile(r"\bin\s+parents\b", re.IGNORECASE),  # in parents
