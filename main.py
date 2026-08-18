@@ -553,12 +553,28 @@ def main():
     validate_streamable_http_auth(args.transport)
     resolve_callback_port_for_transport(args.transport)
 
+    # Resolve TLS configuration before building URLs so display_url reflects the
+    # correct scheme. Partial config (only one of certfile/keyfile) is rejected
+    # here rather than later so the error appears before any port binding occurs.
+    ssl_certfile = os.getenv("WORKSPACE_MCP_SSL_CERTFILE") or None
+    ssl_keyfile = os.getenv("WORKSPACE_MCP_SSL_KEYFILE") or None
+    if bool(ssl_certfile) != bool(ssl_keyfile):
+        missing = "WORKSPACE_MCP_SSL_KEYFILE" if ssl_certfile else "WORKSPACE_MCP_SSL_CERTFILE"
+        print(
+            f"Error: TLS requires both WORKSPACE_MCP_SSL_CERTFILE and "
+            f"WORKSPACE_MCP_SSL_KEYFILE. {missing} is not set.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    tls_enabled = bool(ssl_certfile and ssl_keyfile)
+
     # Set port and base URI once for reuse throughout the function
     if os.getenv("WORKSPACE_MCP_RESOLVED_PORT") == "1":
         port = int(os.getenv("WORKSPACE_MCP_PORT", os.getenv("PORT", "8000")))
     else:
         port = int(os.getenv("PORT", os.getenv("WORKSPACE_MCP_PORT", "8000")))
-    base_uri = os.getenv("WORKSPACE_MCP_BASE_URI", "http://localhost")
+    _default_scheme = "https" if tls_enabled else "http"
+    base_uri = os.getenv("WORKSPACE_MCP_BASE_URI", f"{_default_scheme}://localhost")
     host = resolve_bind_host_for_transport(args.transport)
     external_url = os.getenv("WORKSPACE_EXTERNAL_URL")
     display_url = external_url if external_url else f"{base_uri}:{port}"
@@ -891,14 +907,11 @@ def main():
                 )
                 sys.exit(1)
 
-            ssl_certfile = os.getenv("WORKSPACE_MCP_SSL_CERTFILE") or None
-            ssl_keyfile = os.getenv("WORKSPACE_MCP_SSL_KEYFILE") or None
-            uvicorn_ssl: dict | None = None
-            if ssl_certfile and ssl_keyfile:
-                uvicorn_ssl = {
-                    "ssl_certfile": ssl_certfile,
-                    "ssl_keyfile": ssl_keyfile,
-                }
+            uvicorn_ssl: dict | None = (
+                {"ssl_certfile": ssl_certfile, "ssl_keyfile": ssl_keyfile}
+                if tls_enabled
+                else None
+            )
 
             server.run(
                 transport="streamable-http",
