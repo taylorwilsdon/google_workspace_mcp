@@ -162,3 +162,132 @@ def test_no_tls_config_forwarded_when_env_vars_absent(monkeypatch):
     main.main()
 
     assert run_kwargs.get("uvicorn_config") is None
+
+
+# ---------------------------------------------------------------------------
+# Partial TLS configuration — exactly one env var set must be a startup error.
+# ---------------------------------------------------------------------------
+
+
+def _patch_main_for_http(monkeypatch) -> None:
+    """Patch out main() side-effects so we can reach the TLS validation step."""
+    from unittest.mock import MagicMock
+    import socket
+
+    monkeypatch.setenv("WORKSPACE_MCP_TRANSPORT", "streamable-http")
+    monkeypatch.setattr(main.server, "run", lambda **kw: None)
+    monkeypatch.setattr(main, "configure_server_for_http", lambda: None)
+    monkeypatch.setattr(main, "set_transport_mode", lambda _t: None)
+    monkeypatch.setattr(main, "check_credentials_directory_permissions", lambda: None)
+    monkeypatch.setattr(main, "is_stateless_mode", lambda: False)
+    monkeypatch.setattr(main, "is_service_account_enabled", lambda: False)
+    monkeypatch.setattr(main, "get_selected_backend", lambda: "local")
+    monkeypatch.setattr(main, "wrap_server_tool_method", lambda _s: None)
+    monkeypatch.setattr(main, "set_enabled_tool_names", lambda _t: None)
+    monkeypatch.setattr(main, "filter_server_tools", lambda _s: 0)
+    monkeypatch.setattr(main, "configure_safe_logging", lambda: None)
+    monkeypatch.setattr("sys.argv", ["main"])
+    monkeypatch.setattr("importlib.import_module", lambda *a, **kw: MagicMock())
+
+    fake_sock = MagicMock()
+    fake_sock.__enter__ = lambda s: s
+    fake_sock.__exit__ = MagicMock(return_value=False)
+    monkeypatch.setattr(socket, "socket", lambda *a, **kw: fake_sock)
+
+
+def test_certfile_only_exits_with_error(monkeypatch, capsys):
+    """Setting only WORKSPACE_MCP_SSL_CERTFILE must abort startup with a clear error."""
+    monkeypatch.setenv("WORKSPACE_MCP_SSL_CERTFILE", "/certs/server.pem")
+    monkeypatch.delenv("WORKSPACE_MCP_SSL_KEYFILE", raising=False)
+    _patch_main_for_http(monkeypatch)
+
+    with pytest.raises(SystemExit) as exc_info:
+        main.main()
+
+    assert exc_info.value.code == 1
+    stderr = capsys.readouterr().err
+    assert "WORKSPACE_MCP_SSL_KEYFILE" in stderr
+    assert "WORKSPACE_MCP_SSL_CERTFILE" in stderr
+
+
+def test_keyfile_only_exits_with_error(monkeypatch, capsys):
+    """Setting only WORKSPACE_MCP_SSL_KEYFILE must abort startup with a clear error."""
+    monkeypatch.delenv("WORKSPACE_MCP_SSL_CERTFILE", raising=False)
+    monkeypatch.setenv("WORKSPACE_MCP_SSL_KEYFILE", "/certs/server.key")
+    _patch_main_for_http(monkeypatch)
+
+    with pytest.raises(SystemExit) as exc_info:
+        main.main()
+
+    assert exc_info.value.code == 1
+    stderr = capsys.readouterr().err
+    assert "WORKSPACE_MCP_SSL_CERTFILE" in stderr
+    assert "WORKSPACE_MCP_SSL_KEYFILE" in stderr
+
+
+def test_partial_tls_error_fires_before_port_binding(monkeypatch, capsys):
+    """Partial TLS config is rejected before any port bind attempt."""
+    monkeypatch.setenv("WORKSPACE_MCP_SSL_CERTFILE", "/certs/server.pem")
+    monkeypatch.delenv("WORKSPACE_MCP_SSL_KEYFILE", raising=False)
+    monkeypatch.setenv("WORKSPACE_MCP_TRANSPORT", "streamable-http")
+    monkeypatch.setattr(main, "configure_safe_logging", lambda: None)
+    monkeypatch.setattr("sys.argv", ["main"])
+
+    bind_called = []
+
+    import socket as _socket
+    from unittest.mock import MagicMock
+
+    real_socket = _socket.socket
+
+    def sentinel_socket(*a, **kw):
+        bind_called.append(True)
+        return real_socket(*a, **kw)
+
+    monkeypatch.setattr(_socket, "socket", sentinel_socket)
+
+    with pytest.raises(SystemExit) as exc_info:
+        main.main()
+
+    assert exc_info.value.code == 1
+    assert not bind_called, "Port binding must not occur when TLS config is partial"
+
+
+def test_tls_enabled_uses_https_in_display_url(monkeypatch):
+    """When both SSL env vars are set, the advertised URL scheme is https://."""
+    monkeypatch.setenv("WORKSPACE_MCP_SSL_CERTFILE", "/certs/server.pem")
+    monkeypatch.setenv("WORKSPACE_MCP_SSL_KEYFILE", "/certs/server.key")
+    monkeypatch.delenv("WORKSPACE_MCP_BASE_URI", raising=False)
+    monkeypatch.delenv("WORKSPACE_EXTERNAL_URL", raising=False)
+
+    run_kwargs: dict = {}
+
+    def fake_run(**kwargs):
+        run_kwargs.update(kwargs)
+
+    _patch_main_for_http(monkeypatch)
+    monkeypatch.setattr(main.server, "run", fake_run)
+
+    # Capture ui.step() calls to verify the displayed URL contains https://.
+    ui_steps: list = []
+    from unittest.mock import MagicMock
+    from core.startup_ui import StartupDisplay
+
+    class _CapturingDisplay(StartupDisplay):
+        def step(self, *args, **kwargs):
+            ui_steps.append(args)
+            return super().step(*args, **kwargs)
+
+    monkeypatch.setattr(main, "StartupDisplay", _CapturingDisplay)
+
+    main.main()
+
+    assert run_kwargs.get("uvicorn_config") == {
+        "ssl_certfile": "/certs/server.pem",
+        "ssl_keyfile": "/certs/server.key",
+    }
+
+    all_step_text = " ".join(str(a) for step in ui_steps for a in step)
+    assert "https://" in all_step_text, (
+        f"Expected 'https://' in startup step output; got: {all_step_text!r}"
+    )
