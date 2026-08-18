@@ -6,6 +6,7 @@ they need for operations like search_docs, list_docs_in_folder,
 export_doc_to_pdf, and list_spreadsheets — without requiring --tools drive.
 """
 
+import importlib
 import sys
 import os
 
@@ -26,6 +27,7 @@ from auth.scopes import (
     GMAIL_READONLY_SCOPE,
     GMAIL_SEND_SCOPE,
     GMAIL_SETTINGS_BASIC_SCOPE,
+    MAIL_GOOGLE_COM_SCOPE,
     SHEETS_READONLY_SCOPE,
     SHEETS_WRITE_SCOPE,
     get_scopes_for_tools,
@@ -34,6 +36,7 @@ from auth.scopes import (
 )
 from auth.permissions import get_scopes_for_permission, set_permissions
 import auth.permissions as permissions_module
+import auth.scopes as scopes
 
 
 class TestDocsScopes:
@@ -229,3 +232,55 @@ class TestGranularPermissionsScopes:
         with_permissions = get_scopes_for_tools(["drive"])
         assert GMAIL_READONLY_SCOPE in with_permissions
         assert DRIVE_READONLY_SCOPE not in with_permissions
+
+
+class TestMailGoogleComSuperscope:
+    """Tests for the mail.google.com full-mailbox superscope."""
+
+    def test_mail_superscope_covers_send_and_readonly(self):
+        assert has_required_scopes(
+            [MAIL_GOOGLE_COM_SCOPE], [GMAIL_SEND_SCOPE, GMAIL_READONLY_SCOPE]
+        )
+
+    def test_mail_superscope_covers_all_gmail_children(self):
+        assert has_required_scopes(
+            [MAIL_GOOGLE_COM_SCOPE],
+            [
+                GMAIL_SEND_SCOPE,
+                GMAIL_READONLY_SCOPE,
+                GMAIL_COMPOSE_SCOPE,
+                GMAIL_MODIFY_SCOPE,
+                GMAIL_LABELS_SCOPE,
+            ],
+        )
+
+
+class TestGmailScopesSmtpInjection:
+    """Tests that MAIL_GOOGLE_COM_SCOPE is injected into GMAIL_SCOPES iff SMTP."""
+
+    @staticmethod
+    def _reload_scopes(monkeypatch, transport):
+        """Helper: set env, reload, return the module; teardown restores default."""
+        if transport is not None:
+            monkeypatch.setenv("GMAIL_SEND_TRANSPORT", transport)
+        else:
+            monkeypatch.delenv("GMAIL_SEND_TRANSPORT", raising=False)
+        importlib.reload(scopes)
+
+    def teardown_method(self):
+        # Ensure module returns to clean (api) state after each reload test,
+        # preventing cross-test scope-state leakage.
+        os.environ.pop("GMAIL_SEND_TRANSPORT", None)
+        importlib.reload(scopes)
+
+    def test_gmail_scopes_inject_mail_when_smtp(self, monkeypatch):
+        self._reload_scopes(monkeypatch, "smtp")
+        assert MAIL_GOOGLE_COM_SCOPE in scopes.GMAIL_SCOPES
+
+    def test_gmail_scopes_omit_mail_when_api(self, monkeypatch):
+        self._reload_scopes(monkeypatch, "api")
+        assert "https://mail.google.com/" not in scopes.GMAIL_SCOPES
+
+    def test_gmail_scopes_omit_mail_when_unset(self, monkeypatch):
+        self._reload_scopes(monkeypatch, None)
+        assert "https://mail.google.com/" not in scopes.GMAIL_SCOPES

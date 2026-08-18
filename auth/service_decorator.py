@@ -985,12 +985,30 @@ def require_multiple_services(service_configs: List[Dict[str, Any]]):
                             stack.callback(service.close)
                             services_created = True
 
-                        except GoogleAuthenticationError as e:
-                            logger.error(
-                                f"[{tool_name}] Auth failed for {user_google_email} | "
-                                f"{service_name}/{service_version} | "
-                                f"method={auth_method or 'none'} | {e}"
-                            )
+                        except Exception as e:
+                            # Optional services degrade gracefully on AUTH failure
+                            # only: a missing scope (or other auth error) injects None
+                            # instead of failing the whole tool, so the primary action
+                            # still runs and the tool reports the fallback. Non-auth
+                            # errors are NOT hidden — they re-raise even for optional
+                            # services so real bugs surface.
+                            if config.get("optional", False) and isinstance(
+                                e, GoogleAuthenticationError
+                            ):
+                                logger.info(
+                                    f"[{tool_name}] Optional service '{service_type}' "
+                                    f"unavailable for {user_google_email} "
+                                    f"({service_name}/{service_version}): {e}. "
+                                    "Injecting None; tool will degrade gracefully."
+                                )
+                                kwargs[param_name] = None
+                                continue
+                            if isinstance(e, GoogleAuthenticationError):
+                                logger.error(
+                                    f"[{tool_name}] Auth failed for {user_google_email} | "
+                                    f"{service_name}/{service_version} | "
+                                    f"method={auth_method or 'none'} | {e}"
+                                )
                             # Re-raise the original error without wrapping it
                             raise
 

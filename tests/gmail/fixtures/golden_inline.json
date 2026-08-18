@@ -1,0 +1,106 @@
+{
+  "_provenance": {
+    "source": "inbox (third-party Gmail-web composed)",
+    "gate": "Message-ID @mail.gmail.com AND multipart/related with inline (cid) part",
+    "samples_agreeing": 1,
+    "note": "Inline images are rare; structure is the canonical Gmail nesting.",
+    "captured": "2026-06-24"
+  },
+  "mime_shape": {
+    "content_type": "multipart/mixed",
+    "cte": "-",
+    "charset": "-",
+    "parts": [
+      {
+        "content_type": "multipart/related",
+        "cte": "-",
+        "charset": "-",
+        "parts": [
+          {
+            "content_type": "multipart/alternative",
+            "cte": "-",
+            "charset": "-",
+            "parts": [
+              {
+                "content_type": "text/plain",
+                "cte": "quoted-printable",
+                "charset": "utf-8"
+              },
+              {
+                "content_type": "text/html",
+                "cte": "quoted-printable",
+                "charset": "utf-8"
+              }
+            ]
+          },
+          {
+            "content_type": "image/jpeg",
+            "cte": "base64",
+            "charset": "-",
+            "disposition": "inline"
+          },
+          {
+            "content_type": "image/png",
+            "cte": "base64",
+            "charset": "-",
+            "disposition": "inline"
+          },
+          {
+            "content_type": "image/png",
+            "cte": "base64",
+            "charset": "-",
+            "disposition": "inline"
+          },
+          {
+            "content_type": "image/png",
+            "cte": "base64",
+            "charset": "-",
+            "disposition": "inline"
+          },
+          {
+            "content_type": "image/png",
+            "cte": "base64",
+            "charset": "-",
+            "disposition": "inline"
+          },
+          {
+            "content_type": "image/png",
+            "cte": "base64",
+            "charset": "-",
+            "disposition": "inline"
+          },
+          {
+            "content_type": "image/png",
+            "cte": "base64",
+            "charset": "-",
+            "disposition": "inline"
+          }
+        ]
+      },
+      {
+        "content_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "cte": "base64",
+        "charset": "-",
+        "disposition": "attachment"
+      },
+      {
+        "content_type": "application/pdf",
+        "cte": "base64",
+        "charset": "-",
+        "disposition": "attachment"
+      },
+      {
+        "content_type": "application/pdf",
+        "cte": "base64",
+        "charset": "-",
+        "disposition": "attachment"
+      },
+      {
+        "content_type": "application/msword",
+        "cte": "base64",
+        "charset": "-",
+        "disposition": "attachment"
+      }
+    ]
+  }
+}

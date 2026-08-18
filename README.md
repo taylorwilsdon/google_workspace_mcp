@@ -248,6 +248,7 @@ Everything you need to run this in production lives in two places. The [document
 - **[External OAuth provider mode](https://workspacemcp.com/docs?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=deploy-external-oauth#authentication)** - bring your own auth server, validate bearer tokens only
 - **[Service accounts with domain-wide delegation](https://workspacemcp.com/docs?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=deploy-service-accounts#authentication)** - per-request user impersonation with an optional domain allowlist
 - **[OpenTelemetry tracing](https://workspacemcp.com/docs?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=deploy-otel#server-modes)** - optional, off unless you configure an OTLP endpoint
+- **Gmail send transport** - `GMAIL_SEND_TRANSPORT=smtp` submits the same raw MIME over `smtp.gmail.com:587` (XOAUTH2) instead of the Gmail API. Opt-in and `api` by default; it requests the `https://mail.google.com/` scope and falls back to the API when that scope is absent. Read [Send-transport message fingerprint](#send-transport-message-fingerprint) before enabling it.
 - **Docker** - `docker build -t workspace-mcp . && docker run -p 8000:8000 workspace-mcp`
 
 The **[Advanced Deployment guide](https://workspacemcp.com/docs/deployment?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=deploy-advanced)** covers self-hosting specifics: reverse proxy setup with `WORKSPACE_EXTERNAL_URL` (including the nginx `Origin: null` consent workaround, the `WORKSPACE_MCP_ALLOW_NULL_ORIGIN_CONSENT` escape hatch, and the `Referrer-Policy` pitfall), origin validation and VS Code webview allowlisting, credential store backends (local directory or GCS with CMEK enforcement), and the **[complete environment variable reference](https://workspacemcp.com/docs/deployment?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=deploy-env-vars#environment-variables)**.
@@ -262,6 +263,19 @@ A few things worth internalizing before you connect an LLM to your email:
 - **Never commit** `.env`, `client_secret.json`, or `.credentials/` to source control.
 - **Local file reads are sandboxed** to the managed attachment directory. Broaden with `ALLOWED_FILE_DIRS` only if you trust the client and its data sources; `.env*`, `~/.ssh/`, `~/.aws/`, and similar paths are always blocked.
 - **Production** deployments should use HTTPS and OAuth 2.1.
+
+### Send-transport message fingerprint
+
+`GMAIL_SEND_TRANSPORT` changes only how a message is *submitted*. The body and MIME structure are byte-identical on both transports, and faithful to Gmail's web composer. What differs is the envelope Google stamps at submission, verified by sending real messages and reading the delivered headers:
+
+| Trait | Gmail web UI | `api` (default) | `smtp` |
+|---|---|---|---|
+| Body / MIME structure | reference | identical | identical |
+| `Message-ID` | `...@mail.gmail.com` | `...@mail.gmail.com` | authored `<...@sender-domain>` |
+| Origin `Received` hop | `from mail-sor-NN.google.com` only | adds `by gmailapi.google.com` | adds `from <reverse-dns> ([your client IP])` + `ESMTPSA` |
+| Exposes your IP to recipients | no | no | **yes** (plus your ISP, via reverse DNS) |
+
+Neither transport is byte-for-byte indistinguishable from the web UI: both add an origin hop the composer does not. `api` is the closer match, keeps the real `@mail.gmail.com` Message-ID, and never exposes your IP. `smtp` rewrites the Message-ID domain and leaks your originating IP and ISP to every recipient. Prefer the default `api`, and choose `smtp` only when you specifically need SMTP submission and accept those trade-offs.
 
 ## Development
 

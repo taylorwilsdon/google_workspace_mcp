@@ -20,6 +20,13 @@ if sys.platform == "darwin":
 
 
 def _load_startup_dependencies():
+    # Load .env BEFORE importing modules whose import-time logic reads env vars
+    # (e.g. auth.scopes builds GMAIL_SCOPES from GMAIL_SEND_TRANSPORT at import,
+    # reached here via core.server). Loading it afterwards would omit the SMTP
+    # mail.google.com scope from the consent flow when set only in .env.
+    load_dotenv(
+        dotenv_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    )
     from auth.credential_store import get_credential_store, get_selected_backend
     from auth.oauth_config import (
         get_oauth_config,
@@ -87,9 +94,6 @@ def _load_startup_dependencies():
     wrap_server_tool_method,
     filter_server_tools,
 ) = _load_startup_dependencies()
-
-dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
-load_dotenv(dotenv_path=dotenv_path)
 
 # Suppress googleapiclient discovery cache warning
 logging.getLogger("googleapiclient.discovery_cache").setLevel(logging.ERROR)

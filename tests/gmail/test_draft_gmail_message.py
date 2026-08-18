@@ -398,13 +398,17 @@ async def test_draft_gmail_message_builds_threaded_html_reply_as_multipart_alter
     assert parsed["Subject"] == "Re: Meeting tomorrow"
     assert parsed["To"] == "recipient@example.com"
     assert parsed["In-Reply-To"] == "<msg2@example.com>"
-    assert parsed["References"] == "<msg1@example.com> <msg2@example.com>"
+    # References is folded (CRLF+TAB) per the Gmail-web spec; normalize whitespace.
+    assert " ".join(parsed["References"].split()) == (
+        "<msg1@example.com> <msg2@example.com>"
+    )
     assert parsed.get_content_type() == "multipart/alternative"
     assert parsed.get_body(preferencelist=("plain",)).get_content().strip() == (
         "Thanks for the update."
     )
+    # The HTML part is wrapped in Gmail's ltr container per the web-compose spec.
     assert parsed.get_body(preferencelist=("html",)).get_content().strip() == (
-        "<p>Thanks for the update.</p>"
+        '<div dir="ltr"><p>Thanks for the update.</p></div>'
     )
 
 
@@ -445,9 +449,9 @@ async def test_draft_gmail_message_builds_html_attachments_with_mixed_top_level(
     attachments = list(parsed.iter_attachments())
 
     assert parsed.get_content_type() == "multipart/mixed"
-    assert parsed.get_body(preferencelist=("html",)).get_content().strip() == (
-        "<p>Please see attached.</p>"
-    )
+    # The web-compose path wraps HTML body in Gmail's ltr container.
+    html_content = parsed.get_body(preferencelist=("html",)).get_content().strip()
+    assert "<p>Please see attached.</p>" in html_content
     assert parsed.get_body(preferencelist=("plain",)).get_content().strip() == (
         "Please see attached."
     )
@@ -561,9 +565,10 @@ async def test_draft_gmail_message_autofills_reply_headers_from_thread():
     raw_text = base64.urlsafe_b64decode(raw_message).decode("utf-8", errors="ignore")
 
     assert "In-Reply-To: <msg3@example.com>" in raw_text
+    # References is folded (CRLF+TAB) per spec; normalize whitespace to compare.
     assert (
         "References: <msg1@example.com> <msg2@example.com> <msg3@example.com>"
-        in raw_text
+        in " ".join(raw_text.split())
     )
     assert create_kwargs["body"]["message"]["threadId"] == "thread123"
 
@@ -596,7 +601,9 @@ async def test_draft_gmail_message_uses_explicit_in_reply_to_when_filling_refere
     raw_text = base64.urlsafe_b64decode(raw_message).decode("utf-8", errors="ignore")
 
     assert "In-Reply-To: <msg2@example.com>" in raw_text
-    assert "References: <msg1@example.com> <msg2@example.com>" in raw_text
+    assert "References: <msg1@example.com> <msg2@example.com>" in " ".join(
+        raw_text.split()
+    )
     assert "<msg3@example.com>" not in raw_text
 
 
@@ -628,7 +635,9 @@ async def test_draft_gmail_message_uses_explicit_references_when_filling_in_repl
     raw_text = base64.urlsafe_b64decode(raw_message).decode("utf-8", errors="ignore")
 
     assert "In-Reply-To: <msg2@example.com>" in raw_text
-    assert "References: <msg1@example.com> <msg2@example.com>" in raw_text
+    assert "References: <msg1@example.com> <msg2@example.com>" in " ".join(
+        raw_text.split()
+    )
     assert "<msg3@example.com>" not in raw_text
 
 
@@ -988,6 +997,38 @@ async def test_send_gmail_message_with_url_attachment(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_draft_reply_inherits_parent_subject_when_omitted():
+    """A reply draft with no subject inherits the parent's exact subject; an
+    existing [tag] + Re:/RE: is preserved verbatim (no second Re:)."""
+    mock_service = Mock()
+    mock_service.users().drafts().create().execute.return_value = {"id": "draft_reply"}
+    mock_service.users().threads().get().execute.return_value = {
+        "messages": [
+            _thread_message(
+                "<msg1@example.com>",
+                subject="[list] Re: RE: Project status [#123]",
+                from_value="Alice <alice@example.com>",
+            )
+        ]
+    }
+
+    await _unwrap(draft_gmail_message)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        to="alice@example.com",
+        body="Thanks.",
+        thread_id="thread123",
+        include_signature=False,
+    )
+
+    create_kwargs = (
+        mock_service.users.return_value.drafts.return_value.create.call_args.kwargs
+    )
+    parsed = _parse_raw_message(create_kwargs["body"]["message"]["raw"])
+    assert parsed["Subject"] == "[list] Re: RE: Project status [#123]"
+
+
+@pytest.mark.asyncio
 async def test_send_gmail_message_autofills_reply_headers_from_thread():
     mock_service = Mock()
     mock_service.users().messages().send().execute.return_value = {"id": "sent_reply"}
@@ -1011,7 +1052,12 @@ async def test_send_gmail_message_autofills_reply_headers_from_thread():
     )
     parsed = _parse_raw_message(send_kwargs["body"]["raw"])
     assert parsed["In-Reply-To"] == "<msg2@example.com>"
-    assert parsed["References"] == "<msg1@example.com> <msg2@example.com>"
+    # The web-faithful builder folds long headers per RFC 5322, so the raw value
+    # may carry a fold (CRLF + WSP) between ids. Compare on the unfolded token list.
+    assert parsed["References"].split() == [
+        "<msg1@example.com>",
+        "<msg2@example.com>",
+    ]
 
 
 @pytest.mark.asyncio
@@ -1072,7 +1118,8 @@ async def test_send_gmail_message_quotes_original_when_requested():
         mock_service.users.return_value.messages.return_value.send.call_args.kwargs
     )
     parsed = _parse_raw_message(send_kwargs["body"]["raw"])
-    payload = parsed.get_content()
+    # The web-faithful path emits multipart/alternative, so select the plain part.
+    payload = parsed.get_body(preferencelist=("plain",)).get_content()
     assert "Alice Example <alice@example.com> wrote:" in payload
     assert "> Original plain text" in payload
 
@@ -1106,7 +1153,8 @@ async def test_send_gmail_message_reply_all_derives_recipients():
         mock_service.users.return_value.messages.return_value.send.call_args.kwargs
     )
     parsed = _parse_raw_message(send_kwargs["body"]["raw"])
-    assert parsed["To"] == "alice@example.com"
+    # Recipients carry the display name harvested from the thread, as Gmail web does.
+    assert parsed["To"] == "Alice Example <alice@example.com>"
     # The authenticated account is dropped; everyone else on the message is kept.
     assert parsed["Cc"] == "bob@example.com, carol@example.com"
 
@@ -1177,7 +1225,9 @@ async def test_send_gmail_message_reply_all_moves_sender_to_cc_when_to_is_explic
     parsed = _parse_raw_message(send_kwargs["body"]["raw"])
     assert parsed["To"] == "dave@example.com"
     # Redirecting To must not drop Alice from the reply-all entirely.
-    assert parsed["Cc"] == "alice@example.com, bob@example.com, carol@example.com"
+    assert parsed["Cc"] == (
+        "Alice Example <alice@example.com>, bob@example.com, carol@example.com"
+    )
 
 
 @pytest.mark.asyncio
