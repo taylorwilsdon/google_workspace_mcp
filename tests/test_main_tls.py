@@ -253,7 +253,7 @@ def test_partial_tls_error_fires_before_port_binding(monkeypatch, capsys):
     assert not bind_called, "Port binding must not occur when TLS config is partial"
 
 
-def test_tls_enabled_uses_https_in_display_url(monkeypatch):
+def test_tls_enabled_uses_https_in_display_url(monkeypatch, capsys, caplog):
     """When both SSL env vars are set, the advertised URL scheme is https://."""
     monkeypatch.setenv("WORKSPACE_MCP_SSL_CERTFILE", "/certs/server.pem")
     monkeypatch.setenv("WORKSPACE_MCP_SSL_KEYFILE", "/certs/server.key")
@@ -268,28 +268,21 @@ def test_tls_enabled_uses_https_in_display_url(monkeypatch):
     _patch_main_for_http(monkeypatch)
     monkeypatch.setattr(main.server, "run", fake_run)
 
-    # Capture ui.step() calls to verify the displayed URL contains https://.
-    ui_steps: list = []
-    from unittest.mock import MagicMock
-    from core.startup_ui import StartupDisplay
-
-    class _CapturingDisplay(StartupDisplay):
-        def step(self, *args, **kwargs):
-            ui_steps.append(args)
-            return super().step(*args, **kwargs)
-
-    monkeypatch.setattr(main, "StartupDisplay", _CapturingDisplay)
-
-    main.main()
+    import logging
+    with caplog.at_level(logging.DEBUG):
+        main.main()
 
     assert run_kwargs.get("uvicorn_config") == {
         "ssl_certfile": "/certs/server.pem",
         "ssl_keyfile": "/certs/server.key",
     }
 
-    all_step_text = " ".join(str(a) for step in ui_steps for a in step)
-    assert "https://" in all_step_text, (
-        f"Expected 'https://' in startup step output; got: {all_step_text!r}"
+    # safe_print() routes to logger.debug in non-TTY environments (tests),
+    # so combine capsys output with caplog to cover all rendering paths.
+    captured = capsys.readouterr()
+    all_text = f"{captured.out}\n{captured.err}\n{caplog.text}"
+    assert "https://" in all_text, (
+        f"Expected 'https://' in startup output; got: {all_text!r}"
     )
 
 
@@ -316,13 +309,12 @@ class TestDefaultSchemeSelection:
 
 
 def test_stdio_with_tls_env_vars_does_not_advertise_https(monkeypatch, capsys):
-    """When TLS env vars are set but transport is stdio, startup must not exit with an
-    https:// OAuth callback URL — the stdio callback server serves plain HTTP."""
+    """When TLS env vars are set but transport is stdio, startup must not advertise
+    https:// — the stdio callback server serves plain HTTP."""
     monkeypatch.setenv("WORKSPACE_MCP_SSL_CERTFILE", "/certs/server.pem")
     monkeypatch.setenv("WORKSPACE_MCP_SSL_KEYFILE", "/certs/server.key")
     monkeypatch.delenv("WORKSPACE_MCP_BASE_URI", raising=False)
     monkeypatch.delenv("WORKSPACE_EXTERNAL_URL", raising=False)
-    # Force stdio transport so TLS applies to the callback-server path.
     monkeypatch.setenv("WORKSPACE_MCP_TRANSPORT", "stdio")
     monkeypatch.setattr("sys.argv", ["main"])
     monkeypatch.setattr(main, "configure_safe_logging", lambda: None)
@@ -335,27 +327,12 @@ def test_stdio_with_tls_env_vars_does_not_advertise_https(monkeypatch, capsys):
     monkeypatch.setattr(main, "set_enabled_tool_names", lambda _t: None)
     monkeypatch.setattr(main, "filter_server_tools", lambda _s: 0)
     monkeypatch.setattr("importlib.import_module", lambda *a, **kw: __import__("unittest.mock", fromlist=["MagicMock"]).MagicMock())
-    # Intercept server.run so we don't actually start stdio.
     monkeypatch.setattr(main.server, "run", lambda **kw: None)
-
-    # Capture ui.step() calls to inspect the advertised OAuth callback URL.
-    ui_steps: list = []
-    from core.startup_ui import StartupDisplay
-
-    class _CapturingDisplay(StartupDisplay):
-        def step(self, *args, **kwargs):
-            ui_steps.append(args)
-            return super().step(*args, **kwargs)
-
-        def detail(self, *args, **kwargs):
-            ui_steps.append(args)
-            return super().detail(*args, **kwargs)
-
-    monkeypatch.setattr(main, "StartupDisplay", _CapturingDisplay)
 
     main.main()
 
-    all_text = " ".join(str(a) for step in ui_steps for a in step)
+    captured = capsys.readouterr()
+    all_text = f"{captured.out}\n{captured.err}"
     assert "https://" not in all_text, (
         f"stdio path must not advertise https:// when the callback server is plain HTTP; got: {all_text!r}"
     )
