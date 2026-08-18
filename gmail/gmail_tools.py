@@ -2274,7 +2274,9 @@ async def get_gmail_attachment_content(
             result_lines.append(f"\n📎 Download URL: {download_url}")
             result_lines.append("\nThe file will expire after 1 hour.")
 
-        result_lines.append("\nNote: Attachment IDs are ephemeral. Always use IDs from the most recent message fetch.")
+        result_lines.append(
+            "\nNote: Attachment IDs are ephemeral. Always use IDs from the most recent message fetch."
+        )
 
         if return_base64 and base64_data:
             result_lines.extend(_format_base64_content_block(base64_data))
