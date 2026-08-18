@@ -25,6 +25,7 @@ from gdrive.drive_tools import (  # noqa: E402
     import_to_google_doc,
     import_to_google_sheets,
     import_to_google_slides,
+    update_drive_file,
 )
 
 
@@ -75,6 +76,25 @@ class TestRemoteFilePathRejected:
         msg = str(exc.value)
         assert "'file_url'" in msg
         assert "'content'" not in msg
+        service.files.assert_not_called()
+
+    @pytest.mark.asyncio
+    @REMOTE
+    async def test_update_drive_file_rejected_before_any_read(self, _mode):
+        """update_drive_file reaches _resolve_import_media outside
+        _import_with_conversion, so it needs its own guard: a cached-schema
+        client sending file_path must be rejected before the server touches
+        the Drive API or its own filesystem."""
+        service = Mock()
+        with pytest.raises(UserInputError) as exc:
+            await _unwrap(update_drive_file)(
+                service=service,
+                user_google_email="user@example.com",
+                file_id="abc123",
+                file_path="/Users/someone/report.docx",
+            )
+        msg = str(exc.value)
+        assert "'content'" in msg and "'file_url'" in msg
         service.files.assert_not_called()
 
     @pytest.mark.asyncio

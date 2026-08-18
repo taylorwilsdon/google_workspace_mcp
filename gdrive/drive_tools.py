@@ -1968,6 +1968,16 @@ async def update_drive_file(
             "'file_path' and 'file_url' are only supported with mode='replace'."
         )
 
+    # Same guard as _import_with_conversion: exclude_args hides file_path from
+    # the remote schema, but a client with a cached schema can still send it —
+    # and the path would resolve on the SERVER's filesystem, not the caller's.
+    if file_path is not None and get_transport_mode() == "streamable-http":
+        raise UserInputError(
+            "'file_path' is unavailable in remote (streamable-http) mode: it "
+            "reads from the MCP server's filesystem, not yours. Pass the text "
+            "via 'content', or host the file and pass 'file_url'."
+        )
+
     current_file_fields = (
         "name, description, mimeType, parents, starred, trashed, webViewLink, "
         "writersCanShare, copyRequiresWriterPermission, properties"
