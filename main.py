@@ -573,7 +573,8 @@ def main():
         port = int(os.getenv("WORKSPACE_MCP_PORT", os.getenv("PORT", "8000")))
     else:
         port = int(os.getenv("PORT", os.getenv("WORKSPACE_MCP_PORT", "8000")))
-    _default_scheme = "https" if tls_enabled else "http"
+
+    _default_scheme = "https" if (tls_enabled and args.transport == "streamable-http") else "http"
     base_uri = os.getenv("WORKSPACE_MCP_BASE_URI", f"{_default_scheme}://localhost")
     host = resolve_bind_host_for_transport(args.transport)
     external_url = os.getenv("WORKSPACE_EXTERNAL_URL")

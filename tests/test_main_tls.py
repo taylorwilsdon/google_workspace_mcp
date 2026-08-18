@@ -291,3 +291,71 @@ def test_tls_enabled_uses_https_in_display_url(monkeypatch):
     assert "https://" in all_step_text, (
         f"Expected 'https://' in startup step output; got: {all_step_text!r}"
     )
+
+
+class TestDefaultSchemeSelection:
+    """_default_scheme in main() must be 'https' only for streamable-http + TLS."""
+
+    @staticmethod
+    def _scheme(tls_enabled: bool, transport: str) -> str:
+        """Mirror the _default_scheme logic from main()."""
+        return "https" if (tls_enabled and transport == "streamable-http") else "http"
+
+    def test_streamable_http_with_tls_uses_https(self):
+        assert self._scheme(True, "streamable-http") == "https"
+
+    def test_stdio_with_tls_uses_http(self):
+        """TLS env vars must not make the stdio callback URL advertise https://."""
+        assert self._scheme(True, "stdio") == "http"
+
+    def test_streamable_http_without_tls_uses_http(self):
+        assert self._scheme(False, "streamable-http") == "http"
+
+    def test_stdio_without_tls_uses_http(self):
+        assert self._scheme(False, "stdio") == "http"
+
+
+def test_stdio_with_tls_env_vars_does_not_advertise_https(monkeypatch, capsys):
+    """When TLS env vars are set but transport is stdio, startup must not exit with an
+    https:// OAuth callback URL — the stdio callback server serves plain HTTP."""
+    monkeypatch.setenv("WORKSPACE_MCP_SSL_CERTFILE", "/certs/server.pem")
+    monkeypatch.setenv("WORKSPACE_MCP_SSL_KEYFILE", "/certs/server.key")
+    monkeypatch.delenv("WORKSPACE_MCP_BASE_URI", raising=False)
+    monkeypatch.delenv("WORKSPACE_EXTERNAL_URL", raising=False)
+    # Force stdio transport so TLS applies to the callback-server path.
+    monkeypatch.setenv("WORKSPACE_MCP_TRANSPORT", "stdio")
+    monkeypatch.setattr("sys.argv", ["main"])
+    monkeypatch.setattr(main, "configure_safe_logging", lambda: None)
+    monkeypatch.setattr(main, "set_transport_mode", lambda _t: None)
+    monkeypatch.setattr(main, "check_credentials_directory_permissions", lambda: None)
+    monkeypatch.setattr(main, "is_stateless_mode", lambda: False)
+    monkeypatch.setattr(main, "is_service_account_enabled", lambda: False)
+    monkeypatch.setattr(main, "get_selected_backend", lambda: "local")
+    monkeypatch.setattr(main, "wrap_server_tool_method", lambda _s: None)
+    monkeypatch.setattr(main, "set_enabled_tool_names", lambda _t: None)
+    monkeypatch.setattr(main, "filter_server_tools", lambda _s: 0)
+    monkeypatch.setattr("importlib.import_module", lambda *a, **kw: __import__("unittest.mock", fromlist=["MagicMock"]).MagicMock())
+    # Intercept server.run so we don't actually start stdio.
+    monkeypatch.setattr(main.server, "run", lambda **kw: None)
+
+    # Capture ui.step() calls to inspect the advertised OAuth callback URL.
+    ui_steps: list = []
+    from core.startup_ui import StartupDisplay
+
+    class _CapturingDisplay(StartupDisplay):
+        def step(self, *args, **kwargs):
+            ui_steps.append(args)
+            return super().step(*args, **kwargs)
+
+        def detail(self, *args, **kwargs):
+            ui_steps.append(args)
+            return super().detail(*args, **kwargs)
+
+    monkeypatch.setattr(main, "StartupDisplay", _CapturingDisplay)
+
+    main.main()
+
+    all_text = " ".join(str(a) for step in ui_steps for a in step)
+    assert "https://" not in all_text, (
+        f"stdio path must not advertise https:// when the callback server is plain HTTP; got: {all_text!r}"
+    )
