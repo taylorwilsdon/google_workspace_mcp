@@ -402,11 +402,10 @@ def configure_server_for_http():
         ) -> bytes:
             """Validate JWT signing key override and derive the final JWT key."""
             if jwt_signing_key_override:
-                if len(jwt_signing_key_override) < 32:
-                    raise ValueError(
-                        f"FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY must be at least 32 characters "
-                        f"(got {len(jwt_signing_key_override)}). "
-                        "Generate with: python -c \"import secrets; print(secrets.token_hex(32))\""
+                if len(jwt_signing_key_override) < 12:
+                    logger.warning(
+                        "OAuth 2.1: FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY is less than 12 characters; "
+                        "use a longer secret to improve key derivation strength."
                     )
                 return derive_jwt_key(
                     low_entropy_material=jwt_signing_key_override,
