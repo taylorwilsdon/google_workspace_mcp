@@ -119,8 +119,13 @@ class _HTMLTextExtractor(HTMLParser):
         self._text = []
         self._skip = False
         self._strip_quotes = strip_quotes
-        self._quote_open = False
-        self._quote_nesting = 0
+        # Tag name that opened the current quote block, or None when no quote
+        # is open. Tracking the NAME rather than a blind nesting counter is
+        # what makes this survive real email HTML: unclosed <p> and <li> are
+        # everywhere, and a counter would leave the quote open past its
+        # container and swallow the rest of the message.
+        self._quote_tag: Optional[str] = None
+        self._quote_depth = 0
         self.removed_chars = 0
         self.quote_marker: Optional[str] = None
 
@@ -139,11 +144,11 @@ class _HTMLTextExtractor(HTMLParser):
         return None
 
     def handle_starttag(self, tag, attrs):
-        if self._quote_open:
-            # Track nesting so the quote block closes on its own end tag
-            # rather than on the first end tag of any child element.
-            if tag not in VOID_HTML_TAGS:
-                self._quote_nesting += 1
+        if self._quote_tag is not None:
+            # Only a nested container of the SAME name deepens the quote.
+            # Everything else inside it is irrelevant to where it ends.
+            if tag == self._quote_tag and tag not in VOID_HTML_TAGS:
+                self._quote_depth += 1
             return
         if tag in ("script", "style"):
             self._skip = True
@@ -151,8 +156,8 @@ class _HTMLTextExtractor(HTMLParser):
         if self._strip_quotes and tag not in VOID_HTML_TAGS:
             marker = self._quote_container(tag, attrs)
             if marker:
-                self._quote_open = True
-                self._quote_nesting = 0
+                self._quote_tag = tag
+                self._quote_depth = 0
                 if self.quote_marker is None:
                     self.quote_marker = marker
                 return
@@ -160,17 +165,21 @@ class _HTMLTextExtractor(HTMLParser):
             self._text.append(" ")
 
     def handle_endtag(self, tag):
-        if self._quote_open:
-            if self._quote_nesting == 0:
-                self._quote_open = False
+        if self._quote_tag is not None:
+            # HTMLParser dispatches "<br />" to BOTH handlers, so a void end
+            # tag must never be read as the end of the quote.
+            if tag in VOID_HTML_TAGS or tag != self._quote_tag:
+                return
+            if self._quote_depth == 0:
+                self._quote_tag = None
             else:
-                self._quote_nesting -= 1
+                self._quote_depth -= 1
             return
         if tag in ("script", "style"):
             self._skip = False
 
     def handle_data(self, data):
-        if self._quote_open:
+        if self._quote_tag is not None:
             self.removed_chars += len(data)
             return
         if not self._skip:

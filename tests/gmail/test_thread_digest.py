@@ -265,6 +265,65 @@ class TestHtmlQuoteStripping:
         assert "more old" not in text
         assert "After." in text
 
+    def test_self_closing_br_does_not_end_the_quote(self):
+        """HTMLParser dispatches "<br />" to BOTH handlers. Reading that end
+        tag as the end of the quote leaks the rest of the quoted history."""
+        html = (
+            "<div>Reply.</div>"
+            "<blockquote>old<br />STILL QUOTED</blockquote>"
+            "<div>Sig.</div>"
+        )
+        text, removed, _ = _html_to_text_with_quote_stats(html, strip_quotes=True)
+        assert "STILL QUOTED" not in text
+        assert "old" not in text
+        assert text == "Reply.Sig."
+        assert removed == len("old") + len("STILL QUOTED")
+
+    def test_unclosed_block_tags_do_not_swallow_later_content(self):
+        """Unclosed <p> is everywhere in real email HTML. A blind nesting
+        counter stays positive past </blockquote> and discards the rest of the
+        message, which is the one thing this must never do."""
+        html = (
+            "<div>Reply.</div>"
+            "<blockquote><p>old<p>more</blockquote>"
+            "<div>Signature.</div>"
+        )
+        text, removed, _ = _html_to_text_with_quote_stats(html, strip_quotes=True)
+        assert "Signature." in text
+        assert "old" not in text
+        assert "more" not in text
+        assert removed == len("old") + len("more")
+
+    def test_unclosed_list_items_do_not_swallow_later_content(self):
+        html = (
+            "<div>Reply.</div>"
+            "<blockquote><ul><li>a<li>b</ul></blockquote>"
+            "<div>After.</div>"
+        )
+        text, _, _ = _html_to_text_with_quote_stats(html, strip_quotes=True)
+        assert "After." in text
+        assert "a" not in text.replace("Reply.", "").replace("After.", "")
+
+    def test_nested_same_tag_quote_closes_at_the_outer_container(self):
+        html = (
+            "<div>R.</div>"
+            "<blockquote>a<blockquote>b</blockquote>c</blockquote>"
+            "<div>After.</div>"
+        )
+        text, removed, _ = _html_to_text_with_quote_stats(html, strip_quotes=True)
+        assert text == "R.After."
+        assert removed == 3
+
+    def test_stray_end_tag_inside_quote_does_not_end_it(self):
+        html = (
+            "<div>Reply.</div>"
+            "<blockquote>old</span>still old</blockquote>"
+            "<div>After.</div>"
+        )
+        text, _, _ = _html_to_text_with_quote_stats(html, strip_quotes=True)
+        assert "still old" not in text
+        assert "After." in text
+
     def test_strip_quotes_off_keeps_everything(self):
         html = "<div>New reply.</div><blockquote>Old quoted history.</blockquote>"
         text, removed, marker = _html_to_text_with_quote_stats(html, strip_quotes=False)
