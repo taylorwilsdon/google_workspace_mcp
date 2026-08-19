@@ -19,6 +19,7 @@ from auth.service_decorator import require_google_service
 from core.server import server
 from core.utils import UserInputError, handle_http_errors, StringList
 from gcontacts.contacts_helpers import (
+    _contact_sync_item,
     _format_contact,
     _merge_emails,
     _merge_nicknames,
@@ -34,6 +35,10 @@ logger = logging.getLogger(__name__)
 
 # Default person fields for list/search operations
 DEFAULT_PERSON_FIELDS = "names,nicknames,emailAddresses,phoneNumbers,organizations"
+
+# Incremental connection sync also needs metadata so deletion tombstones can
+# be represented without fetching each person individually.
+SYNC_PERSON_FIELDS = f"{DEFAULT_PERSON_FIELDS},metadata"
 
 # Detailed person fields for get operations
 DETAILED_PERSON_FIELDS = (
@@ -559,6 +564,78 @@ async def _warmup_search_cache(service: Resource, user_google_email: str) -> Non
 # =============================================================================
 # Core Tier Tools
 # =============================================================================
+
+
+@server.tool(
+    title="Sync Contacts",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+@require_google_service("people", "contacts_read")
+@handle_http_errors("sync_contacts", service_type="people")
+async def sync_contacts(
+    service: Resource,
+    user_google_email: str,
+    page_size: int = 1000,
+    page_token: Optional[str] = None,
+    sync_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Return one structured page for a full or incremental contact sync.
+
+    Call without ``sync_token`` for the initial full sync and follow
+    ``next_page_token`` until the final page supplies ``next_sync_token``.
+    The server returns but does not persist that token; the consumer must store
+    it and pass it on later calls to receive only changes and deletion
+    tombstones. A stale token is reported as ``reset_required`` so a client can
+    safely restart with a full sync.
+    """
+    if page_size < 1:
+        raise UserInputError("page_size must be >= 1")
+    page_size = min(page_size, 1000)
+
+    params: Dict[str, Any] = {
+        "resourceName": "people/me",
+        "personFields": SYNC_PERSON_FIELDS,
+        "pageSize": page_size,
+    }
+    if page_token:
+        params["pageToken"] = page_token
+    if sync_token:
+        params["syncToken"] = sync_token
+    else:
+        params["requestSyncToken"] = True
+
+    try:
+        result = await asyncio.to_thread(
+            service.people().connections().list(**params).execute
+        )
+    except HttpError as exc:
+        if sync_token and getattr(exc.resp, "status", None) == 410:
+            return {
+                "account": user_google_email,
+                "contacts": [],
+                "next_page_token": None,
+                "next_sync_token": None,
+                "reset_required": True,
+            }
+        raise
+
+    contacts = [_contact_sync_item(person) for person in result.get("connections", [])]
+    logger.info(
+        "[sync_contacts] Returned %d contact changes for configured account",
+        len(contacts),
+    )
+    return {
+        "account": user_google_email,
+        "contacts": contacts,
+        "next_page_token": result.get("nextPageToken"),
+        "next_sync_token": result.get("nextSyncToken"),
+        "reset_required": False,
+    }
 
 
 @server.tool(
