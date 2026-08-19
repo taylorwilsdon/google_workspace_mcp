@@ -636,3 +636,190 @@ def html_to_text_preserving_breaks(html_content: str) -> str:
 def _signature_html_to_text(signature_html: str) -> str:
     """Convert Gmail signature HTML to plain text, preserving line breaks."""
     return html_to_text_preserving_breaks(signature_html)
+
+
+# ---------------------------------------------------------------------------
+# Quoted-history stripping
+#
+# The Gmail API has no server-side option to remove quoted reply history:
+# users.threads.get accepts only `format` and `metadataHeaders`. Threads
+# therefore arrive with every earlier message repeated inside every later one,
+# so an n-message thread carries roughly n(n+1)/2 message-bodies of text.
+#
+# The helpers below remove that duplication before the payload leaves the
+# server. They are deliberately conservative. There is no marker every mail
+# client agrees on, so a heuristic will eventually meet a body it misreads:
+# every removal is reported back to the caller as a character count plus the
+# marker that triggered it, and anything the heuristics cannot read
+# confidently is returned untouched.
+# ---------------------------------------------------------------------------
+
+# HTML containers that clients wrap quoted history in.
+QUOTE_HTML_TAGS = frozenset({"blockquote"})
+QUOTE_HTML_CLASS_MARKERS = (
+    "gmail_quote",
+    "gmail_attr",
+    "yahoo_quoted",
+    "moz-cite-prefix",
+    "protonmail_quote",
+)
+QUOTE_HTML_IDS = frozenset(
+    {
+        "appendonly",
+        "divrplyfwdmsg",
+        "olk_src_body_section",
+    }
+)
+
+# Void elements never produce an end tag, so they must not affect nesting depth.
+VOID_HTML_TAGS = frozenset(
+    {
+        "area",
+        "base",
+        "br",
+        "col",
+        "embed",
+        "hr",
+        "img",
+        "input",
+        "link",
+        "meta",
+        "param",
+        "source",
+        "track",
+        "wbr",
+    }
+)
+
+# Plain-text quote headers. Anchored and narrow on purpose: a false positive
+# truncates real content, which is worse than leaving duplication in place.
+_QUOTE_ON_WROTE_RE = re.compile(r"^\s*On\b.{0,400}\bwrote:\s*$", re.IGNORECASE)
+_QUOTE_ON_START_RE = re.compile(r"^\s*On\b", re.IGNORECASE)
+_QUOTE_ORIGINAL_RE = re.compile(
+    r"^\s*-{2,}\s*Original Message\s*-{2,}\s*$", re.IGNORECASE
+)
+_QUOTE_FORWARDED_RE = re.compile(
+    r"^\s*-{2,}\s*Forwarded message\s*-{2,}\s*$", re.IGNORECASE
+)
+_QUOTE_UNDERSCORE_RE = re.compile(r"^\s*_{10,}\s*$")
+_QUOTE_FROM_RE = re.compile(r"^\s*From:\s*\S")
+_QUOTE_SENT_RE = re.compile(r"^\s*(Sent|Date):\s*\S")
+_QUOTE_TO_RE = re.compile(r"^\s*To:\s*\S")
+_QUOTE_PREFIX_RE = re.compile(r"^\s{0,3}>")
+
+# Share of non-blank remaining lines that must carry a ">" prefix before a
+# quote-prefix run is treated as the start of quoted history.
+QUOTE_PREFIX_RUN_RATIO = 0.6
+
+
+def _is_outlook_quote_header(lines: list[str], index: int) -> bool:
+    """True when lines[index] opens an Outlook-style quoted header block.
+
+    A bare "From:" line is not enough on its own; a Sent/Date line and a To
+    line must follow within the next few lines.
+    """
+    if not _QUOTE_FROM_RE.match(lines[index]):
+        return False
+    window = lines[index + 1 : index + 5]
+    has_sent = any(_QUOTE_SENT_RE.match(line) for line in window)
+    has_to = any(_QUOTE_TO_RE.match(line) for line in window)
+    return has_sent and has_to
+
+
+def _is_on_wrote_header(lines: list[str], index: int) -> bool:
+    """True when lines[index] opens a Gmail-style "On ... wrote:" header.
+
+    Gmail wraps long attribution lines, so the trailing "wrote:" is allowed to
+    land on either of the next two lines.
+    """
+    if not _QUOTE_ON_START_RE.match(lines[index]):
+        return False
+    joined = lines[index]
+    for offset in range(3):
+        if _QUOTE_ON_WROTE_RE.match(joined):
+            return True
+        next_index = index + offset + 1
+        if next_index >= len(lines):
+            return False
+        joined = f"{joined} {lines[next_index].strip()}"
+    return False
+
+
+def _is_quote_prefix_run(lines: list[str], index: int) -> bool:
+    """True when lines[index] begins a ">"-quoted run that dominates the rest.
+
+    A single stray ">" line (a quoted fragment mid-sentence, a shell prompt in
+    a code sample) does not qualify.
+    """
+    if not _QUOTE_PREFIX_RE.match(lines[index]):
+        return False
+    remaining = [line for line in lines[index:] if line.strip()]
+    if not remaining:
+        return False
+    quoted = sum(1 for line in remaining if _QUOTE_PREFIX_RE.match(line))
+    return quoted / len(remaining) >= QUOTE_PREFIX_RUN_RATIO
+
+
+def _quote_marker_at(lines: list[str], index: int) -> Optional[str]:
+    """Name of the quote marker starting at lines[index], or None."""
+    line = lines[index]
+    if _is_on_wrote_header(lines, index):
+        return "on_wrote"
+    if _QUOTE_ORIGINAL_RE.match(line):
+        return "original_message"
+    if _QUOTE_FORWARDED_RE.match(line):
+        return "forwarded_message"
+    if _QUOTE_UNDERSCORE_RE.match(line) and any(
+        _QUOTE_FROM_RE.match(candidate) for candidate in lines[index + 1 : index + 5]
+    ):
+        return "outlook_separator"
+    if _is_outlook_quote_header(lines, index):
+        return "outlook_header"
+    if _is_quote_prefix_run(lines, index):
+        return "quote_prefix"
+    return None
+
+
+def _find_quote_cut(lines: list[str]) -> tuple[Optional[int], Optional[str]]:
+    """Find the first line index that starts quoted history.
+
+    Returns (index, marker_name), or (None, None) when nothing matches.
+
+    A body whose FIRST line already starts quoted history is left whole. It
+    carries no new content to keep, so cutting would leave only an attribution
+    line and throw away the only copy of the quoted text the caller has.
+    """
+    if not lines:
+        return None, None
+    if _quote_marker_at(lines, 0) is not None:
+        return None, None
+    for index in range(1, len(lines)):
+        marker = _quote_marker_at(lines, index)
+        if marker is not None:
+            return index, marker
+    return None, None
+
+
+def _strip_quoted_plaintext(text: str) -> tuple[str, int, Optional[str]]:
+    """Remove quoted reply history from a plain-text message body.
+
+    Returns (kept_text, removed_chars, marker). The body is returned unchanged
+    with removed_chars == 0 when no marker matches confidently, or when
+    stripping would leave nothing behind.
+    """
+    if not text or not text.strip():
+        return text, 0, None
+
+    lines = text.splitlines()
+    cut, marker = _find_quote_cut(lines)
+    if cut is None:
+        return text, 0, None
+
+    kept = "\n".join(lines[:cut]).rstrip()
+    if not kept.strip():
+        return text, 0, None
+
+    removed = len(text) - len(kept)
+    if removed <= 0:
+        return text, 0, None
+    return kept, removed, marker

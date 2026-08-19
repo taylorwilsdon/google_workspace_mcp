@@ -58,7 +58,11 @@ from auth.scopes import (
 )
 from gmail.gmail_helpers import (
     GMAIL_METADATA_HEADERS,
+    QUOTE_HTML_CLASS_MARKERS,
+    QUOTE_HTML_IDS,
+    QUOTE_HTML_TAGS,
     RAW_BODY_TRUNCATE_LIMIT,
+    VOID_HTML_TAGS,
     _analyze_thread_ownership_impl,
     _build_forward_content,
     _derive_reply_all_recipients,
@@ -68,6 +72,7 @@ from gmail.gmail_helpers import (
     _retryable_result_ids,
     _signature_fetch_tool_error,
     _signature_html_to_text,
+    _strip_quoted_plaintext,
     html_to_text_preserving_breaks,
 )
 
@@ -81,6 +86,10 @@ GMAIL_SEARCH_HEADER_BATCH_SIZE = 10
 GMAIL_REQUEST_DELAY = 0.1
 GMAIL_RATE_LIMIT_BACKOFF = 2.0
 HTML_BODY_TRUNCATE_LIMIT = 20000
+# Per-message body cap applied in digest mode. The formatted-string paths
+# keep their existing behavior: the text path is uncapped there, and the
+# HTML path keeps HTML_BODY_TRUNCATE_LIMIT.
+DIGEST_BODY_TRUNCATE_LIMIT = 4000
 LOW_VALUE_TEXT_PLACEHOLDERS = (
     "your client does not support html",
     "view this email in your browser",
@@ -98,25 +107,72 @@ CONTENT_ID_SAFE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+\-@]*$")
 
 
 class _HTMLTextExtractor(HTMLParser):
-    """Extract readable text from HTML using stdlib."""
+    """Extract readable text from HTML using stdlib.
 
-    def __init__(self):
+    With strip_quotes=True the extractor also drops the subtree of any element
+    a mail client uses to wrap quoted reply history, and records how many
+    characters that removed so the caller can report it rather than hiding it.
+    """
+
+    def __init__(self, strip_quotes: bool = False):
         super().__init__()
         self._text = []
         self._skip = False
+        self._strip_quotes = strip_quotes
+        self._quote_open = False
+        self._quote_nesting = 0
+        self.removed_chars = 0
+        self.quote_marker: Optional[str] = None
+
+    @staticmethod
+    def _quote_container(tag: str, attrs) -> Optional[str]:
+        """Name of the quote marker this start tag matches, or None."""
+        if tag in QUOTE_HTML_TAGS:
+            return "blockquote"
+        attr_map = {key.lower(): (value or "") for key, value in attrs}
+        classes = attr_map.get("class", "").lower()
+        for marker in QUOTE_HTML_CLASS_MARKERS:
+            if marker in classes:
+                return marker
+        if attr_map.get("id", "").lower() in QUOTE_HTML_IDS:
+            return "outlook_container"
+        return None
 
     def handle_starttag(self, tag, attrs):
+        if self._quote_open:
+            # Track nesting so the quote block closes on its own end tag
+            # rather than on the first end tag of any child element.
+            if tag not in VOID_HTML_TAGS:
+                self._quote_nesting += 1
+            return
         if tag in ("script", "style"):
             self._skip = True
             return
+        if self._strip_quotes and tag not in VOID_HTML_TAGS:
+            marker = self._quote_container(tag, attrs)
+            if marker:
+                self._quote_open = True
+                self._quote_nesting = 0
+                if self.quote_marker is None:
+                    self.quote_marker = marker
+                return
         if tag == "br" and not self._skip:
             self._text.append(" ")
 
     def handle_endtag(self, tag):
+        if self._quote_open:
+            if self._quote_nesting == 0:
+                self._quote_open = False
+            else:
+                self._quote_nesting -= 1
+            return
         if tag in ("script", "style"):
             self._skip = False
 
     def handle_data(self, data):
+        if self._quote_open:
+            self.removed_chars += len(data)
+            return
         if not self._skip:
             self._text.append(data)
 
@@ -126,12 +182,24 @@ class _HTMLTextExtractor(HTMLParser):
 
 def _html_to_text(html: str) -> str:
     """Convert HTML to readable plain text."""
+    text, _, _ = _html_to_text_with_quote_stats(html)
+    return text
+
+
+def _html_to_text_with_quote_stats(
+    html: str, strip_quotes: bool = False
+) -> tuple[str, int, Optional[str]]:
+    """Convert HTML to text, optionally dropping quoted history.
+
+    Returns (text, removed_chars, marker). On a parse failure the raw input is
+    returned with removed_chars == 0, matching the previous fallback behavior.
+    """
     try:
-        parser = _HTMLTextExtractor()
+        parser = _HTMLTextExtractor(strip_quotes=strip_quotes)
         parser.feed(html)
-        return parser.get_text()
+        return parser.get_text(), parser.removed_chars, parser.quote_marker
     except Exception:
-        return html
+        return html, 0, None
 
 
 def _extract_message_body(payload):
@@ -202,6 +270,32 @@ def _extract_message_bodies(payload):
     return {"text": text_body, "html": html_body}
 
 
+def _should_use_html_body(text_stripped: str, html_text: str) -> bool:
+    """Decide whether the HTML body should be preferred over the plain-text one.
+
+    Prefer plain text, but fall back to HTML when the plain part is empty or a
+    clearly low-value stand-in (a "your client does not support HTML" notice, a
+    bare unsubscribe footer, or a tail of the HTML content).
+    """
+    plain_lower = " ".join(text_stripped.split()).lower()
+    html_lower = " ".join(html_text.split()).lower()
+    plain_is_low_value = plain_lower and (
+        any(marker in plain_lower for marker in LOW_VALUE_TEXT_PLACEHOLDERS)
+        or (
+            any(marker in plain_lower for marker in LOW_VALUE_TEXT_FOOTER_MARKERS)
+            and len(html_lower) >= len(plain_lower) + LOW_VALUE_TEXT_HTML_DIFF_MIN
+        )
+        or (
+            len(html_lower) >= len(plain_lower) + LOW_VALUE_TEXT_HTML_DIFF_MIN
+            and html_lower.endswith(plain_lower)
+        )
+    )
+    return bool(
+        html_text
+        and (not text_stripped or "<!--" in text_stripped or plain_is_low_value)
+    )
+
+
 def _format_body_content(
     text_body: str,
     html_body: str,
@@ -237,26 +331,7 @@ def _format_body_content(
     html_stripped = html_body.strip()
     html_text = _html_to_text(html_stripped).strip() if html_stripped else ""
 
-    plain_lower = " ".join(text_stripped.split()).lower()
-    html_lower = " ".join(html_text.split()).lower()
-    plain_is_low_value = plain_lower and (
-        any(marker in plain_lower for marker in LOW_VALUE_TEXT_PLACEHOLDERS)
-        or (
-            any(marker in plain_lower for marker in LOW_VALUE_TEXT_FOOTER_MARKERS)
-            and len(html_lower) >= len(plain_lower) + LOW_VALUE_TEXT_HTML_DIFF_MIN
-        )
-        or (
-            len(html_lower) >= len(plain_lower) + LOW_VALUE_TEXT_HTML_DIFF_MIN
-            and html_lower.endswith(plain_lower)
-        )
-    )
-
-    # Prefer plain text, but fall back to HTML when plain text is empty or clearly low-value.
-    use_html = html_text and (
-        not text_stripped or "<!--" in text_stripped or plain_is_low_value
-    )
-
-    if use_html:
+    if _should_use_html_body(text_stripped, html_text):
         content = html_text
         if len(content) > HTML_BODY_TRUNCATE_LIMIT:
             content = content[:HTML_BODY_TRUNCATE_LIMIT] + "\n\n[Content truncated...]"
@@ -3083,6 +3158,200 @@ async def draft_gmail_message(
     return f"Draft created{attachment_info}! Draft ID: {draft_id}"
 
 
+def _digest_body_content(
+    text_body: str,
+    html_body: str,
+    max_chars: int = DIGEST_BODY_TRUNCATE_LIMIT,
+) -> Dict[str, Any]:
+    """Reduce one message body to the content its sender actually added.
+
+    Picks the same text-or-HTML source the formatted path would pick, removes
+    quoted reply history from it, then caps what remains. Never returns less
+    than the caller could otherwise see without saying so: `removed_chars`,
+    `marker` and `truncated` describe every reduction applied.
+
+    Falls back to the unstripped body when stripping would leave nothing, so a
+    message that is entirely quoted history still returns its content.
+    """
+    text_stripped = text_body.strip()
+    html_stripped = html_body.strip()
+    html_text = _html_to_text(html_stripped).strip() if html_stripped else ""
+
+    if _should_use_html_body(text_stripped, html_text):
+        source = "html"
+        original = html_text
+        content, removed, marker = _html_to_text_with_quote_stats(
+            html_stripped, strip_quotes=True
+        )
+        content = content.strip()
+    else:
+        source = "text"
+        original = text_stripped
+        content, removed, marker = _strip_quoted_plaintext(text_body)
+        content = content.strip()
+
+    # Stripping must never be the reason a caller sees nothing at all.
+    if not content and original:
+        content, removed, marker = original, 0, None
+
+    if not content:
+        return {
+            "content": "[No readable content found]",
+            "source": source,
+            "removed_chars": 0,
+            "marker": None,
+            "truncated": False,
+            "original_chars": len(original),
+        }
+
+    truncated = len(content) > max_chars
+    if truncated:
+        content = _truncate_content(content, max_chars)
+
+    return {
+        "content": content,
+        "source": source,
+        "removed_chars": removed,
+        "marker": marker,
+        "truncated": truncated,
+        "original_chars": len(original),
+    }
+
+
+def _digest_raw_content(
+    raw_body: str,
+    max_chars: int = DIGEST_BODY_TRUNCATE_LIMIT,
+) -> Dict[str, Any]:
+    """Digest shape for a raw MIME body: quote-stripped and capped, no parsing."""
+    original = raw_body or ""
+    content, removed, marker = _strip_quoted_plaintext(original)
+    content = content.strip()
+    if not content:
+        content, removed, marker = original.strip(), 0, None
+    if not content:
+        return {
+            "content": "[No raw content found]",
+            "source": "raw",
+            "removed_chars": 0,
+            "marker": None,
+            "truncated": False,
+            "original_chars": len(original),
+        }
+    truncated = len(content) > max_chars
+    if truncated:
+        content = _truncate_content(content, max_chars)
+    return {
+        "content": content,
+        "source": "raw",
+        "removed_chars": removed,
+        "marker": marker,
+        "truncated": truncated,
+        "original_chars": len(original),
+    }
+
+
+def _build_thread_digest(
+    thread_data: dict,
+    thread_id: str,
+    body_format: Literal["text", "html", "raw"] = "text",
+    raw_contents: Optional[Dict[str, str]] = None,
+    max_chars: int = DIGEST_BODY_TRUNCATE_LIMIT,
+) -> Dict[str, Any]:
+    """Build a structured, de-duplicated digest of a Gmail thread.
+
+    One entry per message carrying sender, date, recipients, the RFC822
+    Message-ID and the new content only. Quoted history that repeats earlier
+    messages in the same thread is removed here rather than in the caller's
+    context window, and the totals in "stats" report exactly how much went.
+    """
+    messages = thread_data.get("messages", []) or []
+    if not messages:
+        return {
+            "thread_id": thread_id,
+            "subject": None,
+            "message_count": 0,
+            "messages": [],
+            "stats": {
+                "quoted_chars_removed": 0,
+                "messages_truncated": 0,
+                "original_chars": 0,
+                "digest_chars": 0,
+            },
+        }
+
+    first_headers = _extract_headers(messages[0].get("payload", {}), ["Subject"])
+    thread_subject = first_headers.get("Subject", "(no subject)")
+
+    digest_messages: List[Dict[str, Any]] = []
+    total_removed = 0
+    total_truncated = 0
+    total_original = 0
+    total_digest = 0
+
+    for index, message in enumerate(messages, 1):
+        payload = message.get("payload", {})
+        headers = _extract_headers(payload, GMAIL_METADATA_HEADERS)
+        message_id = message.get("id", "")
+
+        if body_format == "raw":
+            body = _digest_raw_content(
+                (raw_contents or {}).get(message_id, ""), max_chars=max_chars
+            )
+        else:
+            bodies = _extract_message_bodies(payload)
+            body = _digest_body_content(
+                bodies.get("text", ""), bodies.get("html", ""), max_chars=max_chars
+            )
+
+        subject = headers.get("Subject", "")
+        entry: Dict[str, Any] = {
+            "index": index,
+            "id": message_id,
+            "from": headers.get("From", ""),
+            "date": headers.get("Date", ""),
+            "to": headers.get("To", ""),
+            "cc": headers.get("Cc", ""),
+            "message_id_header": headers.get("Message-ID", ""),
+            "subject": subject if subject and subject != thread_subject else None,
+            "content": body["content"],
+            "content_source": body["source"],
+            "quoted_chars_removed": body["removed_chars"],
+            "quote_marker": body["marker"],
+            "truncated": body["truncated"],
+        }
+
+        attachments = _extract_attachments(payload)
+        if attachments:
+            entry["attachments"] = [
+                {
+                    "filename": att["filename"],
+                    "mimeType": att["mimeType"],
+                    "size": att["size"],
+                    "attachmentId": att["attachmentId"],
+                }
+                for att in attachments
+            ]
+
+        digest_messages.append(entry)
+        total_removed += body["removed_chars"]
+        total_truncated += 1 if body["truncated"] else 0
+        total_original += body["original_chars"]
+        total_digest += len(body["content"])
+
+    return {
+        "thread_id": thread_id,
+        "subject": thread_subject,
+        "message_count": len(messages),
+        "messages": digest_messages,
+        "stats": {
+            "quoted_chars_removed": total_removed,
+            "messages_truncated": total_truncated,
+            "original_chars": total_original,
+            "digest_chars": total_digest,
+        },
+    }
+
+
 def _format_thread_content(
     thread_data: dict,
     thread_id: str,
@@ -3244,6 +3513,20 @@ async def get_gmail_thread_content(
             ),
         ),
     ] = False,
+    digest: Annotated[
+        bool,
+        Field(
+            description=(
+                "When True, returns a structured per-message digest instead of "
+                "the formatted string: one entry per message with sender, date, "
+                "recipients, Message-ID and the sender's NEW content only. "
+                "Quoted reply history repeated from earlier messages in the same "
+                "thread is removed server-side, and every removal is reported in "
+                "the per-message and thread-level counts. Bodies are capped at "
+                "4000 characters each. Defaults to False (existing behavior)."
+            ),
+        ),
+    ] = False,
 ) -> "str | Dict[str, Any]":
     """
     Retrieves the complete content of a Gmail conversation thread, including all messages.
@@ -3263,18 +3546,25 @@ async def get_gmail_thread_content(
             formatted thread content and structured ownership analysis. When
             False (default), returns the formatted content string (existing
             behavior, unchanged).
+        digest (bool): When True, returns a structured per-message digest with
+            quoted reply history removed. See `_build_thread_digest`.
 
     Returns:
-        str: When `include_analysis=False` (default). The complete thread
-        content with all messages formatted for reading.
+        str: When `digest=False` and `include_analysis=False` (default). The
+        complete thread content with all messages formatted for reading.
 
         Dict[str, Any]: When `include_analysis=True`. A dict with keys
             "content" (str) and "analysis" (dict). See
             `_analyze_thread_ownership_impl` for the analysis schema.
+
+        Dict[str, Any]: When `digest=True`. The digest shape from
+            `_build_thread_digest`, plus an "analysis" key when
+            `include_analysis=True` as well.
     """
     logger.info(
         f"[get_gmail_thread_content] Invoked. Thread ID: '{thread_id}', "
-        f"Email: '{user_google_email}', include_analysis={include_analysis}"
+        f"Email: '{user_google_email}', include_analysis={include_analysis}, "
+        f"digest={digest}"
     )
 
     # Fetch the complete thread with all messages
@@ -3292,6 +3582,19 @@ async def get_gmail_thread_content(
         raw_contents = await _fetch_raw_message_contents(
             service, message_ids, log_prefix="get_gmail_thread_content"
         )
+
+    if digest:
+        result = _build_thread_digest(
+            thread_response,
+            thread_id,
+            body_format=body_format,
+            raw_contents=raw_contents,
+        )
+        if include_analysis:
+            result["analysis"] = _analyze_thread_ownership_impl(
+                thread_response, user_google_email
+            )
+        return result
 
     content = _format_thread_content(
         thread_response,
@@ -3335,7 +3638,20 @@ async def get_gmail_threads_content_batch(
             ),
         ),
     ] = "text",
-) -> str:
+    digest: Annotated[
+        bool,
+        Field(
+            description=(
+                "When True, returns a structured digest per thread instead of "
+                "one concatenated string: each thread carries per-message "
+                "sender, date, recipients, Message-ID and the sender's NEW "
+                "content only, with quoted reply history removed server-side "
+                "and reported in the counts. Defaults to False (existing "
+                "behavior)."
+            ),
+        ),
+    ] = False,
+) -> "str | Dict[str, Any]":
     """
     Retrieves the content of multiple Gmail threads in a single batch request.
     Supports up to 25 threads per batch to prevent SSL connection exhaustion.
@@ -3348,8 +3664,16 @@ async def get_gmail_threads_content_batch(
             "html" returns the raw HTML body as-is without conversion.
             "raw" fetches each message's full raw MIME content and returns the base64url-decoded body.
 
+        digest (bool): When True, returns structured per-thread digests with
+            quoted reply history removed. See `_build_thread_digest`.
+
     Returns:
-        str: A formatted list of thread contents with separators.
+        str: When `digest=False` (default). A formatted list of thread contents
+        with separators.
+
+        Dict[str, Any]: When `digest=True`. A dict with "thread_count",
+            "threads" (a list of digest dicts), "errors" (a list of
+            {"thread_id", "error"}) and aggregate "stats".
     """
     logger.info(
         f"[get_gmail_threads_content_batch] Invoked. Thread count: {len(thread_ids)}, Email: '{user_google_email}'"
@@ -3359,6 +3683,8 @@ async def get_gmail_threads_content_batch(
         raise ValueError("No thread IDs provided")
 
     output_threads = []
+    digest_threads: List[Dict[str, Any]] = []
+    digest_errors: List[Dict[str, str]] = []
 
     def _batch_callback(request_id, response, exception):
         """Callback for batch requests"""
@@ -3426,11 +3752,21 @@ async def get_gmail_threads_content_batch(
             entry = results.get(tid, {"data": None, "error": "No result"})
 
             if entry["error"]:
-                output_threads.append(f"⚠️ Thread {tid}: {entry['error']}\n")
+                if digest:
+                    digest_errors.append(
+                        {"thread_id": tid, "error": str(entry["error"])}
+                    )
+                else:
+                    output_threads.append(f"⚠️ Thread {tid}: {entry['error']}\n")
             else:
                 thread = entry["data"]
                 if not thread:
-                    output_threads.append(f"⚠️ Thread {tid}: No data returned\n")
+                    if digest:
+                        digest_errors.append(
+                            {"thread_id": tid, "error": "No data returned"}
+                        )
+                    else:
+                        output_threads.append(f"⚠️ Thread {tid}: No data returned\n")
                     continue
 
                 raw_contents = None
@@ -3446,14 +3782,45 @@ async def get_gmail_threads_content_batch(
                         log_prefix="get_gmail_threads_content_batch",
                     )
 
-                output_threads.append(
-                    _format_thread_content(
-                        thread,
-                        tid,
-                        body_format=body_format,
-                        raw_contents=raw_contents,
+                if digest:
+                    digest_threads.append(
+                        _build_thread_digest(
+                            thread,
+                            tid,
+                            body_format=body_format,
+                            raw_contents=raw_contents,
+                        )
                     )
-                )
+                else:
+                    output_threads.append(
+                        _format_thread_content(
+                            thread,
+                            tid,
+                            body_format=body_format,
+                            raw_contents=raw_contents,
+                        )
+                    )
+
+    if digest:
+        return {
+            "thread_count": len(digest_threads),
+            "threads": digest_threads,
+            "errors": digest_errors,
+            "stats": {
+                "quoted_chars_removed": sum(
+                    thread["stats"]["quoted_chars_removed"] for thread in digest_threads
+                ),
+                "messages_truncated": sum(
+                    thread["stats"]["messages_truncated"] for thread in digest_threads
+                ),
+                "original_chars": sum(
+                    thread["stats"]["original_chars"] for thread in digest_threads
+                ),
+                "digest_chars": sum(
+                    thread["stats"]["digest_chars"] for thread in digest_threads
+                ),
+            },
+        }
 
     # Combine all threads with separators
     header = f"Retrieved {len(thread_ids)} threads:"
