@@ -576,7 +576,7 @@ async def _warmup_search_cache(service: Resource, user_google_email: str) -> Non
     ),
 )
 @require_google_service("people", "contacts_read")
-@handle_http_errors("sync_contacts", service_type="people")
+@handle_http_errors("sync_contacts", is_read_only=True, service_type="people")
 async def sync_contacts(
     service: Resource,
     user_google_email: str,
@@ -590,8 +590,9 @@ async def sync_contacts(
     ``next_page_token`` until the final page supplies ``next_sync_token``.
     The server returns but does not persist that token; the consumer must store
     it and pass it on later calls to receive only changes and deletion
-    tombstones. A stale token is reported as ``reset_required`` so a client can
-    safely restart with a full sync.
+    tombstones. Consumers must also reuse the returned ``page_size`` whenever
+    passing a page or sync token. A stale token is reported as
+    ``reset_required`` so a client can safely restart with a full sync.
     """
     if page_size < 1:
         raise UserInputError("page_size must be >= 1")
@@ -618,6 +619,7 @@ async def sync_contacts(
             return {
                 "account": user_google_email,
                 "contacts": [],
+                "page_size": page_size,
                 "next_page_token": None,
                 "next_sync_token": None,
                 "reset_required": True,
@@ -632,6 +634,7 @@ async def sync_contacts(
     return {
         "account": user_google_email,
         "contacts": contacts,
+        "page_size": page_size,
         "next_page_token": result.get("nextPageToken"),
         "next_sync_token": result.get("nextSyncToken"),
         "reset_required": False,

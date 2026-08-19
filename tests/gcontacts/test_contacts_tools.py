@@ -105,6 +105,7 @@ class TestSyncContacts:
         result = await _call_sync_contacts(service, page_size=250, page_token="page-2")
 
         assert result["next_page_token"] == "page-3"
+        assert result["page_size"] == 250
         service.people.return_value.connections.return_value.list.assert_called_once_with(
             resourceName="people/me",
             personFields="names,nicknames,emailAddresses,phoneNumbers,organizations,metadata",
@@ -152,6 +153,7 @@ class TestSyncContacts:
         assert result == {
             "account": "user@example.com",
             "contacts": [],
+            "page_size": 1000,
             "next_page_token": None,
             "next_sync_token": None,
             "reset_required": True,
