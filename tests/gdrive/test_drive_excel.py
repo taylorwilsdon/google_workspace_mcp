@@ -208,6 +208,26 @@ async def test_read_drive_excel_range_returns_cached_values_formulas_formats_and
 
 
 @pytest.mark.asyncio
+async def test_read_drive_excel_range_preserves_shape_past_declared_range():
+    service = _drive_file(_workbook_bytes())
+
+    with patch("gdrive.drive_tools.MediaIoBaseDownload", _FakeDownloader):
+        result = await _unwrap(read_drive_excel_range)(
+            service=service,
+            user_google_email="user@example.com",
+            file_id="xlsx123",
+            sheet_name="Summary",
+            cell_range="A1:F5",
+        )
+
+    payload = json.loads(result)
+    for matrix_name in ("values", "formulas", "numberFormats"):
+        assert len(payload[matrix_name]) == 5
+        assert [len(row) for row in payload[matrix_name]] == [6] * 5
+        assert payload[matrix_name][2:] == [[None] * 6] * 3
+
+
+@pytest.mark.asyncio
 async def test_read_drive_excel_range_rejects_oversized_range_before_drive_access():
     service = Mock()
 

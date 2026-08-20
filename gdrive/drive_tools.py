@@ -325,24 +325,34 @@ def _read_excel_range(
                 max_col=max_col,
                 max_row=max_row,
             )
+            requested_row_count = max_row - min_row + 1
+            requested_column_count = max_col - min_col + 1
 
             values: List[List[Any]] = []
             formulas: List[List[Optional[str]]] = []
             number_formats: List[List[Optional[str]]] = []
-            for formula_row, cached_row in zip(formula_rows, cached_rows):
-                values.append([_json_excel_value(cell.value) for cell in cached_row])
-                formulas.append(
-                    [
-                        str(cell.value) if cell.data_type == "f" else None
-                        for cell in formula_row
-                    ]
+            for _ in range(requested_row_count):
+                formula_row = next(formula_rows, ())
+                cached_row = next(cached_rows, ())
+                value_row = [_json_excel_value(cell.value) for cell in cached_row]
+                formula_values = [
+                    str(cell.value) if cell.data_type == "f" else None
+                    for cell in formula_row
+                ]
+                format_values = [
+                    cell.number_format if cell.number_format != "General" else None
+                    for cell in formula_row
+                ]
+                value_row.extend([None] * (requested_column_count - len(value_row)))
+                formula_values.extend(
+                    [None] * (requested_column_count - len(formula_values))
                 )
-                number_formats.append(
-                    [
-                        cell.number_format if cell.number_format != "General" else None
-                        for cell in formula_row
-                    ]
+                format_values.extend(
+                    [None] * (requested_column_count - len(format_values))
                 )
+                values.append(value_row)
+                formulas.append(formula_values)
+                number_formats.append(format_values)
 
             return _serialize_excel_response(
                 {
