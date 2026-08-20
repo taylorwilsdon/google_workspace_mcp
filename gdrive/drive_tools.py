@@ -34,6 +34,7 @@ from core.attachment_storage import get_attachment_storage, get_attachment_url
 from core.utils import (
     GOOGLE_API_WRITE_RETRIES,
     IMAGE_MIME_TYPES,
+    UserInputError,
     encode_image_content,
     extract_office_xml_text,
     extract_pdf_text,
@@ -161,9 +162,14 @@ async def _download_file_to_temp(
             )
             done = False
             while not done:
-                _status, done = await loop.run_in_executor(None, downloader.next_chunk)
+                next_chunk = loop.run_in_executor(None, downloader.next_chunk)
+                try:
+                    _status, done = await asyncio.shield(next_chunk)
+                except asyncio.CancelledError:
+                    await asyncio.shield(next_chunk)
+                    raise
                 if max_bytes is not None and tmp_file.tell() > max_bytes:
-                    raise ValueError(
+                    raise UserInputError(
                         f"Downloaded file exceeds the {max_bytes}-byte safety limit."
                     )
     except BaseException:
@@ -175,17 +181,17 @@ async def _download_file_to_temp(
 def _validate_excel_range(cell_range: str) -> tuple[int, int, int, int]:
     """Parse one bounded worksheet-local A1 range."""
     if "!" in cell_range or "," in cell_range:
-        raise ValueError(
+        raise UserInputError(
             "cell_range must be one worksheet-local A1 range such as A1:H20."
         )
     try:
         min_col, min_row, max_col, max_row = range_boundaries(cell_range)
     except ValueError as error:
-        raise ValueError(
+        raise UserInputError(
             "cell_range must be one worksheet-local A1 range such as A1:H20."
         ) from error
     if None in (min_col, min_row, max_col, max_row):
-        raise ValueError(
+        raise UserInputError(
             "cell_range must include both columns and rows, such as A1:H20."
         )
     if (
@@ -196,10 +202,10 @@ def _validate_excel_range(cell_range: str) -> tuple[int, int, int, int]:
         or max_col > EXCEL_MAX_COLUMN
         or max_row > EXCEL_MAX_ROW
     ):
-        raise ValueError("cell_range is outside Excel worksheet bounds.")
+        raise UserInputError("cell_range is outside Excel worksheet bounds.")
     cell_count = (max_col - min_col + 1) * (max_row - min_row + 1)
     if cell_count > MAX_EXCEL_RANGE_CELLS:
-        raise ValueError(
+        raise UserInputError(
             f"cell_range requests {cell_count} cells; request at most "
             f"{MAX_EXCEL_RANGE_CELLS} cells."
         )
@@ -212,23 +218,27 @@ def _validate_excel_archive(path: Path) -> None:
         with zipfile.ZipFile(path) as archive:
             entries = archive.infolist()
             if len(entries) > MAX_EXCEL_ARCHIVE_ENTRIES:
-                raise ValueError("Excel workbook contains too many archive entries.")
+                raise UserInputError(
+                    "Excel workbook contains too many archive entries."
+                )
             if any(entry.flag_bits & 0x1 for entry in entries):
-                raise ValueError("Encrypted Excel workbooks are not supported.")
+                raise UserInputError("Encrypted Excel workbooks are not supported.")
             if any(
                 entry.file_size > MAX_EXCEL_ARCHIVE_ENTRY_BYTES for entry in entries
             ):
-                raise ValueError("Excel workbook contains an oversized archive entry.")
+                raise UserInputError(
+                    "Excel workbook contains an oversized archive entry."
+                )
             if (
                 sum(entry.file_size for entry in entries)
                 > MAX_EXCEL_ARCHIVE_UNCOMPRESSED_BYTES
             ):
-                raise ValueError("Excel workbook expands beyond the safety limit.")
+                raise UserInputError("Excel workbook expands beyond the safety limit.")
             names = set(archive.namelist())
             if "[Content_Types].xml" not in names or "xl/workbook.xml" not in names:
-                raise ValueError("File is not a valid XLSX workbook.")
+                raise UserInputError("File is not a valid XLSX workbook.")
     except zipfile.BadZipFile as error:
-        raise ValueError("File is not a valid XLSX workbook.") from error
+        raise UserInputError("File is not a valid XLSX workbook.") from error
 
 
 def _json_excel_value(value: Any) -> Any:
@@ -237,7 +247,7 @@ def _json_excel_value(value: Any) -> Any:
         return value
     if isinstance(value, float):
         if not math.isfinite(value):
-            raise ValueError("Excel range contains a non-finite numeric value.")
+            raise UserInputError("Excel range contains a non-finite numeric value.")
         return value
     if isinstance(value, (date, datetime, time)):
         return value.isoformat()
@@ -254,7 +264,7 @@ def _serialize_excel_response(payload: Dict[str, Any]) -> str:
         separators=(",", ":"),
     )
     if len(response) > MAX_EXCEL_RESPONSE_CHARACTERS:
-        raise ValueError(
+        raise UserInputError(
             "Excel range response exceeds the output safety limit; request a narrower range."
         )
     return response
@@ -309,7 +319,7 @@ def _read_excel_range(
         )
         try:
             if sheet_name not in formula_workbook.sheetnames:
-                raise ValueError(f"Worksheet '{sheet_name}' does not exist.")
+                raise UserInputError(f"Worksheet '{sheet_name}' does not exist.")
             formula_sheet = formula_workbook[sheet_name]
             cached_sheet = cached_workbook[sheet_name]
             min_col, min_row, max_col, max_row = bounds
@@ -381,12 +391,14 @@ async def _prepare_drive_excel_file(
         extra_fields="name, webViewLink, size, capabilities(canDownload)",
     )
     if file_metadata.get("mimeType") != EXCEL_MIME_TYPE:
-        raise ValueError("File must be a Drive-hosted .xlsx workbook.")
+        raise UserInputError("File must be a Drive-hosted .xlsx workbook.")
     if file_metadata.get("capabilities", {}).get("canDownload") is False:
-        raise ValueError("The current user is not permitted to download this workbook.")
+        raise UserInputError(
+            "The current user is not permitted to download this workbook."
+        )
     size = file_metadata.get("size")
     if size is not None and int(size) > MAX_EXCEL_DOWNLOAD_BYTES:
-        raise ValueError(
+        raise UserInputError(
             f"Excel workbook exceeds the {MAX_EXCEL_DOWNLOAD_BYTES}-byte safety limit."
         )
     path = await _download_file_to_temp(

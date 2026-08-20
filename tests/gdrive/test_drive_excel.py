@@ -13,6 +13,7 @@ from unittest.mock import Mock, patch
 import pytest
 from openpyxl import Workbook
 
+from core.utils import UserInputError
 from gdrive.drive_tools import inspect_drive_excel, read_drive_excel_range
 
 
@@ -231,7 +232,7 @@ async def test_read_drive_excel_range_preserves_shape_past_declared_range():
 async def test_read_drive_excel_range_rejects_oversized_range_before_drive_access():
     service = Mock()
 
-    with pytest.raises(ValueError, match="at most 500 cells"):
+    with pytest.raises(UserInputError, match="at most 500 cells"):
         await _unwrap(read_drive_excel_range)(
             service=service,
             user_google_email="user@example.com",
@@ -249,7 +250,7 @@ async def test_read_drive_excel_range_rejects_sheet_qualified_or_open_ended_rang
 
     for cell_range in ("Summary!A1:B2", "A:B", "D2:A1"):
         with pytest.raises(
-            ValueError, match="worksheet-local|columns and rows|worksheet bounds"
+            UserInputError, match="worksheet-local|columns and rows|worksheet bounds"
         ):
             await _unwrap(read_drive_excel_range)(
                 service=service,
@@ -266,7 +267,7 @@ async def test_read_drive_excel_range_rejects_sheet_qualified_or_open_ended_rang
 async def test_drive_excel_tools_reject_wrong_mime_type_before_download():
     service = _drive_file(_workbook_bytes(), mime_type="application/pdf")
 
-    with pytest.raises(ValueError, match="Drive-hosted .xlsx"):
+    with pytest.raises(UserInputError, match="Drive-hosted .xlsx"):
         await _unwrap(inspect_drive_excel)(
             service=service,
             user_google_email="user@example.com",
@@ -281,7 +282,7 @@ async def test_drive_excel_tools_reject_metadata_and_stream_size_limits(monkeypa
     content = _workbook_bytes()
     metadata_oversized = _drive_file(content, size=26 * 1024 * 1024)
 
-    with pytest.raises(ValueError, match="safety limit"):
+    with pytest.raises(UserInputError, match="safety limit"):
         await _unwrap(inspect_drive_excel)(
             service=metadata_oversized,
             user_google_email="user@example.com",
@@ -292,7 +293,7 @@ async def test_drive_excel_tools_reject_metadata_and_stream_size_limits(monkeypa
     stream_oversized = _drive_file(content, size=1)
     monkeypatch.setattr("gdrive.drive_tools.MAX_EXCEL_DOWNLOAD_BYTES", 1)
     with patch("gdrive.drive_tools.MediaIoBaseDownload", _FakeDownloader):
-        with pytest.raises(ValueError, match="safety limit"):
+        with pytest.raises(UserInputError, match="safety limit"):
             await _unwrap(inspect_drive_excel)(
                 service=stream_oversized,
                 user_google_email="user@example.com",
@@ -315,7 +316,7 @@ async def test_drive_excel_tools_reject_corrupt_and_encrypted_workbooks(
     service = _drive_file(content)
 
     with patch("gdrive.drive_tools.MediaIoBaseDownload", _FakeDownloader):
-        with pytest.raises(ValueError, match=message):
+        with pytest.raises(UserInputError, match=message):
             await _unwrap(inspect_drive_excel)(
                 service=service,
                 user_google_email="user@example.com",
@@ -333,7 +334,7 @@ async def test_drive_excel_tools_reject_archive_expansion_and_large_response(
     monkeypatch.setattr("gdrive.drive_tools.MAX_EXCEL_ARCHIVE_UNCOMPRESSED_BYTES", 1)
 
     with patch("gdrive.drive_tools.MediaIoBaseDownload", _FakeDownloader):
-        with pytest.raises(ValueError, match="expands beyond"):
+        with pytest.raises(UserInputError, match="expands beyond"):
             await _unwrap(inspect_drive_excel)(
                 service=service,
                 user_google_email="user@example.com",
@@ -346,7 +347,7 @@ async def test_drive_excel_tools_reject_archive_expansion_and_large_response(
     )
     monkeypatch.setattr("gdrive.drive_tools.MAX_EXCEL_RESPONSE_CHARACTERS", 1)
     with patch("gdrive.drive_tools.MediaIoBaseDownload", _FakeDownloader):
-        with pytest.raises(ValueError, match="output safety limit"):
+        with pytest.raises(UserInputError, match="output safety limit"):
             await _unwrap(read_drive_excel_range)(
                 service=response_service,
                 user_google_email="user@example.com",
@@ -372,7 +373,7 @@ async def test_drive_excel_tools_reject_archive_entry_limits(
     monkeypatch.setattr(f"gdrive.drive_tools.{limit_name}", 1)
 
     with patch("gdrive.drive_tools.MediaIoBaseDownload", _FakeDownloader):
-        with pytest.raises(ValueError, match=message):
+        with pytest.raises(UserInputError, match=message):
             await _unwrap(inspect_drive_excel)(
                 service=service,
                 user_google_email="user@example.com",
@@ -385,7 +386,7 @@ async def test_read_drive_excel_range_rejects_unknown_sheet_and_download_restric
     content = _workbook_bytes()
     unknown_sheet = _drive_file(content)
     with patch("gdrive.drive_tools.MediaIoBaseDownload", _FakeDownloader):
-        with pytest.raises(ValueError, match="does not exist"):
+        with pytest.raises(UserInputError, match="does not exist"):
             await _unwrap(read_drive_excel_range)(
                 service=unknown_sheet,
                 user_google_email="user@example.com",
@@ -398,7 +399,7 @@ async def test_read_drive_excel_range_rejects_unknown_sheet_and_download_restric
     restricted.files().get().execute.return_value["capabilities"] = {
         "canDownload": False
     }
-    with pytest.raises(ValueError, match="not permitted"):
+    with pytest.raises(UserInputError, match="not permitted"):
         await _unwrap(inspect_drive_excel)(
             service=restricted,
             user_google_email="user@example.com",
