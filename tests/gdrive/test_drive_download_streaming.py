@@ -148,6 +148,11 @@ async def test_download_to_temp_waits_for_worker_before_cleanup_on_cancellation(
         assert not task.done()
         assert temp_path.exists()
 
+        task.cancel()
+        await asyncio.sleep(0)
+        assert not task.done()
+        assert temp_path.exists()
+
         release.set()
         with pytest.raises(asyncio.CancelledError):
             await task

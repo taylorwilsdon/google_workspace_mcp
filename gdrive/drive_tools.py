@@ -166,10 +166,17 @@ async def _download_file_to_temp(
                 next_chunk = loop.run_in_executor(None, downloader.next_chunk)
                 try:
                     _status, done = await asyncio.shield(next_chunk)
-                except asyncio.CancelledError:
+                except asyncio.CancelledError as cancellation:
+                    while not next_chunk.done():
+                        try:
+                            await asyncio.shield(next_chunk)
+                        except asyncio.CancelledError:
+                            continue
+                        except Exception:
+                            break
                     with suppress(Exception):
-                        await asyncio.shield(next_chunk)
-                    raise
+                        next_chunk.result()
+                    raise cancellation
                 if max_bytes is not None and tmp_file.tell() > max_bytes:
                     raise UserInputError(
                         f"Downloaded file exceeds the {max_bytes}-byte safety limit."
