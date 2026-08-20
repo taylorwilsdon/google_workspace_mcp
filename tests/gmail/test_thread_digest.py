@@ -482,7 +482,15 @@ class TestDigestBodyContent:
     def test_absurdly_small_limit_does_not_produce_a_negative_slice(self):
         body = _digest_body_content("x" * 100, "", max_chars=5)
         assert body["truncated"] is True
-        assert TRUNCATION_NOTICE.strip() in body["content"]
+        assert len(body["content"]) <= 5
+
+    def test_limit_shorter_than_the_notice_omits_the_notice(self):
+        """A max_chars below len(TRUNCATION_NOTICE) can't fit body + notice,
+        so the notice is dropped rather than the output exceeding max_chars."""
+        body = _digest_body_content("x" * 100, "", max_chars=len(TRUNCATION_NOTICE) - 1)
+        assert body["truncated"] is True
+        assert len(body["content"]) <= len(TRUNCATION_NOTICE) - 1
+        assert TRUNCATION_NOTICE.strip() not in body["content"]
 
     def test_empty_body_reports_no_readable_content(self):
         body = _digest_body_content("", "")

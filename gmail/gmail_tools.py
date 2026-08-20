@@ -3263,8 +3263,13 @@ def _digest_body_content(
 
     truncated = len(content) > max_chars
     if truncated:
-        # Reserve room for the notice so the returned body honors max_chars.
-        content = _truncate_content(content, max(0, max_chars - len(TRUNCATION_NOTICE)))
+        if max_chars <= len(TRUNCATION_NOTICE):
+            # No room for the notice without itself exceeding max_chars.
+            # Hard-truncate instead of appending a notice that won't fit.
+            content = content[:max_chars]
+        else:
+            # Reserve room for the notice so the returned body honors max_chars.
+            content = _truncate_content(content, max_chars - len(TRUNCATION_NOTICE))
 
     return {
         "content": content,
