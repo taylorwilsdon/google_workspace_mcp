@@ -656,8 +656,14 @@ def _signature_html_to_text(signature_html: str) -> str:
 
 # HTML containers that clients wrap quoted history in.
 QUOTE_HTML_TAGS = frozenset({"blockquote"})
+# Matched as complete class tokens, never as substrings: a substring test lets
+# an unrelated class like "notgmail_quote" masquerade as a quote container and
+# delete real content. gmail_quote_container is listed explicitly because exact
+# matching would otherwise stop recognising Gmail's newer markup, which a
+# substring test caught by accident.
 QUOTE_HTML_CLASS_MARKERS = (
     "gmail_quote",
+    "gmail_quote_container",
     "gmail_attr",
     "yahoo_quoted",
     "moz-cite-prefix",

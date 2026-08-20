@@ -135,7 +135,9 @@ class _HTMLTextExtractor(HTMLParser):
         if tag in QUOTE_HTML_TAGS:
             return "blockquote"
         attr_map = {key.lower(): (value or "") for key, value in attrs}
-        classes = attr_map.get("class", "").lower()
+        # Whitespace-delimited tokens, compared exactly. "notgmail_quote" must
+        # not read as a quote container.
+        classes = set(attr_map.get("class", "").lower().split())
         for marker in QUOTE_HTML_CLASS_MARKERS:
             if marker in classes:
                 return marker
@@ -3187,6 +3189,15 @@ async def draft_gmail_message(
     return f"Draft created{attachment_info}! Draft ID: {draft_id}"
 
 
+DIGEST_HTML_FORMAT_ERROR = (
+    "digest=True returns normalized text, so body_format='html' cannot be "
+    "honored: quoted history is removed while parsing the HTML, and the "
+    "surviving fragments are not reassembled into valid HTML. Use "
+    "body_format='text' (the default) or 'raw' with digest=True, or drop "
+    "digest to get the raw HTML body."
+)
+
+
 def _digest_body_content(
     text_body: str,
     html_body: str,
@@ -3552,7 +3563,9 @@ async def get_gmail_thread_content(
                 "Quoted reply history repeated from earlier messages in the same "
                 "thread is removed server-side, and every removal is reported in "
                 "the per-message and thread-level counts. Bodies are capped at "
-                "4000 characters each. Defaults to False (existing behavior)."
+                "4000 characters each. Digest output is normalized text, so it "
+                "cannot be combined with body_format='html'. Defaults to False "
+                "(existing behavior)."
             ),
         ),
     ] = False,
@@ -3576,7 +3589,8 @@ async def get_gmail_thread_content(
             False (default), returns the formatted content string (existing
             behavior, unchanged).
         digest (bool): When True, returns a structured per-message digest with
-            quoted reply history removed. See `_build_thread_digest`.
+            quoted reply history removed. See `_build_thread_digest`. Cannot be
+            combined with body_format="html"; raises UserInputError if it is.
 
     Returns:
         str: When `digest=False` and `include_analysis=False` (default). The
@@ -3595,6 +3609,9 @@ async def get_gmail_thread_content(
         f"Email: '{user_google_email}', include_analysis={include_analysis}, "
         f"digest={digest}"
     )
+
+    if digest and body_format == "html":
+        raise UserInputError(DIGEST_HTML_FORMAT_ERROR)
 
     # Fetch the complete thread with all messages
     thread_response = await asyncio.to_thread(
@@ -3675,8 +3692,9 @@ async def get_gmail_threads_content_batch(
                 "one concatenated string: each thread carries per-message "
                 "sender, date, recipients, Message-ID and the sender's NEW "
                 "content only, with quoted reply history removed server-side "
-                "and reported in the counts. Defaults to False (existing "
-                "behavior)."
+                "and reported in the counts. Digest output is normalized "
+                "text, so it cannot be combined with body_format='html'. "
+                "Defaults to False (existing behavior)."
             ),
         ),
     ] = False,
@@ -3694,7 +3712,8 @@ async def get_gmail_threads_content_batch(
             "raw" fetches each message's full raw MIME content and returns the base64url-decoded body.
 
         digest (bool): When True, returns structured per-thread digests with
-            quoted reply history removed. See `_build_thread_digest`.
+            quoted reply history removed. See `_build_thread_digest`. Cannot be
+            combined with body_format="html"; raises UserInputError if it is.
 
     Returns:
         str: When `digest=False` (default). A formatted list of thread contents
@@ -3712,6 +3731,9 @@ async def get_gmail_threads_content_batch(
 
     if not thread_ids:
         raise ValueError("No thread IDs provided")
+
+    if digest and body_format == "html":
+        raise UserInputError(DIGEST_HTML_FORMAT_ERROR)
 
     output_threads = []
     digest_threads: List[Dict[str, Any]] = []

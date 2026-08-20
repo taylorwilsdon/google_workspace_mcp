@@ -16,6 +16,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from core.utils import UserInputError
 from gmail.gmail_helpers import _strip_quoted_plaintext
 from gmail.gmail_tools import (
     DIGEST_BODY_TRUNCATE_LIMIT,
@@ -371,6 +372,42 @@ class TestHtmlQuoteStripping:
         text, _, _ = _html_to_text_with_quote_stats("<div>Tom &amp", strip_quotes=True)
         assert text == "Tom &"
 
+    def test_class_markers_match_whole_tokens_not_substrings(self):
+        """A substring test lets "notgmail_quote" masquerade as a quote
+        container and delete real content."""
+        html = '<div>Keep me.</div><div class="notgmail_quote">REAL CONTENT</div>'
+        text, removed, marker = _html_to_text_with_quote_stats(html, strip_quotes=True)
+        assert "REAL CONTENT" in text
+        assert removed == 0
+        assert marker is None
+
+    def test_marker_embedded_in_a_longer_token_is_not_matched(self):
+        html = '<div>Keep.</div><div class="x-gmail_quote-ish">CONTENT</div>'
+        text, removed, marker = _html_to_text_with_quote_stats(html, strip_quotes=True)
+        assert "CONTENT" in text
+        assert removed == 0
+        assert marker is None
+
+    def test_marker_among_several_class_tokens_is_matched(self):
+        html = '<div>R.</div><div class="foo gmail_quote bar">old</div><div>A.</div>'
+        text, _, marker = _html_to_text_with_quote_stats(html, strip_quotes=True)
+        assert text == "R.A."
+        assert marker == "gmail_quote"
+
+    def test_gmail_quote_container_variant_is_still_matched(self):
+        """Exact-token matching would have dropped this variant, which the old
+        substring test only caught by accident."""
+        html = '<div>R.</div><div class="gmail_quote_container">old</div><div>A.</div>'
+        text, _, marker = _html_to_text_with_quote_stats(html, strip_quotes=True)
+        assert text == "R.A."
+        assert marker == "gmail_quote_container"
+
+    def test_class_matching_is_case_insensitive(self):
+        html = '<div>R.</div><div class="GMail_Quote">old</div><div>A.</div>'
+        text, _, marker = _html_to_text_with_quote_stats(html, strip_quotes=True)
+        assert text == "R.A."
+        assert marker == "gmail_quote"
+
     def test_strip_quotes_off_keeps_everything(self):
         html = "<div>New reply.</div><blockquote>Old quoted history.</blockquote>"
         text, removed, marker = _html_to_text_with_quote_stats(html, strip_quotes=False)
@@ -577,6 +614,48 @@ class TestToolWiring:
         assert "analysis" in result
         assert isinstance(result["analysis"], dict)
         assert result["message_count"] == 3
+
+    @pytest.mark.asyncio
+    async def test_digest_rejects_body_format_html(self):
+        """Silently ignoring a documented parameter is the same family of fault
+        as silently dropping content, so the combination is refused."""
+        service = _build_mock_service(_quoted_thread())
+        with pytest.raises(UserInputError) as excinfo:
+            await _unwrap(get_gmail_thread_content)(
+                service=service,
+                thread_id="t1",
+                user_google_email="erik@example.com",
+                digest=True,
+                body_format="html",
+            )
+        assert "body_format" in str(excinfo.value)
+        # and it must fail before spending an API call
+        service.users.return_value.threads.return_value.get.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_batch_digest_rejects_body_format_html(self):
+        service = MagicMock()
+        with pytest.raises(UserInputError):
+            await _unwrap(get_gmail_threads_content_batch)(
+                service=service,
+                thread_ids=["t1"],
+                user_google_email="erik@example.com",
+                digest=True,
+                body_format="html",
+            )
+        service.new_batch_http_request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_html_body_format_without_digest_is_untouched(self):
+        """The rejection must not leak into the existing formatted path."""
+        service = _build_mock_service(_quoted_thread())
+        result = await _unwrap(get_gmail_thread_content)(
+            service=service,
+            thread_id="t1",
+            user_google_email="erik@example.com",
+            body_format="html",
+        )
+        assert isinstance(result, str)
 
     @pytest.mark.asyncio
     async def test_batch_digest_returns_threads_and_stats(self):
