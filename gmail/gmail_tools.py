@@ -185,6 +185,11 @@ class _HTMLTextExtractor(HTMLParser):
         if not self._skip:
             self._text.append(data)
 
+    @property
+    def quote_unclosed(self) -> bool:
+        """True when parsing ended inside a quote container that never closed."""
+        return self._quote_tag is not None
+
     def get_text(self) -> str:
         return " ".join("".join(self._text).split())
 
@@ -206,6 +211,21 @@ def _html_to_text_with_quote_stats(
     try:
         parser = _HTMLTextExtractor(strip_quotes=strip_quotes)
         parser.feed(html)
+        # feed() withholds any tail that could still be an incomplete
+        # construct, such as a trailing "&amp" with no semicolon. close()
+        # flushes it; without this a body ending that way comes back empty.
+        parser.close()
+        if parser.quote_unclosed:
+            # The quote container never closed, so the parser cannot tell
+            # where the quoted history ended and everything after the opening
+            # tag was suppressed. Returning the stripped result risks
+            # discarding real content, which this must never do, so return
+            # the body untouched and report that nothing was removed.
+            # Leaving duplication in place is the acceptable failure here.
+            plain = _HTMLTextExtractor(strip_quotes=False)
+            plain.feed(html)
+            plain.close()
+            return plain.get_text(), 0, None
         return parser.get_text(), parser.removed_chars, parser.quote_marker
     except Exception:
         return html, 0, None
@@ -3680,9 +3700,11 @@ async def get_gmail_threads_content_batch(
         str: When `digest=False` (default). A formatted list of thread contents
         with separators.
 
-        Dict[str, Any]: When `digest=True`. A dict with "thread_count",
-            "threads" (a list of digest dicts), "errors" (a list of
-            {"thread_id", "error"}) and aggregate "stats".
+        Dict[str, Any]: When `digest=True`. A dict with "requested" (how many
+            thread IDs were asked for), "thread_count" (how many digests came
+            back), "threads" (a list of digest dicts), "errors" (a list of
+            {"thread_id", "error"}) and aggregate "stats". requested equals
+            thread_count plus the number of errors.
     """
     logger.info(
         f"[get_gmail_threads_content_batch] Invoked. Thread count: {len(thread_ids)}, Email: '{user_google_email}'"
@@ -3812,6 +3834,7 @@ async def get_gmail_threads_content_batch(
 
     if digest:
         return {
+            "requested": len(thread_ids),
             "thread_count": len(digest_threads),
             "threads": digest_threads,
             "errors": digest_errors,

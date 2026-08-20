@@ -324,6 +324,53 @@ class TestHtmlQuoteStripping:
         assert "still old" not in text
         assert "After." in text
 
+    def test_unclosed_quote_container_keeps_the_whole_body(self):
+        """When the container never closes, the parser cannot tell where the
+        quote ended. Keeping duplication beats discarding real content."""
+        html = '<div>Reply.</div><div class="gmail_quote"><div>old</div>Trailing.'
+        text, removed, marker = _html_to_text_with_quote_stats(html, strip_quotes=True)
+        assert "Reply." in text
+        assert "Trailing." in text
+        assert "old" in text
+        assert removed == 0
+        assert marker is None
+
+    def test_unclosed_blockquote_keeps_the_whole_body(self):
+        html = "<div>Reply.</div><blockquote>old<div>Trailing.</div>"
+        text, removed, marker = _html_to_text_with_quote_stats(html, strip_quotes=True)
+        assert "Trailing." in text
+        assert removed == 0
+        assert marker is None
+
+    def test_unclosed_nested_same_tag_inside_quote_keeps_the_body(self):
+        """The nested <div> closes but the container does not, so the quote is
+        still open at the end of the document."""
+        html = '<div>R.</div><div class="gmail_quote">a<div>b</div>c'
+        text, removed, marker = _html_to_text_with_quote_stats(html, strip_quotes=True)
+        assert text == "R.abc"
+        assert removed == 0
+        assert marker is None
+
+    def test_closed_quote_after_an_unclosed_child_still_strips(self):
+        """Guard against over-correcting: a properly closed container must
+        still strip even when its children are unbalanced."""
+        html = (
+            "<div>Reply.</div>"
+            '<div class="gmail_quote"><p>old<p>more</div>'
+            "<div>Sig.</div>"
+        )
+        text, removed, marker = _html_to_text_with_quote_stats(html, strip_quotes=True)
+        assert text == "Reply.Sig."
+        assert removed == len("old") + len("more")
+        assert marker == "gmail_quote"
+
+    def test_trailing_incomplete_entity_is_not_lost(self):
+        """feed() withholds a tail like "&amp" with no semicolon; close()
+        flushes it. Without that, the whole body came back empty."""
+        assert _html_to_text("<div>Tom &amp") == "Tom &"
+        text, _, _ = _html_to_text_with_quote_stats("<div>Tom &amp", strip_quotes=True)
+        assert text == "Tom &"
+
     def test_strip_quotes_off_keeps_everything(self):
         html = "<div>New reply.</div><blockquote>Old quoted history.</blockquote>"
         text, removed, marker = _html_to_text_with_quote_stats(html, strip_quotes=False)
@@ -545,6 +592,7 @@ class TestToolWiring:
             digest=True,
         )
         assert isinstance(result, dict)
+        assert result["requested"] == 1
         assert result["thread_count"] == 1
         assert result["errors"] == []
         assert result["threads"][0]["messages"][2]["content"] == "Booked for Tuesday."
