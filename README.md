@@ -105,7 +105,7 @@ This project is [MIT licensed](LICENSE) — not "open core," not "source availab
 </td>
 <td align="center" width="25%">
 <h3>📁</h3><a href="https://workspacemcp.com/google-drive?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=services-google-drive"><b>Drive</b></a><br>
-<sub>16 tools - search, create, share,<br>import Office files</sub>
+<sub>18 tools - search, create, share,<br>import Office files, read XLSX ranges</sub>
 </td>
 <td align="center" width="25%">
 <h3>📅</h3><a href="https://workspacemcp.com/google-calendar?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=services-google-calendar"><b>Calendar</b></a><br>

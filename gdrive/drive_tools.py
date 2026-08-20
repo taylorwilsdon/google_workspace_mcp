@@ -9,8 +9,12 @@ import logging
 import io
 import base64
 import binascii
+import json
+import math
+import zipfile
 
-from typing import Optional, List, Dict, Any
+from datetime import date, datetime, time, timedelta
+from typing import Optional, List, Dict, Any, Callable
 from tempfile import NamedTemporaryFile, SpooledTemporaryFile
 from urllib.parse import urlparse
 from urllib.request import url2pathname
@@ -19,6 +23,8 @@ from weakref import WeakValueDictionary
 
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
+from openpyxl import load_workbook
+from openpyxl.utils.cell import range_boundaries
 
 from mcp.types import ToolAnnotations
 
@@ -77,6 +83,15 @@ IMPORT_FORMATS_BY_GOOGLE_MIME_TYPE = {
 CONTENT_UPDATE_MODES = ("replace", "append", "prepend")
 # Bytes held in memory per streamed download chunk.
 DOWNLOAD_CHUNK_SIZE = 8 * 1024 * 1024
+EXCEL_MIME_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+MAX_EXCEL_DOWNLOAD_BYTES = 25 * 1024 * 1024
+MAX_EXCEL_ARCHIVE_ENTRIES = 10_000
+MAX_EXCEL_ARCHIVE_UNCOMPRESSED_BYTES = 200 * 1024 * 1024
+MAX_EXCEL_ARCHIVE_ENTRY_BYTES = 50 * 1024 * 1024
+MAX_EXCEL_RANGE_CELLS = 500
+MAX_EXCEL_RESPONSE_CHARACTERS = 12_000
+EXCEL_MAX_COLUMN = 16_384
+EXCEL_MAX_ROW = 1_048_576
 _CONTENT_UPDATE_LOCKS: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
 
 
@@ -122,7 +137,11 @@ async def _download_file_bytes(
 
 
 async def _download_file_to_temp(
-    service, file_id: str, export_mime_type: Optional[str] = None
+    service,
+    file_id: str,
+    export_mime_type: Optional[str] = None,
+    max_bytes: Optional[int] = None,
+    suffix: str = "",
 ) -> Path:
     """Stream a Drive file to a temporary file and return its path.
 
@@ -130,7 +149,7 @@ async def _download_file_to_temp(
     multi-gigabyte file no longer exhausts RAM (see #994). The caller owns the
     returned path and must move or delete it.
     """
-    tmp_file = NamedTemporaryFile(prefix="wsmcp_dl_", delete=False)
+    tmp_file = NamedTemporaryFile(prefix="wsmcp_dl_", suffix=suffix, delete=False)
     tmp_path = Path(tmp_file.name)
     loop = asyncio.get_event_loop()
     try:
@@ -143,10 +162,230 @@ async def _download_file_to_temp(
             done = False
             while not done:
                 _status, done = await loop.run_in_executor(None, downloader.next_chunk)
+                if max_bytes is not None and tmp_file.tell() > max_bytes:
+                    raise ValueError(
+                        f"Downloaded file exceeds the {max_bytes}-byte safety limit."
+                    )
     except BaseException:
         tmp_path.unlink(missing_ok=True)
         raise
     return tmp_path
+
+
+def _validate_excel_range(cell_range: str) -> tuple[int, int, int, int]:
+    """Parse one bounded worksheet-local A1 range."""
+    if "!" in cell_range or "," in cell_range:
+        raise ValueError(
+            "cell_range must be one worksheet-local A1 range such as A1:H20."
+        )
+    try:
+        min_col, min_row, max_col, max_row = range_boundaries(cell_range)
+    except ValueError as error:
+        raise ValueError(
+            "cell_range must be one worksheet-local A1 range such as A1:H20."
+        ) from error
+    if None in (min_col, min_row, max_col, max_row):
+        raise ValueError(
+            "cell_range must include both columns and rows, such as A1:H20."
+        )
+    if (
+        min_col < 1
+        or min_row < 1
+        or max_col < min_col
+        or max_row < min_row
+        or max_col > EXCEL_MAX_COLUMN
+        or max_row > EXCEL_MAX_ROW
+    ):
+        raise ValueError("cell_range is outside Excel worksheet bounds.")
+    cell_count = (max_col - min_col + 1) * (max_row - min_row + 1)
+    if cell_count > MAX_EXCEL_RANGE_CELLS:
+        raise ValueError(
+            f"cell_range requests {cell_count} cells; request at most "
+            f"{MAX_EXCEL_RANGE_CELLS} cells."
+        )
+    return min_col, min_row, max_col, max_row
+
+
+def _validate_excel_archive(path: Path) -> None:
+    """Reject encrypted, malformed, or expansion-heavy XLSX archives."""
+    try:
+        with zipfile.ZipFile(path) as archive:
+            entries = archive.infolist()
+            if len(entries) > MAX_EXCEL_ARCHIVE_ENTRIES:
+                raise ValueError("Excel workbook contains too many archive entries.")
+            if any(entry.flag_bits & 0x1 for entry in entries):
+                raise ValueError("Encrypted Excel workbooks are not supported.")
+            if any(
+                entry.file_size > MAX_EXCEL_ARCHIVE_ENTRY_BYTES for entry in entries
+            ):
+                raise ValueError("Excel workbook contains an oversized archive entry.")
+            if (
+                sum(entry.file_size for entry in entries)
+                > MAX_EXCEL_ARCHIVE_UNCOMPRESSED_BYTES
+            ):
+                raise ValueError("Excel workbook expands beyond the safety limit.")
+            names = set(archive.namelist())
+            if "[Content_Types].xml" not in names or "xl/workbook.xml" not in names:
+                raise ValueError("File is not a valid XLSX workbook.")
+    except zipfile.BadZipFile as error:
+        raise ValueError("File is not a valid XLSX workbook.") from error
+
+
+def _json_excel_value(value: Any) -> Any:
+    """Convert openpyxl cell values to strict JSON-compatible values."""
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("Excel range contains a non-finite numeric value.")
+        return value
+    if isinstance(value, (date, datetime, time)):
+        return value.isoformat()
+    if isinstance(value, timedelta):
+        return str(value)
+    return str(value)
+
+
+def _serialize_excel_response(payload: Dict[str, Any]) -> str:
+    response = json.dumps(
+        payload,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    )
+    if len(response) > MAX_EXCEL_RESPONSE_CHARACTERS:
+        raise ValueError(
+            "Excel range response exceeds the output safety limit; request a narrower range."
+        )
+    return response
+
+
+def _run_excel_parser(path: Path, parser: Callable[..., str], *parser_args: Any) -> str:
+    """Keep temp-file ownership with the parser thread, including on cancellation."""
+    try:
+        return parser(path, *parser_args)
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def _inspect_excel_workbook(path: Path, file_metadata: Dict[str, Any]) -> str:
+    _validate_excel_archive(path)
+    workbook = load_workbook(path, read_only=True, data_only=False, keep_links=False)
+    try:
+        sheets = [
+            {
+                "name": worksheet.title,
+                "declaredRange": worksheet.calculate_dimension(force=True),
+            }
+            for worksheet in workbook.worksheets
+        ]
+        return _serialize_excel_response(
+            {
+                "fileId": file_metadata["id"],
+                "filename": file_metadata.get("name", "Unknown File"),
+                "webViewLink": file_metadata.get("webViewLink"),
+                "mimeType": EXCEL_MIME_TYPE,
+                "sheets": sheets,
+            }
+        )
+    finally:
+        workbook.close()
+
+
+def _read_excel_range(
+    path: Path,
+    file_metadata: Dict[str, Any],
+    sheet_name: str,
+    cell_range: str,
+    bounds: tuple[int, int, int, int],
+) -> str:
+    _validate_excel_archive(path)
+    formula_workbook = load_workbook(
+        path, read_only=True, data_only=False, keep_links=False
+    )
+    try:
+        cached_workbook = load_workbook(
+            path, read_only=True, data_only=True, keep_links=False
+        )
+        try:
+            if sheet_name not in formula_workbook.sheetnames:
+                raise ValueError(f"Worksheet '{sheet_name}' does not exist.")
+            formula_sheet = formula_workbook[sheet_name]
+            cached_sheet = cached_workbook[sheet_name]
+            min_col, min_row, max_col, max_row = bounds
+            formula_rows = formula_sheet.iter_rows(
+                min_col=min_col,
+                min_row=min_row,
+                max_col=max_col,
+                max_row=max_row,
+            )
+            cached_rows = cached_sheet.iter_rows(
+                min_col=min_col,
+                min_row=min_row,
+                max_col=max_col,
+                max_row=max_row,
+            )
+
+            values: List[List[Any]] = []
+            formulas: List[List[Optional[str]]] = []
+            number_formats: List[List[Optional[str]]] = []
+            for formula_row, cached_row in zip(formula_rows, cached_rows):
+                values.append([_json_excel_value(cell.value) for cell in cached_row])
+                formulas.append(
+                    [
+                        str(cell.value) if cell.data_type == "f" else None
+                        for cell in formula_row
+                    ]
+                )
+                number_formats.append(
+                    [
+                        cell.number_format if cell.number_format != "General" else None
+                        for cell in formula_row
+                    ]
+                )
+
+            return _serialize_excel_response(
+                {
+                    "fileId": file_metadata["id"],
+                    "filename": file_metadata.get("name", "Unknown File"),
+                    "webViewLink": file_metadata.get("webViewLink"),
+                    "sheet": sheet_name,
+                    "range": cell_range,
+                    "values": values,
+                    "formulas": formulas,
+                    "numberFormats": number_formats,
+                }
+            )
+        finally:
+            cached_workbook.close()
+    finally:
+        formula_workbook.close()
+
+
+async def _prepare_drive_excel_file(
+    service, file_id: str
+) -> tuple[Path, Dict[str, Any]]:
+    resolved_file_id, file_metadata = await resolve_drive_item(
+        service,
+        file_id,
+        extra_fields="name, webViewLink, size, capabilities(canDownload)",
+    )
+    if file_metadata.get("mimeType") != EXCEL_MIME_TYPE:
+        raise ValueError("File must be a Drive-hosted .xlsx workbook.")
+    if file_metadata.get("capabilities", {}).get("canDownload") is False:
+        raise ValueError("The current user is not permitted to download this workbook.")
+    size = file_metadata.get("size")
+    if size is not None and int(size) > MAX_EXCEL_DOWNLOAD_BYTES:
+        raise ValueError(
+            f"Excel workbook exceeds the {MAX_EXCEL_DOWNLOAD_BYTES}-byte safety limit."
+        )
+    path = await _download_file_to_temp(
+        service,
+        resolved_file_id,
+        max_bytes=MAX_EXCEL_DOWNLOAD_BYTES,
+        suffix=".xlsx",
+    )
+    return path, {**file_metadata, "id": resolved_file_id}
 
 
 def _splice_content(existing: str, addition: str, mode: str) -> str:
@@ -429,6 +668,87 @@ async def get_drive_file_content(
         f"Link: {file_metadata.get('webViewLink', '#')}\n\n--- CONTENT ---\n"
     )
     return header + body_text
+
+
+@server.tool(
+    title="Inspect Drive Excel Workbook",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("inspect_drive_excel", is_read_only=True, service_type="drive")
+@require_google_service("drive", "drive_read")
+async def inspect_drive_excel(
+    service,
+    user_google_email: str,
+    file_id: str,
+) -> str:
+    """Lists sheet names and declared ranges for one Drive-hosted XLSX workbook.
+
+    Args:
+        user_google_email: The user's Google email address.
+        file_id: Drive file ID for a passwordless XLSX workbook.
+
+    Returns:
+        JSON with stable file metadata and worksheet names/ranges. No cell content
+        is returned and the Drive file is never converted or modified.
+    """
+    logger.info("[inspect_drive_excel] Invoked. File ID: '%s'", file_id)
+    path, metadata = await _prepare_drive_excel_file(service, file_id)
+    return await asyncio.to_thread(
+        _run_excel_parser, path, _inspect_excel_workbook, metadata
+    )
+
+
+@server.tool(
+    title="Read Drive Excel Range",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("read_drive_excel_range", is_read_only=True, service_type="drive")
+@require_google_service("drive", "drive_read")
+async def read_drive_excel_range(
+    service,
+    user_google_email: str,
+    file_id: str,
+    sheet_name: str,
+    cell_range: str,
+) -> str:
+    """Reads one bounded A1 range from a Drive-hosted XLSX workbook.
+
+    Formula cells return both their formula text and Excel's last cached value.
+    The provider does not calculate formulas. Blank positions are retained as
+    JSON nulls and non-General number formats are returned alongside values.
+
+    Args:
+        user_google_email: The user's Google email address.
+        file_id: Drive file ID for a passwordless XLSX workbook.
+        sheet_name: Exact worksheet name returned by inspect_drive_excel.
+        cell_range: One worksheet-local A1 range, for example A1:H20.
+
+    Returns:
+        JSON with file, sheet and range provenance plus bounded value, formula
+        and number-format matrices. The Drive file is never modified.
+    """
+    bounds = _validate_excel_range(cell_range)
+    logger.info("[read_drive_excel_range] Invoked. File ID: '%s'", file_id)
+    path, metadata = await _prepare_drive_excel_file(service, file_id)
+    return await asyncio.to_thread(
+        _run_excel_parser,
+        path,
+        _read_excel_range,
+        metadata,
+        sheet_name,
+        cell_range,
+        bounds,
+    )
 
 
 @server.tool(

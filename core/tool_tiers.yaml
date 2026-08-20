@@ -24,6 +24,8 @@ drive:
   core:
     - search_drive_files
     - get_drive_file_content
+    - inspect_drive_excel
+    - read_drive_excel_range
     - get_drive_file_download_url
     - create_drive_file
     - create_drive_folder

@@ -28,6 +28,7 @@ dependencies = [
  "pypdf>=6.15.0",
  "pytz>=2026.1.post1",
  "markdown-it-py>=3.0.0",
+ "openpyxl>=3.1.5",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
