@@ -156,6 +156,38 @@ async def test_download_to_temp_waits_for_worker_before_cleanup_on_cancellation(
 
 
 @pytest.mark.asyncio
+async def test_download_to_temp_preserves_cancellation_when_worker_fails():
+    mock_service = Mock()
+    mock_service.files().get_media.return_value = "req"
+    started = Event()
+    release = Event()
+
+    class _FailingAfterCancellation(_FakeDownloader):
+        def next_chunk(self):
+            started.set()
+            if not release.wait(timeout=5):
+                raise TimeoutError("download worker was not released")
+            raise RuntimeError("worker failed while cancellation was draining")
+
+    with patch("gdrive.drive_tools.MediaIoBaseDownload", _FailingAfterCancellation):
+        _FakeDownloader.handles = []
+        task = asyncio.create_task(_download_file_to_temp(mock_service, "file123"))
+        assert await asyncio.to_thread(started.wait, 1)
+        task.cancel()
+        await asyncio.sleep(0)
+
+        temp_path = Path(_FailingAfterCancellation.handles[0].name)
+        assert not task.done()
+        assert temp_path.exists()
+
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    assert not temp_path.exists()
+
+
+@pytest.mark.asyncio
 async def test_download_url_moves_payload_into_storage(mock_resolve, storage):
     mock_service = Mock()
     mock_service.files().get_media.return_value = "req"

@@ -13,6 +13,7 @@ import json
 import math
 import zipfile
 
+from contextlib import suppress
 from datetime import date, datetime, time, timedelta
 from typing import Optional, List, Dict, Any, Callable
 from tempfile import NamedTemporaryFile, SpooledTemporaryFile
@@ -166,7 +167,8 @@ async def _download_file_to_temp(
                 try:
                     _status, done = await asyncio.shield(next_chunk)
                 except asyncio.CancelledError:
-                    await asyncio.shield(next_chunk)
+                    with suppress(Exception):
+                        await asyncio.shield(next_chunk)
                     raise
                 if max_bytes is not None and tmp_file.tell() > max_bytes:
                     raise UserInputError(
