@@ -20,6 +20,7 @@ from core.utils import UserInputError
 from gmail.gmail_helpers import _strip_quoted_plaintext
 from gmail.gmail_tools import (
     DIGEST_BODY_TRUNCATE_LIMIT,
+    TRUNCATION_NOTICE,
     _build_thread_digest,
     _digest_body_content,
     _html_to_text,
@@ -463,6 +464,26 @@ class TestDigestBodyContent:
         assert len(body["content"]) < len(text)
         assert "[Content truncated...]" in body["content"]
 
+    def test_truncated_body_stays_within_the_limit(self):
+        """_truncate_content appends a notice, so the digest has to reserve
+        room for it or a body capped at N comes back longer than N."""
+        text = "x" * (DIGEST_BODY_TRUNCATE_LIMIT + 500)
+        body = _digest_body_content(text, "")
+        assert body["truncated"] is True
+        assert len(body["content"]) <= DIGEST_BODY_TRUNCATE_LIMIT
+        assert TRUNCATION_NOTICE.strip() in body["content"]
+
+    def test_body_exactly_at_the_limit_is_not_truncated(self):
+        text = "x" * DIGEST_BODY_TRUNCATE_LIMIT
+        body = _digest_body_content(text, "")
+        assert body["truncated"] is False
+        assert len(body["content"]) == DIGEST_BODY_TRUNCATE_LIMIT
+
+    def test_absurdly_small_limit_does_not_produce_a_negative_slice(self):
+        body = _digest_body_content("x" * 100, "", max_chars=5)
+        assert body["truncated"] is True
+        assert TRUNCATION_NOTICE.strip() in body["content"]
+
     def test_empty_body_reports_no_readable_content(self):
         body = _digest_body_content("", "")
         assert body["content"] == "[No readable content found]"
@@ -616,7 +637,8 @@ class TestToolWiring:
         assert result["message_count"] == 3
 
     @pytest.mark.asyncio
-    async def test_digest_rejects_body_format_html(self):
+    @pytest.mark.parametrize("body_format", ["html", "raw"])
+    async def test_digest_rejects_non_text_body_format(self, body_format):
         """Silently ignoring a documented parameter is the same family of fault
         as silently dropping content, so the combination is refused."""
         service = _build_mock_service(_quoted_thread())
@@ -626,14 +648,16 @@ class TestToolWiring:
                 thread_id="t1",
                 user_google_email="erik@example.com",
                 digest=True,
-                body_format="html",
+                body_format=body_format,
             )
         assert "body_format" in str(excinfo.value)
+        assert body_format in str(excinfo.value)
         # and it must fail before spending an API call
         service.users.return_value.threads.return_value.get.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_batch_digest_rejects_body_format_html(self):
+    @pytest.mark.parametrize("body_format", ["html", "raw"])
+    async def test_batch_digest_rejects_non_text_body_format(self, body_format):
         service = MagicMock()
         with pytest.raises(UserInputError):
             await _unwrap(get_gmail_threads_content_batch)(
@@ -641,7 +665,7 @@ class TestToolWiring:
                 thread_ids=["t1"],
                 user_google_email="erik@example.com",
                 digest=True,
-                body_format="html",
+                body_format=body_format,
             )
         service.new_batch_http_request.assert_not_called()
 

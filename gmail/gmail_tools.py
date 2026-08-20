@@ -86,6 +86,7 @@ GMAIL_SEARCH_HEADER_BATCH_SIZE = 10
 GMAIL_REQUEST_DELAY = 0.1
 GMAIL_RATE_LIMIT_BACKOFF = 2.0
 HTML_BODY_TRUNCATE_LIMIT = 20000
+TRUNCATION_NOTICE = "\n\n[Content truncated...]"
 # Per-message body cap applied in digest mode. The formatted-string paths
 # keep their existing behavior: the text path is uncapped there, and the
 # HTML path keeps HTML_BODY_TRUNCATE_LIMIT.
@@ -374,10 +375,15 @@ def _format_body_content(
 
 
 def _truncate_content(content: str, limit: int) -> str:
-    """Truncate content to a readable length for tool responses."""
+    """Truncate content to a readable length for tool responses.
+
+    Note that the result is up to len(TRUNCATION_NOTICE) longer than
+    limit. Callers that must not exceed a hard budget should subtract
+    len(TRUNCATION_NOTICE) from the limit they pass.
+    """
     if len(content) <= limit:
         return content
-    return content[:limit] + "\n\n[Content truncated...]"
+    return content[:limit] + TRUNCATION_NOTICE
 
 
 def _decode_raw_mime_content(raw_data: str) -> str:
@@ -3189,13 +3195,24 @@ async def draft_gmail_message(
     return f"Draft created{attachment_info}! Draft ID: {draft_id}"
 
 
-DIGEST_HTML_FORMAT_ERROR = (
-    "digest=True returns normalized text, so body_format='html' cannot be "
-    "honored: quoted history is removed while parsing the HTML, and the "
-    "surviving fragments are not reassembled into valid HTML. Use "
-    "body_format='text' (the default) or 'raw' with digest=True, or drop "
-    "digest to get the raw HTML body."
-)
+def _digest_body_format_error(body_format: str) -> str:
+    """Message for an unsupported body_format in digest mode."""
+    reason = {
+        "html": (
+            "quoted history is removed while parsing the HTML and the "
+            "surviving fragments are not reassembled into valid HTML"
+        ),
+        "raw": (
+            "quote detection on undecoded MIME source is meaningless, and "
+            "truncating a MIME document produces something that is no longer "
+            "raw"
+        ),
+    }.get(body_format, "digest mode parses message bodies into text")
+    return (
+        f"digest=True cannot be combined with body_format={body_format!r}: "
+        f"{reason}. Use the default body_format='text' with digest=True, or "
+        f"drop digest to get the {body_format} body."
+    )
 
 
 def _digest_body_content(
@@ -3246,7 +3263,8 @@ def _digest_body_content(
 
     truncated = len(content) > max_chars
     if truncated:
-        content = _truncate_content(content, max_chars)
+        # Reserve room for the notice so the returned body honors max_chars.
+        content = _truncate_content(content, max(0, max_chars - len(TRUNCATION_NOTICE)))
 
     return {
         "content": content,
@@ -3258,43 +3276,9 @@ def _digest_body_content(
     }
 
 
-def _digest_raw_content(
-    raw_body: str,
-    max_chars: int = DIGEST_BODY_TRUNCATE_LIMIT,
-) -> Dict[str, Any]:
-    """Digest shape for a raw MIME body: quote-stripped and capped, no parsing."""
-    original = raw_body or ""
-    content, removed, marker = _strip_quoted_plaintext(original)
-    content = content.strip()
-    if not content:
-        content, removed, marker = original.strip(), 0, None
-    if not content:
-        return {
-            "content": "[No raw content found]",
-            "source": "raw",
-            "removed_chars": 0,
-            "marker": None,
-            "truncated": False,
-            "original_chars": len(original),
-        }
-    truncated = len(content) > max_chars
-    if truncated:
-        content = _truncate_content(content, max_chars)
-    return {
-        "content": content,
-        "source": "raw",
-        "removed_chars": removed,
-        "marker": marker,
-        "truncated": truncated,
-        "original_chars": len(original),
-    }
-
-
 def _build_thread_digest(
     thread_data: dict,
     thread_id: str,
-    body_format: Literal["text", "html", "raw"] = "text",
-    raw_contents: Optional[Dict[str, str]] = None,
     max_chars: int = DIGEST_BODY_TRUNCATE_LIMIT,
 ) -> Dict[str, Any]:
     """Build a structured, de-duplicated digest of a Gmail thread.
@@ -3333,15 +3317,10 @@ def _build_thread_digest(
         headers = _extract_headers(payload, GMAIL_METADATA_HEADERS)
         message_id = message.get("id", "")
 
-        if body_format == "raw":
-            body = _digest_raw_content(
-                (raw_contents or {}).get(message_id, ""), max_chars=max_chars
-            )
-        else:
-            bodies = _extract_message_bodies(payload)
-            body = _digest_body_content(
-                bodies.get("text", ""), bodies.get("html", ""), max_chars=max_chars
-            )
+        bodies = _extract_message_bodies(payload)
+        body = _digest_body_content(
+            bodies.get("text", ""), bodies.get("html", ""), max_chars=max_chars
+        )
 
         subject = headers.get("Subject", "")
         entry: Dict[str, Any] = {
@@ -3563,9 +3542,9 @@ async def get_gmail_thread_content(
                 "Quoted reply history repeated from earlier messages in the same "
                 "thread is removed server-side, and every removal is reported in "
                 "the per-message and thread-level counts. Bodies are capped at "
-                "4000 characters each. Digest output is normalized text, so it "
-                "cannot be combined with body_format='html'. Defaults to False "
-                "(existing behavior)."
+                "4000 characters each. Digest output is normalized text "
+                "parsed from the message bodies, so it requires the default "
+                "body_format='text'. Defaults to False (existing behavior)."
             ),
         ),
     ] = False,
@@ -3589,8 +3568,8 @@ async def get_gmail_thread_content(
             False (default), returns the formatted content string (existing
             behavior, unchanged).
         digest (bool): When True, returns a structured per-message digest with
-            quoted reply history removed. See `_build_thread_digest`. Cannot be
-            combined with body_format="html"; raises UserInputError if it is.
+            quoted reply history removed. See `_build_thread_digest`. Requires
+            the default body_format="text"; raises UserInputError otherwise.
 
     Returns:
         str: When `digest=False` and `include_analysis=False` (default). The
@@ -3610,8 +3589,8 @@ async def get_gmail_thread_content(
         f"digest={digest}"
     )
 
-    if digest and body_format == "html":
-        raise UserInputError(DIGEST_HTML_FORMAT_ERROR)
+    if digest and body_format != "text":
+        raise UserInputError(_digest_body_format_error(body_format))
 
     # Fetch the complete thread with all messages
     thread_response = await asyncio.to_thread(
@@ -3630,12 +3609,7 @@ async def get_gmail_thread_content(
         )
 
     if digest:
-        result = _build_thread_digest(
-            thread_response,
-            thread_id,
-            body_format=body_format,
-            raw_contents=raw_contents,
-        )
+        result = _build_thread_digest(thread_response, thread_id)
         if include_analysis:
             result["analysis"] = _analyze_thread_ownership_impl(
                 thread_response, user_google_email
@@ -3693,8 +3667,9 @@ async def get_gmail_threads_content_batch(
                 "sender, date, recipients, Message-ID and the sender's NEW "
                 "content only, with quoted reply history removed server-side "
                 "and reported in the counts. Digest output is normalized "
-                "text, so it cannot be combined with body_format='html'. "
-                "Defaults to False (existing behavior)."
+                "text parsed from the message bodies, so it requires the "
+                "default body_format='text'. Defaults to False (existing "
+                "behavior)."
             ),
         ),
     ] = False,
@@ -3712,8 +3687,8 @@ async def get_gmail_threads_content_batch(
             "raw" fetches each message's full raw MIME content and returns the base64url-decoded body.
 
         digest (bool): When True, returns structured per-thread digests with
-            quoted reply history removed. See `_build_thread_digest`. Cannot be
-            combined with body_format="html"; raises UserInputError if it is.
+            quoted reply history removed. See `_build_thread_digest`. Requires
+            the default body_format="text"; raises UserInputError otherwise.
 
     Returns:
         str: When `digest=False` (default). A formatted list of thread contents
@@ -3732,8 +3707,8 @@ async def get_gmail_threads_content_batch(
     if not thread_ids:
         raise ValueError("No thread IDs provided")
 
-    if digest and body_format == "html":
-        raise UserInputError(DIGEST_HTML_FORMAT_ERROR)
+    if digest and body_format != "text":
+        raise UserInputError(_digest_body_format_error(body_format))
 
     output_threads = []
     digest_threads: List[Dict[str, Any]] = []
@@ -3836,14 +3811,7 @@ async def get_gmail_threads_content_batch(
                     )
 
                 if digest:
-                    digest_threads.append(
-                        _build_thread_digest(
-                            thread,
-                            tid,
-                            body_format=body_format,
-                            raw_contents=raw_contents,
-                        )
-                    )
+                    digest_threads.append(_build_thread_digest(thread, tid))
                 else:
                     output_threads.append(
                         _format_thread_content(
