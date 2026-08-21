@@ -68,7 +68,10 @@ class BatchOperationManager:
         self.validation_manager = ValidationManager()
 
     async def execute_batch_operations(
-        self, document_id: str, operations: list[dict[str, Any]]
+        self,
+        document_id: str,
+        operations: list[dict[str, Any]],
+        suggest_mode: bool = False,
     ) -> tuple[bool, str, dict[str, Any]]:
         """
         Execute multiple document operations in a single atomic batch.
@@ -78,6 +81,8 @@ class BatchOperationManager:
         Args:
             document_id: ID of the document to update
             operations: List of operation dictionaries
+            suggest_mode: If True, apply all requests as suggested edits
+                (WriteControl.writeMode = SUGGEST) instead of direct edits.
 
         Returns:
             Tuple of (success, message, metadata)
@@ -108,7 +113,9 @@ class BatchOperationManager:
                 return False, "No valid requests could be built from operations", {}
 
             # Execute the batch
-            result = await self._execute_batch_requests(document_id, requests)
+            result = await self._execute_batch_requests(
+                document_id, requests, suggest_mode=suggest_mode
+            )
 
             # Process results
             metadata = {
@@ -117,6 +124,8 @@ class BatchOperationManager:
                 "replies_count": len(result.get("replies", [])),
                 "operation_summary": operation_descriptions[:5],  # First 5 operations
             }
+            if suggest_mode:
+                metadata["comment_update_state"] = result.get("commentUpdateState")
 
             # Fetch document length after batch for downstream chaining
             try:
@@ -899,7 +908,10 @@ class BatchOperationManager:
         return request, description
 
     async def _execute_batch_requests(
-        self, document_id: str, requests: list[dict[str, Any]]
+        self,
+        document_id: str,
+        requests: list[dict[str, Any]],
+        suggest_mode: bool = False,
     ) -> dict[str, Any]:
         """
         Execute the batch requests against the Google Docs API.
@@ -907,13 +919,19 @@ class BatchOperationManager:
         Args:
             document_id: Document ID
             requests: List of API requests
+            suggest_mode: If True, apply the requests as suggested edits rather
+                than direct edits.
 
         Returns:
             API response
         """
+        body: dict[str, Any] = {"requests": requests}
+        if suggest_mode:
+            body["writeControl"] = {"writeMode": "SUGGEST"}
+
         return await asyncio.to_thread(
             self.service.documents()
-            .batchUpdate(documentId=document_id, body={"requests": requests})
+            .batchUpdate(documentId=document_id, body=body)
             .execute
         )
 

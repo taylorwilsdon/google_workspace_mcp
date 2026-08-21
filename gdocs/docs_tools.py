@@ -1076,6 +1076,7 @@ async def batch_update_doc(
     user_google_email: str,
     document_id: str,
     operations: BatchDocOperations,
+    suggest_mode: bool = False,
 ) -> str:
     """
     Executes multiple low-level document operations in a single atomic batch update.
@@ -1292,6 +1293,29 @@ async def batch_update_doc(
             {"type": "update_document_style", "margin_top": 72, "margin_bottom": 72}
         ]
 
+    Example - Propose changes as suggestions instead of direct edits:
+        suggest_mode=true with:
+        [{"type": "find_replace", "find_text": "teh", "replace_text": "the"}]
+        The edit lands as a pending suggestion (as if made in "Suggesting" mode
+        in the Docs UI) rather than being applied directly. Use manage_doc_suggestions
+        to accept, reject, or delete it afterwards.
+
+    Args:
+        user_google_email: User's Google email address
+        document_id: ID of the document to update
+        operations: List of operation dicts. Each operation MUST have a 'type' field.
+                    All operations accept an optional 'tab_id' to target a specific tab.
+        suggest_mode: If true, apply every operation in this batch as a suggested
+            edit (pending approval) instead of a direct edit, equivalent to
+            enabling "Suggesting" mode in the Docs UI. Requires the requesting
+            Google Cloud project to be enrolled in the Workspace Developer
+            Preview Program; otherwise the API call will fail. Not every
+            operation type can be suggested - insert_doc_tab, delete_doc_tab,
+            update_doc_tab, create_named_range, delete_named_range, and
+            update_table_column_properties are rejected by the API in suggest
+            mode, as are the document_mode/use_even_page_header_footer/
+            use_first_page_header_footer fields of update_document_style.
+
     Returns:
         str: Confirmation message with batch results and document length for chaining
     """
@@ -1303,7 +1327,8 @@ async def batch_update_doc(
     ]
 
     logger.debug(
-        f"[batch_update_doc] Doc={document_id}, operations={len(normalized_operations)}"
+        f"[batch_update_doc] Doc={document_id}, operations={len(normalized_operations)}, "
+        f"suggest_mode={suggest_mode}"
     )
 
     # Input validation
@@ -1317,11 +1342,16 @@ async def batch_update_doc(
     if not is_valid:
         return f"Error: {error_msg}"
 
+    if suggest_mode:
+        unsupported_error = _validate_suggest_mode_operations(normalized_operations)
+        if unsupported_error:
+            return f"Error: {unsupported_error}"
+
     # Use BatchOperationManager to handle the complex logic
     batch_manager = BatchOperationManager(service)
 
     success, message, metadata = await batch_manager.execute_batch_operations(
-        document_id, normalized_operations
+        document_id, normalized_operations, suggest_mode=suggest_mode
     )
 
     if success:
@@ -1329,14 +1359,99 @@ async def batch_update_doc(
         replies_count = metadata.get("replies_count", 0)
         doc_length = metadata.get("document_length")
         length_info = f" Document length: {doc_length}." if doc_length else ""
+        suggest_info = ""
+        if suggest_mode:
+            comment_state = metadata.get("comment_update_state")
+            suggest_info = (
+                f" Applied as suggested edits (comment_update_state: {comment_state})."
+            )
         return (
             f"{message} on document {document_id}. "
-            f"API replies: {replies_count}.{length_info} "
+            f"API replies: {replies_count}.{length_info}{suggest_info} "
             f"To apply formatting, call inspect_doc_structure to get exact text positions. "
             f"Link: {link}"
         )
     else:
         return f"Error: {message}"
+
+
+@server.tool(
+    title="Manage Doc Suggestions",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("manage_doc_suggestions", service_type="docs")
+@require_google_service("docs", "docs_write")
+async def manage_doc_suggestions(
+    service: Any,
+    user_google_email: str,
+    document_id: str,
+    action: Literal["accept", "reject", "delete"],
+    suggestion_ids: List[str],
+) -> str:
+    """
+    Accepts, rejects, or deletes pending suggestion threads on a Google Doc
+    (the suggested edits produced by "Suggesting" mode in the Docs UI, or by
+    calling batch_update_doc with suggest_mode=true).
+
+    Requires the requesting Google Cloud project to be enrolled in the
+    Workspace Developer Preview Program; otherwise the API call will fail.
+
+    To find suggestion_ids, call get_doc_content or inspect_doc_structure with
+    suggestions_view_mode="SUGGESTIONS_INLINE" and look for the
+    suggestedInsertionIds / suggestedDeletionIds fields on text runs - each ID
+    identifies a suggestion thread (e.g. "suggest.vcti8ewm4mww").
+
+    Args:
+        user_google_email: User's Google email address
+        document_id: ID of the document containing the suggestions
+        action: "accept" applies the suggestion (requires edit access),
+            "reject" discards it (requires edit access or being its author),
+            "delete" removes the suggestion thread entirely (requires being
+            its author)
+        suggestion_ids: One or more suggestion thread IDs to act on
+
+    Returns:
+        str: Confirmation message including how many suggestions were processed
+    """
+    if not suggestion_ids:
+        return "Error: suggestion_ids cannot be empty"
+
+    request_key = {
+        "accept": "acceptSuggestion",
+        "reject": "rejectSuggestion",
+        "delete": "deleteSuggestion",
+    }.get(action)
+    if not request_key:
+        return f"Error: action must be one of 'accept', 'reject', 'delete', got '{action}'"
+
+    requests = [
+        {request_key: {"suggestionId": suggestion_id}}
+        for suggestion_id in suggestion_ids
+    ]
+
+    logger.debug(
+        f"[manage_doc_suggestions] Doc={document_id}, action={action}, "
+        f"suggestion_ids={suggestion_ids}"
+    )
+
+    result = await asyncio.to_thread(
+        service.documents()
+        .batchUpdate(documentId=document_id, body={"requests": requests})
+        .execute
+    )
+
+    comment_state = result.get("commentUpdateState")
+    link = f"https://docs.google.com/document/d/{document_id}/edit"
+    return (
+        f"Successfully requested '{action}' on {len(suggestion_ids)} suggestion(s) "
+        f"in document {document_id} (comment_update_state: {comment_state}). "
+        f"Link: {link}"
+    )
 
 
 @server.tool(
@@ -1600,6 +1715,62 @@ async def inspect_doc_structure(
 
     link = f"https://docs.google.com/document/d/{document_id}/edit"
     return f"Document structure analysis for {document_id}:\n\n{json.dumps(result, indent=2)}\n\nLink: {link}"
+
+
+# Operation types this codebase exposes that the Docs API rejects when
+# WriteControl.writeMode is SUGGEST (see "Unsupported requests in suggest
+# mode" at https://developers.google.com/workspace/docs/api/how-tos/suggestions).
+_SUGGEST_MODE_UNSUPPORTED_OPERATION_TYPES = {
+    "insert_doc_tab": "AddDocumentTab",
+    "delete_doc_tab": "DeleteTab",
+    "update_doc_tab": "UpdateDocumentTabProperties",
+    "create_named_range": "CreateNamedRange",
+    "delete_named_range": "DeleteNamedRange",
+    "update_table_column_properties": "UpdateTableColumnProperties",
+}
+
+# update_document_style fields the API rejects as suggestions.
+_SUGGEST_MODE_UNSUPPORTED_DOCUMENT_STYLE_FIELDS = {
+    "document_mode",
+    "use_even_page_header_footer",
+    "use_first_page_header_footer",
+}
+
+
+def _validate_suggest_mode_operations(
+    operations: list[dict[str, Any]],
+) -> Optional[str]:
+    """
+    Reject operations client-side that the Docs API is known to refuse when
+    executed with WriteControl.writeMode = SUGGEST, so callers get an
+    actionable error instead of an opaque API failure.
+    """
+    problems: list[str] = []
+    for i, op in enumerate(operations):
+        op_type = op.get("type")
+        api_name = _SUGGEST_MODE_UNSUPPORTED_OPERATION_TYPES.get(op_type)
+        if api_name:
+            problems.append(
+                f"operation {i} ('{op_type}') maps to {api_name}, which suggest mode does not support"
+            )
+        elif op_type == "update_document_style":
+            bad_fields = sorted(
+                _SUGGEST_MODE_UNSUPPORTED_DOCUMENT_STYLE_FIELDS & set(op.keys())
+            )
+            if bad_fields:
+                problems.append(
+                    f"operation {i} ('update_document_style') sets {bad_fields}, "
+                    "which cannot be suggested"
+                )
+
+    if not problems:
+        return None
+
+    return (
+        "suggest_mode=true but this batch includes operations the Docs API cannot "
+        "apply as suggestions: " + "; ".join(problems) + ". Remove them or run this "
+        "batch with suggest_mode=false."
+    )
 
 
 def _rewrite_modify_doc_text_http_error(
