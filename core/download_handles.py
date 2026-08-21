@@ -10,8 +10,8 @@ handle, and the URL carries only the handle (~22 chars): ``/dl/{handle}``.
 The handle *is* the capability: 128 bits from a CSPRNG is as unguessable as
 an HMAC signature, the store's TTL enforces the same expiry the JWT would
 have carried, and — unlike a JWT — a handle can be revoked by deleting the
-row. Records are Fernet-encrypted under a handle-specific context, mirroring
-the attachment credential cache.
+row. Records are Fernet-encrypted with the same derived key as the attachment
+credential cache, whose store (and backend selection) they reuse wholesale.
 
 Handles live in the same encrypted store as the attachment credential cache
 (``core.attachment_cred_cache``) under their own collection: the shared

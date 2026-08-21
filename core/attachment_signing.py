@@ -216,7 +216,14 @@ def verify_attachment_token(token: str) -> Optional[dict]:
     treats any None as a 403.
     """
     try:
-        return jwt.decode(token, _signing_key(), algorithms=[_ALG])
+        return jwt.decode(
+            token,
+            _signing_key(),
+            algorithms=[_ALG],
+            # Server-minted tokens always carry these; requiring them means a
+            # validly-signed token without an expiry can never pass.
+            options={"require": ["exp", "sub", "iat"]},
+        )
     except Exception:
         return None
 

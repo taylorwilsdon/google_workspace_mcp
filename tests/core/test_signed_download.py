@@ -40,24 +40,35 @@ class _FakeDownloader:
 
 
 class _FakeFiles:
-    def get_media(self, fileId):
+    def __init__(self, calls):
+        self._calls = calls
+
+    # No **kwargs catch-all: the signature mirrors the real client so a kwarg
+    # the API doesn't take fails here the way it would fail live.
+    def get_media(self, fileId, supportsAllDrives=False):
+        self._calls.append(("get_media", fileId, supportsAllDrives))
         return "REQ"
 
     def export_media(self, fileId, mimeType):
+        self._calls.append(("export_media", fileId, mimeType))
         return "REQ"
 
 
 class _FakeDrive:
+    def __init__(self):
+        self.calls = []
+
     def files(self):
-        return _FakeFiles()
+        return _FakeFiles(self.calls)
 
 
 @pytest.fixture
 def patched_drive(monkeypatch):
     payload = bytes(range(256)) * 200  # 51200 bytes
     chunksize = 8192
+    fake_drive = _FakeDrive()
     monkeypatch.setattr(sd, "_DRIVE_CHUNK_SIZE", chunksize)
-    monkeypatch.setattr(sd, "build", lambda *a, **k: _FakeDrive())
+    monkeypatch.setattr(sd, "build", lambda *a, **k: fake_drive)
     monkeypatch.setattr(
         sd,
         "MediaIoBaseDownload",
@@ -65,13 +76,13 @@ def patched_drive(monkeypatch):
             payload, fh, chunksize
         ),
     )
-    return payload, chunksize
+    return payload, chunksize, fake_drive
 
 
 class TestDriveStreaming:
     @pytest.mark.asyncio
     async def test_streams_in_bounded_chunks_and_reassembles(self, patched_drive):
-        payload, chunksize = patched_drive
+        payload, chunksize, fake_drive = patched_drive
         result = await sd._fetch_drive(
             {"fid": "F", "fn": "v.mov", "mt": "video/quicktime"}, None
         )
@@ -85,6 +96,21 @@ class TestDriveStreaming:
         assert b"".join(chunks) == payload  # byte-perfect
         assert max(len(c) for c in chunks) <= chunksize  # never the whole file at once
         assert len(chunks) > 1  # actually chunked
+
+    @pytest.mark.asyncio
+    async def test_get_media_supports_shared_drives(self, patched_drive):
+        """The fetcher must pass supportsAllDrives=True: without it the Drive
+        API 404s on shared-drive files, so the tool mints a signed URL that then
+        502s on every fetch — while the same tool's non-signed fallback works.
+        The tool-side metadata resolution and #1022's download path both pass
+        it; this pins the signed fetcher to the same behavior."""
+        _payload, _chunksize, fake_drive = patched_drive
+
+        result = await sd._fetch_drive({"fid": "SHARED", "fn": "f.bin"}, None)
+        async for _ in result.stream:
+            pass
+
+        assert fake_drive.calls == [("get_media", "SHARED", True)]
 
     @pytest.mark.asyncio
     async def test_missing_fid_raises(self):
