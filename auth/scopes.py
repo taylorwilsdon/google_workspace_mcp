@@ -25,6 +25,7 @@ def set_explicit_scopes(scopes):
     if _EXPLICIT_SCOPES is not None:
         logger.info("Explicit scope set active: %d scopes", len(_EXPLICIT_SCOPES))
 
+
 # Individual OAuth Scope Constants
 USERINFO_EMAIL_SCOPE = "https://www.googleapis.com/auth/userinfo.email"
 USERINFO_PROFILE_SCOPE = "https://www.googleapis.com/auth/userinfo.profile"
@@ -255,8 +256,11 @@ def set_enabled_tools(enabled_tools):
     """
     global _ENABLED_TOOLS
     _ENABLED_TOOLS = enabled_tools
+    # enabled_tools may be None (the default / "all services" state) — guard the
+    # count so clearing the override doesn't raise.
     # Debug level: the startup screen already reports the loaded service count.
-    logger.debug(f"Scope management active for {len(enabled_tools)} services")
+    count = len(enabled_tools) if enabled_tools is not None else 0
+    logger.debug(f"Scope management active for {count} services")
 
 
 # Global variable to store read-only mode (set by main.py)

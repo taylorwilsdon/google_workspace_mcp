@@ -511,7 +511,9 @@ def main():
                     "WORKSPACE_MCP_TOOL_TIER", _env_tier, "core, extended, or complete"
                 )
             args.tool_tier = _env_tier
-    # Subtractive, so it needs no conflict handling against the allowlist flags.
+    # Subtractive, so it needs no conflict handling against the allowlist flags —
+    # except --only-tools, which derives scopes from its exact list and rejects
+    # the combination below.
     disabled_tools = resolve_disabled_tools(args.disabled_tools)
     set_disabled_tools(disabled_tools)
     if not args.read_only and not _cli_has_permissions:
@@ -595,12 +597,15 @@ def main():
         or args.tool_tier is not None
         or args.permissions is not None
         or args.read_only
+        or disabled_tools
     ):
         print(
             "Error: --only-tools cannot be combined with --tools, --tool-tier, "
-            "--permissions, or --read-only "
+            "--permissions, --read-only, or --disabled-tools "
             "(via CLI flag or WORKSPACE_MCP_* env var). "
-            "--only-tools is an exact per-tool allowlist and selects scopes on its own.",
+            "--only-tools is an exact per-tool allowlist and selects scopes on its "
+            "own — disabling one of its tools would drop it from the surface while "
+            "still requesting its scope, so just omit it from --only-tools instead.",
             file=sys.stderr,
         )
         sys.exit(1)

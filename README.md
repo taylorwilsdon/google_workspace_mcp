@@ -238,6 +238,14 @@ uv run workspace-cli call search_gmail_messages query="is:unread" max_results=5
 
 Install globally with `uv tool install .` from this repo. ⚠️ Don't use `uvx workspace-cli` - an abandoned PyPI package squats that name.
 
+**🎯 Exact Tool Selection**
+
+```bash
+uv run main.py --only-tools send_gmail_message manage_drive_access
+```
+
+**`--only-tools`** takes an exact (and possibly cross-service) tool allowlist and *also* derives the **minimal** OAuth scopes those tools need — the smallest possible consent screen for a purpose-built endpoint. Mutually exclusive with `--tools`, `--tool-tier`, `--permissions`, `--read-only`, and `--disabled-tools` (just omit a tool from the list rather than disabling it). See [docs/only-tools.md](docs/only-tools.md), including how it differs from the subtractive `--disabled-tools`.
+
 ## Deployment & Advanced Configuration
 
 Everything you need to run this in production lives in two places. The [documentation](https://workspacemcp.com/docs?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=deploy-docs) covers auth modes and server configuration:
