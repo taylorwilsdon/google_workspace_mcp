@@ -341,6 +341,44 @@ class TestSelectionBranch:
             GMAIL_SEND_SCOPE
         }
 
+    def test_stale_filter_modes_cleared_before_tool_filtering(self, monkeypatch):
+        """Read-only / permissions mode from a prior in-process run must not
+        survive into this run's filter_server_tools (CodeRabbit finding on the
+        re-scope). Before the fix, set_read_only was enable-only and permissions
+        mode was never cleared, so a later --only-tools run inherited the stale
+        filters, filter_server_tools removed its selected write tools, and the
+        fail-closed availability check exited with no conflicting current flag.
+
+        Stops at filter_server_tools: the stale modes must already be gone by
+        the time it runs, and stopping there keeps the (destructive) removal
+        from touching the process-global server.
+        """
+        from auth.scopes import is_read_only_mode
+
+        # Simulate the leftovers of an earlier `--read-only --permissions ...` run.
+        set_read_only(True)
+        permissions.set_permissions({"gmail": "readonly"})
+
+        class _StopBeforeFiltering(Exception):
+            pass
+
+        def _stop(*_a, **_k):
+            raise _StopBeforeFiltering()
+
+        monkeypatch.setattr(main, "configure_safe_logging", lambda: None)
+        monkeypatch.setattr(main, "resolve_callback_port_for_transport", lambda t: None)
+        monkeypatch.setattr(main, "validate_streamable_http_auth", lambda t: None)
+        monkeypatch.setattr(main, "filter_server_tools", _stop)
+        monkeypatch.setattr(
+            sys, "argv", ["main.py", "--only-tools", "send_gmail_message"]
+        )
+
+        with pytest.raises(_StopBeforeFiltering):
+            main.main()
+
+        assert not is_read_only_mode()
+        assert permissions.get_permissions() is None
+
 
 class TestScopeDerivationEndToEnd:
     """The headline feature: the post-registration scope union.

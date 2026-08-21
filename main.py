@@ -744,16 +744,21 @@ def main():
 
     wrap_server_tool_method(server)
 
+    from auth.permissions import set_permissions as set_permissions_mode
     from auth.scopes import set_enabled_tools, set_read_only, set_explicit_scopes
 
     set_enabled_tools(list(tools_to_import))
-    # Clear any explicit-scope override left from a prior in-process run; only the
-    # --only-tools branch below sets it. Without this reset, a second main() call
-    # in the same process (tests, or an embedded re-init) that does NOT use
-    # --only-tools would reuse the stale exact-scope grant and request wrong scopes.
+    # Clear any state left from a prior in-process run (tests, or an embedded
+    # re-init); each mode below is only (re)enabled by its own flag on THIS run.
+    # Without these resets a later run inherits the earlier run's filters:
+    # filter_server_tools() would apply a stale read-only / permissions mode and
+    # could remove tools the current flags selected — under --only-tools that
+    # turns into a spurious startup failure, and the explicit-scope override
+    # would make a non---only-tools run request the earlier narrow grant.
     set_explicit_scopes(None)
-    if args.read_only:
-        set_read_only(True)
+    set_read_only(bool(args.read_only))
+    if not args.permissions:
+        set_permissions_mode(None)
 
     loaded = []
     failed = []
