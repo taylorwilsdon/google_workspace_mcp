@@ -37,11 +37,18 @@ Get spreadsheet metadata: title, locale, and list of sheets.
 ### read_sheet_values
 Read values from a range in a spreadsheet.
 
+Open-ended or oversized A1 ranges are clamped to at most **1000 rows** before
+the Sheets API request (same budget as the default `A1:Z1000`). When clamped,
+the response includes a note with the rewritten range so you can request the
+next window (e.g. `A1001:A2000`). Quoted whole-sheet references such as
+`'My Sheet'` are clamped as well. Bare identifiers are left unchanged because
+Google Sheets can resolve them as named ranges.
+
 | Parameter | Type | Required | Default | Notes |
 |-----------|------|----------|---------|-------|
 | user_google_email | string | yes | | |
 | spreadsheet_id | string | yes | | |
-| range_name | string | no | A1:Z1000 | A1 notation, e.g. `Sheet1!A1:D10` |
+| range_name | string | no | A1:Z1000 | A1 notation, e.g. `Sheet1!A1:D10`. Caps at 1000 rows |
 | include_hyperlinks | boolean | no | false | Fetch hyperlink metadata (slower) |
 | include_notes | boolean | no | false | Fetch cell notes (slower) |
 

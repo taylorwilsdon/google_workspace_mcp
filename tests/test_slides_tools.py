@@ -7,7 +7,9 @@ from gslides.slides_tools import (
     _describe_elements,
     _extract_shape_text,
     _iter_text_bearing_elements,
+    _speaker_notes_shape,
     batch_update_presentation,
+    get_presentation,
 )
 
 
@@ -150,7 +152,7 @@ async def test_batch_update_rejects_insert_text_targeting_other_page_ids():
     presentations.get.assert_called_once_with(
         presentationId="presentation-1",
         fields=(
-            "slides(objectId,slideProperties(notesPage(objectId))),masters(objectId),layouts(objectId),notesMaster(objectId)"
+            "slides(objectId,slideProperties(notesPage(objectId,notesProperties(speakerNotesObjectId)))),masters(objectId),layouts(objectId),notesMaster(objectId)"
         ),
     )
     presentations.batchUpdate.assert_not_called()
@@ -437,3 +439,179 @@ def test_describe_elements_keeps_shape_without_text_simple():
 def test_describe_elements_handles_empty_and_none_input():
     assert _describe_elements([]) == []
     assert _describe_elements(None) == []
+
+
+# --- Tests for speaker notes reporting and insertText redirection ---
+
+
+def _slide_with_notes(slide_id="slide_1", notes_object_id="notes_shape_1", text=None):
+    """Build a slide resource carrying a notes page, as presentations.get returns."""
+    notes_page = {
+        "objectId": f"{slide_id}_notes",
+        "notesProperties": {"speakerNotesObjectId": notes_object_id}
+        if notes_object_id
+        else {},
+        "pageElements": [],
+    }
+    if text is not None:
+        element = _text_shape(text)
+        element["objectId"] = notes_object_id
+        notes_page["pageElements"].append(element)
+    return {
+        "objectId": slide_id,
+        "slideProperties": {"notesPage": notes_page},
+    }
+
+
+def test_speaker_notes_shape_returns_id_and_text():
+    slide = _slide_with_notes(text="Talk track\n")
+    assert _speaker_notes_shape(slide) == ("notes_shape_1", "Talk track\n")
+
+
+def test_speaker_notes_shape_handles_missing_shape_and_missing_id():
+    assert _speaker_notes_shape(_slide_with_notes()) == ("notes_shape_1", "")
+    assert _speaker_notes_shape(_slide_with_notes(notes_object_id=None)) == (None, "")
+    assert _speaker_notes_shape({}) == (None, "")
+
+
+@pytest.mark.asyncio
+async def test_get_presentation_omits_speaker_notes_by_default():
+    service, _ = _build_slides_service(
+        presentation={"slides": [_slide_with_notes("slide_1", "notes_1", "Talk\n")]}
+    )
+
+    result = await _unwrap(get_presentation)(
+        service=service,
+        user_google_email="user@example.com",
+        presentation_id="presentation-1",
+    )
+
+    assert "Speaker Notes" not in result
+    assert "notes_1" not in result
+
+
+@pytest.mark.asyncio
+async def test_get_presentation_reports_speaker_notes_when_requested():
+    service, _ = _build_slides_service(
+        presentation={
+            "slides": [
+                _slide_with_notes(
+                    "slide_1", "notes_1", "Opening remarks\nSecond line\n"
+                ),
+                _slide_with_notes("slide_2", "notes_2"),
+                _slide_with_notes("slide_3", notes_object_id=None),
+            ]
+        }
+    )
+
+    result = await _unwrap(get_presentation)(
+        service=service,
+        user_google_email="user@example.com",
+        presentation_id="presentation-1",
+        include_speaker_notes=True,
+    )
+
+    assert "    Speaker Notes Shape ID: notes_1, Notes:" in result
+    assert "      > Opening remarks" in result
+    assert "      > Second line" in result
+    assert "    Speaker Notes Shape ID: notes_2, Notes: empty" in result
+    assert "    Speaker Notes: none (slide has no notes placeholder)" in result
+
+
+@pytest.mark.asyncio
+async def test_batch_update_redirects_insert_text_from_notes_page_to_notes_shape():
+    service, presentations = _build_slides_service(
+        presentation={
+            "slides": [_slide_with_notes("slide_1", "notes_shape_1")],
+        }
+    )
+
+    with pytest.raises(UserInputError) as exc_info:
+        await _unwrap(batch_update_presentation)(
+            service=service,
+            user_google_email="user@example.com",
+            presentation_id="presentation-1",
+            requests=[
+                {
+                    "insertText": {
+                        "objectId": "slide_1_notes",
+                        "insertionIndex": 0,
+                        "text": "Talk track",
+                    }
+                }
+            ],
+        )
+
+    message = str(exc_info.value)
+    assert "requests[0].insertText.objectId='slide_1_notes'" in message
+    assert "targets a notes page" in message
+    assert "use objectId 'notes_shape_1' instead" in message
+    # The createShape guidance is wrong for notes and must not be appended.
+    assert "createShape" not in message
+    presentations.batchUpdate.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_batch_update_keeps_shape_guidance_when_a_slide_id_is_also_targeted():
+    service, _ = _build_slides_service(
+        presentation={"slides": [_slide_with_notes("slide_1", "notes_shape_1")]}
+    )
+
+    with pytest.raises(UserInputError) as exc_info:
+        await _unwrap(batch_update_presentation)(
+            service=service,
+            user_google_email="user@example.com",
+            presentation_id="presentation-1",
+            requests=[
+                {
+                    "insertText": {
+                        "objectId": "slide_1_notes",
+                        "insertionIndex": 0,
+                        "text": "Notes",
+                    }
+                },
+                {
+                    "insertText": {
+                        "objectId": "slide_1",
+                        "insertionIndex": 0,
+                        "text": "Title",
+                    }
+                },
+            ],
+        )
+
+    message = str(exc_info.value)
+    assert "use objectId 'notes_shape_1' instead" in message
+    assert "requests[1].insertText.objectId='slide_1' targets a slide/page object" in (
+        message
+    )
+    assert "createShape" in message
+
+
+@pytest.mark.asyncio
+async def test_batch_update_allows_insert_text_into_the_speaker_notes_shape():
+    service, presentations = _build_slides_service(
+        presentation={
+            "slides": [_slide_with_notes("slide_1", "notes_shape_1", "Old\n")]
+        }
+    )
+    requests = [
+        {"deleteText": {"objectId": "notes_shape_1", "textRange": {"type": "ALL"}}},
+        {
+            "insertText": {
+                "objectId": "notes_shape_1",
+                "insertionIndex": 0,
+                "text": "New talk track",
+            }
+        },
+    ]
+
+    result = await _unwrap(batch_update_presentation)(
+        service=service,
+        user_google_email="user@example.com",
+        presentation_id="presentation-1",
+        requests=requests,
+    )
+
+    assert presentations.batchUpdate.call_args.kwargs["body"] == {"requests": requests}
+    assert "Batch Update Completed" in result

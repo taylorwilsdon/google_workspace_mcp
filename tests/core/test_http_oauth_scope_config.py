@@ -109,36 +109,19 @@ def test_configure_server_for_http_uses_protocol_auth_required_scopes(monkeypatc
     )
 
 
-def test_configure_server_for_http_supports_public_client_with_jwt_key(monkeypatch):
-    captured = {}
-
-    class FakeGoogleProvider:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-            self.client_registration_options = SimpleNamespace(
-                valid_scopes=kwargs.get("valid_scopes"),
-                default_scopes=None,
-            )
-
+def test_configure_server_for_http_rejects_google_provider_without_client_secret(
+    monkeypatch,
+):
+    """Google rejects the code exchange without a secret, so startup must fail first."""
     monkeypatch.setenv(
         "FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY",
         "this-is-a-long-enough-jwt-signing-key",
     )
     monkeypatch.setattr(server_module, "get_transport_mode", lambda: "streamable-http")
-    monkeypatch.setattr(server_module, "GoogleProvider", FakeGoogleProvider)
-    monkeypatch.setattr(
-        server_module,
-        "get_current_scopes",
-        lambda: [
-            "https://www.googleapis.com/auth/userinfo.profile",
-            "https://www.googleapis.com/auth/userinfo.email",
-            "openid",
-        ],
-    )
+    monkeypatch.setattr(server_module, "GoogleProvider", object)
     monkeypatch.setattr(server_module, "set_auth_provider", lambda provider: None)
     monkeypatch.setattr(server_module, "_auth_provider", server_module._auth_provider)
     monkeypatch.setattr(server_module.server, "auth", server_module.server.auth)
-
     monkeypatch.setattr(
         "auth.oauth_config.get_oauth_config",
         lambda: SimpleNamespace(
@@ -153,14 +136,11 @@ def test_configure_server_for_http_supports_public_client_with_jwt_key(monkeypat
         ),
     )
 
-    server_module.configure_server_for_http()
-
-    assert captured["client_id"] == "public-client-id"
-    assert captured["client_secret"] is None
-    assert captured["jwt_signing_key"]
+    with pytest.raises(RuntimeError, match="requires GOOGLE_OAUTH_CLIENT_SECRET"):
+        server_module.configure_server_for_http()
 
 
-def test_configure_server_for_http_rejects_public_client_without_jwt_key(
+def test_configure_server_for_http_rejects_external_provider_without_jwt_key(
     monkeypatch,
 ):
     monkeypatch.delenv("FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY", raising=False)
@@ -175,7 +155,7 @@ def test_configure_server_for_http_rejects_public_client_without_jwt_key(
             is_oauth21_enabled=lambda: True,
             is_configured=lambda: True,
             is_public_client=lambda: True,
-            is_external_oauth21_provider=lambda: False,
+            is_external_oauth21_provider=lambda: True,
             client_id="public-client-id",
             client_secret=None,
             get_oauth_base_url=lambda: "https://workspace-mcp.example.test",

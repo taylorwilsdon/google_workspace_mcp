@@ -13,13 +13,16 @@ from core.warning_filters import install_startup_warning_filters
 install_startup_warning_filters()
 
 from auth.auth_info_middleware import AuthInfoMiddleware
+from core.camel_case_middleware import CamelCaseArgumentsMiddleware
 from auth.google_auth import handle_auth_callback, start_auth_flow, check_client_secrets
+from auth.gateway_identity import get_verified_gateway_principal
 from auth.mcp_session_middleware import MCPSessionMiddleware
 from auth.oauth21_session_store import set_auth_provider
 from auth.oauth_config import (
     is_oauth21_enabled,
     is_external_oauth21_provider,
     get_oauth_config,
+    is_trust_gateway_identity,
 )
 from auth.oauth_responses import (
     create_error_response,
@@ -72,6 +75,12 @@ _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 # Default authority ports per scheme, used to compare an Origin against the Host
 # header that received the request (a same-origin check).
 _DEFAULT_PORTS = {"http": 80, "https": 443, "ws": 80, "wss": 443}
+_ALLOW_NULL_ORIGIN_CONSENT_ENV = "WORKSPACE_MCP_ALLOW_NULL_ORIGIN_CONSENT"
+
+
+def _parse_bool_env(value: str) -> bool:
+    """Parse environment variable string to boolean."""
+    return value.lower() in ("1", "true", "yes", "on")
 
 
 def _normalize_parsed(parsed: ParseResult) -> Optional[str]:
@@ -142,6 +151,26 @@ def _is_same_origin_as_host(origin: str, host_header: Optional[str]) -> bool:
     return parsed.hostname == host.hostname and origin_port == host_port
 
 
+def _is_null_origin_consent_compat_allowed(scope: Scope, origin: str) -> bool:
+    """Allow known opaque-origin consent POSTs only when explicitly enabled.
+
+    Some browser/MCP-client OAuth redirect chains end with Chrome sending
+    ``Origin: null`` on the consent form submission, which this middleware would
+    otherwise reject. The bypass is opt-in and scoped to that exact request shape;
+    the consent handler itself still enforces a double-submit CSRF check (the form
+    token must match the SameSite=Lax ``MCP_CONSENT_STATE`` cookie), so origin
+    validation is defense in depth here rather than the only guard.
+    """
+    if origin != "null":
+        return False
+    if scope.get("method") != "POST":
+        return False
+    if scope.get("path") != "/consent":
+        return False
+
+    return _parse_bool_env(os.getenv(_ALLOW_NULL_ORIGIN_CONSENT_ENV, "").strip())
+
+
 class OriginValidationMiddleware:
     """Reject browser-originated HTTP requests from untrusted origins."""
 
@@ -159,6 +188,14 @@ class OriginValidationMiddleware:
                 if not _is_origin_allowed(origin) and not _is_same_origin_as_host(
                     origin, host_header
                 ):
+                    if _is_null_origin_consent_compat_allowed(scope, origin):
+                        logger.info(
+                            "Allowing OAuth consent POST with Origin: null because "
+                            "%s is enabled",
+                            _ALLOW_NULL_ORIGIN_CONSENT_ENV,
+                        )
+                        await self.app(scope, receive, send)
+                        return
                     logger.warning("Rejected HTTP request from Origin: %s", origin)
                     response = JSONResponse(
                         {"error": "Origin not allowed"}, status_code=403
@@ -228,7 +265,7 @@ class SecureFastMCP(FastMCP):
 
         # Rebuild middleware stack
         app.middleware_stack = app.build_middleware_stack()
-        logger.info(
+        logger.debug(
             "Added middleware stack: WellKnownCacheControl, OriginValidation, "
             "Session Management"
         )
@@ -244,6 +281,23 @@ class SecureFastMCP(FastMCP):
         runtime still resolves the email correctly via the service decorator.
         """
         tools = list(await super().list_tools(run_middleware=run_middleware))
+        if is_trust_gateway_identity():
+            patched = []
+            for tool in tools:
+                if tool.name != "start_google_auth":
+                    patched.append(tool)
+                    continue
+                schema = dict(tool.parameters)
+                required = [
+                    name
+                    for name in schema.get("required", [])
+                    if name != "user_google_email"
+                ]
+                properties = dict(schema.get("properties", {}))
+                properties.pop("user_google_email", None)
+                schema.update(required=required, properties=properties)
+                patched.append(tool.model_copy(update={"parameters": schema}))
+            return patched
         if not USER_GOOGLE_EMAIL or is_oauth21_enabled():
             return tools
         patched = []
@@ -270,7 +324,17 @@ class SecureFastMCP(FastMCP):
         inject the default BEFORE that validation step.
         """
         arguments = arguments or {}
-        if (
+        if is_trust_gateway_identity():
+            # The verified gateway principal is authoritative for every tool, and the
+            # parameter is gone from tool signatures. Drop any caller-supplied email
+            # (older clients may have the pre-gateway schema cached) instead of letting
+            # it fail signature validation, and never inject USER_GOOGLE_EMAIL.
+            arguments = {
+                key: value
+                for key, value in arguments.items()
+                if key != "user_google_email"
+            }
+        elif (
             not is_oauth21_enabled()
             and USER_GOOGLE_EMAIL
             and "user_google_email" not in arguments
@@ -279,9 +343,11 @@ class SecureFastMCP(FastMCP):
         return await super().call_tool(name, arguments, *args, **kwargs)
 
 
-# Build server instructions with user email context for single-user mode
+# Build server instructions with user email context for single-user mode.
+# Skipped in trusted-gateway mode: the verified principal supersedes the configured
+# default, and user_google_email is no longer a tool parameter clients can pass.
 _server_instructions = None
-if USER_GOOGLE_EMAIL:
+if USER_GOOGLE_EMAIL and not is_trust_gateway_identity():
     _server_instructions = f"""Connected Google account: {USER_GOOGLE_EMAIL}
 
 When using Google Workspace tools, always use `{USER_GOOGLE_EMAIL}` as the `user_google_email` parameter. Do not ask the user for their email address."""
@@ -306,10 +372,10 @@ server = SecureFastMCP(
 auth_info_middleware = AuthInfoMiddleware()
 server.add_middleware(auth_info_middleware)
 
-
-def _parse_bool_env(value: str) -> bool:
-    """Parse environment variable string to boolean."""
-    return value.lower() in ("1", "true", "yes", "on")
+# Accept camelCase argument names (calendarId, timeMin, ...) from callers that
+# mirror the Google API field names, mapping them onto the snake_case tool
+# parameters. See https://github.com/taylorwilsdon/google_workspace_mcp/issues/918
+server.add_middleware(CamelCaseArgumentsMiddleware())
 
 
 def _parse_allowed_redirect_uris(value: Optional[str]) -> Optional[List[str]]:
@@ -334,7 +400,8 @@ def _parse_allowed_redirect_uris(value: Optional[str]) -> Optional[List[str]]:
 def set_transport_mode(mode: str):
     """Sets the transport mode for the server."""
     _set_transport_mode(mode)
-    logger.info(f"Transport: {mode}")
+    # Debug level: the startup banner already shows the active transport.
+    logger.debug(f"Transport: {mode}")
 
 
 def _ensure_legacy_callback_route() -> None:
@@ -370,6 +437,18 @@ def configure_server_for_http():
             raise RuntimeError(
                 "streamable-http transport requires GOOGLE_OAUTH_CLIENT_ID so OAuth 2.1 "
                 "protocol authentication can be configured."
+            )
+
+        if not config.client_secret and not config.is_external_oauth21_provider():
+            # MCP clients stay secretless, but this server performs the Google code
+            # exchange itself and Google requires a secret for it. Fail here instead
+            # of at the last step of the user's browser flow.
+            raise RuntimeError(
+                "OAuth 2.1 requires GOOGLE_OAUTH_CLIENT_SECRET: Google rejects the "
+                "authorization code exchange without a client secret (invalid_request: "
+                "client_secret is missing), even for public clients using PKCE. Set "
+                "GOOGLE_OAUTH_CLIENT_SECRET, or set EXTERNAL_OAUTH21_PROVIDER=true if "
+                "another identity provider performs the code exchange."
             )
 
         def validate_and_derive_jwt_key(
@@ -696,7 +775,8 @@ def configure_server_for_http():
             )
             raise
     else:
-        logger.info(
+        # Debug level: main.py surfaces the loopback default as a startup notice.
+        logger.debug(
             "OAuth 2.0 legacy mode - streamable HTTP defaults to loopback unless "
             "WORKSPACE_MCP_HOST is explicitly set."
         )
@@ -978,6 +1058,9 @@ async def start_google_auth(
             "original tool."
         )
 
+    if is_trust_gateway_identity():
+        user_google_email = await get_verified_gateway_principal()
+
     if not user_google_email:
         raise ValueError("user_google_email must be provided.")
 
@@ -1001,6 +1084,9 @@ async def start_google_auth(
             user_google_email=user_google_email,
             service_name=service_name,
             redirect_uri=get_oauth_redirect_uri_for_current_mode(),
+            principal_source=(
+                "gateway_assertion" if is_trust_gateway_identity() else None
+            ),
         )
         return auth_message
     except Exception as e:

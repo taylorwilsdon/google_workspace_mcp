@@ -38,6 +38,8 @@ from gdocs.docs_helpers import (
     create_merge_table_cells_request,
     create_unmerge_table_cells_request,
     create_update_table_column_properties_request,
+    create_update_table_row_style_request,
+    create_pin_table_header_rows_request,
     validate_operation,
 )
 from gdocs.managers.validation_manager import ValidationManager
@@ -402,6 +404,11 @@ class BatchOperationManager:
                 op.get("page_break_before"),
                 op.get("spacing_mode"),
                 op.get("shading_color"),
+                op.get("border_edges"),
+                op.get("border_color"),
+                op.get("border_width"),
+                op.get("border_padding"),
+                op.get("border_dash"),
             )
 
             if not request:
@@ -413,6 +420,8 @@ class BatchOperationManager:
                 "indent_end",
                 "space_above",
                 "space_below",
+                "border_width",
+                "border_padding",
             }
             _SUFFIX = {
                 "heading_level": lambda v: f"H{v}",
@@ -437,6 +446,11 @@ class BatchOperationManager:
                 ("page_break_before", "page break before"),
                 ("spacing_mode", "spacing mode"),
                 ("shading_color", "shading"),
+                ("border_edges", "border edges"),
+                ("border_color", "border color"),
+                ("border_width", "border width"),
+                ("border_padding", "border padding"),
+                ("border_dash", "border dash"),
             ]:
                 if op.get(param) is not None:
                     raw = op[param]
@@ -466,6 +480,7 @@ class BatchOperationManager:
                     column_index=op.get("column_index"),
                     row_span=op.get("row_span"),
                     column_span=op.get("column_span"),
+                    border_edges=op.get("border_edges"),
                 )
             )
             if not is_valid:
@@ -486,6 +501,7 @@ class BatchOperationManager:
                 row_span=op.get("row_span"),
                 column_span=op.get("column_span"),
                 tab_id=tab_id,
+                border_edges=op.get("border_edges"),
             )
 
             if not request:
@@ -501,6 +517,7 @@ class BatchOperationManager:
                 ("padding_left", "padding left"),
                 ("padding_right", "padding right"),
                 ("content_alignment", "content alignment"),
+                ("border_edges", "border edges"),
             ]:
                 if op.get(param) is not None:
                     value = (
@@ -812,6 +829,36 @@ class BatchOperationManager:
                 f"in table at {op['table_start_index']}"
             )
 
+        elif op_type == "update_table_row_style":
+            request = create_update_table_row_style_request(
+                table_start_index=op["table_start_index"],
+                row_indices=op["row_indices"],
+                min_row_height=op.get("min_row_height"),
+                tab_id=tab_id,
+            )
+
+            if not request:
+                raise ValueError(
+                    "update_table_row_style requires at least one of: min_row_height"
+                )
+
+            description = (
+                f"update row style for rows {op['row_indices']} "
+                f"in table at {op['table_start_index']}"
+            )
+
+        elif op_type == "pin_table_header_rows":
+            request = create_pin_table_header_rows_request(
+                table_start_index=op["table_start_index"],
+                pinned_header_rows_count=op["pinned_header_rows_count"],
+                tab_id=tab_id,
+            )
+
+            description = (
+                f"pin {op['pinned_header_rows_count']} header row(s) "
+                f"for table at {op['table_start_index']}"
+            )
+
         else:
             supported_types = [
                 "insert_text",
@@ -842,6 +889,8 @@ class BatchOperationManager:
                 "merge_table_cells",
                 "unmerge_table_cells",
                 "update_table_column_properties",
+                "update_table_row_style",
+                "pin_table_header_rows",
             ]
             raise ValueError(
                 f"Unsupported operation type '{op_type}'. Supported: {', '.join(supported_types)}"
@@ -1001,6 +1050,11 @@ class BatchOperationManager:
                         "page_break_before",
                         "spacing_mode",
                         "shading_color",
+                        "border_edges",
+                        "border_color",
+                        "border_width",
+                        "border_padding",
+                        "border_dash",
                         "segment_id",
                         "tab_id",
                     ],
@@ -1021,6 +1075,7 @@ class BatchOperationManager:
                         "column_index",
                         "row_span",
                         "column_span",
+                        "border_edges",
                     ],
                     "description": "Apply table cell styling to an entire table or a targeted cell range",
                 },
@@ -1184,6 +1239,16 @@ class BatchOperationManager:
                     "required": ["table_start_index", "column_indices"],
                     "optional": ["width", "width_type", "tab_id"],
                     "description": "Update column width and width type for specified columns in a table",
+                },
+                "update_table_row_style": {
+                    "required": ["table_start_index", "row_indices"],
+                    "optional": ["min_row_height", "tab_id"],
+                    "description": "Update row style for specified rows in a table (minimum row height)",
+                },
+                "pin_table_header_rows": {
+                    "required": ["table_start_index", "pinned_header_rows_count"],
+                    "optional": ["tab_id"],
+                    "description": "Pin (repeat) the leading N rows of a table as a header on every page",
                 },
             },
             "example_operations": [

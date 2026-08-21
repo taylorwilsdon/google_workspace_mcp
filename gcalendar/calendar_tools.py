@@ -19,9 +19,8 @@ from googleapiclient.discovery import build
 from auth.service_decorator import require_google_service
 from core.utils import handle_http_errors, StringList
 from gcalendar.calendar_helpers import (
-    _format_attachment_details,
-    _format_attendee_details,
-    _format_person,
+    _format_event_detail_lines,
+    _format_event_time,
     _get_meeting_link,
 )
 
@@ -395,7 +394,7 @@ async def get_events(
         time_max (Optional[str]): The end of the time range (exclusive) in RFC3339 format. If omitted, events starting from `time_min` onwards are considered (up to `max_results`). Ignored if event_id is provided.
         max_results (int): The maximum number of events to return. Defaults to 25. Ignored if event_id is provided.
         query (Optional[str]): A keyword to search for within event fields (summary, description, location). Ignored if event_id is provided.
-        detailed (bool): Whether to return detailed event information including description, location, attendees, and attendee details (response status, organizer, optional flags). Defaults to False.
+        detailed (bool): Whether to return detailed event information including description, location, colour (colorId), attendees, and attendee details (response status, organizer, optional flags). Recurring instances also report the parent series ID needed to edit the whole series, and events that are not ordinary confirmed meetings report their event type (outOfOffice, workingLocation, focusTime) and status. Defaults to False.
         include_attachments (bool): Whether to include attachment information in detailed event output. When True, shows attachment details (fileId, fileUrl, mimeType, title) for events that have attachments. Only applies when detailed=True. Set this to True when you need to view or access files that have been attached to calendar events, such as meeting documents, presentations, or other shared files. Defaults to False.
 
     Returns:
@@ -469,50 +468,19 @@ async def get_events(
     if event_id and detailed:
         item = items[0]
         summary = item.get("summary", "No Title")
-        start = item["start"].get("dateTime", item["start"].get("date"))
-        end = item["end"].get("dateTime", item["end"].get("date"))
+        start = _format_event_time(item, "start")
+        end = _format_event_time(item, "end")
         link = item.get("htmlLink", "No Link")
-        description = item.get("description", "No Description")
-        location = item.get("location", "No Location")
-        color_id = item.get("colorId", "None")
-        attendees = item.get("attendees", [])
-        attendee_emails = (
-            ", ".join([a.get("email", "") for a in attendees]) if attendees else "None"
-        )
-        attendee_details_str = _format_attendee_details(attendees, indent="  ")
-
-        meeting_link = _get_meeting_link(item)
-
-        creator_str = _format_person(item.get("creator"))
-        organizer_str = _format_person(item.get("organizer"))
 
         event_details = (
-            f"Event Details:\n"
-            f"- Title: {summary}\n"
-            f"- Starts: {start}\n"
-            f"- Ends: {end}\n"
-            f"- Description: {description}\n"
-            f"- Location: {location}\n"
-            f"- Color ID: {color_id}\n"
+            f"Event Details:\n- Title: {summary}\n- Starts: {start}\n- Ends: {end}\n"
         )
-        if creator_str:
-            event_details += f"- Creator: {creator_str}\n"
-        if organizer_str:
-            event_details += f"- Organizer: {organizer_str}\n"
-        if meeting_link:
-            event_details += f"- Meeting Link: {meeting_link}\n"
-        event_details += (
-            f"- Attendees: {attendee_emails}\n"
-            f"- Attendee Details: {attendee_details_str}\n"
+        event_details += _format_event_detail_lines(
+            item,
+            prefix="- ",
+            indent="  ",
+            include_attachments=include_attachments,
         )
-
-        if include_attachments:
-            attachments = item.get("attachments", [])
-            attachment_details_str = _format_attachment_details(
-                attachments, indent="  "
-            )
-            event_details += f"- Attachments: {attachment_details_str}\n"
-
         event_details += f"- Event ID: {event_id}\n- Link: {link}"
         logger.info(
             f"[get_events] Successfully retrieved detailed event {event_id} for {user_google_email}."
@@ -523,52 +491,23 @@ async def get_events(
     event_details_list = []
     for item in items:
         summary = item.get("summary", "No Title")
-        start_time = item["start"].get("dateTime", item["start"].get("date"))
-        end_time = item["end"].get("dateTime", item["end"].get("date"))
+        start_time = _format_event_time(item, "start")
+        end_time = _format_event_time(item, "end")
         link = item.get("htmlLink", "No Link")
         item_event_id = item.get("id", "No ID")
 
         if detailed:
             # Add detailed information for multiple events
-            description = item.get("description", "No Description")
-            location = item.get("location", "No Location")
-            attendees = item.get("attendees", [])
-            attendee_emails = (
-                ", ".join([a.get("email", "") for a in attendees])
-                if attendees
-                else "None"
-            )
-            attendee_details_str = _format_attendee_details(attendees, indent="    ")
-
-            meeting_link = _get_meeting_link(item)
-
-            creator_str = _format_person(item.get("creator"))
-            organizer_str = _format_person(item.get("organizer"))
-
             event_detail_parts = (
                 f'- "{summary}" (Starts: {start_time}, Ends: {end_time})\n'
-                f"  Description: {description}\n"
-                f"  Location: {location}\n"
-            )
-            if creator_str:
-                event_detail_parts += f"  Creator: {creator_str}\n"
-            if organizer_str:
-                event_detail_parts += f"  Organizer: {organizer_str}\n"
-            if meeting_link:
-                event_detail_parts += f"  Meeting Link: {meeting_link}\n"
-            event_detail_parts += (
-                f"  Attendees: {attendee_emails}\n"
-                f"  Attendee Details: {attendee_details_str}\n"
-            )
-
-            if include_attachments:
-                attachments = item.get("attachments", [])
-                attachment_details_str = _format_attachment_details(
-                    attachments, indent="    "
+                + _format_event_detail_lines(
+                    item,
+                    prefix="  ",
+                    indent="    ",
+                    include_attachments=include_attachments,
                 )
-                event_detail_parts += f"  Attachments: {attachment_details_str}\n"
-
-            event_detail_parts += f"  ID: {item_event_id} | Link: {link}"
+                + f"  ID: {item_event_id} | Link: {link}"
+            )
             event_details_list.append(event_detail_parts)
         else:
             # Basic output format

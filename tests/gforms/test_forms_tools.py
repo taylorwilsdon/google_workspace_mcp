@@ -372,7 +372,7 @@ async def test_set_publish_settings_builds_publish_state_body():
                 "isAcceptingResponses": False,
             }
         },
-        "updateMask": "publishState.isPublished,publishState.isAcceptingResponses",
+        "updateMask": "publishState",
     }
     assert "Published: True" in result
     assert "Accepting responses: False" in result

@@ -277,7 +277,8 @@ def check_credentials_directory_permissions(credentials_dir: str = None) -> None
             f"'{os.path.abspath(credentials_dir)}': {e}"
         )
 
-    logger.info(
+    # Debug level: the startup screen already reports this check and the path.
+    logger.debug(
         f"Credentials directory permissions check passed: {os.path.abspath(credentials_dir)}"
     )
 

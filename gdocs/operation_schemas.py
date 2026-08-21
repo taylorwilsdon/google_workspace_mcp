@@ -13,6 +13,10 @@ from typing import Annotated, Any, Literal, Optional, Union
 from pydantic import BaseModel, ConfigDict, Field, BeforeValidator, model_validator
 
 
+ParagraphBorderEdge = Literal["top", "bottom", "left", "right", "between"]
+TableBorderEdge = Literal["top", "bottom", "left", "right"]
+
+
 def _coerce_json_str_to_list(v: Any) -> Any:
     """Accept JSON-encoded lists for MCP clients that serialize arrays as strings."""
     if not isinstance(v, str):
@@ -89,7 +93,7 @@ class FormatTextOperation(SegmentTargetDocOperation):
     italic: Optional[bool] = None
     underline: Optional[bool] = None
     strikethrough: Optional[bool] = None
-    font_size: Optional[int] = None
+    font_size: Optional[float] = None
     font_family: Optional[str] = None
     font_weight: Optional[int] = None
     text_color: Optional[str] = None
@@ -120,6 +124,15 @@ class UpdateParagraphStyleOperation(SegmentTargetDocOperation):
     page_break_before: Optional[bool] = None
     spacing_mode: Optional[str] = None
     shading_color: Optional[str] = None
+    border_edges: Optional[list[ParagraphBorderEdge]] = Field(
+        default=None,
+        min_length=1,
+        description="Paragraph border edges to update; omit to update top, bottom, left, and right.",
+    )
+    border_color: Optional[str] = None
+    border_width: Optional[float] = None
+    border_padding: Optional[float] = None
+    border_dash: Optional[str] = None
 
 
 class UpdateTableCellStyleOperation(StrictDocOperation):
@@ -137,6 +150,11 @@ class UpdateTableCellStyleOperation(StrictDocOperation):
     column_index: Optional[int] = None
     row_span: Optional[int] = None
     column_span: Optional[int] = None
+    border_edges: Optional[list[TableBorderEdge]] = Field(
+        default=None,
+        min_length=1,
+        description="Table-cell border edges to update; omit to update all four edges.",
+    )
 
 
 class InsertTableOperation(SegmentTargetDocOperation):
@@ -209,6 +227,30 @@ class UpdateTableColumnPropertiesOperation(StrictDocOperation):
     column_indices: list[int]
     width: Optional[float] = None
     width_type: Optional[str] = None
+
+
+class UpdateTableRowStyleOperation(StrictDocOperation):
+    type: Literal["update_table_row_style"]
+    table_start_index: int
+    row_indices: list[int] = Field(
+        description="Zero-based row indices to style, e.g. [0] for the header row."
+    )
+    min_row_height: Optional[float] = Field(
+        default=None,
+        description="Minimum row height in points.",
+    )
+
+
+class PinTableHeaderRowsOperation(StrictDocOperation):
+    type: Literal["pin_table_header_rows"]
+    table_start_index: int
+    pinned_header_rows_count: int = Field(
+        ge=0,
+        description="Number of leading rows to pin as a repeating header on each "
+        "page. 0 unpins all rows. Use this dedicated request because the "
+        "'tableHeader' value reported in TableRowStyle cannot be set through "
+        "UpdateTableRowStyleRequest.",
+    )
 
 
 class InsertPageBreakOperation(StrictDocOperation):
@@ -414,6 +456,8 @@ BatchDocOperation = Annotated[
         MergeTableCellsOperation,
         UnmergeTableCellsOperation,
         UpdateTableColumnPropertiesOperation,
+        UpdateTableRowStyleOperation,
+        PinTableHeaderRowsOperation,
         InsertPageBreakOperation,
         InsertSectionBreakOperation,
         FindReplaceOperation,

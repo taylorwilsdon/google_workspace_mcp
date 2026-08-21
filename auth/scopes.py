@@ -242,7 +242,8 @@ def set_enabled_tools(enabled_tools):
     """
     global _ENABLED_TOOLS
     _ENABLED_TOOLS = enabled_tools
-    logger.info(f"Scope management active for {len(enabled_tools)} services")
+    # Debug level: the startup screen already reports the loaded service count.
+    logger.debug(f"Scope management active for {len(enabled_tools)} services")
 
 
 # Global variable to store read-only mode (set by main.py)
@@ -258,7 +259,8 @@ def set_read_only(enabled: bool):
     """
     global _READ_ONLY_MODE
     _READ_ONLY_MODE = enabled
-    logger.info(f"Read-only mode set to: {enabled}")
+    # Debug level: the startup banner already flags read-only mode.
+    logger.debug(f"Read-only mode set to: {enabled}")
 
 
 def is_read_only_mode() -> bool:

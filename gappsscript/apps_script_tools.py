@@ -4,16 +4,96 @@ Google Apps Script MCP Tools
 This module provides MCP tools for interacting with Google Apps Script API.
 """
 
-import logging
 import asyncio
-from typing import List, Dict, Any, Optional
+import logging
+import weakref
+from typing import Any, Dict, List, Optional
+
+from mcp.types import ToolAnnotations
 
 from auth.service_decorator import require_google_service
 from core.server import server
-from mcp.types import ToolAnnotations
-from core.utils import handle_http_errors, ObjectList
+from core.utils import ObjectList, UserInputError, handle_http_errors
 
 logger = logging.getLogger(__name__)
+
+_VALID_SCRIPT_FILE_TYPES = frozenset({"SERVER_JS", "HTML", "JSON"})
+
+# These locks serialize updates only within this process. Other worker
+# processes or service instances can still race while merging the same script_id.
+_SCRIPT_UPDATE_LOCKS: weakref.WeakValueDictionary[str, asyncio.Lock] = (
+    weakref.WeakValueDictionary()
+)
+
+
+def _get_script_update_lock(script_id: str) -> asyncio.Lock:
+    """Return the in-process lock that orders updates for one script."""
+    return _SCRIPT_UPDATE_LOCKS.setdefault(script_id, asyncio.Lock())
+
+
+def _normalize_script_file(file: Dict[str, Any]) -> Dict[str, str]:
+    """Return the Script API file fields used for updateContent requests.
+
+    Output-only fields returned by getContent (createTime, functionSet, ...)
+    are dropped. Fields the caller omitted stay omitted so a merge can fall
+    back to the existing value instead of blanking it.
+    """
+    return {
+        key: file[key]
+        for key in ("name", "type", "source")
+        if key in file and file[key] is not None
+    }
+
+
+def _merge_script_files(
+    existing_files: List[Dict[str, Any]],
+    updated_files: List[Dict[str, Any]],
+) -> List[Dict[str, str]]:
+    """Overlay updated files onto the current project.
+
+    Files are keyed by (name, type) because Script API names exclude the
+    extension, so one project may hold both Code.gs and Code.html as "Code".
+    An update that omits `type` falls back to matching by name, but only when
+    exactly one existing file carries that name; otherwise the type cannot be
+    inferred and a UserInputError is raised rather than pushing an untyped file.
+    """
+    merged = {
+        (file["name"], file.get("type")): _normalize_script_file(file)
+        for file in existing_files
+        if file.get("name")
+    }
+
+    for index, file in enumerate(updated_files):
+        name = file.get("name")
+        if not name:
+            raise UserInputError(
+                f"File at index {index} is missing a non-empty 'name'."
+            )
+        file_type = file.get("type")
+        if file_type is not None:
+            if file_type not in _VALID_SCRIPT_FILE_TYPES:
+                raise UserInputError(
+                    f"File '{name}' has unsupported type '{file_type}'; it must "
+                    "be one of SERVER_JS, HTML, or JSON."
+                )
+            if file_type == "JSON" and name != "appsscript":
+                raise UserInputError(
+                    f"JSON file '{name}' must use the manifest name 'appsscript'."
+                )
+
+        key = (name, file_type)
+        if key not in merged and file_type is None:
+            same_name = [existing for existing in merged if existing[0] == name]
+            if len(same_name) != 1:
+                raise UserInputError(
+                    f"File '{name}' is missing 'type'; it must be one of "
+                    "SERVER_JS, HTML, or JSON because the existing project "
+                    "does not identify a single file with that name."
+                )
+            key = same_name[0]
+        merged[key] = {**merged.get(key, {}), **_normalize_script_file(file)}
+
+    return list(merged.values())
 
 
 # Internal implementation functions for testing
@@ -320,26 +400,48 @@ async def _update_script_content_impl(
     user_google_email: str,
     script_id: str,
     files: List[Dict[str, str]],
+    merge: bool = True,
 ) -> str:
     """Internal implementation for update_script_content."""
     logger.info(
-        f"[update_script_content] Email: {user_google_email}, ID: {script_id}, Files: {len(files)}"
+        f"[update_script_content] Email: {user_google_email}, ID: {script_id}, "
+        f"Files: {len(files)}, merge: {merge}"
     )
 
-    request_body = {"files": files}
+    files_to_push = [_normalize_script_file(file) for file in files]
 
-    updated_content = await asyncio.to_thread(
-        service.projects().updateContent(scriptId=script_id, body=request_body).execute
-    )
+    async with _get_script_update_lock(script_id):
+        if merge:
+            current_content = await asyncio.to_thread(
+                service.projects().getContent(scriptId=script_id).execute
+            )
+            files_to_push = _merge_script_files(
+                current_content.get("files", []), files_to_push
+            )
 
-    output = [f"Updated script project: {script_id}", "", "Modified files:"]
+        request_body = {"files": files_to_push}
+
+        updated_content = await asyncio.to_thread(
+            service.projects()
+            .updateContent(scriptId=script_id, body=request_body)
+            .execute
+        )
+
+    mode = "merged into project" if merge else "replaced entire project"
+    output = [
+        f"Updated script project: {script_id} ({mode})",
+        "",
+        "Files in project after update:",
+    ]
 
     for file in updated_content.get("files", []):
         file_name = file.get("name", "Untitled")
         file_type = file.get("type", "Unknown")
         output.append(f"- {file_name} ({file_type})")
 
-    logger.info(f"[update_script_content] Updated {len(files)} files in {script_id}")
+    logger.info(
+        f"[update_script_content] Pushed {len(files_to_push)} files to {script_id}"
+    )
     return "\n".join(output)
 
 
@@ -359,21 +461,29 @@ async def update_script_content(
     user_google_email: str,
     script_id: str,
     files: List[Dict[str, str]],
+    merge: bool = True,
 ) -> str:
     """
-    Updates or creates files in a script project.
+    Update or create files in a script project.
+
+    By default this merges the supplied files into the existing project by file
+    name, leaving other files untouched. Set merge=False to replace the entire
+    project: any existing file omitted from `files` is permanently deleted.
 
     Args:
         service: Injected Google API service client
         user_google_email: User's email address
         script_id: The script project ID
-        files: List of file objects with name, type, and source
+        files: File objects with name, type, and source to create or update
+        merge: When True (default), overlay these files onto the current
+            project. When False, replace the full project file set; omitted
+            files are deleted.
 
     Returns:
         str: Formatted string confirming update with file list
     """
     return await _update_script_content_impl(
-        service, user_google_email, script_id, files
+        service, user_google_email, script_id, files, merge
     )
 
 

@@ -17,13 +17,20 @@ logger = logging.getLogger(__name__)
 
 MAX_GRID_METADATA_CELLS = 5000
 
+# Cap rows fetched by read_sheet_values before calling values().get.
+# Matches the tool default range (A1:Z1000). Open-ended or oversized A1
+# ranges otherwise materialize the full sheet into memory.
+MAX_READ_SHEET_ROWS = 1000
+
 A1_PART_REGEX = re.compile(r"^([A-Za-z]*)(\d*)$")
 SHEET_TITLE_SAFE_RE = re.compile(r"^[A-Za-z0-9_]+$")
+COLUMN_LETTER_REGEX = re.compile(r"^[A-Za-z]+$")
+QUOTED_SHEET_ONLY_REGEX = re.compile(r"^'(?:[^']|'')+'$")
 
 
 def _column_to_index(column: str) -> Optional[int]:
     """Convert column letters (A, B, AA) to zero-based index."""
-    if not column:
+    if not column or not COLUMN_LETTER_REGEX.fullmatch(column):
         return None
     result = 0
     for char in column.upper():
@@ -39,7 +46,7 @@ def _parse_a1_part(
     Supports anchors like '$A$1' by stripping the dollar signs.
     """
     clean_part = part.replace("$", "")
-    match = pattern.match(clean_part)
+    match = pattern.fullmatch(clean_part)
     if not match:
         raise UserInputError(f"Invalid A1 range part: '{part}'.")
     col_letters, row_digits = match.groups()
@@ -69,6 +76,100 @@ def _split_sheet_and_range(range_name: str) -> tuple[Optional[str], str]:
 
     sheet_name, a1_range = range_name.split("!", 1)
     return sheet_name.strip().strip("'"), a1_range
+
+
+def _format_a1_part(col_idx: Optional[int], row_idx: Optional[int]) -> str:
+    """Build an A1 cell/partial reference from zero-based indexes."""
+    col = _index_to_column(col_idx) if col_idx is not None else ""
+    row = str(row_idx + 1) if row_idx is not None else ""
+    if not col and not row:
+        raise UserInputError("A1 range part must include a column and/or row.")
+    return f"{col}{row}"
+
+
+def _format_read_clamp_note(range_name: str, clamped_range: str, max_rows: int) -> str:
+    """Describe a rewritten read range and how to continue paging."""
+    return (
+        f"\n\nNote: Requested range '{range_name}' was clamped to '{clamped_range}' "
+        f"(max {max_rows} rows per read). Request a later row window to continue."
+    )
+
+
+def _clamp_a1_read_rows(
+    range_name: str, max_rows: int = MAX_READ_SHEET_ROWS
+) -> tuple[str, Optional[str]]:
+    """
+    Rewrite an A1 range so it spans at most ``max_rows`` rows.
+
+    Open-ended ranges (e.g. ``A:Z``, ``Sheet1!A1:Z``) and quoted whole-sheet
+    references (e.g. ``'My Sheet'``) are closed to a finite end row. Oversized
+    finite ranges are truncated from the start row. Bare identifiers are
+    returned unchanged because they can refer to named ranges.
+
+    Returns:
+        (range_for_api, note): ``note`` is set when the range was rewritten.
+    """
+    if max_rows < 1:
+        raise ValueError(f"max_rows must be >= 1, got {max_rows}")
+
+    # A quoted sheet title without coordinates unambiguously addresses the
+    # entire sheet. Bare identifiers are intentionally not handled here:
+    # Google Sheets resolves them as named ranges when a matching name exists.
+    if QUOTED_SHEET_ONLY_REGEX.fullmatch(range_name):
+        clamped_range = f"{range_name}!1:{max_rows}"
+        return clamped_range, _format_read_clamp_note(
+            range_name, clamped_range, max_rows
+        )
+
+    sheet_name, a1_range = _split_sheet_and_range(range_name)
+    if not a1_range:
+        return range_name, None
+
+    try:
+        if ":" in a1_range:
+            start, end = a1_range.split(":", 1)
+        else:
+            # Bare identifiers without a row (e.g. named ranges) are not A1
+            # coordinates we can safely rewrite.
+            start = end = a1_range
+        start_col, start_row = _parse_a1_part(start)
+        end_col, end_row = _parse_a1_part(end)
+    except UserInputError:
+        logger.warning(
+            "Cannot clamp non-A1 sheet range %r; fetching as requested",
+            range_name,
+        )
+        return range_name, None
+
+    if ":" not in a1_range and start_row is None:
+        return range_name, None
+
+    effective_start = start_row if start_row is not None else 0
+    max_end_row = effective_start + max_rows - 1
+
+    clamped = False
+    if start_row is None:
+        start_row = effective_start
+        clamped = True
+    if end_row is None or end_row > max_end_row:
+        end_row = max_end_row
+        clamped = True
+
+    if not clamped:
+        return range_name, None
+
+    range_ref = (
+        _format_a1_part(start_col, start_row)
+        if start_col == end_col and start_row == end_row
+        else f"{_format_a1_part(start_col, start_row)}:{_format_a1_part(end_col, end_row)}"
+    )
+    if sheet_name is not None:
+        clamped_range = f"{_quote_sheet_title_for_a1(sheet_name)}!{range_ref}"
+    else:
+        clamped_range = range_ref
+
+    note = _format_read_clamp_note(range_name, clamped_range, max_rows)
+    return clamped_range, note
 
 
 def _parse_a1_range(range_name: str, sheets: List[dict]) -> dict:
@@ -172,7 +273,7 @@ def _quote_sheet_title_for_a1(sheet_title: str) -> str:
     If the sheet title contains special characters or spaces, it is wrapped in single quotes.
     Any single quotes in the title are escaped by doubling them, as required by Google Sheets.
     """
-    if SHEET_TITLE_SAFE_RE.match(sheet_title or ""):
+    if SHEET_TITLE_SAFE_RE.fullmatch(sheet_title or ""):
         return sheet_title
     escaped = (sheet_title or "").replace("'", "''")
     return f"'{escaped}'"

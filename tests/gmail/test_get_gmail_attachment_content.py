@@ -227,3 +227,64 @@ async def test_return_base64_preserves_file_save_behavior(isolated_attachment_en
     assert "Download URL" in result
     # ...and includes the base64 block.
     assert "📦 Base64 content" in result
+
+
+@pytest.mark.asyncio
+async def test_resolves_correct_filename_for_nested_smime_attachment(
+    isolated_attachment_env,
+):
+    """Resolve a nested attachment instead of its top-level S/MIME signature."""
+    payload = b"%PDF-1.4 fake pdf bytes" + bytes(range(200))
+    mock_service = _build_mock_service(payload)
+
+    def messages_get(**kwargs):
+        mixed_part = {"mimeType": "multipart/mixed"}
+        if kwargs["fields"].count("parts(") >= 2:
+            mixed_part["parts"] = [
+                {
+                    "filename": "statement.pdf",
+                    "mimeType": "application/pdf",
+                    "body": {
+                        "attachmentId": "att-pdf-123",
+                        "size": len(payload),
+                    },
+                }
+            ]
+        return Mock(
+            execute=Mock(
+                return_value={
+                    "payload": {
+                        "mimeType": "multipart/signed",
+                        "parts": [
+                            mixed_part,
+                            {
+                                "filename": "smime.p7s",
+                                "mimeType": "application/pkcs7-signature",
+                                "body": {"attachmentId": "sig-456", "size": 4771},
+                            },
+                        ],
+                    }
+                }
+            )
+        )
+
+    metadata_get = Mock(side_effect=messages_get)
+    mock_service.users().messages().get = metadata_get
+
+    result = await _unwrap(get_gmail_attachment_content)(
+        service=mock_service,
+        message_id="msg-1",
+        attachment_id="att-pdf-123",
+        user_google_email="user@example.com",
+    )
+
+    assert "Filename: statement.pdf" in result
+    assert "smime.p7s" not in result
+    fields = metadata_get.call_args.kwargs["fields"]
+    assert fields.count("parts(") == 6
+    assert "data" not in fields
+
+    saved_files = list(isolated_attachment_env.iterdir())
+    assert len(saved_files) == 1
+    assert saved_files[0].suffix == ".pdf"
+    assert saved_files[0].read_bytes() == payload

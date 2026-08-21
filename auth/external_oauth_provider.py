@@ -80,6 +80,8 @@ class ExternalOAuthProvider(GoogleProvider):
     ):
         """Initialize and store client credentials for token validation."""
         self._resource_server_url = resource_server_url
+        if resource_server_url and "resource_base_url" not in kwargs:
+            kwargs["resource_base_url"] = resource_server_url
         super().__init__(client_id=client_id, client_secret=client_secret, **kwargs)
         # Store credentials as they're not exposed by parent class
         self._client_id = client_id
@@ -150,7 +152,7 @@ class ExternalOAuthProvider(GoogleProvider):
         # For JWT tokens, use parent class implementation
         return await super().verify_token(token)
 
-    def get_routes(self, **kwargs) -> list[Route]:
+    def get_routes(self, mcp_path: str | None = None) -> list[Route]:
         """
         Get OAuth routes for external provider mode.
 
@@ -159,7 +161,7 @@ class ExternalOAuthProvider(GoogleProvider):
         (/authorize, /token, etc.) since tokens are issued by Google directly.
 
         Args:
-            **kwargs: Additional arguments passed by FastMCP (e.g., mcp_path)
+            mcp_path: Path where FastMCP mounts the protected MCP endpoint.
 
         Returns:
             List of routes - only protected resource metadata
@@ -172,10 +174,18 @@ class ExternalOAuthProvider(GoogleProvider):
             )
             return []
 
+        self.set_mcp_path(mcp_path)
+        resource_url = self._get_resource_url(mcp_path)
+        if not resource_url:
+            logger.warning(
+                "ExternalOAuthProvider: protected resource URL could not be resolved"
+            )
+            return []
+
         # Create protected resource routes that point to Google as the authorization server
         # Pass strings directly - Pydantic validates them during model construction
         protected_routes = create_protected_resource_routes(
-            resource_url=self.resource_server_url,
+            resource_url=resource_url,
             authorization_servers=[GOOGLE_ISSUER_URL],
             scopes_supported=self.required_scopes,
             resource_name="Google Workspace MCP",
