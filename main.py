@@ -470,7 +470,8 @@ def main():
             "Expose exactly the named tools (per-tool-name allowlist) and request "
             "only the OAuth scopes those specific tools require. "
             "Example: --only-tools send_gmail_message manage_drive_access. "
-            "Mutually exclusive with --tools, --tool-tier, --permissions, and --read-only."
+            "Mutually exclusive with --tools, --tool-tier, --permissions, "
+            "--read-only, and --disabled-tools."
         ),
     )
     args = parser.parse_args()
@@ -673,12 +674,12 @@ def main():
 
         requested = list(dict.fromkeys(args.only_tools))  # de-dup, keep order
         loader = ToolTierLoader()
-        known_tools = loader.get_all_tool_names()  # the new public helper
+        known_tools = loader.get_all_tool_names()
         unknown = [t for t in requested if t not in known_tools]
         if unknown:
             print(
                 f"Error: unknown tool name(s) for --only-tools: {', '.join(unknown)}. "
-                f"Each must be a registered tool name (see core/tool_tiers.yaml).",
+                f"Each must be a tool name listed in core/tool_tiers.yaml.",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -787,23 +788,40 @@ def main():
         components = get_tool_components(server)
         minimal_scopes = set()
         missing = []
-        for name in args.only_tools:
+        scopeless = []
+        for name in requested:
             obj = components.get(name)
             if obj is None:
                 missing.append(name)
                 continue
             fn = getattr(obj, "fn", obj)
-            minimal_scopes.update(getattr(fn, "_required_google_scopes", []) or [])
+            tool_scopes = getattr(fn, "_required_google_scopes", []) or []
+            if not tool_scopes:
+                scopeless.append(name)
+            minimal_scopes.update(tool_scopes)
         if missing:
             print(
-                f"Error: --only-tools selected tool(s) did not register: "
-                f"{', '.join(missing)}.",
+                f"Error: --only-tools selected tool(s) are not available: "
+                f"{', '.join(missing)}. They validated against core/tool_tiers.yaml "
+                f"but were removed by another startup filter — for example, "
+                f"start_google_auth is unavailable when OAuth 2.1 is enabled.",
                 file=sys.stderr,
             )
             sys.exit(1)
+        if scopeless:
+            # A selected tool declaring no scopes usually means the decorator
+            # metadata moved out from under us — the derived grant would then be
+            # smaller than the tools need and every call would fail at runtime.
+            logger.warning(
+                "--only-tools: %d selected tool(s) declare no Google scopes "
+                "(%s); the derived OAuth grant will not include anything for "
+                "them. If these tools normally need scopes, this is a bug.",
+                len(scopeless),
+                ", ".join(scopeless),
+            )
         set_explicit_scopes(minimal_scopes)
         safe_print(
-            f"🎯 only-tools: {len(args.only_tools)} tools, "
+            f"🎯 only-tools: {len(requested)} tools, "
             f"{len(minimal_scopes)} minimal scopes"
         )
 

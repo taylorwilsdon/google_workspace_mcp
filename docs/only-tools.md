@@ -39,8 +39,8 @@ over-granting scopes or over-exposing tools.
    service boundaries.
 2. **Derive the minimal scope union.** The server inspects exactly those tools'
    declared Google scopes (`_required_google_scopes`) and requests **only** that
-   union plus the base identity scopes (`userinfo.email`, `openid`). It bypasses
-   the service-granular scope maps entirely.
+   union plus the base identity scopes (`userinfo.email`, `userinfo.profile`,
+   `openid`). It bypasses the service-granular scope maps entirely.
 
 So `--only-tools` **narrows both layers at once**: the tool surface *and* the
 OAuth grant. The token you mint can do nothing beyond what those specific tools

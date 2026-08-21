@@ -10,16 +10,15 @@ tools' Google OAuth scopes. It is exercised across three layers:
   get_scopes_for_tools() returns exactly BASE_SCOPES + the explicit scopes,
   bypassing the service-granular maps.
 - main.py: argparse wiring, the mutual-exclusivity guard, the unknown-tool
-  validation, and the selection branch that resolves services and sets the
-  enabled-tool allowlist.
-
-The post-import scope-union step (reading each registered tool's
-_required_google_scopes off a live FastMCP server) needs a fully-registered
-server, so it is integration-level and covered by a manual smoke test rather
-than here.
+  validation, the selection branch that resolves services and sets the
+  enabled-tool allowlist, and the post-registration scope-union derivation
+  (driven through a real main() run stopped just after the union is applied —
+  see TestScopeDerivationEndToEnd).
 """
 
+import json
 import os
+import subprocess
 import sys
 
 import pytest
@@ -32,10 +31,26 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 os.environ["MCP_ENABLE_OAUTH21"] = "false"
 os.environ["WORKSPACE_MCP_STATELESS_MODE"] = "false"
 
+# Selection env vars main() folds into args.* before the --only-tools guard runs.
+# A value leaked from the developer's shell (e.g. WORKSPACE_MCP_DISABLED_TOOLS)
+# would trip the mutual-exclusivity guard and turn an unrelated test's expected
+# error into the guard's error. Scrubbed here AND per-test via _scrub_selection_env.
+SELECTION_ENV_VARS = [
+    "WORKSPACE_MCP_TOOLS",
+    "WORKSPACE_MCP_TOOL_TIER",
+    "WORKSPACE_MCP_PERMISSIONS",
+    "WORKSPACE_MCP_READ_ONLY",
+    "WORKSPACE_MCP_DISABLED_TOOLS",
+]
+for _var in SELECTION_ENV_VARS:
+    os.environ.pop(_var, None)
+
 import main  # noqa: E402
 
 from auth.scopes import (  # noqa: E402
     BASE_SCOPES,
+    DRIVE_FILE_SCOPE,
+    GMAIL_READONLY_SCOPE,
     GMAIL_SEND_SCOPE,
     get_scopes_for_tools,
     set_explicit_scopes,
@@ -157,6 +172,16 @@ class TestSelectionBranch:
 
     def teardown_method(self):
         self._reset()
+
+    @pytest.fixture(autouse=True)
+    def _scrub_selection_env(self, monkeypatch):
+        # main() folds these env vars into args.* before the guards run, so a
+        # value leaked from the developer's shell would change WHICH guard
+        # fires (e.g. WORKSPACE_MCP_DISABLED_TOOLS turns the unknown-tool error
+        # into the mutual-exclusivity error). Tests that want one set it
+        # explicitly after this scrub.
+        for var in SELECTION_ENV_VARS:
+            monkeypatch.delenv(var, raising=False)
 
     def test_selection_resolves_services_and_allowlist(self):
         """--only-tools send_gmail_message manage_drive_access resolves to the
@@ -315,3 +340,76 @@ class TestSelectionBranch:
         assert set(get_scopes_for_tools(["drive"])) != set(BASE_SCOPES) | {
             GMAIL_SEND_SCOPE
         }
+
+
+class TestScopeDerivationEndToEnd:
+    """The headline feature: the post-registration scope union.
+
+    main() reads each selected tool's ``_required_google_scopes`` off the live
+    FastMCP registry and calls ``set_explicit_scopes`` with exactly that union.
+    If those decorator internals ever move (a rename of ``.fn`` or of the scope
+    attribute), the union silently collapses to the empty set and the OAuth
+    grant shrinks to BASE_SCOPES — consent still succeeds, then every tool call
+    fails at runtime. Only a test that drives a REAL main() run can catch that.
+
+    Runs in a subprocess (same idiom as the streamable-http decoration boot
+    test) because the run registers every tool and then *removes* all but the
+    selected ones from the process-global server — an irreversible mutation
+    that would poison any later test using the shared registry in-process.
+    """
+
+    def test_derived_grant_is_exactly_the_selected_tools_union(self):
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        code = """
+import json, os, sys
+import main
+
+def _stop(*_a, **_k):
+    # Runs INSIDE main() right after the scope union is applied
+    # (set_transport_mode is the next hook), before any server binds a port.
+    # Dump the state and hard-exit here: main() wraps its run in a broad
+    # except Exception, so an exception-based sentinel would be swallowed.
+    from auth.scopes import get_scopes_for_tools
+    from core.tool_registry import get_tool_components
+
+    sys.stdout.write(json.dumps({
+        "scopes": sorted(get_scopes_for_tools()),
+        "surface": sorted(get_tool_components(main.server)),
+    }) + "\\n")
+    sys.stdout.flush()
+    os._exit(0)
+
+main.set_transport_mode = _stop
+sys.argv = ["main.py", "--only-tools", "send_gmail_message", "manage_drive_access"]
+main.main()
+raise SystemExit("main() was not stopped by the sentinel")
+"""
+        env = {
+            **os.environ,
+            "MCP_ENABLE_OAUTH21": "false",
+            "WORKSPACE_MCP_STATELESS_MODE": "false",
+        }
+        for var in SELECTION_ENV_VARS:
+            env.pop(var, None)
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert result.returncode == 0, (
+            f"main() run failed:\nstdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+        payload = json.loads(result.stdout.strip().splitlines()[-1])
+
+        # The surface is exactly the selected tools — nothing else survived.
+        assert payload["surface"] == ["manage_drive_access", "send_gmail_message"]
+
+        # The grant is exactly base identity + the two tools' declared scopes.
+        # Pinned literally on purpose: if a tool's declaration changes, the
+        # consent screen changes, and this failing is the announcement.
+        assert payload["scopes"] == sorted(
+            set(BASE_SCOPES)
+            | {GMAIL_SEND_SCOPE, GMAIL_READONLY_SCOPE, DRIVE_FILE_SCOPE}
+        )
