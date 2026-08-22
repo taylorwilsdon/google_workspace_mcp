@@ -796,14 +796,30 @@ async def handle_auth_callback(
 
             if session_id:
                 try:
-                    session_credentials = store.get_credentials_by_mcp_session(
-                        session_id
+                    # Only borrow a refresh token from the session when the
+                    # session actually belongs to the account that just
+                    # consented. On a cross-account callback (personal account's
+                    # session consenting for a second workspace account) this
+                    # would otherwise graft the FIRST user's refresh token onto
+                    # the SECOND user's credential.
+                    get_bound_user = getattr(store, "get_user_by_mcp_session", None)
+                    session_user = (
+                        get_bound_user(session_id) if get_bound_user else None
                     )
-                    if session_credentials and session_credentials.refresh_token:
-                        fallback_refresh_token = session_credentials.refresh_token
+                    if session_user and session_user != user_google_email:
                         logger.info(
-                            "OAuth callback response omitted refresh token; preserving existing refresh token from session store."
+                            "OAuth callback response omitted refresh token; session belongs to "
+                            f"{session_user}, not {user_google_email} — not borrowing its refresh token."
                         )
+                    else:
+                        session_credentials = store.get_credentials_by_mcp_session(
+                            session_id
+                        )
+                        if session_credentials and session_credentials.refresh_token:
+                            fallback_refresh_token = session_credentials.refresh_token
+                            logger.info(
+                                "OAuth callback response omitted refresh token; preserving existing refresh token from session store."
+                            )
                 except Exception as e:
                     logger.debug(
                         f"Could not check session store for existing refresh token: {e}"
@@ -856,22 +872,42 @@ async def handle_auth_callback(
                     "session state was not updated."
                 )
 
-        # Always save to OAuth21SessionStore for centralized management
-        store.store_session(
-            user_email=user_google_email,
-            access_token=credentials.token,
-            refresh_token=credentials.refresh_token,
-            token_uri=credentials.token_uri,
-            client_id=credentials.client_id,
-            client_secret=credentials.client_secret,
-            scopes=credentials.scopes,
-            expiry=credentials.expiry,
-            mcp_session_id=session_id,
-            issuer="https://accounts.google.com",  # Add issuer for Google tokens
-        )
+        # Always save to OAuth21SessionStore for centralized management.
+        #
+        # The store refuses to rebind an MCP session that already belongs to
+        # another user, and it is RIGHT to refuse — session bindings are
+        # deliberately immutable. But a refused rebind is not a failed
+        # authorization: by this point the credential is already written to the
+        # on-disk credential store AND keyed by user_email inside the session
+        # store, so everything the caller needs is persisted. Letting the
+        # ValueError escape turns a perfectly good consent into a 500 on
+        # /oauth2callback — the "re-auth appears to work, then doesn't" shape.
+        binding_refused = False
+        try:
+            store.store_session(
+                user_email=user_google_email,
+                access_token=credentials.token,
+                refresh_token=credentials.refresh_token,
+                token_uri=credentials.token_uri,
+                client_id=credentials.client_id,
+                client_secret=credentials.client_secret,
+                scopes=credentials.scopes,
+                expiry=credentials.expiry,
+                mcp_session_id=session_id,
+                issuer="https://accounts.google.com",  # Add issuer for Google tokens
+            )
+        except ValueError as e:
+            binding_refused = True
+            logger.info(
+                f"OAuth callback for {user_google_email}: MCP session {session_id} stays bound to its "
+                f"original user ({e}). Credentials were persisted to the credential store; "
+                "the session cache is left untouched."
+            )
 
-        # If session_id is provided, also save to session cache for compatibility
-        if session_id:
+        # If session_id is provided, also save to session cache for compatibility.
+        # Never when the binding was refused — that cache belongs to the session's
+        # own user and must not be overwritten with a second account's credential.
+        if session_id and not binding_refused:
             save_credentials_to_session(session_id, credentials)
 
         return user_google_email, credentials
