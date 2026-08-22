@@ -30,6 +30,7 @@ from gsheets.sheets_helpers import (
     _fetch_sheets_with_rules,
     _format_conditional_rules_section,
     _format_sheet_error_section,
+    _grid_range_to_a1,
     _parse_a1_range,
     _parse_condition_values,
     _parse_gradient_points,
@@ -2455,3 +2456,240 @@ _comment_tools = create_comment_tools("spreadsheet", "spreadsheet_id")
 # Extract and register the functions
 list_spreadsheet_comments = _comment_tools["list_comments"]
 manage_spreadsheet_comment = _comment_tools["manage_comment"]
+
+
+async def _list_named_ranges_impl(service, spreadsheet_id: str) -> dict:
+    """Internal implementation for list_named_ranges (decorator-free for tests)."""
+    metadata = await asyncio.to_thread(
+        service.spreadsheets()
+        .get(
+            spreadsheetId=spreadsheet_id,
+            fields="namedRanges,sheets.properties(sheetId,title)",
+        )
+        .execute
+    )
+    sheet_titles = {
+        s.get("properties", {}).get("sheetId"): s.get("properties", {}).get("title", "")
+        for s in metadata.get("sheets", [])
+    }
+    named = []
+    for nr in metadata.get("namedRanges", []):
+        named.append(
+            {
+                "name": nr.get("name"),
+                "named_range_id": nr.get("namedRangeId"),
+                "range": _grid_range_to_a1(nr.get("range", {}), sheet_titles),
+            }
+        )
+    return {"spreadsheet_id": spreadsheet_id, "named_ranges": named}
+
+
+@server.tool(
+    title="List Named Ranges",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("list_named_ranges", is_read_only=True, service_type="sheets")
+@require_google_service("sheets", "sheets_read")
+async def list_named_ranges(
+    service,
+    user_google_email: str,
+    spreadsheet_id: str,
+) -> str:
+    """
+    Lists all named ranges defined in a Google Spreadsheet.
+
+    Returns each named range's name, its id (needed to update/delete it), and the
+    A1 range it points to. Read-only.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        spreadsheet_id (str): The ID of the spreadsheet. Required.
+
+    Returns:
+        str: A listing of the named ranges, or a note that none are defined.
+    """
+    logger.info(
+        "[list_named_ranges] Email: '%s', Spreadsheet: %s",
+        user_google_email,
+        spreadsheet_id,
+    )
+    result = await _list_named_ranges_impl(service=service, spreadsheet_id=spreadsheet_id)
+    named = result["named_ranges"]
+    if not named:
+        return (
+            f"No named ranges defined in spreadsheet {spreadsheet_id} "
+            f"for {user_google_email}."
+        )
+    lines = [
+        f"Named ranges in spreadsheet {spreadsheet_id} for {user_google_email} "
+        f"({len(named)}):"
+    ]
+    for nr in named:
+        lines.append(f"  {nr['name']} (id {nr['named_range_id']}) -> {nr['range']}")
+    return "\n".join(lines)
+
+
+async def _manage_named_range_impl(
+    service,
+    spreadsheet_id: str,
+    action: str = "create",
+    name: Optional[str] = None,
+    range_name: Optional[str] = None,
+    named_range_id: Optional[str] = None,
+    new_name: Optional[str] = None,
+) -> dict:
+    """Internal implementation for manage_named_range (decorator-free for tests)."""
+    action_normalized = (action or "").strip().lower()
+    if action_normalized not in ("create", "update", "delete"):
+        raise UserInputError("action must be 'create', 'update', or 'delete'.")
+
+    metadata = await asyncio.to_thread(
+        service.spreadsheets()
+        .get(
+            spreadsheetId=spreadsheet_id,
+            fields="namedRanges(namedRangeId,name),sheets.properties(sheetId,title)",
+        )
+        .execute
+    )
+    sheets = metadata.get("sheets", [])
+    existing = metadata.get("namedRanges", [])
+
+    def resolve_id() -> str:
+        if named_range_id:
+            return named_range_id
+        if not name:
+            raise UserInputError(
+                "Provide 'named_range_id' or 'name' to identify the named range."
+            )
+        matches = [nr for nr in existing if nr.get("name") == name]
+        if not matches:
+            avail = ", ".join(sorted(nr.get("name", "") for nr in existing)) or "none"
+            raise UserInputError(
+                f"No named range called '{name}'. Existing: {avail}."
+            )
+        if len(matches) > 1:
+            raise UserInputError(
+                f"Multiple named ranges called '{name}'; pass 'named_range_id'."
+            )
+        return matches[0].get("namedRangeId")
+
+    if action_normalized == "create":
+        if not name or not range_name:
+            raise UserInputError("create requires both 'name' and 'range_name'.")
+        grid = _parse_a1_range(range_name, sheets)
+        request = {"addNamedRange": {"namedRange": {"name": name, "range": grid}}}
+        summary = f"created named range '{name}' -> {range_name}"
+    elif action_normalized == "delete":
+        target = resolve_id()
+        request = {"deleteNamedRange": {"namedRangeId": target}}
+        summary = f"deleted named range '{name or target}'"
+    else:  # update
+        target = resolve_id()
+        nr = {"namedRangeId": target}
+        fields = []
+        if new_name:
+            nr["name"] = new_name
+            fields.append("name")
+        if range_name:
+            nr["range"] = _parse_a1_range(range_name, sheets)
+            fields.append("range")
+        if not fields:
+            raise UserInputError("update requires 'new_name' and/or 'range_name'.")
+        request = {"updateNamedRange": {"namedRange": nr, "fields": ",".join(fields)}}
+        bits = []
+        if new_name:
+            bits.append(f"renamed to '{new_name}'")
+        if range_name:
+            bits.append(f"repointed to {range_name}")
+        summary = f"updated named range '{name or target}': " + "; ".join(bits)
+
+    response = await asyncio.to_thread(
+        service.spreadsheets()
+        .batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": [request]})
+        .execute
+    )
+
+    result_id = named_range_id
+    if action_normalized == "create":
+        try:
+            result_id = response["replies"][0]["addNamedRange"]["namedRange"][
+                "namedRangeId"
+            ]
+        except (KeyError, IndexError, TypeError):
+            result_id = None
+
+    return {
+        "spreadsheet_id": spreadsheet_id,
+        "summary": summary,
+        "named_range_id": result_id,
+    }
+
+
+@server.tool(
+    title="Manage Named Range",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("manage_named_range", service_type="sheets")
+@require_google_service("sheets", "sheets_write")
+async def manage_named_range(
+    service,
+    user_google_email: str,
+    spreadsheet_id: str,
+    action: str = "create",
+    name: Optional[str] = None,
+    range_name: Optional[str] = None,
+    named_range_id: Optional[str] = None,
+    new_name: Optional[str] = None,
+) -> str:
+    """
+    Creates, updates, or deletes a named range in a Google Spreadsheet.
+
+    Named ranges can only point inside this spreadsheet (not at external files).
+    Use list_named_ranges first to see existing names/ids.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        spreadsheet_id (str): The ID of the spreadsheet. Required.
+        action (str): "create", "update", or "delete". Defaults to "create".
+        name (str): For create, the name to give the range. For update/delete, the
+            existing name to act on (alternative to named_range_id).
+        range_name (str): A1 range the name points to (e.g. "DEV | SIM REF!C91:C145").
+            Required for create; for update, the new range to repoint to.
+        named_range_id (str): The id of the range to update/delete (from
+            list_named_ranges). Alternative to name.
+        new_name (str): For update, a new name (rename the range).
+
+    Returns:
+        str: Confirmation of the create/update/delete.
+    """
+    logger.info(
+        "[manage_named_range] Action: '%s', Email: '%s', Spreadsheet: %s, Name: %s",
+        action,
+        user_google_email,
+        spreadsheet_id,
+        name or named_range_id,
+    )
+    result = await _manage_named_range_impl(
+        service=service,
+        spreadsheet_id=spreadsheet_id,
+        action=action,
+        name=name,
+        range_name=range_name,
+        named_range_id=named_range_id,
+        new_name=new_name,
+    )
+    suffix = f" (id {result['named_range_id']})" if result.get("named_range_id") else ""
+    return (
+        f"In spreadsheet {result['spreadsheet_id']} for {user_google_email}: "
+        f"{result['summary']}{suffix}."
+    )
