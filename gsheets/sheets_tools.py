@@ -28,6 +28,7 @@ from gsheets.sheets_helpers import (
     _fetch_detailed_sheet_errors,
     _fetch_grid_metadata,
     _fetch_sheets_with_rules,
+    _format_a1_cell,
     _format_conditional_rules_section,
     _format_sheet_error_section,
     _parse_a1_range,
@@ -2455,3 +2456,284 @@ _comment_tools = create_comment_tools("spreadsheet", "spreadsheet_id")
 # Extract and register the functions
 list_spreadsheet_comments = _comment_tools["list_comments"]
 manage_spreadsheet_comment = _comment_tools["manage_comment"]
+
+
+async def _manage_data_validation_impl(
+    service,
+    spreadsheet_id: str,
+    range_name: str,
+    action: str = "set",
+    values: Optional[List[str]] = None,
+    source_range: Optional[str] = None,
+    strict: bool = True,
+    show_dropdown: bool = True,
+    input_message: Optional[str] = None,
+) -> dict:
+    """Internal implementation for manage_data_validation (decorator-free for tests)."""
+    action_normalized = (action or "").strip().lower()
+    if action_normalized not in ("set", "clear"):
+        raise UserInputError("action must be 'set' or 'clear'.")
+
+    if action_normalized == "set" and bool(values) == bool(source_range):
+        raise UserInputError(
+            "For action='set', provide exactly one of 'values' (a list of dropdown "
+            "options) or 'source_range' (an A1 range to source the options from)."
+        )
+
+    metadata = await asyncio.to_thread(
+        service.spreadsheets()
+        .get(
+            spreadsheetId=spreadsheet_id,
+            fields="sheets(properties(sheetId,title))",
+        )
+        .execute
+    )
+    sheets = metadata.get("sheets", [])
+    grid_range = _parse_a1_range(range_name, sheets)
+
+    if action_normalized == "clear":
+        # Omitting 'rule' from setDataValidation clears validation on the range.
+        dv_request = {"range": grid_range}
+        summary = "cleared data validation"
+    else:
+        if values:
+            condition = {
+                "type": "ONE_OF_LIST",
+                "values": [{"userEnteredValue": str(v)} for v in values],
+            }
+            summary = f"set a dropdown with {len(values)} option(s)"
+        else:
+            ref = source_range.strip()
+            if not ref.startswith("="):
+                ref = "=" + ref
+            condition = {
+                "type": "ONE_OF_RANGE",
+                "values": [{"userEnteredValue": ref}],
+            }
+            summary = f"set a dropdown sourced from {source_range}"
+
+        rule = {
+            "condition": condition,
+            "showCustomUi": show_dropdown,
+            "strict": strict,
+        }
+        if input_message:
+            rule["inputMessage"] = input_message
+        dv_request = {"range": grid_range, "rule": rule}
+
+    request_body = {"requests": [{"setDataValidation": dv_request}]}
+    await asyncio.to_thread(
+        service.spreadsheets()
+        .batchUpdate(spreadsheetId=spreadsheet_id, body=request_body)
+        .execute
+    )
+
+    return {
+        "range_name": range_name,
+        "spreadsheet_id": spreadsheet_id,
+        "summary": summary,
+    }
+
+
+@server.tool(
+    title="Manage Data Validation",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("manage_data_validation", service_type="sheets")
+@require_google_service("sheets", "sheets_write")
+async def manage_data_validation(
+    service,
+    user_google_email: str,
+    spreadsheet_id: str,
+    range_name: str,
+    action: str = "set",
+    values: Optional[StringList] = None,
+    source_range: Optional[str] = None,
+    strict: bool = True,
+    show_dropdown: bool = True,
+    input_message: Optional[str] = None,
+) -> str:
+    """
+    Sets or clears data validation (dropdowns) on a Google Sheets range.
+
+    Use this to add a dropdown to cells, either from a fixed list of options or
+    sourced from another range, or to remove validation. To run the dropdown,
+    pick action="set" with exactly one of `values` or `source_range`.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        spreadsheet_id (str): The ID of the spreadsheet. Required.
+        range_name (str): A1-style range to apply validation to, optionally with a
+            sheet name (e.g., "Sheet1!C2:C100"). If no sheet name, the first sheet
+            is used. Required.
+        action (str): "set" to apply a dropdown, "clear" to remove validation.
+            Defaults to "set".
+        values (Optional[List[str]]): The list of allowed dropdown options
+            (action="set" with a fixed list). Mutually exclusive with source_range.
+        source_range (Optional[str]): An A1 range whose cell values populate the
+            dropdown, e.g. "Lists!A1:A20" (the leading "=" is added if omitted).
+            Mutually exclusive with values.
+        strict (bool): If True, reject entries not in the list. If False, warn but
+            allow. Defaults to True.
+        show_dropdown (bool): Show the dropdown arrow chip in the cell. Defaults to True.
+        input_message (Optional[str]): Optional help tooltip shown on the cell.
+
+    Returns:
+        str: Confirmation of the applied or cleared validation.
+    """
+    logger.info(
+        "[manage_data_validation] Action: '%s', Email: '%s', Spreadsheet: %s, Range: %s",
+        action,
+        user_google_email,
+        spreadsheet_id,
+        range_name,
+    )
+
+    result = await _manage_data_validation_impl(
+        service=service,
+        spreadsheet_id=spreadsheet_id,
+        range_name=range_name,
+        action=action,
+        values=values,
+        source_range=source_range,
+        strict=strict,
+        show_dropdown=show_dropdown,
+        input_message=input_message,
+    )
+
+    return (
+        f"Applied data validation to '{result['range_name']}' in spreadsheet "
+        f"{result['spreadsheet_id']} for {user_google_email}: {result['summary']}."
+    )
+
+
+async def _read_data_validation_impl(
+    service,
+    spreadsheet_id: str,
+    range_name: str,
+) -> dict:
+    """Internal implementation for read_data_validation (decorator-free for tests)."""
+    metadata = await asyncio.to_thread(
+        service.spreadsheets()
+        .get(
+            spreadsheetId=spreadsheet_id,
+            ranges=[range_name],
+            fields="sheets(properties(title),data(startRow,startColumn,rowData(values(dataValidation))))",
+        )
+        .execute
+    )
+
+    cells = []
+    cells_checked = 0
+    for sheet in metadata.get("sheets", []):
+        title = sheet.get("properties", {}).get("title", "")
+        for data in sheet.get("data", []):
+            start_row = data.get("startRow", 0)
+            start_col = data.get("startColumn", 0)
+            for i, row in enumerate(data.get("rowData", [])):
+                for j, cell in enumerate(row.get("values", [])):
+                    cells_checked += 1
+                    dv = cell.get("dataValidation")
+                    if not dv:
+                        continue
+                    condition = dv.get("condition", {})
+                    cond_values = [
+                        v.get("userEnteredValue") for v in condition.get("values", [])
+                    ]
+                    cells.append(
+                        {
+                            "address": _format_a1_cell(
+                                title, start_row + i, start_col + j
+                            ),
+                            "type": condition.get("type", "UNKNOWN"),
+                            "values": cond_values,
+                            "strict": dv.get("strict", False),
+                            "show_dropdown": dv.get("showCustomUi", False),
+                            "input_message": dv.get("inputMessage"),
+                        }
+                    )
+
+    return {
+        "range_name": range_name,
+        "spreadsheet_id": spreadsheet_id,
+        "cells_checked": cells_checked,
+        "cells_with_validation": cells,
+    }
+
+
+@server.tool(
+    title="Read Data Validation",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("read_data_validation", is_read_only=True, service_type="sheets")
+@require_google_service("sheets", "sheets_read")
+async def read_data_validation(
+    service,
+    user_google_email: str,
+    spreadsheet_id: str,
+    range_name: str,
+) -> str:
+    """
+    Reads the data validation (dropdown) rules currently set on a Google Sheets range.
+
+    Use this to verify what validation a range actually has — for example, to confirm
+    a dropdown set with manage_data_validation landed correctly. Read-only; reports the
+    condition type, the list options or source range, strict vs warn, and whether the
+    dropdown chip is shown, per cell that has a rule.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        spreadsheet_id (str): The ID of the spreadsheet. Required.
+        range_name (str): A1-style range to inspect, optionally with a sheet name
+            (e.g., "Sheet1!C2:C100"). Required.
+
+    Returns:
+        str: A per-cell listing of the validation rules found, or a note that none are set.
+    """
+    logger.info(
+        "[read_data_validation] Email: '%s', Spreadsheet: %s, Range: %s",
+        user_google_email,
+        spreadsheet_id,
+        range_name,
+    )
+
+    result = await _read_data_validation_impl(
+        service=service,
+        spreadsheet_id=spreadsheet_id,
+        range_name=range_name,
+    )
+
+    found = result["cells_with_validation"]
+    if not found:
+        return (
+            f"No data validation found in '{range_name}' of spreadsheet "
+            f"{result['spreadsheet_id']} ({result['cells_checked']} cell(s) checked) "
+            f"for {user_google_email}."
+        )
+
+    lines = [
+        f"Data validation in '{range_name}' of spreadsheet {result['spreadsheet_id']} "
+        f"for {user_google_email} ({len(found)} of {result['cells_checked']} cell(s) have a rule):"
+    ]
+    for c in found:
+        if c["type"] == "ONE_OF_RANGE":
+            source = c["values"][0] if c["values"] else "(unknown)"
+            detail = f"dropdown sourced from {source}"
+        elif c["type"] == "ONE_OF_LIST":
+            detail = f"dropdown list {c['values']}"
+        else:
+            detail = f"{c['type']} {c['values']}"
+        mode = "strict (reject)" if c["strict"] else "warn-only"
+        chip = "chip shown" if c["show_dropdown"] else "no chip"
+        lines.append(f"  {c['address']}: {detail}; {mode}; {chip}")
+    return "\n".join(lines)
