@@ -513,6 +513,61 @@ async def test_download_invalid_index():
     assert "1 attachment(s)" in result
 
 
+class _FakeStreamResponse:
+    """Minimal httpx streaming response for download_chat_attachment."""
+
+    def __init__(self, status_code=200, chunks=(), headers=None):
+        self.status_code = status_code
+        self._chunks = list(chunks)
+        self.headers = headers or {}
+
+    async def aread(self):
+        return b"".join(self._chunks)
+
+    async def aiter_bytes(self, chunk_size=None):  # noqa: ARG002
+        for chunk in self._chunks:
+            yield chunk
+
+
+class _FakeStreamingClient:
+    """httpx.AsyncClient stand-in exposing .stream() as an async context manager."""
+
+    def __init__(self, response=None, error=None):
+        self._response = response
+        self._error = error
+        self.stream_calls = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc_info):
+        return False
+
+    def stream(self, method, url, **kwargs):
+        self.stream_calls.append((method, url, kwargs))
+        error = self._error
+        response = self._response
+
+        class _Ctx:
+            async def __aenter__(self):
+                if error is not None:
+                    raise error
+                return response
+
+            async def __aexit__(self, *exc_info):
+                return False
+
+        return _Ctx()
+
+    @property
+    def last_url(self):
+        return self.stream_calls[-1][1]
+
+    @property
+    def last_headers(self):
+        return self.stream_calls[-1][2]["headers"]
+
+
 @pytest.mark.asyncio
 async def test_download_uses_api_media_endpoint():
     """Should always use chat.googleapis.com media endpoint, not downloadUri."""
@@ -532,14 +587,7 @@ async def test_download_uses_api_media_endpoint():
     saved.path = "/tmp/image_abc.png"
     saved.file_id = "abc"
 
-    mock_response = Mock()
-    mock_response.content = fake_bytes
-    mock_response.status_code = 200
-
-    mock_client = AsyncMock()
-    mock_client.get.return_value = mock_response
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client = _FakeStreamingClient(_FakeStreamResponse(200, chunks=[fake_bytes]))
 
     with (
         patch("gchat.chat_tools.httpx.AsyncClient", return_value=mock_client),
@@ -561,8 +609,7 @@ async def test_download_uses_api_media_endpoint():
     assert "Saved to:" in result
 
     # Verify we used the API endpoint with attachmentDataRef.resourceName
-    call_args = mock_client.get.call_args
-    url_used = call_args.args[0]
+    url_used = mock_client.last_url
     parsed = urlparse(url_used)
     assert parsed.scheme == "https"
     assert parsed.hostname == "chat.googleapis.com"
@@ -571,7 +618,7 @@ async def test_download_uses_api_media_endpoint():
     assert "/messages/" not in parsed.path
 
     # Verify Bearer token
-    assert call_args.kwargs["headers"]["Authorization"] == "Bearer fake-access-token"
+    assert mock_client.last_headers["Authorization"] == "Bearer fake-access-token"
 
     # Verify save_attachment was called with correct base64 data
     save_args = mock_get_storage.return_value.save_attachment.call_args
@@ -596,14 +643,7 @@ async def test_download_falls_back_to_att_name():
     saved.path = "/tmp/image_fetched.png"
     saved.file_id = "f1"
 
-    mock_response = Mock()
-    mock_response.content = fake_bytes
-    mock_response.status_code = 200
-
-    mock_client = AsyncMock()
-    mock_client.get.return_value = mock_response
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client = _FakeStreamingClient(_FakeStreamResponse(200, chunks=[fake_bytes]))
 
     from gchat.chat_tools import download_chat_attachment
 
@@ -626,8 +666,7 @@ async def test_download_falls_back_to_att_name():
     assert "/tmp/image_fetched.png" in result
 
     # Falls back to attachment name when no attachmentDataRef
-    call_args = mock_client.get.call_args
-    assert "spaces/S/messages/M/attachments/A" in call_args.args[0]
+    assert "spaces/S/messages/M/attachments/A" in mock_client.last_url
 
 
 @pytest.mark.asyncio
@@ -641,14 +680,7 @@ async def test_download_http_mode_returns_url():
     service.spaces().messages().get().execute.return_value = msg
     service._http.credentials.token = "fake-token"
 
-    mock_response = Mock()
-    mock_response.content = fake_bytes
-    mock_response.status_code = 200
-
-    mock_client = AsyncMock()
-    mock_client.get.return_value = mock_response
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client = _FakeStreamingClient(_FakeStreamResponse(200, chunks=[fake_bytes]))
 
     saved = Mock()
     saved.path = "/tmp/image_alt.png"
@@ -690,10 +722,7 @@ async def test_download_returns_error_on_failure():
     service.spaces().messages().get().execute.return_value = msg
     service._http.credentials.token = "fake-token"
 
-    mock_client = AsyncMock()
-    mock_client.get.side_effect = Exception("connection refused")
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client = _FakeStreamingClient(error=Exception("connection refused"))
 
     from gchat.chat_tools import download_chat_attachment
 
@@ -707,3 +736,93 @@ async def test_download_returns_error_on_failure():
 
     assert "Failed to download" in result
     assert "connection refused" in result
+
+
+# ---------------------------------------------------------------------------
+# Finding 1: download_chat_attachment must bound what it pulls into memory
+# ---------------------------------------------------------------------------
+
+
+def _download_service():
+    service = Mock()
+    service.spaces().messages().get().execute.return_value = _make_message(
+        attachments=[_make_attachment()]
+    )
+    service._http.credentials.token = "fake-token"
+    return service
+
+
+@pytest.mark.asyncio
+async def test_download_rejects_declared_oversized_attachment(monkeypatch):
+    """An oversized Content-Length is refused before any body is read."""
+    from gchat.chat_tools import download_chat_attachment
+
+    monkeypatch.setattr("gchat.chat_tools.MAX_CHAT_ATTACHMENT_BYTES", 16)
+    response = _FakeStreamResponse(
+        200, chunks=[b"never-read"], headers={"content-length": "999999"}
+    )
+    mock_client = _FakeStreamingClient(response)
+
+    with patch("gchat.chat_tools.httpx.AsyncClient", return_value=mock_client):
+        result = await _unwrap(download_chat_attachment)(
+            service=_download_service(),
+            user_google_email="test@example.com",
+            message_id="spaces/S/messages/M",
+            attachment_index=0,
+        )
+
+    assert "exceeds the 16 byte limit" in result
+    assert "declared 999999 bytes" in result
+
+
+@pytest.mark.asyncio
+async def test_download_aborts_when_streamed_bytes_exceed_limit(monkeypatch):
+    """Content-Length is server-supplied and may be absent, so chunks are counted."""
+    from gchat.chat_tools import download_chat_attachment
+
+    monkeypatch.setattr("gchat.chat_tools.MAX_CHAT_ATTACHMENT_BYTES", 16)
+    # No content-length header at all: only the streaming count can catch this.
+    response = _FakeStreamResponse(200, chunks=[b"x" * 10, b"y" * 10, b"z" * 10])
+    mock_client = _FakeStreamingClient(response)
+
+    with patch("gchat.chat_tools.httpx.AsyncClient", return_value=mock_client):
+        result = await _unwrap(download_chat_attachment)(
+            service=_download_service(),
+            user_google_email="test@example.com",
+            message_id="spaces/S/messages/M",
+            attachment_index=0,
+        )
+
+    assert "exceeds the 16 byte limit" in result
+    assert "download aborted" in result
+
+
+@pytest.mark.asyncio
+async def test_download_accepts_attachment_within_limit(monkeypatch):
+    """The limit must not break normal downloads."""
+    from gchat.chat_tools import download_chat_attachment
+
+    monkeypatch.setattr("gchat.chat_tools.MAX_CHAT_ATTACHMENT_BYTES", 64)
+    response = _FakeStreamResponse(200, chunks=[b"a" * 10, b"b" * 10])
+    mock_client = _FakeStreamingClient(response)
+
+    saved = Mock()
+    saved.path = "/tmp/image_ok.png"
+    saved.file_id = "ok"
+
+    with (
+        patch("gchat.chat_tools.httpx.AsyncClient", return_value=mock_client),
+        patch("auth.oauth_config.is_stateless_mode", return_value=False),
+        patch("core.config.get_transport_mode", return_value="stdio"),
+        patch("core.attachment_storage.get_attachment_storage") as mock_get_storage,
+    ):
+        mock_get_storage.return_value.save_attachment.return_value = saved
+        result = await _unwrap(download_chat_attachment)(
+            service=_download_service(),
+            user_google_email="test@example.com",
+            message_id="spaces/S/messages/M",
+            attachment_index=0,
+        )
+
+    assert "20 bytes" in result
+    assert "/tmp/image_ok.png" in result

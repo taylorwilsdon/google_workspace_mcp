@@ -26,6 +26,8 @@ from core.utils import (
     handle_http_errors,
     UserInputError,
 )
+from core.limits import MAX_DOC_CONTENT_BYTES
+from gdrive.drive_helpers import escape_drive_query_value, validate_drive_id
 from core.server import server
 from core.comments import create_comment_tools
 
@@ -100,7 +102,7 @@ async def search_docs(
     """
     logger.info(f"[search_docs] Email={user_google_email}, Query='{query}'")
 
-    escaped_query = query.replace("'", "\\'")
+    escaped_query = escape_drive_query_value(query)
 
     response = await asyncio.to_thread(
         service.files()
@@ -307,6 +309,15 @@ async def get_doc_content(
         done = False
         while not done:
             status, done = await loop.run_in_executor(None, downloader.next_chunk)
+            # Finding 12: the loop used to run to completion whatever the size, so a
+            # large Drive file was buffered in full before anything looked at it. Check
+            # after each chunk so the download is abandoned at the limit rather than
+            # after it.
+            if fh.tell() > MAX_DOC_CONTENT_BYTES:
+                raise ValueError(
+                    f"Document content exceeds the {MAX_DOC_CONTENT_BYTES} byte limit "
+                    f"({fh.tell()} bytes read). Download the file directly instead."
+                )
 
         file_content_bytes = fh.getvalue()
 
@@ -352,6 +363,10 @@ async def list_docs_in_folder(
     logger.info(
         f"[list_docs_in_folder] Invoked. Email: '{user_google_email}', Folder ID: '{folder_id}'"
     )
+
+    # Finding 31: folder_id was interpolated into the Drive query unvalidated, so a
+    # quote in it could close the literal and rewrite the filter.
+    folder_id = validate_drive_id(folder_id, field_name="folder_id")
 
     rsp = await asyncio.to_thread(
         service.files()
@@ -2009,6 +2024,13 @@ async def export_doc_to_pdf(
         done = False
         while not done:
             _, done = await asyncio.to_thread(downloader.next_chunk)
+            # Same unbounded-buffer shape as finding 12; bounded here too so the two
+            # export paths cannot diverge.
+            if fh.tell() > MAX_DOC_CONTENT_BYTES:
+                raise ValueError(
+                    f"Exported PDF exceeds the {MAX_DOC_CONTENT_BYTES} byte limit "
+                    f"({fh.tell()} bytes read)."
+                )
 
         pdf_content = fh.getvalue()
         pdf_size = len(pdf_content)

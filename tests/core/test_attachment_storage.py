@@ -17,6 +17,9 @@ from core.attachment_storage import AttachmentStorage, sanitize_attachment_filen
 # unambiguous (these characters are visually indistinguishable from a space).
 NARROW_NBSP = chr(0x202F)  # macOS screenshot time separator (NARROW NO-BREAK SPACE)
 
+# Every stored attachment belongs to a principal; reads are scoped to it.
+OWNER = "owner@example.com"
+
 
 class TestSanitizeAttachmentFilename:
     """Unit tests for sanitize_attachment_filename."""
@@ -78,17 +81,25 @@ class TestSaveAttachment:
         )
 
         first = storage.save_attachment(
-            base64.urlsafe_b64encode(b"first").decode(), filename="report.pdf"
+            base64.urlsafe_b64encode(b"first").decode(),
+            filename="report.pdf",
+            owner=OWNER,
         )
         second = storage.save_attachment(
-            base64.urlsafe_b64encode(b"second").decode(), filename="report.pdf"
+            base64.urlsafe_b64encode(b"second").decode(),
+            filename="report.pdf",
+            owner=OWNER,
         )
 
         assert first.path != second.path
         assert Path(first.path).read_bytes() == b"first"
         assert Path(second.path).read_bytes() == b"second"
-        assert storage.get_attachment_path(first.file_id) == Path(first.path)
-        assert storage.get_attachment_path(second.file_id) == Path(second.path)
+        assert storage.get_attachment_path(first.file_id, owner=OWNER) == Path(
+            first.path
+        )
+        assert storage.get_attachment_path(second.file_id, owner=OWNER) == Path(
+            second.path
+        )
 
 
 class TestSaveAttachmentFromPath:
@@ -108,7 +119,9 @@ class TestSaveAttachmentFromPath:
     def test_moves_source_into_storage(self, storage, tmp_path):
         src = self._source(tmp_path)
 
-        saved = storage.save_attachment_from_path(str(src), filename="clip.mp4")
+        saved = storage.save_attachment_from_path(
+            str(src), filename="clip.mp4", owner=OWNER
+        )
 
         assert Path(saved.path).read_bytes() == b"payload"
         assert not src.exists()
@@ -118,7 +131,9 @@ class TestSaveAttachmentFromPath:
         past = time.time() - 7200
         os.utime(src, (past, past))
 
-        saved = storage.save_attachment_from_path(str(src), filename="clip.mp4")
+        saved = storage.save_attachment_from_path(
+            str(src), filename="clip.mp4", owner=OWNER
+        )
 
         assert Path(saved.path).stat().st_mtime > past
         assert storage.sweep_expired() == 0
@@ -127,7 +142,9 @@ class TestSaveAttachmentFromPath:
     def test_stored_file_is_owner_only(self, storage, tmp_path):
         src = self._source(tmp_path)
 
-        saved = storage.save_attachment_from_path(str(src), filename="clip.mp4")
+        saved = storage.save_attachment_from_path(
+            str(src), filename="clip.mp4", owner=OWNER
+        )
 
         assert stat.S_IMODE(Path(saved.path).stat().st_mode) == 0o600
 
@@ -135,19 +152,23 @@ class TestSaveAttachmentFromPath:
         src = self._source(tmp_path)
 
         saved = storage.save_attachment_from_path(
-            str(src), filename="clip.mp4", mime_type="video/mp4"
+            str(src), filename="clip.mp4", mime_type="video/mp4", owner=OWNER
         )
-        metadata = storage.get_attachment_metadata(saved.file_id)
+        metadata = storage.get_attachment_metadata(saved.file_id, owner=OWNER)
 
         assert metadata["original_filename"] == "clip.mp4"
         assert metadata["mime_type"] == "video/mp4"
         assert metadata["size"] == len(b"payload")
-        assert storage.get_attachment_path(saved.file_id) == Path(saved.path)
+        assert storage.get_attachment_path(saved.file_id, owner=OWNER) == Path(
+            saved.path
+        )
 
     def test_keeps_original_stem_and_extension(self, storage, tmp_path):
         src = self._source(tmp_path)
 
-        saved = storage.save_attachment_from_path(str(src), filename="clip.mp4")
+        saved = storage.save_attachment_from_path(
+            str(src), filename="clip.mp4", owner=OWNER
+        )
 
         name = Path(saved.path).name
         assert name.startswith("clip_")
@@ -156,7 +177,9 @@ class TestSaveAttachmentFromPath:
     def test_falls_back_to_mime_extension_without_filename(self, storage, tmp_path):
         src = self._source(tmp_path)
 
-        saved = storage.save_attachment_from_path(str(src), mime_type="application/pdf")
+        saved = storage.save_attachment_from_path(
+            str(src), mime_type="application/pdf", owner=OWNER
+        )
 
         assert Path(saved.path).name == f"{saved.file_id}.pdf"
 
@@ -176,7 +199,9 @@ class TestSaveAttachmentFromPath:
             monkeypatch.setattr(storage, "_record", Mock(side_effect=error))
 
         with pytest.raises(OSError) as exc_info:
-            storage.save_attachment_from_path(str(src), filename="clip.mp4")
+            storage.save_attachment_from_path(
+                str(src), filename="clip.mp4", owner=OWNER
+            )
 
         assert exc_info.value is error
         assert list(attachment_storage.STORAGE_DIR.iterdir()) == []
@@ -219,7 +244,9 @@ class TestSweepExpired:
 
     def test_drops_metadata_for_files_it_sweeps(self, storage):
         saved = storage.save_attachment(
-            base64.urlsafe_b64encode(b"payload").decode(), filename="doc.pdf"
+            base64.urlsafe_b64encode(b"payload").decode(),
+            filename="doc.pdf",
+            owner=OWNER,
         )
         past = time.time() - 7200
         os.utime(saved.path, (past, past))

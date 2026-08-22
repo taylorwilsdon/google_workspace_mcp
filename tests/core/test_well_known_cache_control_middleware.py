@@ -150,14 +150,13 @@ def test_origin_validation_trusts_any_vscode_webview_origin(monkeypatch):
     )
 
 
-def test_origin_validation_allows_same_origin_request(monkeypatch):
+def test_origin_validation_rejects_dns_rebinding_same_origin_request(monkeypatch):
     from core.server import OriginValidationMiddleware
 
-    # The OAuth proxy consent form posts to itself (action=""), so the request is
-    # always same-origin with the host that served the page. A request whose Origin
-    # matches its own Host must be accepted even if that host was never added to the
-    # allowlist (e.g. WORKSPACE_EXTERNAL_URL unset or misconfigured) — a same-origin
-    # request is the server's own page, never the cross-site threat this guard stops.
+    # Finding 9: an "Origin equals Host" shortcut used to accept any host, which is
+    # exactly the shape of a DNS rebinding attack — the attacker's page is served
+    # from a name that resolves to loopback, so its Origin and Host are identical
+    # and unrelated to this deployment. Only configured origins are accepted now.
     monkeypatch.setattr(
         "auth.oauth_config.get_oauth_config",
         lambda: SimpleNamespace(
@@ -175,15 +174,14 @@ def test_origin_validation_allows_same_origin_request(monkeypatch):
     )
     client = TestClient(app)
 
-    # Same-origin consent POST to an unconfigured external host is allowed.
-    same_origin = client.post(
+    rebound = client.post(
         "/consent",
         headers={
-            "Origin": "https://app.example.com",
-            "Host": "app.example.com",
+            "Origin": "https://attacker.example.com",
+            "Host": "attacker.example.com",
         },
     )
-    assert same_origin.status_code == 200
+    assert rebound.status_code == 403
 
     # A cross-origin request to that same host is still rejected.
     cross_origin = client.post(
@@ -307,6 +305,10 @@ def test_configured_server_applies_no_cache_to_served_oauth_discovery_routes(
     monkeypatch.setenv("WORKSPACE_MCP_PORT", "8000")
     monkeypatch.delenv("WORKSPACE_EXTERNAL_URL", raising=False)
     monkeypatch.setenv("EXTERNAL_OAUTH21_PROVIDER", "false")
+    # OAuth 2.1 startup now requires an explicit DCR redirect URI allowlist.
+    monkeypatch.setenv(
+        "WORKSPACE_MCP_ALLOWED_CLIENT_REDIRECT_URIS", "http://127.0.0.1:*/callback"
+    )
 
     import core.server as core_server
     from auth.oauth_config import reload_oauth_config

@@ -344,8 +344,8 @@ async def modify_sheet_values(
     spreadsheet_id: str,
     range_name: str,
     values: Optional[Union[str, List[List[str]]]] = None,
-    value_input_option: str = "USER_ENTERED",
     clear_values: bool = False,
+    allow_formulas: bool = False,
 ) -> str:
     """
     Modifies values in a specific range of a Google Sheet - can write, update, or clear values.
@@ -355,12 +355,22 @@ async def modify_sheet_values(
         spreadsheet_id (str): The ID of the spreadsheet. Required.
         range_name (str): The range to modify (e.g., "Sheet1!A1:D10", "A1:D10"). Required.
         values (Optional[Union[str, List[List[str]]]]): 2D array of values to write/update. Can be a JSON string or Python list. Required unless clear_values=True.
-        value_input_option (str): How to interpret input values ("RAW" or "USER_ENTERED"). Defaults to "USER_ENTERED".
         clear_values (bool): If True, clears the range instead of writing values. Defaults to False.
+        allow_formulas (bool): If True, values are interpreted as if typed into the
+            Sheets UI, so a leading "=" creates a live formula. Defaults to False,
+            which writes every value literally. Only enable this when the values are
+            trusted, because a formula written into a sheet runs for everyone who
+            opens it (HYPERLINK, IMPORTDATA and friends can exfiltrate cell contents).
 
     Returns:
         str: Confirmation message of the successful modification operation.
     """
+    # Findings 14/45: the default used to be USER_ENTERED, so any string beginning
+    # with "=" became a live formula in the recipient's spreadsheet -- a stored
+    # injection whose payload runs in whoever opens the sheet, not in the caller.
+    # RAW writes the same string as text. Formulas remain available, but only when
+    # the caller says so.
+    value_input_option = "USER_ENTERED" if allow_formulas else "RAW"
     operation = "clear" if clear_values else "write"
     logger.info(
         f"[modify_sheet_values] Invoked. Operation: {operation}, Email: '{user_google_email}', Spreadsheet: {spreadsheet_id}, Range: {range_name}"
@@ -1367,14 +1377,20 @@ async def create_sheet(
     return text_output
 
 
-def _to_extended_value(val) -> dict:
-    """Convert a Python value to a Sheets API ExtendedValue dict."""
+def _to_extended_value(val, *, allow_formulas: bool = False) -> dict:
+    """Convert a Python value to a Sheets API ExtendedValue dict.
+
+    Finding 10: a string starting with "=" used to become ``formulaValue``
+    unconditionally, so `append_table_rows` turned any caller-supplied text into a
+    live formula. It is now written as ``stringValue`` unless the caller explicitly
+    asked for formulas.
+    """
     if isinstance(val, bool):
         return {"boolValue": val}
     if isinstance(val, (int, float)):
         return {"numberValue": val}
     s = str(val)
-    if s.startswith("="):
+    if allow_formulas and s.startswith("="):
         return {"formulaValue": s}
     return {"stringValue": s}
 
@@ -1480,6 +1496,7 @@ async def append_table_rows(
     spreadsheet_id: str,
     table_id: str,
     values: Union[str, List[List]],
+    allow_formulas: bool = False,
 ) -> str:
     """
     Appends rows to a structured table in a Google Sheet. The rows are added
@@ -1493,6 +1510,10 @@ async def append_table_rows(
         table_id (str): The ID of the table to append to (get from list_sheet_tables). Required.
         values (Union[str, List[List]]): 2D array of values to append. Each inner
             list is one row. Can be a JSON string or Python list. Required.
+        allow_formulas (bool): If True, a value starting with "=" is written as a live
+            formula. Defaults to False, which writes every value literally. Only
+            enable this for trusted values -- a formula written into a sheet runs for
+            everyone who opens it.
 
     Returns:
         str: Confirmation message with the number of rows appended.
@@ -1547,7 +1568,13 @@ async def append_table_rows(
             )
         cells = []
         for val in row_values:
-            cells.append({"userEnteredValue": _to_extended_value(val)})
+            cells.append(
+                {
+                    "userEnteredValue": _to_extended_value(
+                        val, allow_formulas=allow_formulas
+                    )
+                }
+            )
         rows.append({"values": cells})
 
     request_body = {

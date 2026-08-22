@@ -337,11 +337,23 @@ async def test_callback_missing_state_does_not_use_latest_state_by_default(
 
 
 @pytest.mark.asyncio
-async def test_callback_missing_state_rejects_explicit_fallback_outside_single_user(
+async def test_callback_missing_state_is_rejected_even_in_single_user_mode(
     monkeypatch,
 ):
-    monkeypatch.delenv("MCP_SINGLE_USER_MODE", raising=False)
-    oauth_store = _DummyOAuthStore(session_credentials=None)
+    """Finding 48: single-user mode used to recover a missing state from the store.
+
+    Consuming "the most recently stored state" turns state from a per-flow, single-use
+    CSRF token into whatever flow started last, so a callback could be completed
+    against a flow it never initiated. There is no safe recovery path any more.
+    """
+    monkeypatch.setenv("MCP_SINGLE_USER_MODE", "1")
+    oauth_store = _DummyOAuthStore(
+        session_credentials=None,
+        latest_state_info={
+            "session_id": "stdio-origin-session",
+            "code_verifier": "stdio-verifier",
+        },
+    )
 
     monkeypatch.setattr(
         "auth.google_auth.get_oauth21_session_store", lambda: oauth_store
@@ -353,56 +365,10 @@ async def test_callback_missing_state_rejects_explicit_fallback_outside_single_u
             authorization_response="http://localhost/callback?code=code123",
             redirect_uri="http://localhost/callback",
             session_id=None,
-            allow_missing_state_fallback=True,
         )
 
+    # The stored state must not even be looked at.
     assert oauth_store.latest_calls == []
-
-
-@pytest.mark.asyncio
-async def test_callback_missing_state_uses_explicit_single_user_stdio_fallback(
-    monkeypatch,
-):
-    monkeypatch.setenv("MCP_SINGLE_USER_MODE", "1")
-    callback_credentials = _make_credentials(refresh_token="callback-refresh-token")
-    oauth_store = _DummyOAuthStore(
-        session_credentials=None,
-        latest_state_info={
-            "session_id": "stdio-origin-session",
-            "code_verifier": "stdio-verifier",
-        },
-    )
-    credential_store = _DummyCredentialStore(existing_credentials=None)
-
-    monkeypatch.setattr(
-        "auth.google_auth.create_oauth_flow",
-        lambda **kwargs: _DummyFlow(callback_credentials),  # noqa: ARG005
-    )
-    monkeypatch.setattr(
-        "auth.google_auth.get_oauth21_session_store", lambda: oauth_store
-    )
-    monkeypatch.setattr(
-        "auth.google_auth.get_credential_store", lambda: credential_store
-    )
-    monkeypatch.setattr(
-        "auth.google_auth.get_user_info",
-        lambda credentials: {"email": "user@gmail.com"},  # noqa: ARG005
-    )
-    monkeypatch.setattr(
-        "auth.google_auth.save_credentials_to_session", lambda *args: None
-    )
-    monkeypatch.setattr("auth.google_auth.is_stateless_mode", lambda: False)
-
-    _email, credentials = await handle_auth_callback(
-        scopes=["scope.a"],
-        authorization_response="http://localhost/callback?code=code123",
-        redirect_uri="http://localhost/callback",
-        session_id=None,
-        allow_missing_state_fallback=True,
-    )
-
-    assert credentials.refresh_token == "callback-refresh-token"
-    assert oauth_store.latest_calls == [(None, True)]
 
 
 @pytest.mark.asyncio

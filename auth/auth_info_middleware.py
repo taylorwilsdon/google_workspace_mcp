@@ -14,6 +14,7 @@ from auth.gateway_identity import GatewayIdentityError, extract_email_from_asser
 from auth.oauth21_session_store import ensure_session_from_access_token
 from auth.oauth_config import get_oauth_config, is_trust_gateway_identity
 from auth.oauth_types import WorkspaceAccessToken
+from auth.principal import resolve_stdio_principal
 from auth.request_identity import (
     get_request_identity,
     reset_request_identity,
@@ -264,87 +265,37 @@ class AuthInfoMiddleware(Middleware):
             transport_mode = get_transport_mode()
 
             if transport_mode == "stdio":
-                # In stdio mode, check if there's a session with credentials
-                # This is ONLY safe in stdio mode because it's single-user
-                logger.debug("Checking for stdio mode authentication")
+                # stdio has no per-request credential to verify, so the principal is
+                # pinned to server-side state (configured email, else the sole stored
+                # session). Tool arguments are deliberately not consulted: trusting a
+                # caller-supplied user_google_email here was the stdio impersonation
+                # path (findings 8, 43).
+                logger.debug("Resolving stdio principal from server configuration")
+                try:
+                    from auth.oauth21_session_store import get_oauth21_session_store
 
-                # Get the requested user from the context if available
-                requested_user = None
-                if hasattr(context, "request") and hasattr(context.request, "params"):
-                    requested_user = context.request.params.get("user_google_email")
-                elif hasattr(context, "arguments"):
-                    # FastMCP may store arguments differently
-                    requested_user = context.arguments.get("user_google_email")
-
-                if requested_user:
-                    try:
-                        from auth.oauth21_session_store import get_oauth21_session_store
-
-                        store = get_oauth21_session_store()
-
-                        # Check if user has a recent session
-                        if store.has_session(requested_user):
-                            logger.debug(
-                                f"Using recent stdio session for {requested_user}"
-                            )
-                            # In stdio mode, we can trust the user has authenticated recently
-                            await set_request_identity(
-                                context.fastmcp_context,
-                                email=requested_user,
-                                via="stdio_session",
-                            )
-                            authenticated_user = requested_user
-                            auth_via = "stdio_session"
-                    except Exception as e:
-                        logger.debug(f"Error checking stdio session: {e}")
-
-                # If no requested user was provided but exactly one session exists, assume it in stdio mode
-                if not authenticated_user:
-                    try:
-                        from auth.oauth21_session_store import get_oauth21_session_store
-
-                        store = get_oauth21_session_store()
-                        single_user = store.get_single_user_email()
-                        if single_user:
-                            logger.debug(
-                                f"Defaulting to single stdio OAuth session for {single_user}"
-                            )
-                            await set_request_identity(
-                                context.fastmcp_context,
-                                email=single_user,
-                                via="stdio_single_session",
-                            )
-                            authenticated_user = single_user
-                            auth_via = "stdio_single_session"
-                    except Exception as e:
-                        logger.debug(
-                            f"Error determining stdio single-user session: {e}"
+                    stdio_user, stdio_via = resolve_stdio_principal(
+                        get_oauth21_session_store()
+                    )
+                    if stdio_user:
+                        await set_request_identity(
+                            context.fastmcp_context,
+                            email=stdio_user,
+                            via=stdio_via,
                         )
+                        authenticated_user = stdio_user
+                        auth_via = stdio_via
+                except Exception as e:
+                    logger.debug(f"Error resolving stdio principal: {e}")
 
-            # Check for MCP session binding
-            if not authenticated_user and hasattr(
-                context.fastmcp_context, "session_id"
-            ):
-                mcp_session_id = context.fastmcp_context.session_id
-                if mcp_session_id:
-                    try:
-                        from auth.oauth21_session_store import get_oauth21_session_store
-
-                        store = get_oauth21_session_store()
-
-                        # Check if this MCP session is bound to a user
-                        bound_user = store.get_user_by_mcp_session(mcp_session_id)
-                        if bound_user:
-                            logger.debug(f"MCP session bound to {bound_user}")
-                            await set_request_identity(
-                                context.fastmcp_context,
-                                email=bound_user,
-                                via="mcp_session_binding",
-                            )
-                            authenticated_user = bound_user
-                            auth_via = "mcp_session_binding"
-                    except Exception as e:
-                        logger.debug(f"Error checking MCP session binding: {e}")
+            # NOTE: There is deliberately no MCP-session-binding fallback here.
+            # Recovering a principal from a bare `Mcp-Session-Id` let anyone holding
+            # (or guessing) a session identifier act as that session's user without
+            # presenting a token -- finding 25. Per the MCP authorization spec a client
+            # must send its access token on every request, so the bearer path above is
+            # the only supported way to establish an HTTP principal. Session bindings
+            # remain in the store, but only to *constrain* an already-verified
+            # principal, never to establish one.
 
         # Single exit point with logging
         if authenticated_user:

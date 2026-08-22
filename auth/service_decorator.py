@@ -2,8 +2,6 @@ import gc
 import inspect
 import json
 import logging
-import os
-
 import re
 from functools import wraps
 from typing import Dict, List, Optional, Any, Callable, Union, Tuple
@@ -15,14 +13,20 @@ from googleapiclient.discovery import build
 from fastmcp.server.dependencies import get_access_token, get_context
 from auth.google_auth import get_authenticated_google_service, GoogleAuthenticationError
 from auth.gateway_identity import require_gateway_principal
+from auth.principal import (
+    PrincipalMismatchError,
+    assert_matches_principal,
+    emails_match,
+    get_configured_user_email,
+)
 from auth.request_identity import get_request_identity
-from core.config import USER_GOOGLE_EMAIL as _ENV_USER_EMAIL
 from auth.oauth21_session_store import (
     get_auth_provider,
     get_oauth21_session_store,
     ensure_session_from_access_token,
 )
 from auth.oauth_config import (
+    allow_caller_supplied_user_email,
     is_oauth21_enabled,
     get_oauth_config,
     is_external_oauth21_provider,
@@ -77,11 +81,6 @@ logger = logging.getLogger(__name__)
 def _release_google_service_cycles() -> None:
     """Collect cyclic references retained by googleapiclient Resource objects."""
     gc.collect()
-
-
-def _get_configured_user_google_email() -> Optional[str]:
-    """Return the configured default user email, preferring the live environment."""
-    return os.getenv("USER_GOOGLE_EMAIL") or _ENV_USER_EMAIL
 
 
 # Authentication helper functions
@@ -182,49 +181,6 @@ def _update_email_in_args(args: tuple, index: int, new_email: str) -> tuple:
     return args
 
 
-def _override_oauth21_user_email(
-    use_oauth21: bool,
-    authenticated_user: Optional[str],
-    current_user_email: str,
-    args: tuple,
-    kwargs: dict,
-    param_names: List[str],
-    tool_name: str,
-    service_type: str = "",
-) -> Tuple[str, tuple]:
-    """
-    Override user_google_email with authenticated user when using OAuth 2.1.
-
-    Trusted-gateway mode never reaches this helper: its call sites are gated on
-    ``not _user_email_is_managed()``, and the gateway principal is injected directly.
-
-    Returns:
-        Tuple of (updated_user_email, updated_args)
-    """
-    if not (
-        use_oauth21 and authenticated_user and current_user_email != authenticated_user
-    ):
-        return current_user_email, args
-
-    service_suffix = f" for service '{service_type}'" if service_type else ""
-    logger.info(
-        f"[{tool_name}] OAuth 2.1: Overriding user_google_email from '{current_user_email}' to authenticated user '{authenticated_user}'{service_suffix}"
-    )
-
-    # Update in kwargs if present
-    if "user_google_email" in kwargs:
-        kwargs["user_google_email"] = authenticated_user
-
-    # Update in args if user_google_email is passed positionally
-    try:
-        user_email_index = param_names.index("user_google_email")
-        args = _update_email_in_args(args, user_email_index, authenticated_user)
-    except ValueError:
-        pass  # user_google_email not in positional parameters
-
-    return authenticated_user, args
-
-
 def _get_service_account_credentials(
     scopes: List[str], subject: str
 ) -> google_service_account.Credentials:
@@ -274,7 +230,11 @@ def _get_service_account_credentials(
 
 
 def _validate_dwd_domain(email: str, config) -> None:
-    """Raise if email's domain is not in the configured allowlist (when set)."""
+    """Raise if email's domain is not in the configured DWD allowlist.
+
+    The caller is responsible for deciding whether an allowlist is *required*; this
+    only enforces one that exists. See `_resolve_service_account_subject`.
+    """
     if not config.dwd_allowed_domains:
         return
     domain = email.rsplit("@", 1)[-1].lower()
@@ -283,6 +243,63 @@ def _validate_dwd_domain(email: str, config) -> None:
             f"Domain '{domain}' is not in DWD_ALLOWED_DOMAINS. "
             f"Allowed: {', '.join(config.dwd_allowed_domains)}"
         )
+
+
+def _resolve_service_account_subject(
+    requested_email: Optional[str],
+    authenticated_user: Optional[str],
+    tool_name: str,
+) -> str:
+    """Decide which account domain-wide delegation may impersonate.
+
+    Findings 2, 4, 5, 16, 17, 18, 33: DWD lets the service account act as *any* user
+    in the Workspace domain, so the subject is the whole security boundary. It used to
+    be taken straight from the caller's ``user_google_email``, with a domain allowlist
+    that was empty by default -- i.e. unrestricted impersonation of any user.
+
+    The subject now comes only from an identity the server established:
+
+    * A trusted-gateway principal (service-account mode is incompatible with OAuth 2.1,
+      so that is the only per-request verified identity available here). Because the
+      subject then varies per request, ``DWD_ALLOWED_DOMAINS`` must be configured --
+      enforced at startup by ``OAuthConfig`` and re-checked here.
+    * Otherwise ``USER_GOOGLE_EMAIL``: a single, server-fixed account. No allowlist is
+      required for it to impersonate itself, but one is still honoured if set.
+
+    A ``user_google_email`` argument may only *agree* with that subject. Domain
+    allowlisting alone cannot stop same-domain IDOR, which is why the match against the
+    principal is enforced as well rather than instead.
+    """
+    config = get_oauth_config()
+    configured_email = get_configured_user_email()
+
+    if authenticated_user:
+        subject = authenticated_user
+        per_request_subject = True
+    elif configured_email:
+        subject = configured_email
+        per_request_subject = False
+    else:
+        raise GoogleAuthenticationError(
+            f"[{tool_name}] Service account mode requires USER_GOOGLE_EMAIL to be "
+            "configured, or a verified trusted-gateway identity, before it can "
+            "impersonate a user."
+        )
+
+    if per_request_subject and not config.dwd_allowed_domains:
+        raise GoogleAuthenticationError(
+            f"[{tool_name}] Per-request domain-wide delegation is disabled because "
+            "DWD_ALLOWED_DOMAINS is not configured. Set it to the Workspace domains "
+            "this deployment may impersonate."
+        )
+
+    try:
+        assert_matches_principal(requested_email, subject, context=tool_name)
+    except PrincipalMismatchError as exc:
+        raise GoogleAuthenticationError(str(exc)) from exc
+
+    _validate_dwd_domain(subject, config)
+    return subject
 
 
 async def _authenticate_service(
@@ -302,18 +319,11 @@ async def _authenticate_service(
         Tuple of (service, actual_user_email)
     """
     if is_service_account_enabled():
-        canonical_email = _get_configured_user_google_email()
-        if not canonical_email:
-            raise GoogleAuthenticationError(
-                "Service account mode requires USER_GOOGLE_EMAIL to be configured."
-            )
-
-        config = get_oauth_config()
-        if user_google_email:
-            _validate_dwd_domain(user_google_email, config)
-            target_email = user_google_email
-        else:
-            target_email = canonical_email
+        target_email = _resolve_service_account_subject(
+            requested_email=user_google_email,
+            authenticated_user=authenticated_user,
+            tool_name=tool_name,
+        )
 
         credentials = _get_service_account_credentials(resolved_scopes, target_email)
         service = build(service_name, service_version, credentials=credentials)
@@ -374,12 +384,20 @@ async def get_authenticated_google_service_oauth21(
                 "Authenticated user email could not be determined from access token."
             )
 
-        if auth_token_email and token_email and token_email != auth_token_email:
+        if (
+            auth_token_email
+            and token_email
+            and not emails_match(token_email, auth_token_email)
+        ):
             raise GoogleAuthenticationError(
                 "Access token email does not match authenticated session context."
             )
 
-        if token_email and user_google_email and token_email != user_google_email:
+        if (
+            token_email
+            and user_google_email
+            and not emails_match(token_email, user_google_email)
+        ):
             raise GoogleAuthenticationError(
                 f"Authenticated account {token_email} does not match requested user {user_google_email}."
             )
@@ -425,9 +443,16 @@ async def get_authenticated_google_service_oauth21(
         )
 
     if not credentials.scopes:
-        scopes_available = set(required_scopes)
-    else:
-        scopes_available = set(credentials.scopes)
+        # Finding 29: this used to substitute `required_scopes` when the stored session
+        # had no scope metadata, so the check below compared the requirement against
+        # itself and always passed -- any tool could run regardless of what the user
+        # actually consented to. Missing scope metadata is now a failure, not a pass.
+        raise GoogleAuthenticationError(
+            f"Stored OAuth 2.1 session for {user_google_email} has no recorded scopes, "
+            "so the required scopes cannot be verified. Please re-authenticate."
+        )
+
+    scopes_available = set(credentials.scopes)
 
     if not has_required_scopes(scopes_available, required_scopes):
         raise GoogleAuthenticationError(
@@ -477,38 +502,88 @@ def _extract_managed_user_email(
     return _extract_oauth21_user_email(authenticated_user, func_name)
 
 
-def _extract_oauth20_user_email(
-    args: tuple, kwargs: dict, wrapper_sig: inspect.Signature
-) -> str:
+def _write_back_user_email(
+    args: tuple,
+    kwargs: dict,
+    wrapper_sig: inspect.Signature,
+    resolved_email: str,
+) -> tuple:
+    """Put the resolved email into whichever slot the caller used.
+
+    Writing unconditionally into ``kwargs`` would collide with a positionally
+    supplied ``user_google_email`` ("got multiple values for argument"), so a
+    positional occurrence is rewritten in ``args`` instead.
     """
-    Extract user email for OAuth 2.0 mode from function arguments.
+    param_names = list(wrapper_sig.parameters.keys())
+    try:
+        index = param_names.index("user_google_email")
+    except ValueError:
+        index = -1
 
-    Args:
-        args: Positional arguments passed to wrapper
-        kwargs: Keyword arguments passed to wrapper
-        wrapper_sig: Function signature for parameter binding
+    if 0 <= index < len(args):
+        return _update_email_in_args(args, index, resolved_email)
 
-    Returns:
-        User email string
+    kwargs["user_google_email"] = resolved_email
+    return args
 
-    Raises:
-        Exception: If user_google_email parameter not found
+
+def _resolve_legacy_user_email(
+    args: tuple,
+    kwargs: dict,
+    wrapper_sig: inspect.Signature,
+    authenticated_user: Optional[str],
+    tool_name: str,
+) -> Tuple[str, tuple]:
+    """Resolve the principal for legacy OAuth 2.0 mode, fail-closed.
+
+    Order of authority:
+
+    1. A verified principal from the middleware. Any ``user_google_email`` argument
+       must equal it.
+    2. ``USER_GOOGLE_EMAIL``. Legacy mode is single-user by default, so a mismatched
+       argument is rejected rather than honoured.
+    3. Nothing established -- reject, unless ``ALLOW_CALLER_SUPPLIED_USER_EMAIL=true``
+       explicitly opts back into trusting the caller's claim.
+
+    Returns ``(resolved_email, args)``; ``args`` may be rewritten so the wrapped
+    function sees the resolved value.
     """
-    # Use partial binding so single-user mode can omit user_google_email and
-    # let the configured env-var default supply it.
     bound_args = wrapper_sig.bind_partial(*args, **kwargs)
     bound_args.apply_defaults()
+    requested_email = bound_args.arguments.get("user_google_email")
+    configured_email = get_configured_user_email()
 
-    user_google_email = bound_args.arguments.get("user_google_email")
-    if not user_google_email:
-        # Fall back to USER_GOOGLE_EMAIL env var for single-user / self-hosted mode.
-        # This allows callers (agents) to omit the parameter when a default is configured.
-        user_google_email = _get_configured_user_google_email()
-    if not user_google_email:
-        raise Exception("'user_google_email' parameter is required but was not found.")
-    # Ensure the resolved email is visible to the original function via kwargs
-    kwargs["user_google_email"] = user_google_email
-    return user_google_email
+    if authenticated_user:
+        expected_email = authenticated_user
+    elif configured_email:
+        expected_email = configured_email
+    elif requested_email and allow_caller_supplied_user_email():
+        logger.warning(
+            "[%s] Acting as caller-supplied account %s with no verified identity "
+            "(ALLOW_CALLER_SUPPLIED_USER_EMAIL=true). This provides no cross-user "
+            "isolation.",
+            tool_name,
+            requested_email,
+        )
+        expected_email = requested_email
+    else:
+        raise GoogleAuthenticationError(
+            f"[{tool_name}] Cannot determine the account to act as. Legacy OAuth 2.0 "
+            "mode requires USER_GOOGLE_EMAIL to be configured, or enable OAuth 2.1 "
+            "(MCP_ENABLE_OAUTH21=true) / trusted-gateway identity for per-request "
+            "identity."
+        )
+
+    try:
+        assert_matches_principal(requested_email, expected_email, context=tool_name)
+    except PrincipalMismatchError as exc:
+        # Surface as an auth error so the middleware logs it as such instead of a
+        # generic tool crash.
+        raise GoogleAuthenticationError(str(exc)) from exc
+
+    resolved_email = expected_email
+    args = _write_back_user_email(args, kwargs, wrapper_sig, resolved_email)
+    return resolved_email, args
 
 
 def _remove_user_email_arg_from_docstring(docstring: str) -> str:
@@ -772,8 +847,8 @@ def require_google_service(
                     func.__name__,
                 )
             else:
-                user_google_email = _extract_oauth20_user_email(
-                    args, kwargs, wrapper_sig
+                user_google_email, args = _resolve_legacy_user_email(
+                    args, kwargs, wrapper_sig, authenticated_user, func.__name__
                 )
 
             # Get service configuration from the decorator's arguments
@@ -801,19 +876,9 @@ def require_google_service(
                     authenticated_user, mcp_session_id, tool_name
                 )
 
-                # In OAuth 2.1 mode, user_google_email is already set to authenticated_user
-                # In OAuth 2.0 mode, we may need to override it
-                if not _user_email_is_managed():
-                    wrapper_params = list(wrapper_sig.parameters.keys())
-                    user_google_email, args = _override_oauth21_user_email(
-                        use_oauth21,
-                        authenticated_user,
-                        user_google_email,
-                        args,
-                        kwargs,
-                        wrapper_params,
-                        tool_name,
-                    )
+                # `_resolve_legacy_user_email` already pinned user_google_email to the
+                # verified principal when one exists, so there is nothing left to
+                # override here.
 
                 # Authenticate service
                 service, actual_user_email = await _authenticate_service(
@@ -905,7 +970,6 @@ def require_multiple_services(service_configs: List[Dict[str, Any]]):
             ]
 
         wrapper_sig = original_sig.replace(parameters=filtered_params)
-        wrapper_param_names = [p.name for p in filtered_params]
 
         @wraps(func)
         async def wrapper(*args, **kwargs):
@@ -923,8 +987,8 @@ def require_multiple_services(service_configs: List[Dict[str, Any]]):
                     tool_name,
                 )
             else:
-                user_google_email = _extract_oauth20_user_email(
-                    args, kwargs, wrapper_sig
+                user_google_email, args = _resolve_legacy_user_email(
+                    args, kwargs, wrapper_sig, authenticated_user, tool_name
                 )
 
             # Log requested user identity for audit visibility.
@@ -955,18 +1019,8 @@ def require_multiple_services(service_configs: List[Dict[str, Any]]):
                                 is_oauth21_enabled() and authenticated_user is not None
                             )
 
-                            # In OAuth 2.0 mode, we may need to override user_google_email
-                            if not _user_email_is_managed():
-                                user_google_email, args = _override_oauth21_user_email(
-                                    use_oauth21,
-                                    authenticated_user,
-                                    user_google_email,
-                                    args,
-                                    kwargs,
-                                    wrapper_param_names,
-                                    tool_name,
-                                    service_type,
-                                )
+                            # user_google_email was already pinned to the verified
+                            # principal by `_resolve_legacy_user_email`.
 
                             # Authenticate service
                             service, _ = await _authenticate_service(

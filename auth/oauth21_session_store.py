@@ -24,6 +24,7 @@ from fastmcp.server.auth import AccessToken
 from fastmcp.server.dependencies import get_http_headers
 from google.oauth2.credentials import Credentials
 from auth.oauth_config import is_external_oauth21_provider
+from auth.principal import emails_match, normalize_email
 
 logger = logging.getLogger(__name__)
 
@@ -416,37 +417,6 @@ class OAuth21SessionStore:
         result, _ = self._update_shared_oauth_states(mutator)
         return result
 
-    def _consume_latest_oauth_state_from_shared_store(
-        self,
-        session_id: Optional[str] = None,
-        allow_any_session: bool = False,
-    ) -> Optional[Tuple[str, Dict[str, Any]]]:
-        def mutator(
-            oauth_states: Dict[str, Dict[str, Any]],
-        ) -> Tuple[Optional[Tuple[str, Dict[str, Any]]], bool]:
-            matching_states = [
-                state
-                for state, state_info in oauth_states.items()
-                if (
-                    (allow_any_session and session_id is None)
-                    or state_info.get("session_id") == session_id
-                )
-            ]
-            if not matching_states:
-                return None, False
-
-            latest_state = max(
-                matching_states,
-                key=lambda s: oauth_states[s].get(
-                    "created_at",
-                    datetime.min.replace(tzinfo=timezone.utc),
-                ),
-            )
-            return (latest_state, oauth_states.pop(latest_state)), True
-
-        result, _ = self._update_shared_oauth_states(mutator)
-        return result
-
     def _cleanup_expired_oauth_states_locked(self):
         """Remove expired OAuth state entries. Caller must hold lock."""
         now = datetime.now(timezone.utc)
@@ -514,6 +484,18 @@ class OAuth21SessionStore:
         """
         Validate that a state value exists and consume it.
 
+        The state is the whole CSRF control: it is server-generated, single-use, and
+        carries the flow's PKCE verifier plus any enforced identity binding. Two
+        properties are what make the callback safe, and both are enforced here:
+
+        * **Single use.** The entry is popped before any further checks, so replaying a
+          callback URL cannot re-run the flow (finding 47's real remedy).
+        * **Session consistency.** A state created by an MCP session may only be
+          completed by that session. HTTP callbacks arrive with no MCP session at all,
+          which is why ``session_id`` is optional; ``handle_auth_callback`` then adopts
+          ``state_info["session_id"]`` so the credentials land on the session that
+          started the flow rather than on whatever session presents the callback.
+
         Args:
             state: The OAuth state returned by Google.
             session_id: Optional session identifier that initiated the flow.
@@ -551,46 +533,6 @@ class OAuth21SessionStore:
             logger.debug(
                 "Validated OAuth state %s",
                 state[:8] if len(state) > 8 else state,
-            )
-            return state_info
-
-    def consume_latest_oauth_state(
-        self,
-        initiating_session_id: Optional[str] = None,
-        allow_any_session: bool = False,
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Consume and return the most recently created OAuth state.
-
-        Used as a fallback when the callback URL is missing the state parameter
-        (e.g. in stdio mode with certain Google OAuth prompt types).
-
-        Args:
-            initiating_session_id: Optional session identifier that initiated the
-                OAuth flow. When provided, only matching shared-store states are
-                considered during fallback lookup.
-            allow_any_session: When True and no initiating session is available,
-                allow fallback lookup across session-bound states. This is only
-                safe for local stdio OAuth callbacks.
-
-        Returns:
-            State metadata dict, or None if no states are stored.
-        """
-        with self._lock:
-            self._cleanup_expired_oauth_states_locked()
-            shared_state = self._consume_latest_oauth_state_from_shared_store(
-                initiating_session_id,
-                allow_any_session=allow_any_session,
-            )
-            if not shared_state:
-                self._oauth_states.clear()
-                return None
-
-            latest_state, state_info = shared_state
-            self._oauth_states.pop(latest_state, None)
-            logger.debug(
-                "Consumed latest OAuth state %s as fallback",
-                latest_state[:8] if len(latest_state) > 8 else latest_state,
             )
             return state_info
 
@@ -682,7 +624,9 @@ class OAuth21SessionStore:
                     logger.info(
                         f"Created immutable session binding: {mcp_session_id} -> {user_email}"
                     )
-                elif self._session_auth_binding[mcp_session_id] != user_email:
+                elif not emails_match(
+                    self._session_auth_binding[mcp_session_id], user_email
+                ):
                     # Security: Attempt to bind session to different user
                     logger.error(
                         f"SECURITY: Attempt to rebind session {mcp_session_id} from {self._session_auth_binding[mcp_session_id]} to {user_email}"
@@ -704,6 +648,27 @@ class OAuth21SessionStore:
             if session_id and session_id not in self._session_auth_binding:
                 self._session_auth_binding[session_id] = user_email
 
+    def _resolve_session_key(self, user_email: str) -> Optional[str]:
+        """Find the `_sessions` key naming the same account as `user_email`.
+
+        `_sessions` is keyed by whatever spelling was supplied at `store_session` time,
+        which is Google's canonical form for the OAuth path but the operator's spelling
+        for a configured single user. Since the cross-account guards treat a case-only
+        difference as the same account, the lookup that follows them must agree, or the
+        request is allowed and then fails as a spurious cache miss.
+
+        Only this in-memory map is resolved leniently. The on-disk credential store is
+        still keyed by the exact string, so relaxing it there would orphan existing
+        credential files rather than find them.
+        """
+        normalized = normalize_email(user_email)
+        if not normalized:
+            return None
+        for key in self._sessions:
+            if normalize_email(key) == normalized:
+                return key
+        return None
+
     def get_credentials(self, user_email: str) -> Optional[Credentials]:
         """
         Get Google credentials for a user from OAuth 2.1 session.
@@ -716,6 +681,10 @@ class OAuth21SessionStore:
         """
         with self._lock:
             session_info = self._sessions.get(user_email)
+            if session_info is None:
+                resolved_key = self._resolve_session_key(user_email)
+                if resolved_key is not None:
+                    session_info = self._sessions.get(resolved_key)
             if not session_info:
                 logger.debug(f"No OAuth 2.1 session found for {user_email}")
                 return None
@@ -785,7 +754,7 @@ class OAuth21SessionStore:
         with self._lock:
             # Priority 1: Check auth token email (most secure, from verified JWT)
             if auth_token_email:
-                if auth_token_email != requested_user_email:
+                if not emails_match(auth_token_email, requested_user_email):
                     logger.error(
                         f"SECURITY VIOLATION: Token for {auth_token_email} attempted to access "
                         f"credentials for {requested_user_email}"
@@ -798,7 +767,7 @@ class OAuth21SessionStore:
             if session_id:
                 bound_user = self._session_auth_binding.get(session_id)
                 if bound_user:
-                    if bound_user != requested_user_email:
+                    if not emails_match(bound_user, requested_user_email):
                         logger.error(
                             f"SECURITY VIOLATION: Session {session_id} (bound to {bound_user}) "
                             f"attempted to access credentials for {requested_user_email}"
@@ -810,7 +779,7 @@ class OAuth21SessionStore:
                 # Check if this is an MCP session
                 mcp_user = self._mcp_session_mapping.get(session_id)
                 if mcp_user:
-                    if mcp_user != requested_user_email:
+                    if not emails_match(mcp_user, requested_user_email):
                         logger.error(
                             f"SECURITY VIOLATION: MCP session {session_id} (user {mcp_user}) "
                             f"attempted to access credentials for {requested_user_email}"
@@ -1180,6 +1149,32 @@ async def ensure_session_from_access_token(
         store_expiry = expiry
     else:
         store_expiry = credentials.expiry
+
+    if not credentials.scopes:
+        # Finding 29: scope metadata is what every later scope check is measured
+        # against, so a session stored without it silently disables scope
+        # enforcement. The access token has already been verified by the provider,
+        # so its scope list is a trustworthy last resort.
+        token_scopes = getattr(access_token, "scopes", None)
+        if token_scopes:
+            logger.debug(
+                "Backfilling missing credential scopes from the verified access token"
+            )
+            credentials = Credentials(
+                token=credentials.token,
+                refresh_token=credentials.refresh_token,
+                token_uri=credentials.token_uri,
+                client_id=credentials.client_id,
+                client_secret=credentials.client_secret,
+                scopes=list(token_scopes),
+                expiry=credentials.expiry,
+            )
+        else:
+            logger.warning(
+                "Access token for %s carries no scope information; the resulting "
+                "session cannot satisfy any scope requirement.",
+                email or "<unknown>",
+            )
 
     # Skip session storage for external OAuth 2.1 to prevent memory leak from ephemeral tokens
     if email and not is_external_oauth21_provider():

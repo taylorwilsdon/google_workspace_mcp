@@ -55,6 +55,9 @@ def test_os_open_with_o_binary_preserves_bytes(tmp_path):
     assert written == payload
 
 
+OWNER = "owner@example.com"
+
+
 @pytest.fixture
 def isolated_storage(tmp_path, monkeypatch):
     """Create an AttachmentStorage that writes to a temp directory."""
@@ -70,7 +73,7 @@ def test_save_attachment_uses_binary_mode(isolated_storage):
     b64_data = base64.urlsafe_b64encode(payload).decode()
 
     result = isolated_storage.save_attachment(
-        b64_data, filename="test.png", mime_type="image/png"
+        b64_data, filename="test.png", mime_type="image/png", owner=OWNER
     )
 
     with open(result.path, "rb") as f:
@@ -99,7 +102,7 @@ def test_save_attachment_sanitizes_windows_reserved_filenames(
     payload = b"safe filename check"
     b64_data = base64.urlsafe_b64encode(payload).decode()
 
-    result = isolated_storage.save_attachment(b64_data, filename=filename)
+    result = isolated_storage.save_attachment(b64_data, filename=filename, owner=OWNER)
     saved_name = os.path.basename(result.path)
 
     assert saved_name.startswith(expected_prefix)
@@ -118,10 +121,10 @@ def test_save_attachment_metadata_filename_matches_saved_file(isolated_storage):
     b64_data = base64.urlsafe_b64encode(payload).decode()
 
     result = isolated_storage.save_attachment(
-        b64_data, filename="RE: Foo?.eml", mime_type="message/rfc822"
+        b64_data, filename="RE: Foo?.eml", mime_type="message/rfc822", owner=OWNER
     )
     saved_name = os.path.basename(result.path)
-    metadata = isolated_storage.get_attachment_metadata(result.file_id)
+    metadata = isolated_storage.get_attachment_metadata(result.file_id, owner=OWNER)
 
     assert metadata["filename"] == saved_name
     assert metadata["original_filename"] == "RE: Foo?.eml"
@@ -142,7 +145,9 @@ def test_save_attachment_metadata_filename_matches_saved_file(isolated_storage):
 def test_save_attachment_preserves_various_binary_formats(isolated_storage, payload):
     """Ensure binary integrity for payloads containing LF/CR bytes."""
     b64_data = base64.urlsafe_b64encode(payload).decode()
-    result = isolated_storage.save_attachment(b64_data, filename="test.bin")
+    result = isolated_storage.save_attachment(
+        b64_data, filename="test.bin", owner=OWNER
+    )
 
     with open(result.path, "rb") as f:
         saved_bytes = f.read()

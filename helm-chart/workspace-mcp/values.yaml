@@ -106,7 +106,33 @@ env:
   # OAuth 2.1 support. The chart runs streamable HTTP behind a Kubernetes
   # Service, so OAuth 2.1 is the safe default for network-reachable deployments.
   MCP_ENABLE_OAUTH21: "true"
-  
+
+  # REQUIRED whenever MCP_ENABLE_OAUTH21 is "true": the redirect URIs that
+  # dynamically registered MCP clients may use. The server refuses to start if this
+  # is empty, because an unset allowlist previously meant "accept any redirect URI"
+  # during Dynamic Client Registration -- anyone reaching the registration endpoint
+  # could have authorization codes delivered to themselves.
+  #
+  # Remote entries must be exact HTTPS URLs (no host or path wildcards). Loopback
+  # entries may wildcard the port, which RFC 8252 section 7.3 requires for native
+  # clients that pick an ephemeral port.
+  #
+  # Example:
+  #   "https://claude.ai/api/mcp/auth_callback,http://127.0.0.1:*/callback"
+  WORKSPACE_MCP_ALLOWED_CLIENT_REDIRECT_URIS: ""
+
+  # Browser-origin allowlist. Origin validation matches this list (plus loopback and
+  # the vscode-webview: scheme) and no longer accepts "Origin equals Host", which
+  # was satisfied by DNS rebinding. Set WORKSPACE_EXTERNAL_URL above, and list any
+  # additional hostnames the deployment answers on here.
+  # OAUTH_ALLOWED_ORIGINS: "https://your-domain.com,https://alt.your-domain.com"
+
+  # Only for service-account (domain-wide delegation) deployments that also set
+  # TRUST_GATEWAY_IDENTITY: the Workspace domains this deployment may impersonate.
+  # Required in that combination and validated at startup, because the impersonation
+  # subject then varies per request.
+  # DWD_ALLOWED_DOMAINS: "corp.example.com"
+
   # Development only - set to "1" for local development
   OAUTHLIB_INSECURE_TRANSPORT: "0"
   

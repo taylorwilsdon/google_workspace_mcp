@@ -178,6 +178,15 @@ async def test_worker_save_survives_concurrent_attachment_route_sweep(
 
     monkeypatch.setattr(attachment_storage.shutil, "move", pause_after_move)
 
+    # The route now authenticates; this test is about the metadata race, so give it
+    # the owning principal and let the ownership/expiry logic decide.
+    async def fake_resolve_principal(_headers):
+        return "user@example.com"
+
+    monkeypatch.setattr(
+        "auth.http_principal.resolve_http_principal", fake_resolve_principal
+    )
+
     with (
         patch("gdrive.drive_tools.is_stateless_mode", return_value=False),
         patch("gdrive.drive_tools.get_transport_mode", return_value="stdio"),

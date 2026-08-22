@@ -730,32 +730,45 @@ async def test_draft_gmail_message_gracefully_degrades_when_all_messages_trashed
 # ---------------------------------------------------------------------------
 
 
+OWNER = "owner@example.com"
+# gmail_tools trusts WORKSPACE_EXTERNAL_URL and WORKSPACE_MCP_BASE_URI:PORT.
+TRUSTED_ORIGIN = "http://localhost:8000"
+
+
+def _register_attachment(storage, file_id, file_path, owner=OWNER):
+    from datetime import datetime, timedelta
+
+    storage._metadata[file_id] = {
+        "file_path": str(file_path),
+        "filename": "report.pdf",
+        "original_filename": "report.pdf",
+        "mime_type": "application/pdf",
+        "size": file_path.stat().st_size,
+        "owner": owner,
+        "created_at": datetime.now(),
+        "expires_at": datetime.now() + timedelta(hours=1),
+    }
+
+
 def test_try_read_local_attachment_reads_from_storage(tmp_path, monkeypatch):
     """MCP attachment URLs should be resolved from local storage."""
     import core.attachment_storage as storage_mod
 
     monkeypatch.setattr(storage_mod, "STORAGE_DIR", tmp_path)
+    monkeypatch.delenv("WORKSPACE_EXTERNAL_URL", raising=False)
 
-    # Write a fake attachment file matching the naming convention.
     file_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-    (tmp_path / f"report_{file_id[:8]}.pdf").write_bytes(b"%PDF-fake")
+    file_path = tmp_path / f"report_{file_id[:8]}.pdf"
+    file_path.write_bytes(b"%PDF-fake")
 
     storage = storage_mod.AttachmentStorage()
     monkeypatch.setattr(storage_mod, "_attachment_storage", storage)
+    _register_attachment(storage, file_id, file_path)
 
-    # Manually register metadata so get_attachment_path works.
-    from datetime import datetime, timedelta
+    result = _try_read_local_attachment(
+        f"{TRUSTED_ORIGIN}/attachments/{file_id}", OWNER
+    )
 
-    storage._metadata[file_id] = {
-        "file_path": str(tmp_path / f"report_{file_id[:8]}.pdf"),
-        "filename": "report.pdf",
-        "mime_type": "application/pdf",
-        "size": 9,
-        "created_at": datetime.now(),
-        "expires_at": datetime.now() + timedelta(hours=1),
-    }
-
-    result = _try_read_local_attachment(f"/attachments/{file_id}")
     assert result is not None
     data, filename, mime_type = result
     assert data == b"%PDF-fake"
@@ -763,84 +776,112 @@ def test_try_read_local_attachment_reads_from_storage(tmp_path, monkeypatch):
     assert mime_type == "application/pdf"
 
 
+def test_try_read_local_attachment_rejects_relative_url(tmp_path, monkeypatch):
+    """Finding 38: a relative URL used to skip the trusted-origin check entirely."""
+    import core.attachment_storage as storage_mod
+
+    monkeypatch.setattr(storage_mod, "STORAGE_DIR", tmp_path)
+    monkeypatch.delenv("WORKSPACE_EXTERNAL_URL", raising=False)
+
+    file_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    file_path = tmp_path / f"report_{file_id[:8]}.pdf"
+    file_path.write_bytes(b"%PDF-fake")
+
+    storage = storage_mod.AttachmentStorage()
+    monkeypatch.setattr(storage_mod, "_attachment_storage", storage)
+    _register_attachment(storage, file_id, file_path)
+
+    assert _try_read_local_attachment(f"/attachments/{file_id}", OWNER) is None
+
+
+def test_try_read_local_attachment_rejects_other_owner(tmp_path, monkeypatch):
+    """Findings 24/30/39: a known file id must be useless to another principal."""
+    import core.attachment_storage as storage_mod
+
+    monkeypatch.setattr(storage_mod, "STORAGE_DIR", tmp_path)
+    monkeypatch.delenv("WORKSPACE_EXTERNAL_URL", raising=False)
+
+    file_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    file_path = tmp_path / f"report_{file_id[:8]}.pdf"
+    file_path.write_bytes(b"%PDF-fake")
+
+    storage = storage_mod.AttachmentStorage()
+    monkeypatch.setattr(storage_mod, "_attachment_storage", storage)
+    _register_attachment(storage, file_id, file_path, owner="victim@example.com")
+
+    assert (
+        _try_read_local_attachment(
+            f"{TRUSTED_ORIGIN}/attachments/{file_id}", "attacker@example.com"
+        )
+        is None
+    )
+
+
 def test_try_read_local_attachment_returns_none_for_non_attachment_url():
     """Non-attachment URLs should return None (fall through to HTTP fetch)."""
-    assert _try_read_local_attachment("https://example.com/file.pdf") is None
+    assert _try_read_local_attachment("https://example.com/file.pdf", OWNER) is None
 
 
 def test_try_read_local_attachment_rejects_untrusted_origin(tmp_path, monkeypatch):
+    import core.attachment_storage as storage_mod
+
+    monkeypatch.setattr(storage_mod, "STORAGE_DIR", tmp_path)
+    monkeypatch.delenv("WORKSPACE_EXTERNAL_URL", raising=False)
+
     file_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
     file_path = tmp_path / "report.pdf"
     file_path.write_bytes(b"%PDF-fake")
 
-    storage = gmail_tools.get_attachment_storage()
-    monkeypatch.setattr(
-        storage,
-        "get_attachment_metadata",
-        lambda requested_file_id: (
-            {
-                "filename": "report.pdf",
-                "mime_type": "application/pdf",
-            }
-            if requested_file_id == file_id
-            else None
-        ),
-    )
-    monkeypatch.setattr(
-        storage,
-        "get_attachment_path",
-        lambda requested_file_id: file_path if requested_file_id == file_id else None,
-    )
-    monkeypatch.delenv("WORKSPACE_EXTERNAL_URL", raising=False)
+    storage = storage_mod.AttachmentStorage()
+    monkeypatch.setattr(storage_mod, "_attachment_storage", storage)
+    _register_attachment(storage, file_id, file_path)
 
-    result = _try_read_local_attachment(f"https://evil.example/attachments/{file_id}")
+    result = _try_read_local_attachment(
+        f"https://evil.example/attachments/{file_id}", OWNER
+    )
     assert result is None
 
 
 def test_try_read_local_attachment_requires_metadata_without_scan_fallback(
     tmp_path, monkeypatch
 ):
+    """An on-disk file with no metadata entry must not be readable."""
+    import core.attachment_storage as storage_mod
+
     file_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
     monkeypatch.setattr(gmail_tools, "STORAGE_DIR", tmp_path)
+    monkeypatch.setattr(storage_mod, "STORAGE_DIR", tmp_path)
+    monkeypatch.delenv("WORKSPACE_EXTERNAL_URL", raising=False)
     (tmp_path / f"report_{file_id[:8]}.pdf").write_bytes(b"%PDF-fake")
 
-    storage = gmail_tools.get_attachment_storage()
-    monkeypatch.setattr(storage, "get_attachment_metadata", lambda _file_id: None)
-    monkeypatch.setattr(storage, "get_attachment_path", lambda _file_id: None)
+    storage = storage_mod.AttachmentStorage()
+    monkeypatch.setattr(storage_mod, "_attachment_storage", storage)
 
-    result = _try_read_local_attachment(f"/attachments/{file_id}")
+    result = _try_read_local_attachment(
+        f"{TRUSTED_ORIGIN}/attachments/{file_id}", OWNER
+    )
     assert result is None
 
 
 def test_try_read_local_attachment_checks_file_size_before_reading(
     tmp_path, monkeypatch
 ):
+    import core.attachment_storage as storage_mod
+
+    monkeypatch.setattr(storage_mod, "STORAGE_DIR", tmp_path)
+    monkeypatch.delenv("WORKSPACE_EXTERNAL_URL", raising=False)
+
     file_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
     file_path = tmp_path / "large.bin"
     file_path.write_bytes(b"0123456789")
 
-    storage = gmail_tools.get_attachment_storage()
-    monkeypatch.setattr(
-        storage,
-        "get_attachment_metadata",
-        lambda requested_file_id: (
-            {
-                "filename": "large.bin",
-                "mime_type": "application/octet-stream",
-            }
-            if requested_file_id == file_id
-            else None
-        ),
-    )
-    monkeypatch.setattr(
-        storage,
-        "get_attachment_path",
-        lambda requested_file_id: file_path if requested_file_id == file_id else None,
-    )
+    storage = storage_mod.AttachmentStorage()
+    monkeypatch.setattr(storage_mod, "_attachment_storage", storage)
+    _register_attachment(storage, file_id, file_path)
     monkeypatch.setattr(gmail_tools, "MAX_EMAIL_ATTACHMENT_BYTES", 5)
 
     with pytest.raises(ValueError, match="Attachment exceeds 5 bytes"):
-        _try_read_local_attachment(f"/attachments/{file_id}")
+        _try_read_local_attachment(f"{TRUSTED_ORIGIN}/attachments/{file_id}", OWNER)
 
 
 @pytest.mark.asyncio
@@ -857,7 +898,7 @@ async def test_resolve_url_attachments_fetches_external_url(monkeypatch):
     )
 
     attachments = [{"url": "https://example.com/report.pdf"}]
-    resolved = await _resolve_url_attachments(attachments)
+    resolved = await _resolve_url_attachments(attachments, OWNER)
 
     assert len(resolved) == 1
     assert resolved[0]["_resolved_bytes"] == b"file-bytes"
@@ -872,7 +913,7 @@ async def test_resolve_url_attachments_preserves_non_url_entries():
         {"path": "/some/file.txt"},
         {"content": "aGVsbG8=", "filename": "hello.txt"},
     ]
-    resolved = await _resolve_url_attachments(attachments)
+    resolved = await _resolve_url_attachments(attachments, OWNER)
     assert resolved == attachments
 
 
@@ -890,7 +931,7 @@ async def test_resolve_url_attachments_uses_provided_filename(monkeypatch):
     )
 
     attachments = [{"url": "https://example.com/abc123", "filename": "my_report.txt"}]
-    resolved = await _resolve_url_attachments(attachments)
+    resolved = await _resolve_url_attachments(attachments, OWNER)
     assert resolved[0]["filename"] == "my_report.txt"
 
 
@@ -909,7 +950,7 @@ async def test_resolve_url_attachments_rejects_oversized(monkeypatch):
     )
 
     attachments = [{"url": "https://example.com/huge.bin"}]
-    resolved = await _resolve_url_attachments(attachments)
+    resolved = await _resolve_url_attachments(attachments, OWNER)
     # Should pass through the original dict (no _resolved_bytes).
     assert "_resolved_bytes" not in resolved[0]
     assert resolved[0]["url"] == "https://example.com/huge.bin"

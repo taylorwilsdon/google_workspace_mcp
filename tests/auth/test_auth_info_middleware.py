@@ -236,12 +236,18 @@ async def test_gateway_identity_failure_does_not_fall_back(
 
 
 @pytest.mark.asyncio
-async def test_stdio_requested_user_identity_is_request_scoped(monkeypatch):
+async def test_stdio_ignores_caller_supplied_user_google_email(monkeypatch):
+    """Findings 8/43: a tool argument must never establish the stdio principal.
+
+    The account is real and has a stored session -- previously enough to be adopted
+    as the principal. With USER_GOOGLE_EMAIL pinning the server to someone else,
+    nothing may be resolved from the argument.
+    """
     middleware = AuthInfoMiddleware()
     fastmcp_context = _FakeFastMCPContext()
     context = SimpleNamespace(
         fastmcp_context=fastmcp_context,
-        request=SimpleNamespace(params={"user_google_email": "stdio@example.com"}),
+        request=SimpleNamespace(params={"user_google_email": "victim@example.com"}),
     )
 
     monkeypatch.setattr("auth.auth_info_middleware.get_access_token", lambda: None)
@@ -249,15 +255,46 @@ async def test_stdio_requested_user_identity_is_request_scoped(monkeypatch):
         "auth.auth_info_middleware.get_http_headers", lambda *args, **kwargs: {}
     )
     monkeypatch.setattr("core.config.get_transport_mode", lambda: "stdio")
+    monkeypatch.setenv("USER_GOOGLE_EMAIL", "owner@example.com")
     _stub_session_store(
-        monkeypatch, has_session=lambda email: email == "stdio@example.com"
+        monkeypatch,
+        # Both accounts have sessions; only the configured one may be adopted.
+        has_session=lambda email: email in {"victim@example.com", "owner@example.com"},
+        get_single_user_email=lambda: None,
     )
 
     await middleware._process_request_for_auth(context)
 
-    assert_request_scoped_identity(
-        fastmcp_context, email="stdio@example.com", via="stdio_session"
+    assert fastmcp_context.state["authenticated_user_email"] == "owner@example.com"
+    assert fastmcp_context.state["authenticated_via"] == "stdio_configured_user"
+
+
+@pytest.mark.asyncio
+async def test_stdio_configured_user_without_session_resolves_nothing(monkeypatch):
+    """A pinned principal with no stored session must not fall back to another account."""
+    middleware = AuthInfoMiddleware()
+    fastmcp_context = _FakeFastMCPContext()
+    context = SimpleNamespace(
+        fastmcp_context=fastmcp_context,
+        request=SimpleNamespace(params={"user_google_email": "someone@example.com"}),
     )
+
+    monkeypatch.setattr("auth.auth_info_middleware.get_access_token", lambda: None)
+    monkeypatch.setattr(
+        "auth.auth_info_middleware.get_http_headers", lambda *args, **kwargs: {}
+    )
+    monkeypatch.setattr("core.config.get_transport_mode", lambda: "stdio")
+    monkeypatch.setenv("USER_GOOGLE_EMAIL", "owner@example.com")
+    _stub_session_store(
+        monkeypatch,
+        has_session=lambda email: email == "someone@example.com",
+        get_single_user_email=lambda: "someone@example.com",
+    )
+
+    await middleware._process_request_for_auth(context)
+
+    assert fastmcp_context.state["authenticated_user_email"] is None
+    assert fastmcp_context.state["authenticated_via"] is None
 
 
 @pytest.mark.asyncio
@@ -271,6 +308,8 @@ async def test_stdio_single_session_identity_is_request_scoped(monkeypatch):
         "auth.auth_info_middleware.get_http_headers", lambda *args, **kwargs: {}
     )
     monkeypatch.setattr("core.config.get_transport_mode", lambda: "stdio")
+    monkeypatch.delenv("USER_GOOGLE_EMAIL", raising=False)
+    monkeypatch.setattr("core.config.USER_GOOGLE_EMAIL", None, raising=False)
     _stub_session_store(monkeypatch, get_single_user_email=lambda: "solo@example.com")
 
     await middleware._process_request_for_auth(context)
@@ -281,28 +320,35 @@ async def test_stdio_single_session_identity_is_request_scoped(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_mcp_session_binding_identity_is_request_scoped(monkeypatch):
+async def test_mcp_session_binding_no_longer_authenticates(monkeypatch):
+    """Finding 25: a bare Mcp-Session-Id must not resolve a principal.
+
+    The binding still exists in the store, but presenting only the session id --
+    no bearer token -- must leave the request unauthenticated.
+    """
     middleware = AuthInfoMiddleware()
     fastmcp_context = _FakeFastMCPContext()
     context = SimpleNamespace(fastmcp_context=fastmcp_context)
+    lookups = []
 
     monkeypatch.setattr("auth.auth_info_middleware.get_access_token", lambda: None)
     monkeypatch.setattr(
         "auth.auth_info_middleware.get_http_headers", lambda *args, **kwargs: {}
     )
     monkeypatch.setattr("core.config.get_transport_mode", lambda: "streamable-http")
-    _stub_session_store(
-        monkeypatch,
-        get_user_by_mcp_session=lambda session_id: (
-            "bound@example.com" if session_id == "session-123" else None
-        ),
-    )
+
+    def _record_lookup(session_id):
+        lookups.append(session_id)
+        return "bound@example.com"
+
+    _stub_session_store(monkeypatch, get_user_by_mcp_session=_record_lookup)
 
     await middleware._process_request_for_auth(context)
 
-    assert_request_scoped_identity(
-        fastmcp_context, email="bound@example.com", via="mcp_session_binding"
-    )
+    assert fastmcp_context.state["authenticated_user_email"] is None
+    assert fastmcp_context.state["authenticated_via"] is None
+    # The store must not even be consulted for authentication purposes.
+    assert lookups == []
 
 
 @pytest.mark.asyncio

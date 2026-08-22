@@ -64,6 +64,11 @@ def test_configure_server_for_http_uses_protocol_auth_required_scopes(monkeypatc
 
     monkeypatch.setattr(server_module, "get_transport_mode", lambda: "streamable-http")
     monkeypatch.setattr(server_module, "GoogleProvider", FakeGoogleProvider)
+    # OAuth 2.1 startup now requires an explicit DCR redirect URI allowlist.
+    monkeypatch.setenv(
+        "WORKSPACE_MCP_ALLOWED_CLIENT_REDIRECT_URIS",
+        "https://claude.ai/api/mcp/auth_callback",
+    )
     monkeypatch.setattr(
         server_module,
         "get_current_scopes",

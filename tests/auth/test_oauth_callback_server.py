@@ -262,7 +262,12 @@ def test_ensure_stdio_callback_starts_server_on_demand(monkeypatch):
     assert calls == [("stdio", 8042, "http://localhost")]
 
 
-def test_oauth_callback_missing_state_fallback_follows_single_user_mode(monkeypatch):
+def test_oauth_callback_does_not_offer_a_missing_state_fallback(monkeypatch):
+    """Finding 48: the route must not ask handle_auth_callback to recover a state.
+
+    MCP_SINGLE_USER_MODE used to switch on `allow_missing_state_fallback`, which let a
+    stateless callback be completed against the most recently stored flow.
+    """
     calls = []
 
     async def fake_handle_auth_callback(**kwargs):
@@ -282,15 +287,12 @@ def test_oauth_callback_missing_state_fallback_follows_single_user_mode(monkeypa
         fake_handle_auth_callback,
     )
 
-    monkeypatch.delenv("MCP_SINGLE_USER_MODE", raising=False)
     server = oauth_callback_server.MinimalOAuthServer(8000, "http://localhost")
-    response = TestClient(server.app).get("/oauth2callback?code=code123")
 
-    assert response.status_code == 200
-    assert calls[-1]["allow_missing_state_fallback"] is False
+    for single_user_mode in ("0", "1"):
+        monkeypatch.setenv("MCP_SINGLE_USER_MODE", single_user_mode)
+        response = TestClient(server.app).get("/oauth2callback?code=code123")
 
-    monkeypatch.setenv("MCP_SINGLE_USER_MODE", "1")
-    response = TestClient(server.app).get("/oauth2callback?code=code123")
-
-    assert response.status_code == 200
-    assert calls[-1]["allow_missing_state_fallback"] is True
+        assert response.status_code == 200
+        assert "allow_missing_state_fallback" not in calls[-1]
+        assert calls[-1]["session_id"] is None

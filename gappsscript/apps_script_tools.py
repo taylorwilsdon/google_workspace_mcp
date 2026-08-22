@@ -12,7 +12,13 @@ from typing import Any, Dict, List, Optional
 from mcp.types import ToolAnnotations
 
 from auth.service_decorator import require_google_service
+from core.limits import (
+    MAX_SCRIPT_FILE_BYTES,
+    MAX_SCRIPT_FILES,
+    MAX_SCRIPT_TOTAL_BYTES,
+)
 from core.server import server
+from core.tool_registry import requires_no_google_scopes
 from core.utils import ObjectList, UserInputError, handle_http_errors
 
 logger = logging.getLogger(__name__)
@@ -395,6 +401,39 @@ async def create_script_project(
     )
 
 
+def _validate_script_payload_size(files: List[Dict[str, str]]) -> None:
+    """Reject script payloads that exceed the fixed Apps Script ceilings.
+
+    Finding 32: nothing bounded ``files``, so a single ``update_script_content`` call
+    could hand over an arbitrary amount of source. Three separate bounds are needed
+    because they fail in different ways: one enormous file, and a project of thousands
+    of small files, are each sufficient on their own.
+    """
+    if len(files) > MAX_SCRIPT_FILES:
+        raise UserInputError(
+            f"Script project exceeds the {MAX_SCRIPT_FILES} file limit "
+            f"({len(files)} files)."
+        )
+
+    total_bytes = 0
+    for file in files:
+        source = file.get("source") or ""
+        # Count encoded bytes so multi-byte characters are not under-counted.
+        file_bytes = len(source.encode("utf-8"))
+        if file_bytes > MAX_SCRIPT_FILE_BYTES:
+            raise UserInputError(
+                f"Script file '{file.get('name', 'Untitled')}' exceeds the "
+                f"{MAX_SCRIPT_FILE_BYTES} byte limit ({file_bytes} bytes)."
+            )
+        total_bytes += file_bytes
+
+    if total_bytes > MAX_SCRIPT_TOTAL_BYTES:
+        raise UserInputError(
+            f"Script project source exceeds the {MAX_SCRIPT_TOTAL_BYTES} byte total "
+            f"limit ({total_bytes} bytes)."
+        )
+
+
 async def _update_script_content_impl(
     service: Any,
     user_google_email: str,
@@ -409,6 +448,8 @@ async def _update_script_content_impl(
     )
 
     files_to_push = [_normalize_script_file(file) for file in files]
+    # Bound the caller's payload before any API round-trip.
+    _validate_script_payload_size(files_to_push)
 
     async with _get_script_update_lock(script_id):
         if merge:
@@ -418,6 +459,8 @@ async def _update_script_content_impl(
             files_to_push = _merge_script_files(
                 current_content.get("files", []), files_to_push
             )
+            # A merge can only grow the project, so re-check the merged result.
+            _validate_script_payload_size(files_to_push)
 
         request_body = {"files": files_to_push}
 
@@ -1509,6 +1552,9 @@ def _generate_trigger_code_impl(
         openWorldHint=False,
     ),
 )
+# Pure local string generation: it returns Apps Script source for the user to paste,
+# and never contacts Google.
+@requires_no_google_scopes
 async def generate_trigger_code(
     trigger_type: str,
     function_name: str,

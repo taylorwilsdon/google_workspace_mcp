@@ -135,3 +135,74 @@ def test_validate_file_path_blocks_dot_env_variant_anywhere(monkeypatch, tmp_pat
 
     with pytest.raises(ValueError, match="\\.env files may contain secrets"):
         validate_file_path(str(secret_file))
+
+
+# --- Finding 34: no filesystem existence oracle ---
+#
+# The existence check used to run *first*, so a forbidden path that existed produced
+# "Access ... is not allowed" while a forbidden path that did not exist produced
+# "Path does not exist". That difference is a filesystem existence oracle over the
+# whole machine, reachable without any read permission. `validate_file_path` now
+# answers only "is this path permitted?" and never consults the filesystem for
+# existence; callers check that themselves once permission is established.
+
+
+def _allow_only(monkeypatch, allowed_dir, storage_dir):
+    """Permit exactly `allowed_dir`, with attachment storage pointed elsewhere."""
+    monkeypatch.setenv("ALLOWED_FILE_DIRS", str(allowed_dir))
+    monkeypatch.setattr(attachment_storage, "STORAGE_DIR", storage_dir)
+
+
+def test_forbidden_path_error_is_identical_whether_or_not_it_exists(
+    monkeypatch, tmp_path
+):
+    allowed = tmp_path / "allowed"
+    allowed.mkdir()
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    forbidden_dir = tmp_path / "forbidden"
+    forbidden_dir.mkdir()
+    existing = forbidden_dir / "present.txt"
+    existing.write_text("x")
+    missing = forbidden_dir / "absent.txt"
+    _allow_only(monkeypatch, allowed, storage)
+
+    with pytest.raises(ValueError) as existing_err:
+        validate_file_path(str(existing))
+    with pytest.raises(ValueError) as missing_err:
+        validate_file_path(str(missing))
+
+    # Same exception type and same reason; only the echoed path differs.
+    assert "not allowed" in str(existing_err.value)
+    assert "not allowed" in str(missing_err.value)
+    assert str(existing_err.value).replace("present", "absent") == str(
+        missing_err.value
+    )
+
+
+def test_missing_path_inside_the_allowlist_is_permitted(monkeypatch, tmp_path):
+    """Permission does not depend on existence; callers check that themselves."""
+    allowed = tmp_path / "allowed"
+    allowed.mkdir()
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    _allow_only(monkeypatch, allowed, storage)
+
+    missing = allowed / "not-created-yet.txt"
+
+    assert validate_file_path(str(missing)) == missing.resolve()
+
+
+def test_sensitive_paths_are_rejected_even_when_absent(monkeypatch, tmp_path):
+    """The sensitive-name rules must not depend on the file being there."""
+    allowed = tmp_path / "allowed"
+    allowed.mkdir()
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    _allow_only(monkeypatch, allowed, storage)
+
+    with pytest.raises(ValueError, match="secrets"):
+        validate_file_path(str(allowed / ".env"))
+
+    with pytest.raises(ValueError, match="secrets"):
+        validate_file_path(str(allowed / ".ssh" / "id_rsa"))

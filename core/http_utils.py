@@ -23,6 +23,112 @@ class SSRFFetchError(RuntimeError):
     """Raised when SSRF-safe fetching fails after validation succeeds."""
 
 
+# Findings 6 and 7: the previous check was `if not ip.is_global`, which delegates the
+# entire security decision to a stdlib classification that has changed repeatedly.
+# Python 3.10 reports fc00::/7 (IPv6 unique local addresses) and 100.64.0.0/10 (CGNAT)
+# as global, so both were reachable; the classification was also corrected again in
+# 3.10.15 and 3.13, which means "just require a newer Python" is not a fix either --
+# the code would still be trusting a moving target.
+#
+# These tables are therefore the whole decision. They are deliberately explicit and
+# slightly over-broad: documentation and benchmarking ranges are not routable on the
+# public internet, so refusing them costs nothing and removes any dependence on
+# interpreter version.
+_DENIED_IPV4_NETWORKS = tuple(
+    ipaddress.ip_network(cidr)
+    for cidr in (
+        "0.0.0.0/8",  # "this network" / unspecified
+        "10.0.0.0/8",  # RFC 1918 private
+        "100.64.0.0/10",  # RFC 6598 CGNAT -- reported global by Python 3.10
+        "127.0.0.0/8",  # loopback
+        "169.254.0.0/16",  # RFC 3927 link-local (cloud metadata lives at 169.254.169.254)
+        "172.16.0.0/12",  # RFC 1918 private
+        "192.0.0.0/24",  # IETF protocol assignments
+        "192.0.2.0/24",  # TEST-NET-1
+        "192.88.99.0/24",  # 6to4 relay anycast
+        "192.168.0.0/16",  # RFC 1918 private
+        "198.18.0.0/15",  # benchmarking
+        "198.51.100.0/24",  # TEST-NET-2
+        "203.0.113.0/24",  # TEST-NET-3
+        "224.0.0.0/4",  # multicast
+        "240.0.0.0/4",  # reserved
+        "255.255.255.255/32",  # broadcast
+    )
+)
+
+_DENIED_IPV6_NETWORKS = tuple(
+    ipaddress.ip_network(cidr)
+    for cidr in (
+        # `::/96` is the deprecated IPv4-compatible format (RFC 4291 §2.5.5.1): it
+        # wraps an arbitrary IPv4 destination, so `::10.0.0.1` and `::127.0.0.1` are
+        # private targets written as IPv6. Note this also covers `::` and `::1`.
+        # Python's own `is_private` does *not* list this prefix, so `is_global` reports
+        # `::10.0.0.1` as globally reachable -- another reason not to delegate here.
+        "::/96",
+        "64:ff9b::/96",  # NAT64 -- embeds an arbitrary IPv4 destination
+        "64:ff9b:1::/48",  # local-use NAT64
+        "100::/64",  # discard-only
+        # Covers Teredo (2001::/32), benchmarking, ORCHID(v2) and AS112. Matches the
+        # range Python treats as private, rather than enumerating each sub-prefix.
+        "2001::/23",
+        "2001:db8::/32",  # documentation
+        "2002::/16",  # 6to4 -- embeds an arbitrary IPv4 destination
+        "3fff::/20",  # RFC 9637 documentation
+        "5f00::/16",  # RFC 9602 SRv6 SIDs -- not globally reachable
+        "fc00::/7",  # RFC 4193 unique local -- reported global by Python 3.10
+        # RFC 3879 deprecated site-local. Deprecated, not unroutable: networks still
+        # using it would be reachable, and Python does not list it either.
+        "fec0::/10",
+        "fe80::/10",  # link-local
+        "ff00::/8",  # multicast
+    )
+)
+
+
+def _normalize_ip(
+    ip: ipaddress.IPv4Address | ipaddress.IPv6Address,
+) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
+    """Unwrap IPv4-in-IPv6 forms so the IPv4 rules apply to them.
+
+    ``::ffff:10.0.0.1`` and ``::ffff:a00:1`` are the same private destination written
+    as IPv6. Checking the wrapper against the IPv6 table alone would miss it, so the
+    embedded address is what gets validated.
+    """
+    if isinstance(ip, ipaddress.IPv6Address):
+        mapped = ip.ipv4_mapped
+        if mapped is not None:
+            return mapped
+    return ip
+
+
+def blocked_ip_reason(ip_str: str) -> Optional[str]:
+    """Return why ``ip_str`` must not be connected to, or ``None`` if it is allowed.
+
+    Fails closed: an address that cannot be parsed is blocked.
+    """
+    try:
+        ip = ipaddress.ip_address(ip_str)
+    except ValueError:
+        return f"{ip_str} is not a valid IP address"
+
+    effective = _normalize_ip(ip)
+    networks = (
+        _DENIED_IPV4_NETWORKS
+        if isinstance(effective, ipaddress.IPv4Address)
+        else _DENIED_IPV6_NETWORKS
+    )
+    for network in networks:
+        if effective in network:
+            if effective is not ip:
+                return (
+                    f"{ip_str} embeds {effective}, which is in the blocked range "
+                    f"{network}"
+                )
+            return f"{ip_str} is in the blocked range {network}"
+
+    return None
+
+
 def redact_url(url: str) -> str:
     """Return a redacted URL safe for logs and exceptions."""
     parsed_url = urlparse(url)
@@ -71,11 +177,15 @@ async def resolve_and_validate_host(hostname: str) -> list[str]:
     seen_ips: set[str] = set()
     for _family, _type, _proto, _canonname, sockaddr in addr_infos:
         ip_str = sockaddr[0]
-        ip = ipaddress.ip_address(ip_str)
-        if not ip.is_global:
+        # An IPv6 sockaddr may carry a scope suffix (fe80::1%en0); strip it so the
+        # address parses, and note that the zone itself only ever appears on
+        # link-local addresses, which are blocked anyway.
+        ip_str = ip_str.split("%", 1)[0]
+        reason = blocked_ip_reason(ip_str)
+        if reason:
             raise ValueError(
                 f"URLs pointing to private/internal networks are not allowed: "
-                f"{hostname} resolves to {ip_str}"
+                f"{hostname} resolves to {reason}"
             )
         if ip_str not in seen_ips:
             seen_ips.add(ip_str)
@@ -274,32 +384,41 @@ async def ssrf_safe_stream(
 
         last_error: Optional[Exception] = None
         resp: Optional[httpx.Response] = None
+        client: Optional[httpx.AsyncClient] = None
         for resolved_ip in resolved_ips:
             pinned_url = build_pinned_url(parsed, resolved_ip)
-            client = httpx.AsyncClient(
+            candidate = httpx.AsyncClient(
                 follow_redirects=False, trust_env=False, timeout=timeout
             )
+            # Finding 49: the client was only closed on `Exception`, but
+            # asyncio.CancelledError derives from BaseException. A task cancelled
+            # while awaiting send() therefore leaked the client (and its connection
+            # pool) for the lifetime of the process. `BaseException` covers
+            # cancellation, and `handed_off` marks the one path where ownership moves
+            # to the caller instead.
+            handed_off = False
             try:
-                request = client.build_request(
+                request = candidate.build_request(
                     "GET",
                     pinned_url,
                     headers={"Host": host_header},
                     extensions={"sni_hostname": parsed.hostname},
                 )
-                resp = await client.send(request, stream=True)
+                resp = await candidate.send(request, stream=True)
+                client = candidate
+                handed_off = True
                 break
             except httpx.HTTPError as exc:
                 last_error = exc
-                await client.aclose()
                 logger.warning(
                     f"[ssrf_safe_stream] Failed via IP {resolved_ip} for "
                     f"{parsed.hostname}: {exc.__class__.__name__}"
                 )
-            except Exception:
-                await client.aclose()
-                raise
+            finally:
+                if not handed_off:
+                    await candidate.aclose()
 
-        if resp is None:
+        if resp is None or client is None:
             raise SSRFFetchError(
                 f"Failed to fetch URL after trying {len(resolved_ips)} validated IP(s): "
                 f"{redacted_url}"
@@ -307,8 +426,10 @@ async def ssrf_safe_stream(
 
         if resp.status_code in (301, 302, 303, 307, 308):
             location = resp.headers.get("location")
-            await resp.aclose()
-            await client.aclose()
+            try:
+                await resp.aclose()
+            finally:
+                await client.aclose()
             if not location:
                 raise SSRFFetchError(
                     f"Redirect with no Location header from {redacted_url}"
@@ -322,12 +443,16 @@ async def ssrf_safe_stream(
             current_url = location
             continue
 
-        # Non-redirect — yield the streaming response
+        # Non-redirect — yield the streaming response. The finally runs for
+        # cancellation too, so neither the response nor the client outlives the
+        # `async with` block.
         try:
             yield resp
         finally:
-            await resp.aclose()
-            await client.aclose()
+            try:
+                await resp.aclose()
+            finally:
+                await client.aclose()
         return
 
     raise SSRFFetchError(

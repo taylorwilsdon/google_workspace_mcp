@@ -17,6 +17,7 @@ from mcp.types import ToolAnnotations
 
 # Auth & server utilities
 from auth.service_decorator import require_google_service, require_multiple_services
+from core.limits import MAX_CHAT_ATTACHMENT_BYTES
 from core.server import server
 from core.utils import TransientNetworkError, handle_http_errors
 
@@ -677,18 +678,44 @@ async def download_chat_attachment(
 
     try:
         access_token = service._http.credentials.token
+        # Finding 1: this used to be `resp.content` on a non-streaming GET, so the
+        # whole attachment landed in memory with no ceiling at all. Stream it and
+        # abandon the transfer the moment the cap is passed.
         async with httpx.AsyncClient(follow_redirects=True) as client:
-            resp = await client.get(
+            async with client.stream(
+                "GET",
                 download_url,
                 headers={"Authorization": f"Bearer {access_token}"},
-            )
-            if resp.status_code != 200:
-                body = resp.text[:500]
-                return (
-                    f"Failed to download attachment '{filename}': "
-                    f"HTTP {resp.status_code} from {download_url}\n{body}"
-                )
-            file_bytes = resp.content
+            ) as resp:
+                if resp.status_code != 200:
+                    body = (await resp.aread())[:500].decode("utf-8", "replace")
+                    return (
+                        f"Failed to download attachment '{filename}': "
+                        f"HTTP {resp.status_code} from {download_url}\n{body}"
+                    )
+
+                declared = resp.headers.get("content-length")
+                if declared and declared.isdigit():
+                    if int(declared) > MAX_CHAT_ATTACHMENT_BYTES:
+                        return (
+                            f"Attachment '{filename}' exceeds the "
+                            f"{MAX_CHAT_ATTACHMENT_BYTES} byte limit "
+                            f"(declared {declared} bytes)."
+                        )
+
+                chunks: list[bytes] = []
+                total = 0
+                async for chunk in resp.aiter_bytes(chunk_size=256 * 1024):
+                    total += len(chunk)
+                    # Content-Length is server-supplied and may be absent, so the
+                    # streamed bytes are the authoritative count.
+                    if total > MAX_CHAT_ATTACHMENT_BYTES:
+                        return (
+                            f"Attachment '{filename}' exceeds the "
+                            f"{MAX_CHAT_ATTACHMENT_BYTES} byte limit; download aborted."
+                        )
+                    chunks.append(chunk)
+                file_bytes = b"".join(chunks)
     except Exception as e:
         return f"Failed to download attachment '{filename}': {e}"
 
@@ -717,7 +744,10 @@ async def download_chat_attachment(
     storage = get_attachment_storage()
     b64_data = base64.urlsafe_b64encode(file_bytes).decode("utf-8")
     result = storage.save_attachment(
-        base64_data=b64_data, filename=filename, mime_type=content_type
+        base64_data=b64_data,
+        filename=filename,
+        mime_type=content_type,
+        owner=user_google_email,
     )
 
     result_lines = [

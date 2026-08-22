@@ -870,8 +870,27 @@ async def _create_event_impl(
     return confirmation_message
 
 
+# Attendee fields Google accepts on write. Everything else the API returns
+# (`self`, `organizer`, `id`) is output-only, so echoing it back is at best noise.
+_WRITABLE_ATTENDEE_FIELDS = frozenset(
+    {
+        "email",
+        "displayName",
+        "optional",
+        "resource",
+        "responseStatus",
+        "comment",
+        "additionalGuests",
+    }
+)
+
+# An attendee's RSVP belongs to that attendee. These two fields are the RSVP.
+_OWN_RSVP_FIELDS = ("responseStatus", "comment")
+
+
 def _normalize_attendees(
     attendees: Optional[Union[List[str], List[Dict[str, Any]]]],
+    self_email: Optional[str] = None,
 ) -> Optional[List[Dict[str, Any]]]:
     """
     Normalize attendees input to list of attendee objects.
@@ -881,17 +900,39 @@ def _normalize_attendees(
     - List of attendee objects: [{"email": "user@example.com", "responseStatus": "accepted"}]
     - Mixed list of both formats
 
+    Finding 13: ``events.update``/``patch`` replaces the whole attendee list, and this
+    function used to pass caller-supplied dicts through untouched. Anyone able to edit
+    an event (an organizer, or any guest when ``guestsCanModify`` is set) could
+    therefore write a ``responseStatus`` for *other* people -- accepting or declining
+    invitations on their behalf. ``responseStatus`` and ``comment`` are now kept only
+    for ``self_email``; use ``rsvp_event`` to change your own RSVP.
+
     Returns list of attendee dicts with at minimum 'email' key.
     """
     if attendees is None:
         return None
+
+    normalized_self = (self_email or "").strip().lower()
 
     normalized = []
     for att in attendees:
         if isinstance(att, str):
             normalized.append({"email": att})
         elif isinstance(att, dict) and "email" in att:
-            normalized.append(att)
+            entry = {k: v for k, v in att.items() if k in _WRITABLE_ATTENDEE_FIELDS}
+            is_self = str(entry.get("email", "")).strip().lower() == normalized_self
+            if not is_self:
+                dropped = [f for f in _OWN_RSVP_FIELDS if f in entry]
+                for field in dropped:
+                    del entry[field]
+                if dropped:
+                    logger.warning(
+                        "[_normalize_attendees] Ignoring %s for %s: an attendee's RSVP "
+                        "can only be set by that attendee",
+                        ", ".join(dropped),
+                        entry.get("email"),
+                    )
+            normalized.append(entry)
         else:
             logger.warning(
                 f"[_normalize_attendees] Invalid attendee format: {att}, skipping"
@@ -959,7 +1000,7 @@ async def _modify_event_impl(
         event_body["location"] = location
 
     # Normalize attendees - accepts both email strings and full attendee objects
-    normalized_attendees = _normalize_attendees(attendees)
+    normalized_attendees = _normalize_attendees(attendees, user_google_email)
     if normalized_attendees is not None:
         event_body["attendees"] = normalized_attendees
 

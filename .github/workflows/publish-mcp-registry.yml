@@ -8,6 +8,21 @@ on:
 
 permissions: {}
 
+env:
+  # Finding 46: the publisher used to be fetched from `releases/latest` and piped
+  # straight into `tar`, so whatever the upstream repository happened to be serving at
+  # the moment of a release was executed with this workflow's OIDC identity -- no
+  # version, no integrity check. Pin both the version and the archive digest; the
+  # checksums come from the release's own `registry_<version>_checksums.txt`.
+  MCP_PUBLISHER_VERSION: "1.8.1"
+  MCP_PUBLISHER_SHA256_LINUX_AMD64: "a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc"
+  MCP_PUBLISHER_SHA256_LINUX_ARM64: "8dd75a6cf6845688b5d4e46df58d3ca26d5c8d233bb0626606e1db82c5e883e4"
+  # Finding 15: the validator used to read `$schema` out of server.json and fetch it.
+  # server.json is a repository file, so the URL was untrusted input that the CI
+  # runner would request -- an SSRF with the runner's network position, and a schema an
+  # attacker could choose. Validate against the copy vendored in this repository.
+  SERVER_SCHEMA_PATH: ".github/schemas/server.schema.json"
+
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -15,11 +30,14 @@ jobs:
       contents: read
       id-token: write
     steps:
+      # Actions are pinned to commit SHAs: a tag is mutable, so `@v6` would let the
+      # action's author (or anyone who compromises that account) change what runs in a
+      # job that holds a PyPI and MCP Registry publishing identity.
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.11"
 
@@ -57,24 +75,37 @@ jobs:
           ' server.json > "$tmp"
           mv "$tmp" server.json
 
-      - name: Validate server.json against schema
+      - name: Validate server.json against the vendored schema
         run: |
           python -m pip install --upgrade pip
-          python -m pip install jsonschema requests
+          python -m pip install jsonschema
           python - <<'PY'
           import json
-          import requests
+          import os
+
           from jsonschema import Draft202012Validator
 
           with open("server.json", "r", encoding="utf-8") as f:
               instance = json.load(f)
 
-          schema_url = instance["$schema"]
-          schema = requests.get(schema_url, timeout=30).json()
+          schema_path = os.environ["SERVER_SCHEMA_PATH"]
+          with open(schema_path, "r", encoding="utf-8") as f:
+              schema = json.load(f)
+
+          # The declared $schema must be the one we vendored, otherwise the file is
+          # being validated against a different contract than it claims to follow.
+          declared = instance.get("$schema")
+          expected = schema.get("$id")
+          if declared != expected:
+              raise SystemExit(
+                  f"server.json declares $schema {declared!r} but the vendored schema "
+                  f"is {expected!r}. Update {schema_path} deliberately (and review the "
+                  f"diff) rather than following the URL at build time."
+              )
 
           Draft202012Validator.check_schema(schema)
           Draft202012Validator(schema).validate(instance)
-          print("server.json schema validation passed")
+          print(f"server.json validated against {schema_path}")
           PY
 
       - name: Build distribution
@@ -88,16 +119,31 @@ jobs:
           twine check dist/*
 
       - name: Publish package to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
         with:
           skip-existing: true
 
       - name: Install mcp-publisher
         run: |
-          OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
-          ARCH="$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/')"
-          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_${OS}_${ARCH}.tar.gz" | tar xz mcp-publisher
+          set -euo pipefail
+
+          ARCH="$(uname -m)"
+          case "$ARCH" in
+            x86_64)  ARCH_SUFFIX="amd64"; EXPECTED_SHA256="$MCP_PUBLISHER_SHA256_LINUX_AMD64" ;;
+            aarch64) ARCH_SUFFIX="arm64"; EXPECTED_SHA256="$MCP_PUBLISHER_SHA256_LINUX_ARM64" ;;
+            *) echo "Unsupported runner architecture: $ARCH"; exit 1 ;;
+          esac
+
+          ARCHIVE="mcp-publisher_linux_${ARCH_SUFFIX}.tar.gz"
+          URL="https://github.com/modelcontextprotocol/registry/releases/download/v${MCP_PUBLISHER_VERSION}/${ARCHIVE}"
+
+          # Download to disk first: piping into tar would execute the extraction before
+          # anything could be verified.
+          curl -fsSL --proto '=https' --tlsv1.2 -o "$ARCHIVE" "$URL"
+          echo "${EXPECTED_SHA256}  ${ARCHIVE}" | sha256sum --check --strict -
+          tar xzf "$ARCHIVE" mcp-publisher
           chmod +x mcp-publisher
+          rm -f "$ARCHIVE"
 
       - name: Login to MCP Registry with GitHub OIDC
         run: ./mcp-publisher login github-oidc

@@ -19,23 +19,134 @@ def _result_text(result) -> str:
     return result.content[0].text
 
 
-def test_extract_oauth20_user_email_falls_back_to_env(monkeypatch):
-    monkeypatch.setattr(service_decorator, "_ENV_USER_EMAIL", "configured@example.com")
+def _no_configured_email(monkeypatch):
+    """Remove both sources `get_configured_user_email` reads."""
+    monkeypatch.delenv("USER_GOOGLE_EMAIL", raising=False)
+    monkeypatch.setattr("core.config.USER_GOOGLE_EMAIL", None, raising=False)
+
+
+def test_resolve_legacy_user_email_falls_back_to_configured(monkeypatch):
+    monkeypatch.delenv("USER_GOOGLE_EMAIL", raising=False)
+    monkeypatch.setattr(
+        "core.config.USER_GOOGLE_EMAIL", "configured@example.com", raising=False
+    )
     kwargs = {}
 
-    user_google_email = service_decorator._extract_oauth20_user_email(
-        (), kwargs, _sample_sig()
+    user_google_email, args = service_decorator._resolve_legacy_user_email(
+        (), kwargs, _sample_sig(), None, "sample_tool"
     )
 
     assert user_google_email == "configured@example.com"
     assert kwargs["user_google_email"] == "configured@example.com"
+    assert args == ()
 
 
-def test_extract_oauth20_user_email_raises_without_arg_or_env(monkeypatch):
-    monkeypatch.setattr(service_decorator, "_ENV_USER_EMAIL", None)
+def test_resolve_legacy_user_email_raises_without_principal_or_config(monkeypatch):
+    _no_configured_email(monkeypatch)
 
-    with pytest.raises(Exception, match="user_google_email"):
-        service_decorator._extract_oauth20_user_email((), {}, _sample_sig())
+    with pytest.raises(
+        service_decorator.GoogleAuthenticationError,
+        match="Cannot determine the account to act as",
+    ):
+        service_decorator._resolve_legacy_user_email(
+            (), {}, _sample_sig(), None, "sample_tool"
+        )
+
+
+def test_resolve_legacy_user_email_rejects_caller_supplied_email(monkeypatch):
+    """Findings 21/22/35-37: an unverified caller claim must not select the account."""
+    _no_configured_email(monkeypatch)
+    monkeypatch.setattr(
+        service_decorator, "allow_caller_supplied_user_email", lambda: False
+    )
+
+    with pytest.raises(
+        service_decorator.GoogleAuthenticationError,
+        match="Cannot determine the account to act as",
+    ):
+        service_decorator._resolve_legacy_user_email(
+            (),
+            {"user_google_email": "victim@example.com"},
+            _sample_sig(),
+            None,
+            "sample_tool",
+        )
+
+
+def test_resolve_legacy_user_email_rejects_mismatch_against_configured(monkeypatch):
+    monkeypatch.setenv("USER_GOOGLE_EMAIL", "owner@example.com")
+
+    with pytest.raises(
+        service_decorator.GoogleAuthenticationError,
+        match="does not match the authenticated account",
+    ):
+        service_decorator._resolve_legacy_user_email(
+            (),
+            {"user_google_email": "victim@example.com"},
+            _sample_sig(),
+            None,
+            "sample_tool",
+        )
+
+
+def test_resolve_legacy_user_email_rejects_mismatch_against_principal(monkeypatch):
+    """A verified principal always wins, even with the opt-in flag enabled."""
+    _no_configured_email(monkeypatch)
+    monkeypatch.setattr(
+        service_decorator, "allow_caller_supplied_user_email", lambda: True
+    )
+
+    with pytest.raises(
+        service_decorator.GoogleAuthenticationError,
+        match="does not match the authenticated account",
+    ):
+        service_decorator._resolve_legacy_user_email(
+            (),
+            {"user_google_email": "victim@example.com"},
+            _sample_sig(),
+            "principal@example.com",
+            "sample_tool",
+        )
+
+
+def test_resolve_legacy_user_email_accepts_case_insensitive_match(monkeypatch):
+    _no_configured_email(monkeypatch)
+    kwargs = {"user_google_email": "Owner@Example.COM"}
+
+    user_google_email, _ = service_decorator._resolve_legacy_user_email(
+        (), kwargs, _sample_sig(), "owner@example.com", "sample_tool"
+    )
+
+    assert user_google_email == "owner@example.com"
+    assert kwargs["user_google_email"] == "owner@example.com"
+
+
+def test_resolve_legacy_user_email_honours_explicit_opt_in(monkeypatch):
+    _no_configured_email(monkeypatch)
+    monkeypatch.setattr(
+        service_decorator, "allow_caller_supplied_user_email", lambda: True
+    )
+    kwargs = {"user_google_email": "caller@example.com"}
+
+    user_google_email, _ = service_decorator._resolve_legacy_user_email(
+        (), kwargs, _sample_sig(), None, "sample_tool"
+    )
+
+    assert user_google_email == "caller@example.com"
+
+
+def test_resolve_legacy_user_email_rewrites_positional_argument(monkeypatch):
+    """A positionally supplied email is rewritten in args, not duplicated in kwargs."""
+    monkeypatch.setenv("USER_GOOGLE_EMAIL", "Owner@example.com")
+    kwargs = {}
+
+    user_google_email, args = service_decorator._resolve_legacy_user_email(
+        ("owner@example.com",), kwargs, _sample_sig(), None, "sample_tool"
+    )
+
+    assert user_google_email == "Owner@example.com"
+    assert args == ("Owner@example.com",)
+    assert "user_google_email" not in kwargs
 
 
 @pytest.mark.asyncio
@@ -155,13 +266,13 @@ async def test_gateway_mode_hides_start_google_auth_email(monkeypatch):
     assert "user_google_email" not in tool.parameters.get("required", [])
 
 
-def test_extract_oauth20_user_email_reads_runtime_env(monkeypatch):
-    monkeypatch.setattr(service_decorator, "_ENV_USER_EMAIL", None)
+def test_resolve_legacy_user_email_reads_runtime_env(monkeypatch):
+    monkeypatch.setattr("core.config.USER_GOOGLE_EMAIL", None, raising=False)
     monkeypatch.setenv("USER_GOOGLE_EMAIL", "configured@example.com")
     kwargs = {}
 
-    user_google_email = service_decorator._extract_oauth20_user_email(
-        (), kwargs, _sample_sig()
+    user_google_email, _ = service_decorator._resolve_legacy_user_email(
+        (), kwargs, _sample_sig(), None, "sample_tool"
     )
 
     assert user_google_email == "configured@example.com"
@@ -188,8 +299,11 @@ def test_get_service_account_credentials_raises_without_key_source(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_authenticate_service_account_uses_caller_email(monkeypatch):
-    monkeypatch.setattr(service_decorator, "_ENV_USER_EMAIL", None)
+async def test_authenticate_service_account_pins_subject_to_configured_user(
+    monkeypatch,
+):
+    """Without a verified principal the DWD subject is USER_GOOGLE_EMAIL, not the caller's."""
+    monkeypatch.setattr("core.config.USER_GOOGLE_EMAIL", None, raising=False)
     monkeypatch.setenv("USER_GOOGLE_EMAIL", "configured@example.com")
     monkeypatch.setattr(service_decorator, "is_service_account_enabled", lambda: True)
 
@@ -220,17 +334,17 @@ async def test_authenticate_service_account_uses_caller_email(monkeypatch):
         service_name="gmail",
         service_version="v1",
         tool_name="sample_tool",
-        user_google_email="caller@example.com",
+        user_google_email="configured@example.com",
         resolved_scopes=["scope-a"],
         mcp_session_id=None,
         authenticated_user=None,
     )
 
     assert service is fake_service
-    assert actual_user == "caller@example.com"
+    assert actual_user == "configured@example.com"
     assert captured == {
         "scopes": ["scope-a"],
-        "subject": "caller@example.com",
+        "subject": "configured@example.com",
         "service_name": "gmail",
         "service_version": "v1",
         "credentials": fake_credentials,
@@ -241,7 +355,7 @@ async def test_authenticate_service_account_uses_caller_email(monkeypatch):
 async def test_authenticate_service_account_raises_without_configured_user(
     monkeypatch,
 ):
-    monkeypatch.setattr(service_decorator, "_ENV_USER_EMAIL", None)
+    monkeypatch.setattr("core.config.USER_GOOGLE_EMAIL", None, raising=False)
     monkeypatch.delenv("USER_GOOGLE_EMAIL", raising=False)
     monkeypatch.setattr(service_decorator, "is_service_account_enabled", lambda: True)
 
@@ -266,7 +380,7 @@ async def test_authenticate_service_account_raises_without_configured_user(
 
 def _patch_service_account(monkeypatch, *, allowed_domains=""):
     """Common monkeypatching for DWD impersonation tests."""
-    monkeypatch.setattr(service_decorator, "_ENV_USER_EMAIL", None)
+    monkeypatch.setattr("core.config.USER_GOOGLE_EMAIL", None, raising=False)
     monkeypatch.setenv("USER_GOOGLE_EMAIL", "canonical@corp.com")
     monkeypatch.setattr(service_decorator, "is_service_account_enabled", lambda: True)
 
@@ -302,23 +416,31 @@ def _patch_service_account(monkeypatch, *, allowed_domains=""):
 
 
 @pytest.mark.asyncio
-async def test_dwd_request_impersonation_uses_caller_email(monkeypatch):
-    captured, fake_service = _patch_service_account(monkeypatch)
+async def test_dwd_rejects_caller_supplied_subject(monkeypatch):
+    """Findings 2/4/5/16/17/18/33: a caller argument must not become the DWD subject.
 
-    service, actual_user = await service_decorator._authenticate_service(
-        use_oauth21=False,
-        service_name="gmail",
-        service_version="v1",
-        tool_name="t",
-        user_google_email="other@corp.com",
-        resolved_scopes=["scope-a"],
-        mcp_session_id=None,
-        authenticated_user=None,
-    )
+    Without a verified principal the subject is pinned to USER_GOOGLE_EMAIL, so naming
+    a different account -- even one inside the same Workspace domain, which a domain
+    allowlist would happily accept -- must be refused.
+    """
+    captured, _ = _patch_service_account(monkeypatch, allowed_domains="corp.com")
 
-    assert service is fake_service
-    assert actual_user == "other@corp.com"
-    assert captured["subject"] == "other@corp.com"
+    with pytest.raises(
+        service_decorator.GoogleAuthenticationError,
+        match="does not match the authenticated account",
+    ):
+        await service_decorator._authenticate_service(
+            use_oauth21=False,
+            service_name="gmail",
+            service_version="v1",
+            tool_name="t",
+            user_google_email="victim@corp.com",
+            resolved_scopes=["scope-a"],
+            mcp_session_id=None,
+            authenticated_user=None,
+        )
+
+    assert "subject" not in captured
 
 
 @pytest.mark.asyncio
@@ -341,7 +463,8 @@ async def test_dwd_request_impersonation_falls_back_to_canonical(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_dwd_request_impersonation_domain_allowlist_passes(monkeypatch):
+async def test_dwd_uses_verified_gateway_principal_as_subject(monkeypatch):
+    """A gateway-verified principal is the only per-request subject source."""
     captured, _ = _patch_service_account(
         monkeypatch, allowed_domains="corp.com,partner.io"
     )
@@ -354,7 +477,7 @@ async def test_dwd_request_impersonation_domain_allowlist_passes(monkeypatch):
         user_google_email="alice@partner.io",
         resolved_scopes=["scope-a"],
         mcp_session_id=None,
-        authenticated_user=None,
+        authenticated_user="alice@partner.io",
     )
 
     assert actual_user == "alice@partner.io"
@@ -362,8 +485,32 @@ async def test_dwd_request_impersonation_domain_allowlist_passes(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_dwd_per_request_subject_requires_domain_allowlist(monkeypatch):
+    """Finding 5: an unset allowlist disables per-request impersonation entirely."""
+    captured, _ = _patch_service_account(monkeypatch, allowed_domains="")
+
+    with pytest.raises(
+        service_decorator.GoogleAuthenticationError,
+        match="DWD_ALLOWED_DOMAINS is not configured",
+    ):
+        await service_decorator._authenticate_service(
+            use_oauth21=False,
+            service_name="gmail",
+            service_version="v1",
+            tool_name="t",
+            user_google_email="alice@partner.io",
+            resolved_scopes=["scope-a"],
+            mcp_session_id=None,
+            authenticated_user="alice@partner.io",
+        )
+
+    assert "subject" not in captured
+
+
+@pytest.mark.asyncio
 async def test_dwd_request_impersonation_domain_allowlist_rejects(monkeypatch):
-    _patch_service_account(monkeypatch, allowed_domains="corp.com")
+    """A verified principal outside the allowlisted domains is still refused."""
+    captured, _ = _patch_service_account(monkeypatch, allowed_domains="corp.com")
 
     with pytest.raises(
         service_decorator.GoogleAuthenticationError,
@@ -377,5 +524,7 @@ async def test_dwd_request_impersonation_domain_allowlist_rejects(monkeypatch):
             user_google_email="evil@external.com",
             resolved_scopes=["scope-a"],
             mcp_session_id=None,
-            authenticated_user=None,
+            authenticated_user="evil@external.com",
         )
+
+    assert "subject" not in captured

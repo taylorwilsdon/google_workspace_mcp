@@ -40,6 +40,10 @@ from core.config import (
     WORKSPACE_MCP_PORT,
 )
 from core.http_utils import ssrf_safe_stream
+from core.limits import (
+    MAX_EMAIL_ATTACHMENT_BYTES as _MAX_EMAIL_ATTACHMENT_BYTES,
+    max_base64_length_for,
+)
 from core.utils import (
     GOOGLE_API_WRITE_RETRIES,
     handle_http_errors,
@@ -344,6 +348,7 @@ async def _export_full_message(
     message_id: str,
     headers: Dict[str, str],
     body_format: Literal["text", "html", "raw"],
+    user_google_email: str,
 ) -> str:
     """
     Return a message's complete, untruncated content: saved to local storage and
@@ -470,6 +475,7 @@ async def _export_full_message(
             base64_data=base64.urlsafe_b64encode(content_bytes).decode("ascii"),
             filename=f"{subject[:80]}{extension}",
             mime_type=mime_type,
+            owner=user_google_email,
         )
 
     try:
@@ -962,7 +968,7 @@ async def _fetch_thread_message_ids(service, thread_id: str) -> List[str]:
     return context.get("message_ids", [])
 
 
-MAX_EMAIL_ATTACHMENT_BYTES = 25 * 1024 * 1024  # 25 MB Gmail attachment limit
+MAX_EMAIL_ATTACHMENT_BYTES = _MAX_EMAIL_ATTACHMENT_BYTES  # see core.limits
 
 
 def _redact_url(url: str) -> str:
@@ -1055,33 +1061,48 @@ def _format_resolved_attachment_error(attachment: Dict[str, Any]) -> str:
     return f"{label}: {detail}"
 
 
-def _try_read_local_attachment(url: str) -> Optional[tuple[bytes, str, Optional[str]]]:
+def _try_read_local_attachment(
+    url: str, owner: str
+) -> Optional[tuple[bytes, str, Optional[str]]]:
     """Try to resolve a URL as an MCP attachment stored on local disk.
 
+    Finding 38: the trusted-origin check only ran when the URL had an authority
+    component, so a *relative* ``/attachments/{id}`` skipped it entirely and read any
+    stored attachment straight off disk. An absolute URL from a trusted origin is now
+    required, and the read is scoped to ``owner`` so a leaked id is useless to anyone
+    else (findings 24, 30, 39).
+
     Returns (data, filename, mime_type) if the URL points to a local
-    ``/attachments/{file_id}`` resource, otherwise ``None``.
+    ``/attachments/{file_id}`` resource owned by ``owner``, otherwise ``None``.
     """
     parsed = urlparse(url)
     parts = parsed.path.strip("/").split("/")
     if len(parts) != 2 or parts[0] != "attachments":
         return None
-    if parsed.netloc:
-        origin = (parsed.scheme.lower(), parsed.netloc.lower())
-        if origin not in _get_trusted_attachment_origins():
-            return None
+
+    if not parsed.scheme or not parsed.netloc:
+        logger.debug(
+            "Refusing local attachment fallback for a URL without a trusted origin"
+        )
+        return None
+
+    origin = (parsed.scheme.lower(), parsed.netloc.lower())
+    if origin not in _get_trusted_attachment_origins():
+        return None
 
     file_id = parts[1]
     storage = get_attachment_storage()
-    metadata = storage.get_attachment_metadata(file_id)
+    metadata = storage.get_attachment_metadata(file_id, owner=owner)
     if metadata is None:
         logger.debug(
-            "Attachment metadata missing for %s; refusing local fallback under %s",
+            "Attachment metadata missing or not owned for %s; refusing local fallback "
+            "under %s",
             file_id,
             STORAGE_DIR,
         )
         return None
 
-    file_path = storage.get_attachment_path(file_id)
+    file_path = storage.get_attachment_path(file_id, owner=owner)
     if file_path is None:
         logger.debug(
             "Attachment file path missing for %s; refusing local fallback under %s",
@@ -1099,6 +1120,7 @@ def _try_read_local_attachment(url: str) -> Optional[tuple[bytes, str, Optional[
 
 async def _resolve_url_attachments(
     attachments: Optional[List[Dict[str, Any]]],
+    owner: str,
 ) -> Optional[List[Dict[str, Any]]]:
     """Pre-resolve any URL-based attachments to raw bytes.
 
@@ -1127,7 +1149,7 @@ async def _resolve_url_attachments(
 
         # Fast path: MCP-local attachment URL.
         try:
-            local = _try_read_local_attachment(url)
+            local = _try_read_local_attachment(url, owner)
         except Exception as exc:
             logger.exception("Failed to read local attachment URL %s", _redact_url(url))
             resolved.append(_build_attachment_error_entry(att, exc))
@@ -1270,6 +1292,11 @@ def _prepare_gmail_message(
         message.set_content(body)
 
     seen_content_ids: set[str] = set()
+    # Findings 20/50: neither the local-path branch nor the inline-base64 branch
+    # bounded what it read, so one message could pull an arbitrary amount into memory.
+    # Each source is capped individually *and* the running total is capped, because a
+    # message with many just-under-the-limit attachments is the same DoS.
+    total_attachment_bytes = 0
 
     for attachment in attachments or []:
         if attachment.get("error"):
@@ -1285,7 +1312,8 @@ def _prepare_gmail_message(
 
         try:
             if resolved_bytes is not None:
-                # Pre-resolved from a URL by _resolve_url_attachments.
+                # Pre-resolved from a URL by _resolve_url_attachments, which already
+                # enforced the per-attachment limit while streaming.
                 file_data = resolved_bytes
                 if not filename:
                     filename = "attachment"
@@ -1297,8 +1325,8 @@ def _prepare_gmail_message(
                     logger.error(f"File not found: {file_path}")
                     continue
 
-                with open(path_obj, "rb") as f:
-                    file_data = f.read()
+                # Checks st_size before opening, so an oversized file is never read.
+                file_data = _read_attachment_bytes(path_obj)
 
                 if not filename:
                     filename = path_obj.name
@@ -1312,12 +1340,32 @@ def _prepare_gmail_message(
                     logger.warning("Skipping attachment: missing filename")
                     continue
 
+                # Reject on the encoded length first so the decoded bytes are never
+                # allocated for a payload that cannot fit.
+                max_encoded = max_base64_length_for(MAX_EMAIL_ATTACHMENT_BYTES)
+                if len(content_base64) > max_encoded:
+                    raise ValueError(
+                        f"Attachment exceeds {MAX_EMAIL_ATTACHMENT_BYTES} bytes "
+                        f"(encoded length {len(content_base64)})"
+                    )
                 file_data = base64.b64decode(content_base64)
+                if len(file_data) > MAX_EMAIL_ATTACHMENT_BYTES:
+                    raise ValueError(
+                        f"Attachment exceeds {MAX_EMAIL_ATTACHMENT_BYTES} bytes "
+                        f"({len(file_data)} bytes)"
+                    )
                 if not mime_type:
                     mime_type = "application/octet-stream"
             else:
                 logger.warning("Skipping attachment: missing path, content, and url")
                 continue
+
+            total_attachment_bytes += len(file_data)
+            if total_attachment_bytes > MAX_EMAIL_ATTACHMENT_BYTES:
+                raise ValueError(
+                    f"Attachments total exceeds {MAX_EMAIL_ATTACHMENT_BYTES} bytes "
+                    f"({total_attachment_bytes} bytes)"
+                )
 
             safe_filename = (
                 (filename or "attachment")
@@ -1796,7 +1844,9 @@ async def get_gmail_message_content(
 
     # Full export: hand back a file reference instead of the (truncated) body.
     if full:
-        return await _export_full_message(service, message_id, headers, body_format)
+        return await _export_full_message(
+            service, message_id, headers, body_format, user_google_email
+        )
 
     # Handle raw format separately - fetch with format="raw" and return decoded MIME
     if body_format == "raw":
@@ -2223,7 +2273,10 @@ async def get_gmail_attachment_content(
 
         # Save attachment to local disk
         result = storage.save_attachment(
-            base64_data=base64_data, filename=filename, mime_type=mime_type
+            base64_data=base64_data,
+            filename=filename,
+            mime_type=mime_type,
+            owner=user_google_email,
         )
         saved_filename = Path(result.path).name
 
@@ -2635,7 +2688,9 @@ async def send_gmail_message(
     else:
         send_body_content = _append_signature_to_body(body, body_format, signature_html)
 
-    resolved_attachments = await _resolve_url_attachments(attachments)
+    resolved_attachments = await _resolve_url_attachments(
+        attachments, user_google_email
+    )
     raw_message, thread_id_final, attached_count, attachment_errors = (
         _prepare_gmail_message(
             subject=subject,
@@ -3035,7 +3090,9 @@ async def draft_gmail_message(
     else:
         draft_body = _append_signature_to_body(draft_body, body_format, signature_html)
 
-    resolved_attachments = await _resolve_url_attachments(attachments)
+    resolved_attachments = await _resolve_url_attachments(
+        attachments, user_google_email
+    )
     raw_message, _thread_id_final, attached_count, attachment_errors = (
         _prepare_gmail_message(
             subject=subject,

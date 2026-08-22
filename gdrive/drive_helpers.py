@@ -22,6 +22,7 @@ from core.http_utils import (
     redact_url as _redact_url,
     ssrf_safe_stream as _ssrf_safe_stream,
 )
+from core.limits import MAX_DRIVE_STREAMED_BYTES
 from core.utils import validate_file_path
 
 logger = logging.getLogger(__name__)
@@ -491,7 +492,92 @@ async def resolve_folder_id(
 
 DOWNLOAD_CHUNK_SIZE_BYTES = 256 * 1024  # 256 KB
 UPLOAD_CHUNK_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB (Google recommended minimum)
-MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB safety limit for URL downloads
+
+# Drive file/folder IDs are URL-safe base64-ish tokens. `root` is the documented
+# alias for a user's My Drive.
+_DRIVE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,256}$")
+_DRIVE_ID_ALIASES = frozenset({"root"})
+
+
+def validate_drive_id(value: str, *, field_name: str = "folder_id") -> str:
+    """Return ``value`` if it is a well-formed Drive ID, else raise.
+
+    Finding 31: ``list_docs_in_folder`` interpolated ``folder_id`` straight into a
+    Drive ``q=`` expression. A value containing a quote closes the string literal and
+    the rest is parsed as query syntax, letting the caller replace the filter (for
+    example dropping ``trashed=false`` or widening it past the intended folder).
+    Validating the shape is stronger than escaping here: a real Drive ID never needs
+    any character outside this set.
+    """
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field_name} must be a non-empty string")
+    candidate = value.strip()
+    if candidate in _DRIVE_ID_ALIASES:
+        return candidate
+    if not _DRIVE_ID_RE.match(candidate):
+        raise ValueError(
+            f"{field_name} is not a valid Drive ID: {candidate!r}. Expected only "
+            "letters, digits, '-' and '_'."
+        )
+    return candidate
+
+
+def escape_drive_query_value(value: str) -> str:
+    """Escape a free-text value for use inside a single-quoted Drive ``q=`` literal.
+
+    Per the Drive search reference, ``\\`` and ``'`` must both be escaped. Order
+    matters: escaping the quote first would leave a caller-supplied backslash able to
+    escape the escape (``\\'`` -> ``\\\\'``), terminating the literal anyway.
+    """
+    return value.replace("\\", "\\\\").replace("'", "\\'")
+
+
+# 2 GB safety limit for URL downloads; see core.limits for why this is a constant.
+MAX_DOWNLOAD_BYTES = MAX_DRIVE_STREAMED_BYTES
+
+# RFC 6838 restricted-name shape: type/subtype, each a token of safe characters.
+_MIME_TYPE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}$")
+
+
+def normalize_remote_content_type(content_type: Optional[str]) -> Optional[str]:
+    """Turn a remote ``Content-Type`` header into a MIME type safe to upload with.
+
+    Finding 42: ``create_drive_file`` assigned the raw response header to both
+    ``mime_type`` and ``file_metadata["mimeType"]``. A server the caller was pointed
+    at could therefore choose the stored MIME type, parameters and all --
+    ``text/html; charset=utf-8`` is not a value the Drive API expects, and
+    ``application/vnd.google-apps.document`` asks Drive to treat the bytes as a
+    conversion source. Returns ``None`` when the header is unusable, which means
+    "keep the MIME type the caller asked for".
+    """
+    if not content_type:
+        return None
+
+    # Drop parameters (";charset=...") and normalise case.
+    base = content_type.split(";", 1)[0].strip().lower()
+    if not base or base == "application/octet-stream":
+        return None
+
+    parts = base.split("/")
+    if len(parts) != 2:
+        logger.warning("Ignoring malformed remote Content-Type %r", content_type)
+        return None
+    if not all(_MIME_TYPE_RE.match(part) for part in parts):
+        logger.warning("Ignoring malformed remote Content-Type %r", content_type)
+        return None
+
+    # Google Apps types identify native Drive documents, not uploadable bytes.
+    # Letting a remote server select one lets it choose how Drive interprets the
+    # upload, so the caller's own mime_type is kept instead.
+    if base.startswith("application/vnd.google-apps"):
+        logger.warning(
+            "Ignoring remote Content-Type %r: Google Apps types cannot be uploaded "
+            "directly",
+            content_type,
+        )
+        return None
+
+    return base
 
 
 async def _stream_url_with_validation(

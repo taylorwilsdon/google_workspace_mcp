@@ -30,6 +30,7 @@ mutually exclusive with `MCP_ENABLE_OAUTH21=true`.
 | `GATEWAY_IDENTITY_ALGORITHMS` | no | `ES256` | comma-separated allowed alg(s); pinned to block alg-confusion/`none` (e.g. `RS256` for Cloudflare Access) |
 | `GATEWAY_IDENTITY_ISSUER` | no | — | if set, the assertion's `iss` must match |
 | `GATEWAY_IDENTITY_AUDIENCE` | yes | — | assertion `aud` identifying this MCP deployment; always verified |
+| `DWD_ALLOWED_DOMAINS` | only with a service account | — | Workspace domains this deployment may impersonate; see [Domain-wide delegation](#domain-wide-delegation-in-gateway-mode) |
 
 Example (Pomerium):
 
@@ -64,6 +65,40 @@ its own assertion to the upstream (Pomerium: set `pass_identity_headers: true` o
 
 Credentials still use the normal per-user store (keyed by email); the asserted identity just
 selects/locks which user's grant a request may use.
+
+## Domain-wide delegation in gateway mode
+
+Gateway mode can be combined with a service account
+(`GOOGLE_SERVICE_ACCOUNT_KEY_FILE` / `GOOGLE_SERVICE_ACCOUNT_KEY_JSON`) so requests are
+served by impersonating the verified principal instead of a stored per-user grant. That
+combination makes the impersonation subject **vary per request**, and domain-wide
+delegation can reach any user in the Workspace domain, so `DWD_ALLOWED_DOMAINS` becomes
+mandatory:
+
+```bash
+DWD_ALLOWED_DOMAINS=corp.example.com,partner.example.com
+```
+
+The server refuses to start without it:
+
+```
+Per-request domain-wide delegation requires DWD_ALLOWED_DOMAINS.
+```
+
+Two properties hold together, and both are needed:
+
+- The subject is the **gateway-verified principal**, never a caller-supplied
+  `user_google_email`. A caller may pass that argument, but it is only checked for
+  agreement with the principal — it can never widen it.
+- The principal's domain must be in `DWD_ALLOWED_DOMAINS`.
+
+The allowlist alone would not be sufficient: it bounds which domains can be reached, but
+cannot stop one user in an allowed domain from being impersonated on another's behalf.
+That is what the principal match covers.
+
+A service account **without** `TRUST_GATEWAY_IDENTITY` has a fixed subject
+(`USER_GOOGLE_EMAIL`), so no allowlist is required there — nothing the caller sends can
+change which account is impersonated.
 
 ## Security notes
 

@@ -136,6 +136,36 @@ def get_tool_components(server) -> dict:
     return tools
 
 
+def requires_no_google_scopes(func: Callable) -> Callable:
+    """Mark a tool that legitimately calls no Google API.
+
+    Finding 41: the read-only and permissions filters both wrote
+    ``if required_scopes:``, so a tool with no ``_required_google_scopes`` fell
+    through every check and stayed enabled — the exact opposite of what a
+    restrictive mode is for. The filters now remove any tool whose scope
+    requirements are unknown, and this decorator is how a tool says its
+    requirements are known to be *none*.
+
+    Only use it where the tool touches no user data through a Google API: the
+    authentication bootstrap, and pure local computation.
+    """
+    func._requires_no_google_scopes = True
+    return func
+
+
+def _scope_requirement(tool_obj) -> Optional[list]:
+    """Return a tool's declared Google scopes, or ``None`` when undeclared.
+
+    ``[]`` means "declared, and none needed"; ``None`` means "we do not know",
+    which the callers treat as a reason to disable the tool.
+    """
+    func_to_check = getattr(tool_obj, "fn", tool_obj)
+    if getattr(func_to_check, "_requires_no_google_scopes", False):
+        return []
+    scopes = getattr(func_to_check, "_required_google_scopes", None)
+    return list(scopes) if scopes is not None else None
+
+
 def filter_server_tools(server) -> int:
     """Remove disabled tools from the server after registration.
 
@@ -179,20 +209,27 @@ def filter_server_tools(server) -> int:
             if tool_name in tools_to_remove:
                 continue
 
-            # Check if tool has required scopes attached (from @require_google_service)
-            func_to_check = tool_obj
-            if hasattr(tool_obj, "fn"):
-                func_to_check = tool_obj.fn
+            # Scopes attached by @require_google_service, or [] when the tool is
+            # explicitly marked as needing none.
+            required_scopes = _scope_requirement(tool_obj)
 
-            required_scopes = getattr(func_to_check, "_required_google_scopes", [])
-
-            if required_scopes:
-                # If ANY required scope is not in the allowed read-only scopes, disable the tool
-                if not all(scope in allowed_scopes for scope in required_scopes):
-                    logger.debug(
-                        f"Read-only mode: Disabling tool '{tool_name}' (requires write scopes: {required_scopes})"
-                    )
-                    tools_to_remove.add(tool_name)
+            if required_scopes is None:
+                logger.warning(
+                    "Read-only mode: disabling tool '%s' because it declares no "
+                    "Google scopes. Decorate it with @require_google_service, or "
+                    "@requires_no_google_scopes if it calls no Google API.",
+                    tool_name,
+                )
+                tools_to_remove.add(tool_name)
+            elif required_scopes and not all(
+                scope in allowed_scopes for scope in required_scopes
+            ):
+                # If ANY required scope is not in the allowed read-only scopes,
+                # disable the tool.
+                logger.debug(
+                    f"Read-only mode: Disabling tool '{tool_name}' (requires write scopes: {required_scopes})"
+                )
+                tools_to_remove.add(tool_name)
 
     # 4. Granular permissions filtering
     # No scope hierarchy expansion here — permission levels are already cumulative
@@ -206,19 +243,24 @@ def filter_server_tools(server) -> int:
             if tool_name in tools_to_remove:
                 continue
 
-            func_to_check = tool_obj
-            if hasattr(tool_obj, "fn"):
-                func_to_check = tool_obj.fn
-
-            required_scopes = getattr(func_to_check, "_required_google_scopes", [])
-            if required_scopes:
-                if not all(scope in perm_allowed for scope in required_scopes):
-                    logger.debug(
-                        "Permissions mode: Disabling tool '%s' (requires: %s)",
-                        tool_name,
-                        required_scopes,
-                    )
-                    tools_to_remove.add(tool_name)
+            required_scopes = _scope_requirement(tool_obj)
+            if required_scopes is None:
+                logger.warning(
+                    "Permissions mode: disabling tool '%s' because it declares no "
+                    "Google scopes. Decorate it with @require_google_service, or "
+                    "@requires_no_google_scopes if it calls no Google API.",
+                    tool_name,
+                )
+                tools_to_remove.add(tool_name)
+            elif required_scopes and not all(
+                scope in perm_allowed for scope in required_scopes
+            ):
+                logger.debug(
+                    "Permissions mode: Disabling tool '%s' (requires: %s)",
+                    tool_name,
+                    required_scopes,
+                )
+                tools_to_remove.add(tool_name)
 
     # 5. Explicit per-tool block list (subtractive, so it wins over tier and
     # permission selection). Unmatched entries only warn: a name is legitimately

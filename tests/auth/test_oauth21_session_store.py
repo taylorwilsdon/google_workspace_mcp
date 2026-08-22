@@ -40,97 +40,68 @@ def test_oauth_state_persists_across_store_instances(tmp_path):
     assert state_info["principal_source"] == "gateway_assertion"
 
 
-def test_consume_latest_oauth_state_reads_from_shared_file(tmp_path):
+def test_state_is_single_use(tmp_path):
+    """Finding 47: replaying a callback URL must not re-run the flow."""
     state_file = tmp_path / "oauth_states.json"
-    store_a = OAuth21SessionStore(oauth_state_file=str(state_file))
-    store_b = OAuth21SessionStore(oauth_state_file=str(state_file))
+    store = OAuth21SessionStore(oauth_state_file=str(state_file))
 
-    store_a.store_oauth_state(
-        "latest-state",
-        session_id=None,
-        code_verifier="latest-verifier",
-    )
+    store.store_oauth_state("one-shot", session_id=None, code_verifier="v")
 
-    state_info = store_b.consume_latest_oauth_state()
+    assert store.validate_and_consume_oauth_state("one-shot")["code_verifier"] == "v"
 
-    assert state_info is not None
-    assert state_info["code_verifier"] == "latest-verifier"
-    assert store_a.consume_latest_oauth_state() is None
+    with pytest.raises(ValueError, match="Invalid or expired OAuth state"):
+        store.validate_and_consume_oauth_state("one-shot")
 
 
-def test_consume_latest_oauth_state_without_session_does_not_read_bound_state_by_default(
-    tmp_path,
-):
+def test_state_bound_to_a_session_rejects_a_different_session(tmp_path):
     state_file = tmp_path / "oauth_states.json"
-    store_a = OAuth21SessionStore(oauth_state_file=str(state_file))
-    store_b = OAuth21SessionStore(oauth_state_file=str(state_file))
+    store = OAuth21SessionStore(oauth_state_file=str(state_file))
 
-    store_a.store_oauth_state(
-        "bound-state",
-        session_id="session-123",
-        code_verifier="bound-verifier",
-    )
+    store.store_oauth_state("bound", session_id="session-1", code_verifier="v")
 
-    state_info = store_b.consume_latest_oauth_state()
-
-    assert state_info is None
-
-    remaining_state_info = store_a.consume_latest_oauth_state(
-        initiating_session_id="session-123"
-    )
-    assert remaining_state_info is not None
-    assert remaining_state_info["session_id"] == "session-123"
-    assert remaining_state_info["code_verifier"] == "bound-verifier"
+    with pytest.raises(ValueError, match="does not match the initiating session"):
+        store.validate_and_consume_oauth_state("bound", session_id="session-2")
 
 
-def test_consume_latest_oauth_state_without_session_reads_bound_state_when_allowed(
-    tmp_path,
-):
+def test_state_bound_to_a_session_is_readable_by_a_sessionless_callback(tmp_path):
+    """HTTP callbacks carry no MCP session; the state itself names the originator.
+
+    `handle_auth_callback` adopts `state_info["session_id"]`, so credentials land on
+    the session that started the flow rather than on whoever presents the callback.
+    """
     state_file = tmp_path / "oauth_states.json"
-    store_a = OAuth21SessionStore(oauth_state_file=str(state_file))
-    store_b = OAuth21SessionStore(oauth_state_file=str(state_file))
+    store = OAuth21SessionStore(oauth_state_file=str(state_file))
 
-    store_a.store_oauth_state(
-        "bound-state",
-        session_id="session-123",
-        code_verifier="bound-verifier",
-    )
+    store.store_oauth_state("bound", session_id="session-1", code_verifier="v")
 
-    state_info = store_b.consume_latest_oauth_state(allow_any_session=True)
+    state_info = store.validate_and_consume_oauth_state("bound", session_id=None)
 
-    assert state_info is not None
-    assert state_info["session_id"] == "session-123"
-    assert state_info["code_verifier"] == "bound-verifier"
-
-
-def test_consume_latest_oauth_state_filters_by_initiating_session_id(tmp_path):
-    state_file = tmp_path / "oauth_states.json"
-    store_a = OAuth21SessionStore(oauth_state_file=str(state_file))
-    store_b = OAuth21SessionStore(oauth_state_file=str(state_file))
-
-    store_a.store_oauth_state(
-        "state-none",
-        session_id=None,
-        code_verifier="verifier-none",
-    )
-    store_a.store_oauth_state(
-        "state-session-1",
-        session_id="session-1",
-        code_verifier="verifier-session-1",
-    )
-
-    state_info = store_b.consume_latest_oauth_state(initiating_session_id="session-1")
-
-    assert state_info is not None
     assert state_info["session_id"] == "session-1"
-    assert state_info["code_verifier"] == "verifier-session-1"
+    assert state_info["code_verifier"] == "v"
 
-    remaining_state_info = store_a.consume_latest_oauth_state(
-        initiating_session_id=None
-    )
-    assert remaining_state_info is not None
-    assert remaining_state_info["session_id"] is None
-    assert remaining_state_info["code_verifier"] == "verifier-none"
+
+def test_unknown_state_is_rejected(tmp_path):
+    state_file = tmp_path / "oauth_states.json"
+    store = OAuth21SessionStore(oauth_state_file=str(state_file))
+
+    with pytest.raises(ValueError, match="Invalid or expired OAuth state"):
+        store.validate_and_consume_oauth_state("never-issued")
+
+
+def test_states_are_shared_across_store_instances(tmp_path):
+    """The shared file is what lets the callback process see the initiator's state."""
+    state_file = tmp_path / "oauth_states.json"
+    store_a = OAuth21SessionStore(oauth_state_file=str(state_file))
+    store_b = OAuth21SessionStore(oauth_state_file=str(state_file))
+
+    store_a.store_oauth_state("shared", session_id=None, code_verifier="shared-v")
+
+    state_info = store_b.validate_and_consume_oauth_state("shared")
+
+    assert state_info["code_verifier"] == "shared-v"
+    # Consumed in the shared file, so the other instance cannot replay it either.
+    with pytest.raises(ValueError, match="Invalid or expired OAuth state"):
+        store_a.validate_and_consume_oauth_state("shared")
 
 
 def test_deserialize_oauth_state_entry_normalizes_invalid_and_naive_timestamps(
@@ -408,3 +379,145 @@ async def test_ensure_session_falls_back_to_non_refreshable_credential(monkeypat
     assert creds is not None
     assert creds.token == "ya29.direct"
     assert creds.refresh_token is None
+
+
+class TestCrossAccountChecksIgnoreCaseOnlyDifferences:
+    """`get_credentials_with_validation` guards must agree with `emails_match`.
+
+    All four comparisons fail closed, so a case-only difference denied access and logged
+    "SECURITY VIOLATION" for what is the same Google account. They now share one
+    predicate with `assert_matches_principal`, so the log line means what it says.
+
+    Distinct accounts must still be refused even when their casing differs too, which is
+    what separates this from simply relaxing the comparison.
+    """
+
+    def _store(self, tmp_path):
+        return OAuth21SessionStore(oauth_state_file=str(tmp_path / "oauth_states.json"))
+
+    def test_auth_token_email_matches_case_insensitively(self, tmp_path):
+        store = self._store(tmp_path)
+        store.store_session(user_email="owner@example.com", access_token="token-owner")
+
+        creds = store.get_credentials_with_validation(
+            requested_user_email="owner@example.com",
+            auth_token_email="Owner@Example.COM",
+        )
+
+        assert creds is not None
+
+    def test_auth_token_email_for_a_different_account_is_refused(self, tmp_path):
+        store = self._store(tmp_path)
+        store.store_session(
+            user_email="victim@example.com", access_token="token-victim"
+        )
+
+        creds = store.get_credentials_with_validation(
+            requested_user_email="victim@example.com",
+            auth_token_email="ATTACKER@EXAMPLE.COM",
+        )
+
+        assert creds is None
+
+    def test_session_binding_matches_case_insensitively(self, tmp_path):
+        store = self._store(tmp_path)
+        store.store_session(
+            user_email="owner@example.com",
+            access_token="token-owner",
+            session_id="oauth-session-1",
+        )
+
+        creds = store.get_credentials_with_validation(
+            requested_user_email="Owner@Example.COM",
+            session_id="oauth-session-1",
+        )
+
+        assert creds is not None
+
+    def test_mcp_session_mapping_matches_case_insensitively(self, tmp_path):
+        store = self._store(tmp_path)
+        store.store_session(
+            user_email="owner@example.com",
+            access_token="token-owner",
+            mcp_session_id="mcp-session-1",
+        )
+
+        creds = store.get_credentials_with_validation(
+            requested_user_email="OWNER@example.com",
+            session_id="mcp-session-1",
+        )
+
+        assert creds is not None
+
+    def test_session_bound_to_another_account_is_refused(self, tmp_path):
+        store = self._store(tmp_path)
+        store.store_session(
+            user_email="attacker@example.com",
+            access_token="token-attacker",
+            mcp_session_id="mcp-session-1",
+        )
+        store.store_session(
+            user_email="victim@example.com", access_token="token-victim"
+        )
+
+        creds = store.get_credentials_with_validation(
+            requested_user_email="VICTIM@EXAMPLE.COM",
+            session_id="mcp-session-1",
+        )
+
+        assert creds is None
+
+
+def test_rebinding_a_session_to_the_same_account_in_different_case_is_allowed(tmp_path):
+    """The immutable-binding guard must not fire on a case-only difference."""
+    store = OAuth21SessionStore(oauth_state_file=str(tmp_path / "oauth_states.json"))
+    store.store_session(
+        user_email="owner@example.com",
+        access_token="token-a",
+        mcp_session_id="session-123",
+    )
+
+    store.store_session(
+        user_email="Owner@Example.COM",
+        access_token="token-b",
+        mcp_session_id="session-123",
+    )
+
+    assert store.get_user_by_mcp_session("session-123") is not None
+
+
+def test_rebinding_a_session_to_a_different_account_still_raises(tmp_path):
+    """Case-insensitive comparison must not weaken the immutable binding."""
+    store = OAuth21SessionStore(oauth_state_file=str(tmp_path / "oauth_states.json"))
+    store.store_session(
+        user_email="account-a@example.com",
+        access_token="token-a",
+        mcp_session_id="session-123",
+    )
+
+    with pytest.raises(ValueError, match="already bound to a different user"):
+        store.store_session(
+            user_email="ACCOUNT-B@EXAMPLE.COM",
+            access_token="token-b",
+            mcp_session_id="session-123",
+        )
+
+
+def test_exact_session_key_wins_over_case_insensitive_resolution(tmp_path):
+    """Lenient resolution is a fallback only; an exact key must never be shadowed."""
+    store = OAuth21SessionStore(oauth_state_file=str(tmp_path / "oauth_states.json"))
+    store.store_session(user_email="Owner@Example.com", access_token="token-upper")
+    store.store_session(user_email="owner@example.com", access_token="token-lower")
+
+    assert store.get_credentials("owner@example.com").token == "token-lower"
+    assert store.get_credentials("Owner@Example.com").token == "token-upper"
+
+
+def test_unknown_account_is_not_resolved_to_some_other_session(tmp_path):
+    """The fallback must match on the whole address, not merely find *a* session."""
+    store = OAuth21SessionStore(oauth_state_file=str(tmp_path / "oauth_states.json"))
+    store.store_session(user_email="owner@example.com", access_token="token-owner")
+
+    assert store.get_credentials("someone-else@example.com") is None
+    assert store.get_credentials("owner@other.com") is None
+    assert store.get_credentials("") is None

@@ -198,6 +198,22 @@ class OAuthConfig:
                     "(the audience that identifies this MCP deployment)."
                 )
 
+        # Legacy OAuth 2.0: allow the caller to name the account it acts as.
+        #
+        # Off by default. In legacy mode there is no verified per-request identity, so
+        # a caller-supplied `user_google_email` is an unauthenticated claim; honouring
+        # it lets any client read any account whose grant this server holds (findings
+        # 21, 22, 35-37). With this off, legacy mode resolves the principal from
+        # USER_GOOGLE_EMAIL and is therefore single-user.
+        #
+        # Turning it on restores the old multi-user behaviour and is insecure unless
+        # every caller is already trusted to act as every user. It never relaxes the
+        # check against a *verified* principal: when OAuth 2.1 or a trusted gateway has
+        # established one, a mismatched argument is still rejected.
+        self.allow_caller_supplied_user_email = (
+            os.getenv("ALLOW_CALLER_SUPPLIED_USER_EMAIL", "false").lower() == "true"
+        )
+
         # Stateless mode configuration
         self.stateless_mode = (
             os.getenv("WORKSPACE_MCP_STATELESS_MODE", "false").lower() == "true"
@@ -233,6 +249,22 @@ class OAuthConfig:
             if self.service_account_enabled and _raw_domains
             else []
         )
+        # Finding 5: domain-wide delegation can impersonate any user in the Workspace
+        # domain, so the impersonation subject is the whole security boundary. A subject
+        # fixed by USER_GOOGLE_EMAIL needs no allowlist, but trusted-gateway mode makes
+        # the subject vary per request, so an explicit domain allowlist becomes
+        # mandatory. Fail at startup rather than at the first tool call.
+        if (
+            self.service_account_enabled
+            and self.trust_gateway_identity
+            and not self.dwd_allowed_domains
+        ):
+            raise ValueError(
+                "Per-request domain-wide delegation requires DWD_ALLOWED_DOMAINS. "
+                "Set it to the comma-separated Workspace domains this deployment may "
+                "impersonate, or disable TRUST_GATEWAY_IDENTITY to pin impersonation "
+                "to USER_GOOGLE_EMAIL."
+            )
         # Transport mode (will be set at runtime)
         self._transport_mode = "stdio"  # Default
 
@@ -401,6 +433,7 @@ class OAuthConfig:
             "external_oauth21_provider": self.external_oauth21_provider,
             "pkce_required": self.pkce_required,
             "service_account_enabled": self.service_account_enabled,
+            "allow_caller_supplied_user_email": self.allow_caller_supplied_user_email,
             "transport_mode": self._transport_mode,
             "total_redirect_uris": len(self.get_redirect_uris()),
             "total_allowed_origins": len(self.get_allowed_origins()),
@@ -642,3 +675,8 @@ def is_trust_gateway_identity() -> bool:
 def is_service_account_enabled() -> bool:
     """Check if service account (domain-wide delegation) mode is enabled."""
     return get_oauth_config().is_service_account_enabled()
+
+
+def allow_caller_supplied_user_email() -> bool:
+    """Check whether legacy OAuth 2.0 may trust a caller-supplied user_google_email."""
+    return get_oauth_config().allow_caller_supplied_user_email

@@ -23,6 +23,7 @@ from auth.scopes import SCOPES, get_current_scopes, has_required_scopes  # noqa
 from auth.oauth21_session_store import get_oauth21_session_store
 from auth.credential_store import get_credential_store
 from auth.gateway_identity import normalize_principal_email
+from auth.principal import emails_match
 from auth.oauth_config import (
     is_oauth21_enabled,
     is_stateless_mode,
@@ -676,7 +677,6 @@ async def handle_auth_callback(
     credentials_base_dir: str = DEFAULT_CREDENTIALS_DIR,
     session_id: Optional[str] = None,
     *,
-    allow_missing_state_fallback: bool = False,
     client_secrets_path: Optional[
         str
     ] = None,  # Deprecated: kept for backward compatibility
@@ -692,9 +692,6 @@ async def handle_auth_callback(
         redirect_uri: The redirect URI.
         credentials_base_dir: Base directory for credential files.
         session_id: Optional MCP session ID to associate with the credentials.
-        allow_missing_state_fallback: Whether to recover a missing callback state
-            from the most recently stored OAuth state. Only enable for local stdio
-            callbacks where there is no multi-user session context.
         client_secrets_path: (Deprecated) Path to client secrets file. Ignored if environment variables are set.
 
     Returns:
@@ -730,36 +727,23 @@ async def handle_auth_callback(
         state_values = parse_qs(parsed_response.query).get("state")
         state = state_values[0] if state_values else None
 
-        if state:
-            state_info = store.validate_and_consume_oauth_state(
-                state, session_id=session_id
-            )
-        elif (
-            allow_missing_state_fallback
-            and os.getenv("MCP_SINGLE_USER_MODE") == "1"
-            and session_id is None
-        ):
-            # stdio mode fallback: state may be absent from Google's redirect
-            # (e.g. when prompt=select_account is used with revoked credentials).
-            # Use the most recently stored state to recover the PKCE code_verifier.
-            logger.warning(
-                "OAuth callback missing state parameter; using most recent stored state (single-user stdio fallback)"
-            )
-            state_info = store.consume_latest_oauth_state(
-                initiating_session_id=session_id,
-                allow_any_session=True,
-            )
-            if not state_info:
-                raise ValueError(
-                    "Missing OAuth state parameter and no stored state available"
-                )
-        else:
+        if not state:
             raise ValueError("Missing OAuth state parameter")
+
+        # Finding 48: a missing state used to be recoverable in single-user mode by
+        # consuming the most recently stored state. That turned state from a
+        # per-flow, single-use CSRF token into "whatever flow happened to start
+        # last", so a callback could be completed against a flow it never
+        # initiated. There is no safe recovery: without state the callback cannot
+        # be tied to a flow, so it is rejected.
+        state_info = store.validate_and_consume_oauth_state(
+            state, session_id=session_id
+        )
 
         logger.debug(
             "OAuth callback state %s for session %s",
-            (state[:8] if state else "<fallback>"),
-            state_info.get("session_id") or "<unknown>",
+            state[:8],
+            state_info.get("session_id") or "<unbound>",
         )
 
         if not session_id:
@@ -988,95 +972,105 @@ def get_credentials(
     Returns:
         Valid Credentials object or None.
     """
-    skip_session_cache = False
     # First, try OAuth 2.1 session store if we have a session_id (FastMCP session)
     if session_id:
         try:
             store = get_oauth21_session_store()
 
             session_user = store.get_user_by_mcp_session(session_id)
-            if user_google_email and session_user and session_user != user_google_email:
-                logger.info(
-                    f"[get_credentials] Session user {session_user} doesn't match requested {user_google_email}; "
-                    "skipping session store"
+            if (
+                user_google_email
+                and session_user
+                and not emails_match(session_user, user_google_email)
+            ):
+                # Findings 21/22/35-37: this used to fall through to the file-backed
+                # credential store, which is keyed by email and holds every user's
+                # grant. A session bound to one account could therefore load another
+                # account's credentials. A bound session that asks for a different
+                # account is a cross-user access attempt, so deny instead.
+                logger.error(
+                    "[get_credentials] Denying cross-account access: session is bound "
+                    "to %s but %s was requested",
+                    session_user,
+                    user_google_email,
                 )
-                skip_session_cache = True
-            else:
-                # Try to get credentials by MCP session
-                credentials = store.get_credentials_by_mcp_session(session_id)
-                if credentials:
-                    logger.info(
-                        f"[get_credentials] Found OAuth 2.1 credentials for MCP session {session_id}"
-                    )
+                return None
 
-                    # Refresh invalid credentials before checking scopes
-                    if (not credentials.valid) and credentials.refresh_token:
-                        try:
-                            credentials.refresh(Request())
-                            logger.info(
-                                f"[get_credentials] Refreshed OAuth 2.1 credentials for session {session_id}"
-                            )
-                            # Update stored credentials
-                            user_email = store.get_user_by_mcp_session(session_id)
-                            if user_email:
-                                # Persist to file so rotated refresh tokens survive restarts
-                                persist_succeeded = True
-                                if not is_stateless_mode():
-                                    try:
-                                        credential_store = get_credential_store()
-                                        persist_succeeded = (
-                                            credential_store.store_credential(
-                                                user_email, credentials
-                                            )
+            # Try to get credentials by MCP session
+            credentials = store.get_credentials_by_mcp_session(session_id)
+            if credentials:
+                logger.info(
+                    f"[get_credentials] Found OAuth 2.1 credentials for MCP session {session_id}"
+                )
+
+                # Refresh invalid credentials before checking scopes
+                if (not credentials.valid) and credentials.refresh_token:
+                    try:
+                        credentials.refresh(Request())
+                        logger.info(
+                            f"[get_credentials] Refreshed OAuth 2.1 credentials for session {session_id}"
+                        )
+                        # Update stored credentials
+                        user_email = store.get_user_by_mcp_session(session_id)
+                        if user_email:
+                            # Persist to file so rotated refresh tokens survive restarts
+                            persist_succeeded = True
+                            if not is_stateless_mode():
+                                try:
+                                    credential_store = get_credential_store()
+                                    persist_succeeded = (
+                                        credential_store.store_credential(
+                                            user_email, credentials
                                         )
-                                        if not persist_succeeded:
-                                            logger.warning(
-                                                "[get_credentials] Credential store rejected refreshed OAuth 2.1 credentials for user %s; skipping session update.",
-                                                user_email,
-                                            )
-                                    except Exception as persist_error:
-                                        persist_succeeded = False
+                                    )
+                                    if not persist_succeeded:
                                         logger.warning(
-                                            f"[get_credentials] Failed to persist refreshed OAuth 2.1 credentials for user {user_email}: {persist_error}"
+                                            "[get_credentials] Credential store rejected refreshed OAuth 2.1 credentials for user %s; skipping session update.",
+                                            user_email,
                                         )
-
-                                if not persist_succeeded and not is_stateless_mode():
+                                except Exception as persist_error:
+                                    persist_succeeded = False
                                     logger.warning(
-                                        "[get_credentials] Refreshed OAuth 2.1 credentials for user %s were not persisted; discarding in-memory refresh result.",
-                                        user_email,
+                                        f"[get_credentials] Failed to persist refreshed OAuth 2.1 credentials for user {user_email}: {persist_error}"
                                     )
-                                    return None
 
-                                if persist_succeeded or is_stateless_mode():
-                                    store.store_session(
-                                        user_email=user_email,
-                                        access_token=credentials.token,
-                                        refresh_token=credentials.refresh_token,
-                                        token_uri=credentials.token_uri,
-                                        client_id=credentials.client_id,
-                                        client_secret=credentials.client_secret,
-                                        scopes=credentials.scopes,
-                                        expiry=credentials.expiry,
-                                        mcp_session_id=session_id,
-                                        issuer="https://accounts.google.com",
-                                    )
-                        except Exception as e:
-                            logger.error(
-                                f"[get_credentials] Failed to refresh OAuth 2.1 credentials: {e}"
-                            )
-                            return None
+                            if not persist_succeeded and not is_stateless_mode():
+                                logger.warning(
+                                    "[get_credentials] Refreshed OAuth 2.1 credentials for user %s were not persisted; discarding in-memory refresh result.",
+                                    user_email,
+                                )
+                                return None
 
-                    # Check scopes after refresh so stale metadata doesn't block valid tokens
-                    if not has_required_scopes(credentials.scopes, required_scopes):
-                        logger.warning(
-                            f"[get_credentials] OAuth 2.1 credentials lack required scopes. Need: {required_scopes}, Have: {credentials.scopes}"
+                            if persist_succeeded or is_stateless_mode():
+                                store.store_session(
+                                    user_email=user_email,
+                                    access_token=credentials.token,
+                                    refresh_token=credentials.refresh_token,
+                                    token_uri=credentials.token_uri,
+                                    client_id=credentials.client_id,
+                                    client_secret=credentials.client_secret,
+                                    scopes=credentials.scopes,
+                                    expiry=credentials.expiry,
+                                    mcp_session_id=session_id,
+                                    issuer="https://accounts.google.com",
+                                )
+                    except Exception as e:
+                        logger.error(
+                            f"[get_credentials] Failed to refresh OAuth 2.1 credentials: {e}"
                         )
                         return None
 
-                    if credentials.valid:
-                        return credentials
-
+                # Check scopes after refresh so stale metadata doesn't block valid tokens
+                if not has_required_scopes(credentials.scopes, required_scopes):
+                    logger.warning(
+                        f"[get_credentials] OAuth 2.1 credentials lack required scopes. Need: {required_scopes}, Have: {credentials.scopes}"
+                    )
                     return None
+
+                if credentials.valid:
+                    return credentials
+
+                return None
         except ImportError:
             pass  # OAuth 2.1 store not available
         except Exception as e:
@@ -1129,7 +1123,7 @@ def get_credentials(
             f"[get_credentials] Called for user_google_email: '{user_google_email}', session_id: '{session_id}', required_scopes: {required_scopes}"
         )
 
-        if session_id and not skip_session_cache:
+        if session_id:
             credentials = load_credentials_from_session(session_id)
             if credentials:
                 logger.debug(
@@ -1152,10 +1146,9 @@ def get_credentials(
                 logger.debug(
                     f"[get_credentials] Loaded from file for user '{user_google_email}', caching to session '{session_id}'."
                 )
-                if not skip_session_cache:
-                    save_credentials_to_session(
-                        session_id, credentials
-                    )  # Cache for current session
+                save_credentials_to_session(
+                    session_id, credentials
+                )  # Cache for current session
 
         if not credentials:
             logger.info(

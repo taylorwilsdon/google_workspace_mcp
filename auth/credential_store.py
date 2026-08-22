@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import re
+import tempfile
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import List, Optional
@@ -217,7 +218,21 @@ class LocalDirectoryCredentialStore(CredentialStore):
             return None
 
     def store_credential(self, user_email: str, credentials: Credentials) -> bool:
-        """Store credentials to local JSON file."""
+        """Store credentials to local JSON file, replacing it atomically.
+
+        Finding 40: this used to open the real path with ``O_TRUNC`` and write in
+        place. Two concurrent token refreshes for the same user -- routine, because
+        every expired access token triggers one -- could interleave: the file was
+        emptied by the second writer while the first was still writing, so a reader
+        (or a crash) could observe a truncated file and lose the refresh token
+        entirely, forcing re-authentication.
+
+        Writing a temporary file in the same directory and then ``os.replace``-ing it
+        makes the swap atomic on POSIX and Windows: a reader sees either the old
+        contents or the new ones, never a partial write. The last writer wins, which
+        is correct here -- both are writing a freshly refreshed credential for the
+        same account.
+        """
         creds_path = self._get_credential_path(user_email)
 
         creds_data = {
@@ -230,17 +245,51 @@ class LocalDirectoryCredentialStore(CredentialStore):
             "expiry": credentials.expiry.isoformat() if credentials.expiry else None,
         }
 
+        temp_path: Optional[str] = None
         try:
-            fd = os.open(str(creds_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, "w") as f:
-                json.dump(creds_data, f, indent=2)
+            # Same directory, so os.replace() stays within one filesystem and is a
+            # rename rather than a copy. A unique name keeps concurrent writers from
+            # sharing a temporary file.
+            fd, temp_path = tempfile.mkstemp(
+                dir=os.path.dirname(str(creds_path)),
+                prefix=f".{os.path.basename(str(creds_path))}.",
+                suffix=".tmp",
+            )
+            try:
+                # mkstemp already creates with 0600, but set it explicitly so the
+                # permission is guaranteed before the file becomes visible under its
+                # final name.
+                os.fchmod(fd, 0o600)
+                with os.fdopen(fd, "w") as f:
+                    json.dump(creds_data, f, indent=2)
+                    # Flush to disk before the rename so a crash cannot leave the
+                    # final name pointing at an empty file.
+                    f.flush()
+                    os.fsync(f.fileno())
+            except BaseException:
+                # fdopen took ownership of fd; only the path needs cleaning up.
+                os.unlink(temp_path)
+                temp_path = None
+                raise
+
+            os.replace(temp_path, str(creds_path))
+            temp_path = None
             logger.info(f"Stored credentials for {user_email} to {creds_path}")
             return True
-        except IOError as e:
+        except OSError as e:
             logger.error(
                 f"Error storing credentials for {user_email} to {creds_path}: {e}"
             )
             return False
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.unlink(temp_path)
+                except OSError as cleanup_error:
+                    logger.warning(
+                        f"Failed to remove temporary credential file {temp_path}: "
+                        f"{cleanup_error}"
+                    )
 
     def delete_credential(self, user_email: str) -> bool:
         """Delete credential file for a user."""

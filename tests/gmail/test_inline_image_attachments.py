@@ -6,11 +6,12 @@ must use multipart/related so the HTML body can reference the image via
 """
 
 import base64
-import asyncio
 import logging
 from email import message_from_bytes
 from email.policy import SMTP
 from types import SimpleNamespace
+
+import pytest
 
 import gmail.gmail_tools as gmail_tools
 from gmail.gmail_tools import _prepare_gmail_message, _resolve_url_attachments
@@ -86,7 +87,8 @@ def test_content_id_attachment_uses_multipart_related():
     )
 
 
-def test_url_based_inline_attachment_preserves_content_id(monkeypatch):
+@pytest.mark.asyncio
+async def test_url_based_inline_attachment_preserves_content_id(monkeypatch):
     """A URL-resolved attachment must keep content_id so it remains inline."""
 
     async def fake_download_attachment_bytes(url):
@@ -99,17 +101,16 @@ def test_url_based_inline_attachment_preserves_content_id(monkeypatch):
     monkeypatch.setattr(
         gmail_tools, "_download_attachment_bytes", fake_download_attachment_bytes
     )
-    attachments = asyncio.run(
-        _resolve_url_attachments(
-            [
-                {
-                    "url": "https://example.com/hero.png",
-                    "filename": "hero.png",
-                    "mime_type": "image/png",
-                    "content_id": "hero",
-                }
-            ]
-        )
+    attachments = await _resolve_url_attachments(
+        [
+            {
+                "url": "https://example.com/hero.png",
+                "filename": "hero.png",
+                "mime_type": "image/png",
+                "content_id": "hero",
+            }
+        ],
+        "owner@example.com",
     )
 
     raw_b64, _, attached, errors = _prepare_gmail_message(

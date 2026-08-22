@@ -25,6 +25,11 @@ from mcp.types import ToolAnnotations
 from auth.service_decorator import require_google_service
 from auth.oauth_config import is_stateless_mode
 from core.attachment_storage import get_attachment_storage, get_attachment_url
+from core.limits import (
+    MAX_DRIVE_INLINE_BASE64_BYTES,
+    MAX_DRIVE_STREAMED_BYTES,
+    max_base64_length_for,
+)
 from core.utils import (
     GOOGLE_API_WRITE_RETRIES,
     IMAGE_MIME_TYPES,
@@ -49,6 +54,7 @@ from gdrive.drive_helpers import (
     UPLOAD_CHUNK_SIZE_BYTES,
     _resolve_import_media,
     _stream_url_with_validation,
+    normalize_remote_content_type,
     build_drive_list_params,
     check_public_link_permission,
     list_all_permissions,
@@ -581,6 +587,7 @@ async def get_drive_file_download_url(
             src_path=str(tmp_path),
             filename=output_filename,
             mime_type=output_mime_type,
+            owner=user_google_email,
         )
 
         result_lines = [
@@ -1023,10 +1030,26 @@ async def create_drive_file(
 
     file_data = None
     if base64_content is not None:
+        # Finding 44: an arbitrarily long base64 string was decoded straight into
+        # memory. Reject on the encoded length first so the decoded bytes are never
+        # allocated for a payload that cannot fit.
+        max_encoded = max_base64_length_for(MAX_DRIVE_INLINE_BASE64_BYTES)
+        if len(base64_content) > max_encoded:
+            raise ValueError(
+                f"'base64_content' exceeds the {MAX_DRIVE_INLINE_BASE64_BYTES} byte "
+                f"limit (encoded length {len(base64_content)}). Use 'fileUrl' for "
+                "larger uploads, which streams instead of buffering."
+            )
         try:
             file_data = base64.b64decode(base64_content, validate=True)
         except (binascii.Error, ValueError) as exc:
             raise ValueError("'base64_content' must be valid standard base64.") from exc
+        if len(file_data) > MAX_DRIVE_INLINE_BASE64_BYTES:
+            raise ValueError(
+                f"'base64_content' exceeds the {MAX_DRIVE_INLINE_BASE64_BYTES} byte "
+                f"limit ({len(file_data)} bytes). Use 'fileUrl' for larger uploads, "
+                "which streams instead of buffering."
+            )
 
     # Create folder (no content or media_body). Prefer create_drive_folder for new code.
     if mime_type == FOLDER_MIME_TYPE:
@@ -1106,30 +1129,41 @@ async def create_drive_file(
 
             logger.info(f"[create_drive_file] Reading local file: {file_path}")
 
-            # Read file and upload
-            file_data = await asyncio.to_thread(path_obj.read_bytes)
-            total_bytes = len(file_data)
-            logger.info(f"[create_drive_file] Read {total_bytes} bytes from local file")
-
-            media = MediaIoBaseUpload(
-                io.BytesIO(file_data),
-                mimetype=mime_type,
-                resumable=True,
-                chunksize=UPLOAD_CHUNK_SIZE_BYTES,
-            )
-
-            logger.info("[create_drive_file] Starting upload to Google Drive...")
-            created_file = await asyncio.to_thread(
-                service.files()
-                .create(
-                    body=file_metadata,
-                    media_body=media,
-                    fields="id, name, webViewLink",
-                    supportsAllDrives=True,
+            # Finding 11: this used to be `path_obj.read_bytes()`, so a local file of
+            # any size was pulled fully into memory before the upload started. Check
+            # the declared size, then hand the open file to MediaIoBaseUpload, which
+            # reads it in `chunksize` pieces -- memory use is now independent of the
+            # file's size.
+            total_bytes = await asyncio.to_thread(lambda: path_obj.stat().st_size)
+            if total_bytes > MAX_DRIVE_STREAMED_BYTES:
+                raise Exception(
+                    f"Local file exceeds the {MAX_DRIVE_STREAMED_BYTES} byte limit "
+                    f"({total_bytes} bytes): {file_path}"
                 )
-                .execute,
-                num_retries=GOOGLE_API_WRITE_RETRIES,
+            logger.info(
+                f"[create_drive_file] Streaming {total_bytes} bytes from local file"
             )
+
+            with open(path_obj, "rb") as local_file:
+                media = MediaIoBaseUpload(
+                    local_file,
+                    mimetype=mime_type,
+                    resumable=True,
+                    chunksize=UPLOAD_CHUNK_SIZE_BYTES,
+                )
+
+                logger.info("[create_drive_file] Starting upload to Google Drive...")
+                created_file = await asyncio.to_thread(
+                    service.files()
+                    .create(
+                        body=file_metadata,
+                        media_body=media,
+                        fields="id, name, webViewLink",
+                        supportsAllDrives=True,
+                    )
+                    .execute,
+                    num_retries=GOOGLE_API_WRITE_RETRIES,
+                )
         # Handle HTTP/HTTPS URLs
         elif parsed_url.scheme in ("http", "https"):
             # when running in stateless mode, deployment may not have access to local file system
@@ -1144,12 +1178,15 @@ async def create_drive_file(
                     )
                     await asyncio.to_thread(spool.seek, 0)
 
-                    # Try to get MIME type from Content-Type header
-                    if content_type and content_type != "application/octet-stream":
-                        mime_type = content_type
-                        file_metadata["mimeType"] = content_type
+                    # Finding 42: the header is remote-controlled, so strip its
+                    # parameters and validate it before letting it replace the
+                    # caller's mime_type.
+                    resolved_type = normalize_remote_content_type(content_type)
+                    if resolved_type:
+                        mime_type = resolved_type
+                        file_metadata["mimeType"] = resolved_type
                         logger.info(
-                            f"[create_drive_file] Using MIME type from Content-Type header: {content_type}"
+                            f"[create_drive_file] Using MIME type from Content-Type header: {resolved_type}"
                         )
 
                     media = MediaIoBaseUpload(
@@ -1186,8 +1223,9 @@ async def create_drive_file(
                         f"from URL before upload."
                     )
 
-                    if content_type and content_type != "application/octet-stream":
-                        mime_type = content_type
+                    resolved_type = normalize_remote_content_type(content_type)
+                    if resolved_type:
+                        mime_type = resolved_type
                         file_metadata["mimeType"] = mime_type
                         logger.info(
                             f"[create_drive_file] Using MIME type from "

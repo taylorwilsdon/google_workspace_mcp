@@ -20,14 +20,9 @@ def _patch_common_decorator_state(monkeypatch):
     monkeypatch.setattr(service_decorator, "_get_auth_context", fake_get_auth_context)
     monkeypatch.setattr(
         service_decorator,
-        "_extract_oauth20_user_email",
-        lambda args, kwargs, wrapper_sig: "user@example.com",
-    )
-    monkeypatch.setattr(
-        service_decorator,
-        "_override_oauth21_user_email",
-        lambda use_oauth21, authenticated_user, user_google_email, args, kwargs, wrapper_params, tool_name, service_type=None: (
-            user_google_email,
+        "_resolve_legacy_user_email",
+        lambda args, kwargs, wrapper_sig, authenticated_user, tool_name: (
+            "user@example.com",
             args,
         ),
     )

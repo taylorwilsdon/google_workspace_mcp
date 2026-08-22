@@ -15,12 +15,22 @@ import unicodedata
 import uuid
 from pathlib import Path
 from typing import NamedTuple, Optional, Dict
+from urllib.parse import urlparse
 from datetime import datetime, timedelta
+
+from core.limits import (
+    MAX_ATTACHMENT_BYTES as _MAX_ATTACHMENT_BYTES,
+    max_base64_length_for,
+)
 
 logger = logging.getLogger(__name__)
 
 # Default expiration: 1 hour
 DEFAULT_EXPIRATION_SECONDS = 3600
+
+# Finding 3: `save_attachment` decoded a caller-supplied base64 blob straight into
+# memory with no ceiling, so one call could exhaust the process. See core.limits.
+MAX_ATTACHMENT_BYTES = _MAX_ATTACHMENT_BYTES
 
 # Storage directory - configurable via WORKSPACE_ATTACHMENT_DIR env var
 # Uses absolute path to avoid creating tmp/ in arbitrary working directories (see #327)
@@ -97,17 +107,34 @@ class SavedAttachment(NamedTuple):
 
 
 class AttachmentStorage:
-    """Manages temporary storage of email attachments."""
+    """Manages temporary storage of email attachments.
+
+    Every entry records the principal that created it. Reads take an ``owner`` and
+    return nothing when it does not match, because the file id alone is not an
+    authorisation token: findings 24, 30 and 39 all reduce to the store handing any
+    attachment to any caller who had the id.
+    """
 
     def __init__(self, expiration_seconds: int = DEFAULT_EXPIRATION_SECONDS):
         self.expiration_seconds = expiration_seconds
         self._metadata: Dict[str, Dict] = {}
+
+    @staticmethod
+    def _normalize_owner(owner: str) -> str:
+        if not owner or not str(owner).strip():
+            raise ValueError(
+                "An attachment owner is required; attachments cannot be stored "
+                "without the principal they belong to."
+            )
+        return str(owner).strip().lower()
 
     def save_attachment(
         self,
         base64_data: str,
         filename: Optional[str] = None,
         mime_type: Optional[str] = None,
+        *,
+        owner: str,
     ) -> SavedAttachment:
         """
         Save an attachment to local disk.
@@ -116,14 +143,31 @@ class AttachmentStorage:
             base64_data: Base64-encoded attachment data
             filename: Original filename (optional)
             mime_type: MIME type (optional)
+            owner: Principal the attachment belongs to. Required -- only this
+                principal may read it back.
 
         Returns:
             SavedAttachment with file_id (UUID) and path (absolute file path)
+
+        Raises:
+            ValueError: If the data is not valid base64, exceeds
+                :data:`MAX_ATTACHMENT_BYTES`, or no owner was supplied.
         """
+        normalized_owner = self._normalize_owner(owner)
         _ensure_storage_dir()
 
         # Generate unique file ID for metadata tracking
         file_id = str(uuid.uuid4())
+
+        # Check the encoded length first: base64 inflates by 4/3, so an encoded
+        # payload longer than that ratio cannot fit and is rejected without
+        # materialising the decoded bytes.
+        max_encoded_len = max_base64_length_for(MAX_ATTACHMENT_BYTES)
+        if len(base64_data) > max_encoded_len:
+            raise ValueError(
+                f"Attachment exceeds the {MAX_ATTACHMENT_BYTES} byte limit "
+                f"(encoded length {len(base64_data)})"
+            )
 
         # Decode base64 data
         try:
@@ -131,6 +175,12 @@ class AttachmentStorage:
         except Exception as e:
             logger.error(f"Failed to decode base64 attachment data: {e}")
             raise ValueError(f"Invalid base64 data: {e}")
+
+        if len(file_bytes) > MAX_ATTACHMENT_BYTES:
+            raise ValueError(
+                f"Attachment exceeds the {MAX_ATTACHMENT_BYTES} byte limit "
+                f"({len(file_bytes)} bytes)"
+            )
 
         save_name = _build_save_name(file_id, filename, mime_type)
 
@@ -166,7 +216,13 @@ class AttachmentStorage:
             raise
 
         return self._record(
-            file_id, file_path, save_name, filename, mime_type, len(file_bytes)
+            file_id,
+            file_path,
+            save_name,
+            filename,
+            mime_type,
+            len(file_bytes),
+            normalized_owner,
         )
 
     def save_attachment_from_path(
@@ -174,6 +230,8 @@ class AttachmentStorage:
         src_path: str,
         filename: Optional[str] = None,
         mime_type: Optional[str] = None,
+        *,
+        owner: str,
     ) -> SavedAttachment:
         """
         Adopt an already-downloaded file without loading it into memory.
@@ -187,10 +245,12 @@ class AttachmentStorage:
                 storage, so the caller must not reuse it afterwards.
             filename: Original filename (optional)
             mime_type: MIME type (optional)
+            owner: Principal the attachment belongs to. Required.
 
         Returns:
             SavedAttachment with file_id (UUID) and path (absolute file path)
         """
+        normalized_owner = self._normalize_owner(owner)
         _ensure_storage_dir()
 
         file_id = str(uuid.uuid4())
@@ -210,7 +270,13 @@ class AttachmentStorage:
                 f"({size} bytes) to {file_path}"
             )
             return self._record(
-                file_id, file_path, save_name, filename, mime_type, size
+                file_id,
+                file_path,
+                save_name,
+                filename,
+                mime_type,
+                size,
+                normalized_owner,
             )
         except Exception as e:
             # The move can land before a later finalization step fails, leaving a file in
@@ -237,6 +303,7 @@ class AttachmentStorage:
         filename: Optional[str],
         mime_type: Optional[str],
         size: int,
+        owner: str,
     ) -> SavedAttachment:
         """Record a stored file's metadata and return its handle."""
         self._metadata[file_id] = {
@@ -245,35 +312,62 @@ class AttachmentStorage:
             "original_filename": filename,
             "mime_type": mime_type or "application/octet-stream",
             "size": size,
+            "owner": owner,
             "created_at": datetime.now(),
             "expires_at": datetime.now() + timedelta(seconds=self.expiration_seconds),
         }
         return SavedAttachment(file_id=file_id, path=str(file_path))
 
-    def get_attachment_path(self, file_id: str) -> Optional[Path]:
+    def _owned_metadata(self, file_id: str, owner: str) -> Optional[Dict]:
+        """Return live metadata for ``file_id`` when ``owner`` matches, else ``None``.
+
+        A mismatch is reported exactly like a miss so callers cannot distinguish
+        "someone else's attachment" from "no such attachment" and use the route as an
+        existence oracle.
+        """
+        entry = self._metadata.get(file_id)
+        if entry is None:
+            logger.warning(f"Attachment {file_id} not found in metadata")
+            return None
+
+        if datetime.now() > entry["expires_at"]:
+            logger.info(f"Attachment {file_id} has expired, cleaning up")
+            self._cleanup_file(file_id)
+            return None
+
+        try:
+            normalized_owner = self._normalize_owner(owner)
+        except ValueError:
+            logger.warning("Attachment read attempted without an owner")
+            return None
+
+        if entry.get("owner") != normalized_owner:
+            logger.warning(
+                "Denied attachment %s to %s (owned by another principal)",
+                file_id,
+                normalized_owner,
+            )
+            return None
+
+        return entry
+
+    def get_attachment_path(self, file_id: str, *, owner: str) -> Optional[Path]:
         """
         Get the file path for an attachment ID.
 
         Args:
             file_id: Unique file ID
+            owner: Principal requesting the file. Required.
 
         Returns:
-            Path object if file exists and not expired, None otherwise
+            Path object if the file exists, is unexpired, and belongs to ``owner``.
+            ``None`` otherwise.
         """
-        if file_id not in self._metadata:
-            logger.warning(f"Attachment {file_id} not found in metadata")
+        metadata = self._owned_metadata(file_id, owner)
+        if metadata is None:
             return None
 
-        metadata = self._metadata[file_id]
         file_path = Path(metadata["file_path"])
-
-        # Check if expired
-        if datetime.now() > metadata["expires_at"]:
-            logger.info(f"Attachment {file_id} has expired, cleaning up")
-            self._cleanup_file(file_id)
-            return None
-
-        # Check if file exists
         if not file_path.exists():
             logger.warning(f"Attachment file {file_path} does not exist")
             del self._metadata[file_id]
@@ -281,27 +375,20 @@ class AttachmentStorage:
 
         return file_path
 
-    def get_attachment_metadata(self, file_id: str) -> Optional[Dict]:
+    def get_attachment_metadata(self, file_id: str, *, owner: str) -> Optional[Dict]:
         """
         Get metadata for an attachment.
 
         Args:
             file_id: Unique file ID
+            owner: Principal requesting the metadata. Required.
 
         Returns:
-            Metadata dict if exists and not expired, None otherwise
+            Metadata dict if it exists, is unexpired, and belongs to ``owner``.
+            ``None`` otherwise.
         """
-        if file_id not in self._metadata:
-            return None
-
-        metadata = self._metadata[file_id].copy()
-
-        # Check if expired
-        if datetime.now() > metadata["expires_at"]:
-            self._cleanup_file(file_id)
-            return None
-
-        return metadata
+        metadata = self._owned_metadata(file_id, owner)
+        return metadata.copy() if metadata is not None else None
 
     def _cleanup_file(self, file_id: str) -> None:
         """Remove file and metadata."""
@@ -385,13 +472,18 @@ def get_attachment_storage() -> AttachmentStorage:
 
 def get_attachment_url(file_id: str) -> str:
     """
-    Generate a URL for accessing an attachment.
+    Generate an absolute URL for accessing an attachment.
 
     Args:
         file_id: Unique file ID
 
     Returns:
-        Full URL to access the attachment
+        Absolute URL to access the attachment.
+
+    Raises:
+        ValueError: If no base URL can be determined. Finding 38: returning a
+            relative ``/attachments/{id}`` here let consumers skip the trusted-origin
+            check that only runs when a URL has an authority component.
     """
     from core.config import WORKSPACE_MCP_PORT, WORKSPACE_MCP_BASE_URI
 
@@ -415,5 +507,13 @@ def get_attachment_url(file_id: str) -> str:
         base_url = external_url.rstrip("/")
     else:
         base_url = f"{WORKSPACE_MCP_BASE_URI}:{WORKSPACE_MCP_PORT}"
+
+    parsed = urlparse(base_url)
+    if not parsed.scheme or not parsed.netloc:
+        raise ValueError(
+            "Cannot build an absolute attachment URL: configure "
+            "WORKSPACE_EXTERNAL_URL (or WORKSPACE_MCP_BASE_URI and the port) with a "
+            f"scheme and host. Got {base_url!r}."
+        )
 
     return f"{base_url}/attachments/{file_id}"

@@ -136,20 +136,26 @@ def validate_file_path(file_path: str) -> Path:
     within one of the allowed base directories. Rejects paths to sensitive
     system locations regardless of allowlist.
 
+    Finding 34: this used to check ``resolved.exists()`` *first*, so the caller could
+    tell a non-existent path ("Path does not exist") from an existing but forbidden one
+    ("Access ... is not allowed") -- a filesystem existence oracle over the whole
+    machine, reachable without any read permission. Existence is deliberately not
+    checked here at all: this function answers "is this path permitted?", and every
+    caller already checks ``exists()`` itself once permission is established. A
+    forbidden path therefore produces the same answer whether or not it exists.
+
     Args:
         file_path: The raw file path string to validate.
 
     Returns:
-        Path: The resolved, validated Path object.
+        Path: The resolved, validated Path object. The path is not guaranteed to
+        exist; check that separately.
 
     Raises:
         ValueError: If the path is outside allowed directories or targets
                     a sensitive location.
     """
     resolved = Path(file_path).resolve()
-
-    if not resolved.exists():
-        raise FileNotFoundError(f"Path does not exist: {resolved}")
 
     # Block sensitive file patterns regardless of allowlist
     resolved_str = str(resolved)

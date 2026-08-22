@@ -252,6 +252,25 @@ Everything you need to run this in production lives in two places. The [document
 
 The **[Advanced Deployment guide](https://workspacemcp.com/docs/deployment?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=deploy-advanced)** covers self-hosting specifics: reverse proxy setup with `WORKSPACE_EXTERNAL_URL` (including the nginx `Origin: null` consent workaround, the `WORKSPACE_MCP_ALLOW_NULL_ORIGIN_CONSENT` escape hatch, and the `Referrer-Policy` pitfall), origin validation and VS Code webview allowlisting, credential store backends (local directory or GCS with CMEK enforcement), and the **[complete environment variable reference](https://workspacemcp.com/docs/deployment?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=deploy-env-vars#environment-variables)**.
 
+### Required configuration for HTTP deployments
+
+Several controls used to fail open when unconfigured and now have to be stated
+explicitly. Two of them stop the server from starting, so read this before upgrading an
+existing HTTP deployment — [`docs/security/hardening-migration.md`](docs/security/hardening-migration.md)
+has the full list with symptoms and fixes.
+
+| Variable | When required | Why |
+| :--- | :--- | :--- |
+| `WORKSPACE_MCP_ALLOWED_CLIENT_REDIRECT_URIS` | `MCP_ENABLE_OAUTH21=true` | Unset meant "accept any redirect URI" during Dynamic Client Registration, so anyone reaching the registration endpoint could receive authorization codes. **Startup fails if unset.** |
+| `WORKSPACE_EXTERNAL_URL` or `OAUTH_ALLOWED_ORIGINS` | serving on a non-loopback hostname | Origin validation no longer accepts "Origin equals Host", which DNS rebinding satisfies by construction. Unlisted origins get `403`. |
+| `USER_GOOGLE_EMAIL` | legacy OAuth 2.0 (neither OAuth 2.1 nor a trusted gateway) | Legacy mode has no verified per-request identity, so it is single-user. A `user_google_email` argument is only checked for agreement, never used to choose the account. |
+| `DWD_ALLOWED_DOMAINS` | service account **and** `TRUST_GATEWAY_IDENTITY` | The impersonation subject varies per request in that combination, and domain-wide delegation can reach any user in the domain. **Startup fails if unset.** |
+
+Tool-level behaviour changed too: `modify_sheet_values` and `append_table_rows` now write
+values literally unless you pass `allow_formulas`, `/attachments/{id}` requires the same
+bearer token as tool calls and serves only the caller's own files, and `manage_event`
+ignores `responseStatus` for attendees other than the calling user.
+
 ## Security Best Practices
 
 By default this server sends no data anywhere except Google's APIs, using your own OAuth client credentials - no usage reporting, analytics, license server, or SaaS dependency. MIT licensed with no CLA, no dual licensing, and no copyleft in the dependency chain. The full security posture - scope minimization, sensitive-path blocking, stateless mode - is documented at [workspacemcp.com](https://workspacemcp.com/privacy?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=security-privacy).

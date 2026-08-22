@@ -8,7 +8,6 @@ In stdio mode: Starts a minimal HTTP server just for OAuth callbacks
 import asyncio
 import errno
 import logging
-import os
 import threading
 import time
 import socket
@@ -99,8 +98,6 @@ class MinimalOAuthServer:
                     authorization_response=str(request.url),
                     redirect_uri=redirect_uri,
                     session_id=None,
-                    allow_missing_state_fallback=os.getenv("MCP_SINGLE_USER_MODE")
-                    == "1",
                 )
 
                 logger.info(
@@ -121,25 +118,41 @@ class MinimalOAuthServer:
 
         @self.app.get("/attachments/{file_id}")
         async def serve_attachment(file_id: str, request: Request):
-            """Serve a stored attachment file."""
+            """Serve a stored attachment file to the principal that created it.
+
+            Same authorisation rules as the main server's route (findings 24, 30, 39):
+            the file id is not a capability, so the caller must be identifiable and
+            must own the attachment. Misses and denials are indistinguishable.
+            """
+            from auth.http_principal import resolve_http_principal
+
+            principal = await resolve_http_principal(request.headers)
+            if not principal:
+                return JSONResponse(
+                    {"error": "Authentication required"},
+                    status_code=401,
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+
             storage = get_attachment_storage()
-            metadata = storage.get_attachment_metadata(file_id)
+            metadata = storage.get_attachment_metadata(file_id, owner=principal)
 
             if not metadata:
                 return JSONResponse(
                     {"error": "Attachment not found or expired"}, status_code=404
                 )
 
-            file_path = storage.get_attachment_path(file_id)
+            file_path = storage.get_attachment_path(file_id, owner=principal)
             if not file_path:
                 return JSONResponse(
-                    {"error": "Attachment file not found"}, status_code=404
+                    {"error": "Attachment not found or expired"}, status_code=404
                 )
 
             return FileResponse(
                 path=str(file_path),
                 filename=metadata["filename"],
                 media_type=metadata["mime_type"],
+                headers={"X-Content-Type-Options": "nosniff"},
             )
 
     def is_actually_running(self) -> bool:
