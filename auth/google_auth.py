@@ -1140,7 +1140,18 @@ def get_credentials(
                     return None
 
                 if persist_succeeded or is_stateless_mode():
-                    # Also update OAuth21SessionStore
+                    # Also update OAuth21SessionStore.
+                    #
+                    # Do NOT bind this session to the refreshed user when the
+                    # session already belongs to somebody else — that is a
+                    # legitimate multi-account request (e.g. the personal
+                    # account's session asking for a second workspace account),
+                    # and the read path above has already flagged it via
+                    # skip_session_cache. Passing mcp_session_id here makes the
+                    # store attempt a rebind, which it correctly refuses with a
+                    # ValueError; that exception was then caught by the generic
+                    # handler below and reported as a REFRESH failure, throwing
+                    # away a token that had just refreshed successfully.
                     store = get_oauth21_session_store()
                     store.store_session(
                         user_email=user_google_email,
@@ -1151,12 +1162,18 @@ def get_credentials(
                         client_secret=credentials.client_secret,
                         scopes=credentials.scopes,
                         expiry=credentials.expiry,
-                        mcp_session_id=session_id,
+                        mcp_session_id=None if skip_session_cache else session_id,
                         issuer="https://accounts.google.com",  # Add issuer for Google tokens
                     )
 
-            if session_id and (persist_succeeded or is_stateless_mode()):
-                # Update session cache if it was the source or is active
+            if (
+                session_id
+                and not skip_session_cache
+                and (persist_succeeded or is_stateless_mode())
+            ):
+                # Update session cache if it was the source or is active.
+                # Skipped for a cross-account request so the cache keeps
+                # belonging to the session's own user.
                 save_credentials_to_session(session_id, credentials)
         except RefreshError as e:
             logger.warning(
