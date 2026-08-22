@@ -44,6 +44,28 @@ DETAILED_PERSON_FIELDS = (
 # Contact group fields
 CONTACT_GROUP_FIELDS = "name,groupType,memberCount,metadata"
 
+# Default person fields for directory operations - same as contacts but adds
+# locations and userDefined (which often holds HR-system custom fields synced
+# by Workspace admins such as start date or employee id).
+DIRECTORY_DEFAULT_PERSON_FIELDS = (
+    "names,emailAddresses,phoneNumbers,organizations,locations,userDefined"
+)
+
+# Directory source types supported by the People API.
+# DOMAIN_PROFILE = the Workspace user profile (most useful for staff directory).
+# DOMAIN_CONTACT = shared contacts created by domain admins (vendors, externals).
+DIRECTORY_SOURCE_DOMAIN_PROFILE = "DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE"
+DIRECTORY_SOURCE_DOMAIN_CONTACT = "DIRECTORY_SOURCE_TYPE_DOMAIN_CONTACT"
+DEFAULT_DIRECTORY_SOURCES = [
+    DIRECTORY_SOURCE_DOMAIN_PROFILE,
+    DIRECTORY_SOURCE_DOMAIN_CONTACT,
+]
+
+# mergeSources is itself a list-valued enum in the People API; the only useful
+# value today is DIRECTORY_MERGE_SOURCE_TYPE_CONTACT, which asks the server to
+# merge profile and contact records for the same person.
+DIRECTORY_MERGE_SOURCE_CONTACT = "DIRECTORY_MERGE_SOURCE_TYPE_CONTACT"
+
 # Cache warmup tracking
 _search_cache_warmed_up: Dict[str, bool] = {}
 
@@ -744,6 +766,194 @@ async def search_contacts(
 
     logger.info(
         f"Found {len(results)} contacts matching '{query}' for {user_google_email}"
+    )
+    return response
+
+
+def _resolve_directory_sources(sources: Optional[List[str]]) -> List[str]:
+    """Validate and resolve directory source types, with friendly aliases."""
+    if not sources:
+        return list(DEFAULT_DIRECTORY_SOURCES)
+    resolved: List[str] = []
+    for entry in sources:
+        key = (entry or "").strip().upper()
+        if not key:
+            continue
+        if key in {"PROFILE", "DOMAIN_PROFILE", DIRECTORY_SOURCE_DOMAIN_PROFILE}:
+            resolved.append(DIRECTORY_SOURCE_DOMAIN_PROFILE)
+        elif key in {"CONTACT", "DOMAIN_CONTACT", DIRECTORY_SOURCE_DOMAIN_CONTACT}:
+            resolved.append(DIRECTORY_SOURCE_DOMAIN_CONTACT)
+        else:
+            raise UserInputError(
+                f"Unknown directory source '{entry}'. Use 'profile' (Workspace "
+                "user profiles), 'contact' (admin-managed shared contacts), or "
+                "omit to query both."
+            )
+    return resolved or list(DEFAULT_DIRECTORY_SOURCES)
+
+
+@server.tool(
+    title="List Directory People",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+@require_google_service("people", "directory_read")
+@handle_http_errors("list_directory_people", service_type="people")
+async def list_directory_people(
+    service: Resource,
+    user_google_email: str,
+    page_size: int = 100,
+    page_token: Optional[str] = None,
+    sources: Optional[List[str]] = None,
+    merge_contact_into_profile: bool = True,
+) -> str:
+    """
+    List people in the authenticated user's Google Workspace domain directory.
+
+    Returns colleagues from the organization's directory (Workspace user
+    profiles) and/or admin-managed shared domain contacts. Requires the
+    directory.readonly scope and a Google Workspace account; consumer Google
+    accounts cannot access a domain directory.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        page_size (int): Maximum number of people to return (default: 100, max: 1000).
+        page_token (Optional[str]): Token for pagination.
+        sources (Optional[List[str]]): Which directory sources to include.
+            Accepts 'profile' (Workspace user profiles) and 'contact' (shared
+            domain contacts). Defaults to both.
+        merge_contact_into_profile (bool): When True (default), asks the API
+            to merge shared-contact entries into matching profile entries to
+            reduce duplicates.
+
+    Returns:
+        str: List of directory people with their basic information.
+    """
+    logger.info(f"[list_directory_people] Invoked. Email: '{user_google_email}'")
+
+    if page_size < 1:
+        raise UserInputError("page_size must be >= 1")
+    page_size = min(page_size, 1000)
+
+    params: Dict[str, Any] = {
+        "readMask": DIRECTORY_DEFAULT_PERSON_FIELDS,
+        "sources": _resolve_directory_sources(sources),
+        "pageSize": page_size,
+    }
+    if merge_contact_into_profile:
+        params["mergeSources"] = [DIRECTORY_MERGE_SOURCE_CONTACT]
+    if page_token:
+        params["pageToken"] = page_token
+
+    result = await asyncio.to_thread(
+        service.people().listDirectoryPeople(**params).execute
+    )
+
+    people = result.get("people", [])
+    next_page_token = result.get("nextPageToken")
+
+    if not people:
+        return f"No directory people found for {user_google_email}."
+
+    response = (
+        f"Directory people for {user_google_email} "
+        f"({len(people)} returned this page):\n\n"
+    )
+    for person in people:
+        response += _format_contact(person) + "\n\n"
+    if next_page_token:
+        response += f"Next page token: {next_page_token}"
+
+    logger.info(f"Listed {len(people)} directory people for {user_google_email}")
+    return response
+
+
+@server.tool(
+    title="Search Directory People",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+@require_google_service("people", "directory_read")
+@handle_http_errors("search_directory_people", service_type="people")
+async def search_directory_people(
+    service: Resource,
+    user_google_email: str,
+    query: str,
+    page_size: int = 50,
+    page_token: Optional[str] = None,
+    sources: Optional[List[str]] = None,
+    merge_contact_into_profile: bool = True,
+) -> str:
+    """
+    Search the Workspace domain directory by name, email or other fields.
+
+    Substring-matches across names, email addresses, organisations and titles.
+    Requires the directory.readonly scope and a Google Workspace account.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        query (str): Search query string. The API matches against names, email
+            addresses, organisations and a few other fields.
+        page_size (int): Maximum number of results per page (default: 50, max: 500).
+        page_token (Optional[str]): Token for pagination.
+        sources (Optional[List[str]]): Which directory sources to include
+            ('profile' and/or 'contact'). Defaults to both.
+        merge_contact_into_profile (bool): When True (default), asks the API
+            to merge shared-contact entries into matching profile entries to
+            reduce duplicates.
+
+    Returns:
+        str: Matching directory people with their basic information.
+    """
+    logger.info(
+        f"[search_directory_people] Invoked. Email: '{user_google_email}', "
+        f"Query: '{query}'"
+    )
+
+    if not query or not query.strip():
+        raise UserInputError("query must be a non-empty string")
+    if page_size < 1:
+        raise UserInputError("page_size must be >= 1")
+    page_size = min(page_size, 500)
+
+    params: Dict[str, Any] = {
+        "query": query,
+        "readMask": DIRECTORY_DEFAULT_PERSON_FIELDS,
+        "sources": _resolve_directory_sources(sources),
+        "pageSize": page_size,
+    }
+    if merge_contact_into_profile:
+        params["mergeSources"] = [DIRECTORY_MERGE_SOURCE_CONTACT]
+    if page_token:
+        params["pageToken"] = page_token
+
+    result = await asyncio.to_thread(
+        service.people().searchDirectoryPeople(**params).execute
+    )
+
+    people = result.get("people", [])
+    next_page_token = result.get("nextPageToken")
+
+    if not people:
+        return f"No directory people found matching '{query}' for {user_google_email}."
+
+    response = f"Directory search results for '{query}' ({len(people)} found):\n\n"
+    for person in people:
+        response += _format_contact(person) + "\n\n"
+    if next_page_token:
+        response += f"Next page token: {next_page_token}"
+
+    logger.info(
+        f"Found {len(people)} directory people matching '{query}' for "
+        f"{user_google_email}"
     )
     return response
 

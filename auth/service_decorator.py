@@ -61,6 +61,7 @@ from auth.scopes import (
     TASKS_READONLY_SCOPE,
     CONTACTS_SCOPE,
     CONTACTS_READONLY_SCOPE,
+    DIRECTORY_READONLY_SCOPE,
     CUSTOM_SEARCH_SCOPE,
     SCRIPT_PROJECTS_SCOPE,
     SCRIPT_PROJECTS_READONLY_SCOPE,
@@ -603,6 +604,7 @@ SCOPE_GROUPS = {
     # Contacts scopes
     "contacts": CONTACTS_SCOPE,
     "contacts_read": CONTACTS_READONLY_SCOPE,
+    "directory_read": DIRECTORY_READONLY_SCOPE,
     # Custom Search scope
     "customsearch": CUSTOM_SEARCH_SCOPE,
     # Apps Script scopes
