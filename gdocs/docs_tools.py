@@ -395,6 +395,12 @@ async def create_doc(
     """
     Creates a new Google Doc and optionally inserts initial content.
 
+    Note: `content` is inserted verbatim as plain text. Markdown is NOT rendered
+    (characters such as `#`, `**` and `-` appear literally). To create a document
+    from Markdown with automatic conversion, use `import_to_google_doc` with
+    `source_format="markdown"`. For HTML, use `source_format="html"`; for DOCX,
+    provide a `file_path` or `file_url` and use `source_format="docx"`.
+
     After creation, the document body starts at index 1. A new empty doc
     has total length 2 (one section break at index 0, one newline at index 1).
 
@@ -406,7 +412,8 @@ async def create_doc(
     Args:
         user_google_email: User's Google email address
         title: Title of the new document
-        content: Optional initial plain text content to insert
+        content: Optional initial plain text content to insert. Inserted verbatim;
+            Markdown is not rendered. Use import_to_google_doc for Markdown/HTML/DOCX.
 
     Returns:
         str: Confirmation message with document ID, link, and initial document state.
