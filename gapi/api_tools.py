@@ -131,8 +131,7 @@ async def _api_call_impl(
     # httplib2's request() is synchronous, so run it off the event loop.
     authorized_http = service._http
     response, content = await asyncio.to_thread(
-        authorized_http.request,
-        url, method=method, body=request_body, headers=headers
+        authorized_http.request, url, method=method, body=request_body, headers=headers
     )
 
     return _format_response(response.status, content)
