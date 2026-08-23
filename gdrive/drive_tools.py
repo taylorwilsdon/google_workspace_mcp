@@ -1380,7 +1380,7 @@ async def import_to_google_doc(
 
     Args:
         user_google_email (str): The user's Google email address. Required.
-        file_name (str): The name for the new Google Doc (extension will be ignored).
+        file_name (str): The name for the new Google Doc. The extension is stripped from the title, but when 'content' is provided without 'source_format', the extension still drives source-format auto-detection (e.g. end file_name with '.md' so Markdown content, including tables, is not misdetected as plain text).
         content (Optional[str]): Text content for text-based formats. Use only for short snippets or content already in memory.
         file_path (Optional[str]): Local file path or file:// URL for any supported format (MD, TXT, HTML, DOCX, ODT, RTF). Appropriate for larger files than content, but file_path may still load the file into memory or perform non-streaming reads. Avoid very large files that could exceed memory or time limits; use streaming/chunked uploads or an alternative API for huge files.
         file_url (Optional[str]): Remote URL to fetch the file from (http/https).
@@ -1516,7 +1516,7 @@ async def import_to_google_sheets(
 
     Args:
         user_google_email (str): The user's Google email address. Required.
-        file_name (str): The name for the new Google Sheets spreadsheet (extension will be ignored).
+        file_name (str): The name for the new Google Sheets spreadsheet. The extension is stripped from the title, but when 'content' is provided without 'source_format', the extension still drives source-format auto-detection (e.g. end file_name with '.csv' so CSV content is not misdetected).
         content (Optional[str]): Text content for text-based formats (CSV, TSV). Use only for short snippets or content already in memory.
         file_path (Optional[str]): Local file path or file:// URL for any supported format (XLSX, XLS, ODS, CSV, TSV). Appropriate for larger files than content, but file_path may still load the file into memory or perform non-streaming reads. Avoid very large files that could exceed memory or time limits; use streaming/chunked uploads or an alternative API for huge files.
         file_url (Optional[str]): Remote URL to fetch the spreadsheet from (http/https).
