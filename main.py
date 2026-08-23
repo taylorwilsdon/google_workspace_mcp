@@ -713,6 +713,14 @@ def main():
             logger.error("Failed to import tool '%s': %s", tool, exc, exc_info=True)
             failed.append((tool, exc))
 
+    # Always register the generic api_call escape hatch, independent of the
+    # selected services/tier. It carries no service-specific scopes of its own —
+    # it is bounded by whatever the user has already granted.
+    try:
+        import_module("gapi.api_tools")
+    except ModuleNotFoundError as exc:
+        logger.error("Failed to import 'gapi.api_tools': %s", exc, exc_info=True)
+
     # Filter tools based on tier configuration (if tier-based loading is enabled)
     tools_removed = filter_server_tools(server)
 

@@ -157,6 +157,7 @@ import gforms.forms_tools
 import gslides.slides_tools
 import gtasks.tasks_tools
 import gsearch.search_tools
+import gapi.api_tools
 
 # Configure tool registration
 wrap_server_tool_method(server)
