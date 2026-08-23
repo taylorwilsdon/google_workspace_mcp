@@ -114,3 +114,24 @@ def test_no_filtering_when_nothing_is_configured() -> None:
 
     assert filter_server_tools(server) == 0
     assert server.local_provider.removed == []
+
+
+def test_api_call_survives_tier_selection() -> None:
+    # api_call is in no tier, so a --tool-tier run would otherwise filter it out
+    # right after registering it. It must stay: it is bounded by granted scopes,
+    # not by tier selection.
+    server = _fake_server("search_gmail_messages", "send_gmail_message", "api_call")
+    set_enabled_tools({"search_gmail_messages"})
+
+    assert filter_server_tools(server) == 1
+    assert server.local_provider.removed == ["send_gmail_message"]
+    assert "tool:api_call@1" in server.local_provider._components
+
+
+def test_block_list_still_removes_api_call() -> None:
+    server = _fake_server("search_gmail_messages", "api_call")
+    set_enabled_tools({"search_gmail_messages"})
+    set_disabled_tools({"api_call"})
+
+    assert filter_server_tools(server) == 1
+    assert server.local_provider.removed == ["api_call"]
