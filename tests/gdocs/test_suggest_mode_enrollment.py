@@ -122,6 +122,28 @@ def _make_service(get_side_effect):
 
 class TestSuggestModeEnrollmentVerification:
     @pytest.mark.asyncio
+    async def test_inconclusive_post_batch_fetch_does_not_flag_unenrolled(self):
+        """Regression test: a successful suggest-mode batch whose post-batch
+        verification fetch fails (transient error) must not be treated as
+        proof of non-enrollment. Only a real before/after diff should ever
+        set _SUGGEST_MODE_ENROLLED."""
+        service = _make_service(
+            [NO_SUGGESTIONS_DOC, DOC_LENGTH_STUB, RuntimeError("transient read error")]
+        )
+
+        result = await _unwrap(docs_tools.batch_update_doc)(
+            service=service,
+            user_google_email="user@example.com",
+            document_id="a" * 25,
+            operations=INSERT_TEXT_OPERATIONS,
+            suggest_mode=True,
+        )
+
+        assert "Error" not in result
+        assert "Applied as suggested edits" in result
+        assert docs_tools._SUGGEST_MODE_ENROLLED is None
+
+    @pytest.mark.asyncio
     async def test_suggest_mode_confirmed_when_suggestion_appears(self):
         service = _make_service(
             [NO_SUGGESTIONS_DOC, DOC_LENGTH_STUB, WITH_SUGGESTION_DOC]

@@ -1431,29 +1431,35 @@ async def batch_update_doc(
                 (await _fetch_doc_suggestions(service, document_id)).keys()
             )
         except Exception:
+            # The batch itself already succeeded; a failure here only means
+            # verification is inconclusive, not that suggest_mode failed. Log
+            # and leave the enrollment cache untouched rather than risk
+            # flagging a working project as unenrolled off a transient read
+            # error.
             logger.warning(
                 f"[batch_update_doc] Post-batch suggestion fetch failed for "
                 f"{document_id}; enrollment verification inconclusive.",
                 exc_info=True,
             )
-            after_suggestion_ids = before_suggestion_ids  # inconclusive; don't flag
+            after_suggestion_ids = None
 
-        if after_suggestion_ids - before_suggestion_ids:
-            _SUGGEST_MODE_ENROLLED = True
-        else:
-            _SUGGEST_MODE_ENROLLED = False
-            return (
-                "Error: suggest_mode=true was requested, but verification shows "
-                f"the changes were applied directly to document {document_id} "
-                "instead of as pending suggestions. This Google Cloud project is "
-                "most likely not enrolled in the Workspace Developer Preview "
-                f"Program ({_DEVELOPER_PREVIEW_URL}), required for suggested "
-                "edits. Your changes ARE now live in the document (Google "
-                "silently ignored suggest_mode) - undo manually in the Docs UI "
-                "(Edit > Undo) if that's not what you wanted. suggest_mode and "
-                "manage_doc_suggestions are now disabled for the rest of this "
-                "server session; restart the server after enrolling to re-check."
-            )
+        if after_suggestion_ids is not None:
+            if after_suggestion_ids - before_suggestion_ids:
+                _SUGGEST_MODE_ENROLLED = True
+            else:
+                _SUGGEST_MODE_ENROLLED = False
+                return (
+                    "Error: suggest_mode=true was requested, but verification shows "
+                    f"the changes were applied directly to document {document_id} "
+                    "instead of as pending suggestions. This Google Cloud project is "
+                    "most likely not enrolled in the Workspace Developer Preview "
+                    f"Program ({_DEVELOPER_PREVIEW_URL}), required for suggested "
+                    "edits. Your changes ARE now live in the document (Google "
+                    "silently ignored suggest_mode) - undo manually in the Docs UI "
+                    "(Edit > Undo) if that's not what you wanted. suggest_mode and "
+                    "manage_doc_suggestions are now disabled for the rest of this "
+                    "server session; restart the server after enrolling to re-check."
+                )
 
     if success:
         link = f"https://docs.google.com/document/d/{document_id}/edit"
