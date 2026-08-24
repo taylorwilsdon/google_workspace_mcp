@@ -73,6 +73,7 @@ docs:
     - update_doc_headers_footers
     - batch_update_doc
     - manage_doc_suggestions
+    - list_doc_suggestions
     - inspect_doc_structure
     - create_table_with_data
     - debug_table_structure

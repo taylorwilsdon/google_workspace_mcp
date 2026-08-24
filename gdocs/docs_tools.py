@@ -1401,10 +1401,9 @@ async def manage_doc_suggestions(
     Requires the requesting Google Cloud project to be enrolled in the
     Workspace Developer Preview Program; otherwise the API call will fail.
 
-    To find suggestion_ids, call get_doc_content or inspect_doc_structure with
-    suggestions_view_mode="SUGGESTIONS_INLINE" and look for the
-    suggestedInsertionIds / suggestedDeletionIds fields on text runs - each ID
-    identifies a suggestion thread (e.g. "suggest.vcti8ewm4mww").
+    To find suggestion_ids, call list_doc_suggestions first - it returns each
+    pending suggestion thread's ID (e.g. "suggest.vcti8ewm4mww") along with a
+    text preview.
 
     Args:
         user_google_email: User's Google email address
@@ -1452,6 +1451,143 @@ async def manage_doc_suggestions(
         f"in document {document_id} (comment_update_state: {comment_state}). "
         f"Link: {link}"
     )
+
+
+def _collect_suggestions_from_elements(
+    elements: list[dict[str, Any]],
+    suggestions: dict[str, dict[str, Any]],
+    tab_id: Optional[str] = None,
+    depth: int = 0,
+) -> None:
+    """
+    Recursively walk document content elements collecting suggestion IDs
+    (suggestedInsertionIds, suggestedDeletionIds, suggestedTextStyleChanges)
+    found on text runs, keyed by suggestion ID.
+    """
+    if depth > 5:
+        return
+
+    for element in elements:
+        paragraph = element.get("paragraph")
+        if paragraph:
+            for pe in paragraph.get("elements", []):
+                text_run = pe.get("textRun")
+                if not text_run:
+                    continue
+                content = text_run.get("content", "")
+
+                for sid in text_run.get("suggestedInsertionIds", []):
+                    entry = suggestions.setdefault(
+                        sid, {"types": set(), "text_preview": "", "tab_id": tab_id}
+                    )
+                    entry["types"].add("insertion")
+                    entry["text_preview"] += content
+
+                for sid in text_run.get("suggestedDeletionIds", []):
+                    entry = suggestions.setdefault(
+                        sid, {"types": set(), "text_preview": "", "tab_id": tab_id}
+                    )
+                    entry["types"].add("deletion")
+                    entry["text_preview"] += content
+
+                for sid in text_run.get("suggestedTextStyleChanges", {}):
+                    entry = suggestions.setdefault(
+                        sid, {"types": set(), "text_preview": "", "tab_id": tab_id}
+                    )
+                    entry["types"].add("style")
+                    if not entry["text_preview"]:
+                        entry["text_preview"] = content
+
+        table = element.get("table")
+        if table:
+            for row in table.get("tableRows", []):
+                for cell in row.get("tableCells", []):
+                    _collect_suggestions_from_elements(
+                        cell.get("content", []), suggestions, tab_id, depth + 1
+                    )
+
+
+@server.tool(
+    title="List Doc Suggestions",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("list_doc_suggestions", is_read_only=True, service_type="docs")
+@require_google_service("docs", "docs_read")
+async def list_doc_suggestions(
+    service: Any,
+    user_google_email: str,
+    document_id: str,
+) -> str:
+    """
+    Lists pending suggestion threads in a Google Doc, with the suggestion_id
+    values needed to call manage_doc_suggestions (accept/reject/delete).
+
+    Fetches the document with suggestionsViewMode=SUGGESTIONS_INLINE and
+    extracts every suggestion ID found on text runs (suggestedInsertionIds,
+    suggestedDeletionIds, suggestedTextStyleChanges), grouped by ID with a
+    text preview and whether it's an insertion, deletion, and/or style change.
+
+    Note: the Docs API does not expose the author or timestamp of a
+    suggestion - only its ID, type, and affected text are available here.
+
+    Args:
+        user_google_email: User's Google email address
+        document_id: ID of the document to inspect
+
+    Returns:
+        str: One line per suggestion thread ("suggestion_id | types | text
+             preview"), or a message if there are no pending suggestions.
+    """
+    doc_data = await asyncio.to_thread(
+        service.documents()
+        .get(
+            documentId=document_id,
+            includeTabsContent=True,
+            suggestionsViewMode="SUGGESTIONS_INLINE",
+        )
+        .execute
+    )
+
+    suggestions: dict[str, dict[str, Any]] = {}
+
+    _collect_suggestions_from_elements(
+        doc_data.get("body", {}).get("content", []), suggestions
+    )
+
+    def walk_tabs(tab: dict[str, Any]) -> None:
+        doc_tab = tab.get("documentTab")
+        if doc_tab:
+            tab_id = tab.get("tabProperties", {}).get("tabId")
+            _collect_suggestions_from_elements(
+                doc_tab.get("body", {}).get("content", []), suggestions, tab_id
+            )
+        for child_tab in tab.get("childTabs", []):
+            walk_tabs(child_tab)
+
+    for tab in doc_data.get("tabs", []):
+        walk_tabs(tab)
+
+    link = f"https://docs.google.com/document/d/{document_id}/edit"
+
+    if not suggestions:
+        return f"No pending suggestions found in document {document_id}. Link: {link}"
+
+    lines = [f"Pending suggestions in document {document_id}:"]
+    for sid, info in suggestions.items():
+        types = "+".join(sorted(info["types"]))
+        preview = info["text_preview"].replace("\n", "\\n")
+        if len(preview) > 80:
+            preview = preview[:80] + "..."
+        tab_info = f" (tab: {info['tab_id']})" if info["tab_id"] else ""
+        lines.append(f'  {sid} | {types}{tab_info} | "{preview}"')
+
+    lines.append(f"Link: {link}")
+    return "\n".join(lines)
 
 
 @server.tool(
