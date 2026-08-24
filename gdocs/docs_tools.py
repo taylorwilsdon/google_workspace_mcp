@@ -1347,9 +1347,10 @@ async def batch_update_doc(
             Google Cloud project to be enrolled in the Workspace Developer
             Preview Program; otherwise the API call will fail. Not every
             operation type can be suggested - insert_doc_tab, delete_doc_tab,
-            update_doc_tab, create_named_range, delete_named_range, and
-            update_table_column_properties are rejected by the API in suggest
-            mode, as are the document_mode/use_even_page_header_footer/
+            update_doc_tab, create_named_range, delete_named_range,
+            update_table_column_properties, and create_header_footer are
+            rejected by the API in suggest mode, as are the
+            document_mode/use_even_page_header_footer/
             use_first_page_header_footer fields of update_document_style.
 
     Returns:
@@ -1410,6 +1411,11 @@ async def batch_update_doc(
                 (await _fetch_doc_suggestions(service, document_id)).keys()
             )
         except Exception:
+            logger.warning(
+                f"[batch_update_doc] Pre-batch suggestion fetch failed for "
+                f"{document_id}; skipping suggest_mode verification.",
+                exc_info=True,
+            )
             verify_enrollment = False
 
     # Use BatchOperationManager to handle the complex logic
@@ -1425,6 +1431,11 @@ async def batch_update_doc(
                 (await _fetch_doc_suggestions(service, document_id)).keys()
             )
         except Exception:
+            logger.warning(
+                f"[batch_update_doc] Post-batch suggestion fetch failed for "
+                f"{document_id}; enrollment verification inconclusive.",
+                exc_info=True,
+            )
             after_suggestion_ids = before_suggestion_ids  # inconclusive; don't flag
 
         if after_suggestion_ids - before_suggestion_ids:
@@ -1561,7 +1572,18 @@ def _collect_suggestions_from_elements(
     """
     Recursively walk document content elements collecting suggestion IDs
     (suggestedInsertionIds, suggestedDeletionIds, suggestedTextStyleChanges)
-    found on text runs, keyed by suggestion ID.
+    found on paragraph elements, keyed by suggestion ID.
+
+    Every ParagraphElement variant (textRun, autoText, pageBreak, columnBreak,
+    footnoteReference, horizontalRule, inlineObjectElement, person, richLink,
+    date) carries these fields the same way, so this walks every dict-valued
+    key on the element generically instead of special-casing textRun.
+
+    Known gaps (not covered here): suggestedParagraphStyleChanges/
+    suggestedBulletChanges at the paragraph level, and suggestion IDs on
+    tables/rows/cells themselves (only their text content is walked). These
+    would need dedicated handling to surface paragraph-style, bullet, and
+    table-structure suggestions in list_doc_suggestions.
     """
     if depth > 5:
         return
@@ -1570,32 +1592,35 @@ def _collect_suggestions_from_elements(
         paragraph = element.get("paragraph")
         if paragraph:
             for pe in paragraph.get("elements", []):
-                text_run = pe.get("textRun")
-                if not text_run:
-                    continue
-                content = text_run.get("content", "")
+                for sub in pe.values():
+                    if not isinstance(sub, dict):
+                        continue
+                    content = sub.get("content", "")
 
-                for sid in text_run.get("suggestedInsertionIds", []):
-                    entry = suggestions.setdefault(
-                        sid, {"types": set(), "text_preview": "", "tab_id": tab_id}
-                    )
-                    entry["types"].add("insertion")
-                    entry["text_preview"] += content
+                    for sid in sub.get("suggestedInsertionIds", []):
+                        entry = suggestions.setdefault(
+                            sid,
+                            {"types": set(), "text_preview": "", "tab_id": tab_id},
+                        )
+                        entry["types"].add("insertion")
+                        entry["text_preview"] += content
 
-                for sid in text_run.get("suggestedDeletionIds", []):
-                    entry = suggestions.setdefault(
-                        sid, {"types": set(), "text_preview": "", "tab_id": tab_id}
-                    )
-                    entry["types"].add("deletion")
-                    entry["text_preview"] += content
+                    for sid in sub.get("suggestedDeletionIds", []):
+                        entry = suggestions.setdefault(
+                            sid,
+                            {"types": set(), "text_preview": "", "tab_id": tab_id},
+                        )
+                        entry["types"].add("deletion")
+                        entry["text_preview"] += content
 
-                for sid in text_run.get("suggestedTextStyleChanges", {}):
-                    entry = suggestions.setdefault(
-                        sid, {"types": set(), "text_preview": "", "tab_id": tab_id}
-                    )
-                    entry["types"].add("style")
-                    if not entry["text_preview"]:
-                        entry["text_preview"] = content
+                    for sid in sub.get("suggestedTextStyleChanges", {}):
+                        entry = suggestions.setdefault(
+                            sid,
+                            {"types": set(), "text_preview": "", "tab_id": tab_id},
+                        )
+                        entry["types"].add("style")
+                        if not entry["text_preview"]:
+                            entry["text_preview"] = content
 
         table = element.get("table")
         if table:
@@ -1606,12 +1631,25 @@ def _collect_suggestions_from_elements(
                     )
 
 
+def _collect_suggestions_from_segment_map(
+    segment_map: dict[str, Any],
+    suggestions: dict[str, dict[str, Any]],
+    tab_id: Optional[str] = None,
+) -> None:
+    """Walk a headers/footers/footnotes map (id -> {"content": [...]})."""
+    for segment in segment_map.values():
+        _collect_suggestions_from_elements(
+            segment.get("content", []), suggestions, tab_id
+        )
+
+
 async def _fetch_doc_suggestions(
     service: Any, document_id: str
 ) -> dict[str, dict[str, Any]]:
     """
     Fetch a document with suggestionsViewMode=SUGGESTIONS_INLINE and return
-    every pending suggestion found, keyed by suggestion ID.
+    every pending suggestion found in the body, headers, footers, and
+    footnotes of the main document and every tab, keyed by suggestion ID.
     """
     doc_data = await asyncio.to_thread(
         service.documents()
@@ -1628,6 +1666,9 @@ async def _fetch_doc_suggestions(
     _collect_suggestions_from_elements(
         doc_data.get("body", {}).get("content", []), suggestions
     )
+    _collect_suggestions_from_segment_map(doc_data.get("headers", {}), suggestions)
+    _collect_suggestions_from_segment_map(doc_data.get("footers", {}), suggestions)
+    _collect_suggestions_from_segment_map(doc_data.get("footnotes", {}), suggestions)
 
     def walk_tabs(tab: dict[str, Any]) -> None:
         doc_tab = tab.get("documentTab")
@@ -1635,6 +1676,15 @@ async def _fetch_doc_suggestions(
             tab_id = tab.get("tabProperties", {}).get("tabId")
             _collect_suggestions_from_elements(
                 doc_tab.get("body", {}).get("content", []), suggestions, tab_id
+            )
+            _collect_suggestions_from_segment_map(
+                doc_tab.get("headers", {}), suggestions, tab_id
+            )
+            _collect_suggestions_from_segment_map(
+                doc_tab.get("footers", {}), suggestions, tab_id
+            )
+            _collect_suggestions_from_segment_map(
+                doc_tab.get("footnotes", {}), suggestions, tab_id
             )
         for child_tab in tab.get("childTabs", []):
             walk_tabs(child_tab)
@@ -1974,6 +2024,7 @@ _SUGGEST_MODE_UNSUPPORTED_OPERATION_TYPES = {
     "create_named_range": "CreateNamedRange",
     "delete_named_range": "DeleteNamedRange",
     "update_table_column_properties": "UpdateTableColumnProperties",
+    "create_header_footer": "CreateHeader/CreateFooter",
 }
 
 # update_document_style fields the API rejects as suggestions.

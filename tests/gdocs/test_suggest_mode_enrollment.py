@@ -48,10 +48,55 @@ WITH_SUGGESTION_DOC = {
     "tabs": [],
 }
 
+NO_SUGGESTIONS_DOC_WITH_HEADER = {
+    "body": {"content": [{"paragraph": {"elements": [{"textRun": {"content": "Hello\n"}}]}}]},
+    "headers": {
+        "header1": {
+            "content": [
+                {"paragraph": {"elements": [{"textRun": {"content": "Header text\n"}}]}}
+            ]
+        }
+    },
+    "tabs": [],
+}
+
+WITH_HEADER_SUGGESTION_DOC = {
+    "body": {"content": [{"paragraph": {"elements": [{"textRun": {"content": "Hello\n"}}]}}]},
+    "headers": {
+        "header1": {
+            "content": [
+                {
+                    "paragraph": {
+                        "elements": [
+                            {"textRun": {"content": "Header text\n"}},
+                            {
+                                "textRun": {
+                                    "content": "Suggested header addition\n",
+                                    "suggestedInsertionIds": ["suggest.header1"],
+                                }
+                            },
+                        ]
+                    }
+                }
+            ]
+        }
+    },
+    "tabs": [],
+}
+
 DOC_LENGTH_STUB = {"body": {"content": [{"endIndex": 100}]}}
 
 INSERT_TEXT_OPERATIONS = [
     {"type": "insert_text", "end_of_segment": True, "text": "New sentence\n"}
+]
+
+HEADER_INSERT_OPERATIONS = [
+    {
+        "type": "insert_text",
+        "end_of_segment": True,
+        "text": "Suggested header addition\n",
+        "segment_id": "header1",
+    }
 ]
 
 
@@ -93,6 +138,9 @@ class TestSuggestModeEnrollmentVerification:
         assert "Error" not in result
         assert "Applied as suggested edits" in result
         assert docs_tools._SUGGEST_MODE_ENROLLED is True
+
+        body = service.documents.return_value.batchUpdate.call_args.kwargs["body"]
+        assert body["writeControl"] == {"writeMode": "SUGGEST"}
 
     @pytest.mark.asyncio
     async def test_suggest_mode_flagged_when_no_new_suggestion_appears(self):
@@ -181,3 +229,47 @@ class TestSuggestModeEnrollmentVerification:
 
         assert "Error" not in result
         assert docs_tools._SUGGEST_MODE_ENROLLED is None
+
+        body = service.documents.return_value.batchUpdate.call_args.kwargs["body"]
+        assert "writeControl" not in body
+
+    @pytest.mark.asyncio
+    async def test_header_suggestion_is_detected_by_verifier(self):
+        """Regression test: a suggestion inside a header must not be missed
+        by the enrollment verifier. Previously _fetch_doc_suggestions only
+        walked body/tabs, so a real suggestion placed in a header would look
+        identical before/after and falsely disable suggest_mode for the rest
+        of the process."""
+        service = _make_service(
+            [
+                NO_SUGGESTIONS_DOC_WITH_HEADER,
+                DOC_LENGTH_STUB,
+                WITH_HEADER_SUGGESTION_DOC,
+            ]
+        )
+
+        result = await _unwrap(docs_tools.batch_update_doc)(
+            service=service,
+            user_google_email="user@example.com",
+            document_id="a" * 25,
+            operations=HEADER_INSERT_OPERATIONS,
+            suggest_mode=True,
+        )
+
+        assert "Error" not in result
+        assert docs_tools._SUGGEST_MODE_ENROLLED is True
+
+
+class TestValidateSuggestModeOperations:
+    def test_create_header_footer_rejected(self):
+        error = docs_tools._validate_suggest_mode_operations(
+            [{"type": "create_header_footer", "section_type": "header"}]
+        )
+        assert error is not None
+        assert "CreateHeader/CreateFooter" in error
+
+    def test_plain_insert_text_allowed(self):
+        error = docs_tools._validate_suggest_mode_operations(
+            [{"type": "insert_text", "end_of_segment": True, "text": "hi\n"}]
+        )
+        assert error is None
