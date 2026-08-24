@@ -74,6 +74,42 @@ import json
 logger = logging.getLogger(__name__)
 HEADER_FOOTER_RUNTIME_CANARY = "docs-hf-canary-20260328b"
 
+# Google exposes no API to query Workspace Developer Preview Program
+# enrollment. Suggested edits (suggest_mode) and suggestion-thread management
+# (manage_doc_suggestions) are Preview-only, so the only way to know whether
+# the caller's Cloud project is enrolled is to actually try it and check the
+# result. This cache holds that outcome for the life of the process:
+#   None  - not yet verified
+#   True  - a suggest_mode call was confirmed to produce a real suggestion
+#   False - a suggest_mode call silently applied as a direct edit (or a
+#           suggestion-thread call failed), meaning the project is almost
+#           certainly not enrolled; suggestion features are disabled for the
+#           rest of this process.
+_SUGGEST_MODE_ENROLLED: Optional[bool] = None
+
+# Operation types that leave a suggestedInsertionIds/suggestedDeletionIds/
+# suggestedTextStyleChanges marker on a text run, so a before/after diff can
+# actually detect whether suggest_mode took effect.
+_SUGGEST_MODE_VERIFIABLE_OP_TYPES = {
+    "insert_text",
+    "delete_text",
+    "replace_text",
+    "format_text",
+    "find_replace",
+}
+
+_DEVELOPER_PREVIEW_URL = "https://developers.google.com/workspace/preview"
+
+_SUGGEST_MODE_NOT_ENROLLED_ERROR = (
+    "Suggestion features are disabled for this server process: an earlier call "
+    "showed that suggested edits were applied directly to the document instead "
+    "of as pending suggestions, which means this Google Cloud project is most "
+    f"likely not enrolled in the Workspace Developer Preview Program ({_DEVELOPER_PREVIEW_URL}), "
+    "required for suggest_mode and manage_doc_suggestions. Enroll there, then "
+    "restart this server to re-check. In the meantime, call batch_update_doc "
+    "with suggest_mode=false to apply changes directly."
+)
+
 
 @server.tool(
     title="Search Docs",
@@ -1319,6 +1355,8 @@ async def batch_update_doc(
     Returns:
         str: Confirmation message with batch results and document length for chaining
     """
+    global _SUGGEST_MODE_ENROLLED
+
     normalized_operations = [
         operation.model_dump(exclude_none=True)
         if hasattr(operation, "model_dump")
@@ -1343,9 +1381,36 @@ async def batch_update_doc(
         return f"Error: {error_msg}"
 
     if suggest_mode:
+        if _SUGGEST_MODE_ENROLLED is False:
+            return f"Error: {_SUGGEST_MODE_NOT_ENROLLED_ERROR}"
+
         unsupported_error = _validate_suggest_mode_operations(normalized_operations)
         if unsupported_error:
             return f"Error: {unsupported_error}"
+
+    # Google exposes no capability-check API for Developer Preview enrollment,
+    # and an unenrolled project may silently ignore writeControl.writeMode and
+    # apply changes directly instead of erroring. So the first time suggest_mode
+    # is used in this process, verify it actually produced a suggestion by
+    # diffing suggestion IDs before/after. Only meaningful for op types that
+    # leave a suggestedInsertionIds/suggestedDeletionIds/suggestedTextStyleChanges
+    # marker on a text run; skipped (and trusted) for structural-only batches.
+    verify_enrollment = (
+        suggest_mode
+        and _SUGGEST_MODE_ENROLLED is not True
+        and any(
+            op.get("type") in _SUGGEST_MODE_VERIFIABLE_OP_TYPES
+            for op in normalized_operations
+        )
+    )
+    before_suggestion_ids: set[str] = set()
+    if verify_enrollment:
+        try:
+            before_suggestion_ids = set(
+                (await _fetch_doc_suggestions(service, document_id)).keys()
+            )
+        except Exception:
+            verify_enrollment = False
 
     # Use BatchOperationManager to handle the complex logic
     batch_manager = BatchOperationManager(service)
@@ -1353,6 +1418,31 @@ async def batch_update_doc(
     success, message, metadata = await batch_manager.execute_batch_operations(
         document_id, normalized_operations, suggest_mode=suggest_mode
     )
+
+    if success and verify_enrollment:
+        try:
+            after_suggestion_ids = set(
+                (await _fetch_doc_suggestions(service, document_id)).keys()
+            )
+        except Exception:
+            after_suggestion_ids = before_suggestion_ids  # inconclusive; don't flag
+
+        if after_suggestion_ids - before_suggestion_ids:
+            _SUGGEST_MODE_ENROLLED = True
+        else:
+            _SUGGEST_MODE_ENROLLED = False
+            return (
+                "Error: suggest_mode=true was requested, but verification shows "
+                f"the changes were applied directly to document {document_id} "
+                "instead of as pending suggestions. This Google Cloud project is "
+                "most likely not enrolled in the Workspace Developer Preview "
+                f"Program ({_DEVELOPER_PREVIEW_URL}), required for suggested "
+                "edits. Your changes ARE now live in the document (Google "
+                "silently ignored suggest_mode) - undo manually in the Docs UI "
+                "(Edit > Undo) if that's not what you wanted. suggest_mode and "
+                "manage_doc_suggestions are now disabled for the rest of this "
+                "server session; restart the server after enrolling to re-check."
+            )
 
     if success:
         link = f"https://docs.google.com/document/d/{document_id}/edit"
@@ -1417,6 +1507,11 @@ async def manage_doc_suggestions(
     Returns:
         str: Confirmation message including how many suggestions were processed
     """
+    global _SUGGEST_MODE_ENROLLED
+
+    if _SUGGEST_MODE_ENROLLED is False:
+        return f"Error: {_SUGGEST_MODE_NOT_ENROLLED_ERROR}"
+
     if not suggestion_ids:
         return "Error: suggestion_ids cannot be empty"
 
@@ -1443,6 +1538,10 @@ async def manage_doc_suggestions(
         .batchUpdate(documentId=document_id, body={"requests": requests})
         .execute
     )
+
+    # A successful accept/reject/delete is itself confirmation the Preview
+    # feature works for this project.
+    _SUGGEST_MODE_ENROLLED = True
 
     comment_state = result.get("commentUpdateState")
     link = f"https://docs.google.com/document/d/{document_id}/edit"
@@ -1507,6 +1606,45 @@ def _collect_suggestions_from_elements(
                     )
 
 
+async def _fetch_doc_suggestions(
+    service: Any, document_id: str
+) -> dict[str, dict[str, Any]]:
+    """
+    Fetch a document with suggestionsViewMode=SUGGESTIONS_INLINE and return
+    every pending suggestion found, keyed by suggestion ID.
+    """
+    doc_data = await asyncio.to_thread(
+        service.documents()
+        .get(
+            documentId=document_id,
+            includeTabsContent=True,
+            suggestionsViewMode="SUGGESTIONS_INLINE",
+        )
+        .execute
+    )
+
+    suggestions: dict[str, dict[str, Any]] = {}
+
+    _collect_suggestions_from_elements(
+        doc_data.get("body", {}).get("content", []), suggestions
+    )
+
+    def walk_tabs(tab: dict[str, Any]) -> None:
+        doc_tab = tab.get("documentTab")
+        if doc_tab:
+            tab_id = tab.get("tabProperties", {}).get("tabId")
+            _collect_suggestions_from_elements(
+                doc_tab.get("body", {}).get("content", []), suggestions, tab_id
+            )
+        for child_tab in tab.get("childTabs", []):
+            walk_tabs(child_tab)
+
+    for tab in doc_data.get("tabs", []):
+        walk_tabs(tab)
+
+    return suggestions
+
+
 @server.tool(
     title="List Doc Suggestions",
     annotations=ToolAnnotations(
@@ -1543,34 +1681,7 @@ async def list_doc_suggestions(
         str: One line per suggestion thread ("suggestion_id | types | text
              preview"), or a message if there are no pending suggestions.
     """
-    doc_data = await asyncio.to_thread(
-        service.documents()
-        .get(
-            documentId=document_id,
-            includeTabsContent=True,
-            suggestionsViewMode="SUGGESTIONS_INLINE",
-        )
-        .execute
-    )
-
-    suggestions: dict[str, dict[str, Any]] = {}
-
-    _collect_suggestions_from_elements(
-        doc_data.get("body", {}).get("content", []), suggestions
-    )
-
-    def walk_tabs(tab: dict[str, Any]) -> None:
-        doc_tab = tab.get("documentTab")
-        if doc_tab:
-            tab_id = tab.get("tabProperties", {}).get("tabId")
-            _collect_suggestions_from_elements(
-                doc_tab.get("body", {}).get("content", []), suggestions, tab_id
-            )
-        for child_tab in tab.get("childTabs", []):
-            walk_tabs(child_tab)
-
-    for tab in doc_data.get("tabs", []):
-        walk_tabs(tab)
+    suggestions = await _fetch_doc_suggestions(service, document_id)
 
     link = f"https://docs.google.com/document/d/{document_id}/edit"
 
