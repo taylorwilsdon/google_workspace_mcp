@@ -839,6 +839,289 @@ class TestResourceMapSuggestions:
         assert found == {}
 
 
+# Every suggestion-marker field in Docs API v1, and the schemas carrying each.
+# Derived from the discovery document:
+#   curl 'https://docs.googleapis.com/$discovery/rest?version=v1'
+# then collect property names starting with "suggested" across all schemas.
+# Regenerate when upgrading API versions; a field absent from
+# _SUGGESTION_CHANGE_MAPS (or from the insertion/deletion handling) is a
+# suggestion nobody can list, and therefore nobody can accept or reject.
+_ALL_SUGGESTION_FIELDS = {
+    "suggestedInsertionIds",  # array, 16 schemas
+    "suggestedDeletionIds",  # array, 19 schemas
+    "suggestedInsertionId",  # STRING (singular) - List, InlineObject, PositionedObject
+    "suggestedTextStyleChanges",
+    "suggestedParagraphStyleChanges",
+    "suggestedBulletChanges",
+    "suggestedPositionedObjectIds",
+    "suggestedTableRowStyleChanges",
+    "suggestedTableCellStyleChanges",
+    "suggestedDocumentStyleChanges",
+    "suggestedNamedStylesChanges",
+    "suggestedListPropertiesChanges",
+    "suggestedInlineObjectPropertiesChanges",
+    "suggestedPositionedObjectPropertiesChanges",
+    "suggestedDateElementPropertiesChanges",
+}
+
+# Every ParagraphElement variant that can carry suggestion markers.
+_PARAGRAPH_ELEMENT_VARIANTS = [
+    "textRun",
+    "autoText",
+    "pageBreak",
+    "columnBreak",
+    "footnoteReference",
+    "horizontalRule",
+    "inlineObjectElement",
+    "person",
+    "richLink",
+    "dateElement",
+    "equation",
+]
+
+
+def _all_marker_ids(node, acc):
+    """Collect every suggestion ID planted anywhere in a document payload."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key in ("suggestedInsertionIds", "suggestedDeletionIds"):
+                acc.update(value)
+            elif key == "suggestedInsertionId":
+                acc.add(value)
+            elif key.startswith("suggested") and isinstance(value, dict):
+                acc.update(value)
+            else:
+                _all_marker_ids(value, acc)
+    elif isinstance(node, list):
+        for item in node:
+            _all_marker_ids(item, acc)
+
+
+def _document_with_every_marker():
+    """Build a document carrying every suggestion field at every location."""
+
+    def element(name):
+        """Build one ParagraphElement variant carrying every marker it can."""
+        node = {
+            "suggestedInsertionIds": [f"s.{name}.ins"],
+            "suggestedDeletionIds": [f"s.{name}.del"],
+            "suggestedTextStyleChanges": {f"s.{name}.style": {}},
+        }
+        if name == "dateElement":
+            node["suggestedDateElementPropertiesChanges"] = {f"s.{name}.dateprops": {}}
+        return {name: node}
+
+    def segment(kind):
+        """Build a header/footer/footnote map with one suggested run."""
+        return {
+            f"{kind}1": {
+                "content": [
+                    {
+                        "paragraph": {
+                            "elements": [
+                                {
+                                    "textRun": {
+                                        "suggestedInsertionIds": [f"s.{kind}"],
+                                        "content": "x",
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        }
+
+    return {
+        "suggestedDocumentStyleChanges": {"s.doc.style": {}},
+        "suggestedNamedStylesChanges": {"s.doc.named": {}},
+        "body": {
+            "content": [
+                {
+                    "paragraph": {
+                        "elements": [
+                            element(n) for n in _PARAGRAPH_ELEMENT_VARIANTS
+                        ],
+                        "suggestedParagraphStyleChanges": {"s.para.style": {}},
+                        "suggestedBulletChanges": {"s.para.bullet": {}},
+                        "suggestedPositionedObjectIds": {"s.para.posobj": {}},
+                    }
+                },
+                {
+                    "table": {
+                        "suggestedInsertionIds": ["s.table.ins"],
+                        "suggestedDeletionIds": ["s.table.del"],
+                        "tableRows": [
+                            {
+                                "suggestedInsertionIds": ["s.row.ins"],
+                                "suggestedTableRowStyleChanges": {"s.row.style": {}},
+                                "tableCells": [
+                                    {
+                                        "suggestedInsertionIds": ["s.cell.ins"],
+                                        "suggestedTableCellStyleChanges": {
+                                            "s.cell.style": {}
+                                        },
+                                        "content": [
+                                            {
+                                                "paragraph": {
+                                                    "elements": [
+                                                        {
+                                                            "textRun": {
+                                                                "suggestedInsertionIds": [
+                                                                    "s.incell"
+                                                                ],
+                                                                "content": "x",
+                                                            }
+                                                        }
+                                                    ]
+                                                }
+                                            }
+                                        ],
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                },
+                {
+                    "tableOfContents": {
+                        "suggestedInsertionIds": ["s.toc.ins"],
+                        "content": [
+                            {
+                                "paragraph": {
+                                    "elements": [
+                                        {
+                                            "textRun": {
+                                                "suggestedInsertionIds": ["s.intoc"],
+                                                "content": "x",
+                                            }
+                                        }
+                                    ]
+                                }
+                            }
+                        ],
+                    }
+                },
+                {"sectionBreak": {"suggestedInsertionIds": ["s.sec.ins"]}},
+            ]
+        },
+        "headers": segment("header"),
+        "footers": segment("footer"),
+        "footnotes": segment("footnote"),
+        "lists": {
+            "l1": {
+                "suggestedInsertionId": "s.list.ins",
+                "suggestedListPropertiesChanges": {"s.list.props": {}},
+            }
+        },
+        "inlineObjects": {
+            "i1": {
+                "suggestedInsertionId": "s.inline.ins",
+                "suggestedInlineObjectPropertiesChanges": {"s.inline.props": {}},
+            }
+        },
+        "positionedObjects": {
+            "p1": {
+                "suggestedInsertionId": "s.pos.ins",
+                "suggestedPositionedObjectPropertiesChanges": {"s.pos.props": {}},
+            }
+        },
+        "tabs": [],
+    }
+
+
+class TestExhaustiveSuggestionCoverage:
+    """The walk must reach every place the Docs API records a suggestion.
+
+    Three consecutive review rounds found markers in locations the walk did
+    not reach, each leaving real suggestions unlistable and therefore
+    unmanageable. These tests pin the full surface derived from the API
+    discovery document rather than patching one location at a time.
+    """
+
+    def test_every_known_field_is_handled(self):
+        """No suggestion field in the API may go uncollected."""
+        handled = set(docs_tools._SUGGESTION_CHANGE_MAPS) | {
+            "suggestedInsertionIds",
+            "suggestedDeletionIds",
+            "suggestedInsertionId",
+        }
+        assert _ALL_SUGGESTION_FIELDS - handled == set()
+
+    @pytest.mark.asyncio
+    async def test_every_marker_location_is_reached(self):
+        """A document with a marker everywhere yields every planted ID."""
+        payload = _document_with_every_marker()
+        expected = set()
+        _all_marker_ids(payload, expected)
+
+        service = Mock()
+        service.documents.return_value.get.return_value.execute.return_value = payload
+        found = await docs_tools._fetch_doc_suggestions(service, "a" * 25)
+
+        assert expected - set(found) == set(), "markers the walk failed to reach"
+        assert set(found) - expected == set(), "IDs invented by the walk"
+
+    @pytest.mark.asyncio
+    async def test_markers_inside_a_table_of_contents_are_reached(self):
+        """A table of contents nests structural content of its own."""
+        payload = {
+            "body": {
+                "content": [
+                    {
+                        "tableOfContents": {
+                            "content": [
+                                {
+                                    "paragraph": {
+                                        "elements": [
+                                            {
+                                                "textRun": {
+                                                    "suggestedInsertionIds": [
+                                                        "suggest.intoc"
+                                                    ],
+                                                    "content": "Heading",
+                                                }
+                                            }
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            "tabs": [],
+        }
+        service = Mock()
+        service.documents.return_value.get.return_value.execute.return_value = payload
+
+        found = await docs_tools._fetch_doc_suggestions(service, "a" * 25)
+
+        assert "suggest.intoc" in found
+
+    def test_date_element_property_suggestions_are_reached(self):
+        """dateElement carries a properties-change map of its own."""
+        elements = [
+            {
+                "paragraph": {
+                    "elements": [
+                        {
+                            "dateElement": {
+                                "suggestedDateElementPropertiesChanges": {
+                                    "suggest.date": {}
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        ]
+        found = {}
+        docs_tools._collect_suggestions_from_elements(elements, found)
+
+        assert found["suggest.date"]["types"] == {"date-element-properties"}
+
+
 class TestValidateSuggestModeOperations:
     """Client-side rejection of operations the API refuses in suggest mode."""
 

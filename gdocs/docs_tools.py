@@ -1643,10 +1643,17 @@ def _collect_suggestions_from_elements(
         return
 
     for element in elements:
-        for key in ("sectionBreak", "tableOfContents"):
-            node = element.get(key)
-            if isinstance(node, dict):
-                _collect_suggestion_markers(node, suggestions, tab_id)
+        section_break = element.get("sectionBreak")
+        if isinstance(section_break, dict):
+            _collect_suggestion_markers(section_break, suggestions, tab_id)
+
+        table_of_contents = element.get("tableOfContents")
+        if isinstance(table_of_contents, dict):
+            _collect_suggestion_markers(table_of_contents, suggestions, tab_id)
+            # A table of contents nests its own structural content.
+            _collect_suggestions_from_elements(
+                table_of_contents.get("content", []), suggestions, tab_id, depth + 1
+            )
 
         paragraph = element.get("paragraph")
         if paragraph:
@@ -1700,6 +1707,7 @@ _SUGGESTION_CHANGE_MAPS = {
     "suggestedListPropertiesChanges": "list-properties",
     "suggestedInlineObjectPropertiesChanges": "inline-object-properties",
     "suggestedPositionedObjectPropertiesChanges": "positioned-object-properties",
+    "suggestedDateElementPropertiesChanges": "date-element-properties",
 }
 
 # Document resource maps whose entries carry their own suggestion markers.
