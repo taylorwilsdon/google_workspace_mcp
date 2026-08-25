@@ -4,20 +4,63 @@ Unit tests for Google Forms MCP tools
 Tests the batch_update_form tool with mocked API responses
 """
 
+import inspect
 import pytest
 from unittest.mock import Mock
 import sys
 import os
 
+from pydantic import TypeAdapter
+
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+
+from core.utils import DictList
 
 # Import internal implementation functions (not decorated tool wrappers)
 from gforms.forms_tools import (
     _batch_update_form_impl,
     _serialize_form_item,
+    batch_update_form,
     get_form,
     set_publish_settings,
 )
+
+
+def _raw(fn):
+    """Unwrap the FastMCP tool + decorators to the original async function."""
+    fn = getattr(fn, "fn", fn)
+    while hasattr(fn, "__wrapped__"):
+        fn = fn.__wrapped__
+    return fn
+
+
+def _requests_adapter() -> TypeAdapter:
+    """TypeAdapter for the wired ``requests`` annotation on batch_update_form."""
+    annotation = (
+        inspect.signature(_raw(batch_update_form)).parameters["requests"].annotation
+    )
+    return TypeAdapter(annotation)
+
+
+class TestBatchUpdateFormRequestsCoercion:
+    """The ``requests`` param must accept both a native list and a JSON-encoded
+    string of a list — some MCP clients serialise array args as strings."""
+
+    def test_requests_annotation_is_dictlist(self):
+        annotation = (
+            inspect.signature(_raw(batch_update_form)).parameters["requests"].annotation
+        )
+        assert annotation is DictList
+
+    def test_requests_accepts_native_list(self):
+        value = [{"createItem": {"item": {"title": "Q1"}, "location": {"index": 0}}}]
+        assert _requests_adapter().validate_python(value) == value
+
+    def test_requests_coerces_json_array_string(self):
+        value = [{"createItem": {"item": {"title": "Q1"}, "location": {"index": 0}}}]
+        import json as _json
+
+        assert _requests_adapter().validate_python(_json.dumps(value)) == value
 
 
 @pytest.mark.asyncio

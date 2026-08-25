@@ -1,8 +1,10 @@
+import inspect
 from unittest.mock import Mock
 
 import pytest
+from pydantic import TypeAdapter
 
-from core.utils import UserInputError
+from core.utils import DictList, UserInputError
 from gslides.slides_tools import (
     _describe_elements,
     _extract_shape_text,
@@ -19,6 +21,38 @@ def _unwrap(tool):
     while hasattr(fn, "__wrapped__"):
         fn = fn.__wrapped__
     return fn
+
+
+class TestBatchUpdatePresentationRequestsCoercion:
+    """The ``requests`` param must accept both a native list and a JSON-encoded
+    string of a list — some MCP clients serialise array args as strings."""
+
+    @staticmethod
+    def _adapter() -> TypeAdapter:
+        annotation = (
+            inspect.signature(_unwrap(batch_update_presentation))
+            .parameters["requests"]
+            .annotation
+        )
+        return TypeAdapter(annotation)
+
+    def test_requests_annotation_is_dictlist(self):
+        annotation = (
+            inspect.signature(_unwrap(batch_update_presentation))
+            .parameters["requests"]
+            .annotation
+        )
+        assert annotation is DictList
+
+    def test_requests_accepts_native_list(self):
+        value = [{"createSlide": {"objectId": "s1"}}]
+        assert self._adapter().validate_python(value) == value
+
+    def test_requests_coerces_json_array_string(self):
+        import json as _json
+
+        value = [{"createSlide": {"objectId": "s1"}}]
+        assert self._adapter().validate_python(_json.dumps(value)) == value
 
 
 def _build_slides_service(presentation=None, batch_update_response=None):

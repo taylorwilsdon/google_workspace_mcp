@@ -14,7 +14,7 @@ from mcp.types import ToolAnnotations
 
 from auth.service_decorator import require_google_service
 from core.server import server
-from core.utils import handle_http_errors
+from core.utils import handle_http_errors, DictList
 
 logger = logging.getLogger(__name__)
 
@@ -509,7 +509,7 @@ async def batch_update_form(
     service,
     user_google_email: str,
     form_id: str,
-    requests: List[Dict[str, Any]],
+    requests: DictList,
 ) -> str:
     """
     Apply batch updates to a Google Form.
