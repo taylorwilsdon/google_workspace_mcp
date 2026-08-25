@@ -160,6 +160,9 @@ async def test_forward_simple_text_email():
     assert "Email forwarded" in result
     assert "fwd001" in result
     mock_service.users().messages().send.assert_called()
+    mock_service.users().messages().send.return_value.execute.assert_called_once_with(
+        num_retries=0
+    )
 
     sent = get_sent_mime_message(mock_service)
     assert sent["Subject"] == "Fwd: Hello"

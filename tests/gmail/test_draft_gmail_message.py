@@ -1665,3 +1665,6 @@ async def test_send_gmail_message_does_not_fetch_thread_for_a_new_message():
     )
 
     assert mock_service.users.return_value.threads.return_value.get.call_count == 0
+    mock_service.users().messages().send.return_value.execute.assert_called_once_with(
+        num_retries=0
+    )
