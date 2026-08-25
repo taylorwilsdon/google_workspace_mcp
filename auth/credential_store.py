@@ -10,13 +10,74 @@ import logging
 import os
 import re
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 from urllib.parse import quote, unquote
 
 from google.oauth2.credentials import Credentials
 
 logger = logging.getLogger(__name__)
+
+
+def _configured_oauth_client() -> tuple[Optional[str], Optional[str]]:
+    """Load OAuth client_id/secret from application config (not from credential files)."""
+    try:
+        from auth.oauth_config import get_oauth_config
+
+        cfg = get_oauth_config()
+        return cfg.client_id, cfg.client_secret
+    except Exception as e:
+        logger.debug(f"Could not load OAuth client config: {e}")
+        return None, None
+
+
+def _credentials_from_stored_data(creds_data: dict, user_email: str) -> Credentials:
+    """Build Credentials, preferring app config over embedded client secrets."""
+    expiry = None
+    if creds_data.get("expiry"):
+        try:
+            expiry = datetime.fromisoformat(creds_data["expiry"])
+            if expiry.tzinfo is not None:
+                # google-auth expects naive UTC; convert aware values first.
+                expiry = expiry.astimezone(timezone.utc).replace(tzinfo=None)
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Could not parse expiry time for {user_email}: {e}")
+
+    cfg_client_id, cfg_client_secret = _configured_oauth_client()
+    stored_client_id = creds_data.get("client_id")
+    if cfg_client_id and stored_client_id and cfg_client_id != stored_client_id:
+        logger.warning(
+            "OAuth client_id mismatch for %s: configured=%s stored=%s "
+            "(using configured value)",
+            user_email,
+            cfg_client_id,
+            stored_client_id,
+        )
+    # Backward compatible: older files may still contain client_id/secret.
+    client_id = cfg_client_id or stored_client_id
+    client_secret = cfg_client_secret or creds_data.get("client_secret")
+
+    return Credentials(
+        token=creds_data.get("token"),
+        refresh_token=creds_data.get("refresh_token"),
+        token_uri=creds_data.get("token_uri"),
+        client_id=client_id,
+        client_secret=client_secret,
+        scopes=creds_data.get("scopes"),
+        expiry=expiry,
+    )
+
+
+def _credential_payload_for_storage(credentials: Credentials) -> dict:
+    """Serialize credentials without persisting OAuth client secrets."""
+    return {
+        "token": credentials.token,
+        "refresh_token": credentials.refresh_token,
+        "token_uri": credentials.token_uri,
+        # client_id/client_secret intentionally omitted — loaded from app config
+        "scopes": credentials.scopes,
+        "expiry": credentials.expiry.isoformat() if credentials.expiry else None,
+    }
 
 
 class CredentialStore(ABC):
@@ -187,25 +248,7 @@ class LocalDirectoryCredentialStore(CredentialStore):
                 creds_data = json.load(f)
 
             # Parse expiry if present
-            expiry = None
-            if creds_data.get("expiry"):
-                try:
-                    expiry = datetime.fromisoformat(creds_data["expiry"])
-                    # Ensure timezone-naive datetime for Google auth library compatibility
-                    if expiry.tzinfo is not None:
-                        expiry = expiry.replace(tzinfo=None)
-                except (ValueError, TypeError) as e:
-                    logger.warning(f"Could not parse expiry time for {user_email}: {e}")
-
-            credentials = Credentials(
-                token=creds_data.get("token"),
-                refresh_token=creds_data.get("refresh_token"),
-                token_uri=creds_data.get("token_uri"),
-                client_id=creds_data.get("client_id"),
-                client_secret=creds_data.get("client_secret"),
-                scopes=creds_data.get("scopes"),
-                expiry=expiry,
-            )
+            credentials = _credentials_from_stored_data(creds_data, user_email)
 
             logger.debug(f"Loaded credentials for {user_email} from {creds_path}")
             return credentials
@@ -220,15 +263,7 @@ class LocalDirectoryCredentialStore(CredentialStore):
         """Store credentials to local JSON file."""
         creds_path = self._get_credential_path(user_email)
 
-        creds_data = {
-            "token": credentials.token,
-            "refresh_token": credentials.refresh_token,
-            "token_uri": credentials.token_uri,
-            "client_id": credentials.client_id,
-            "client_secret": credentials.client_secret,
-            "scopes": credentials.scopes,
-            "expiry": credentials.expiry.isoformat() if credentials.expiry else None,
-        }
+        creds_data = _credential_payload_for_storage(credentials)
 
         try:
             fd = os.open(str(creds_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -412,24 +447,7 @@ class GCSCredentialStore(CredentialStore):
             logger.error(f"Error parsing credentials for {user_email}: {e}")
             return None
 
-        expiry = None
-        if creds_data.get("expiry"):
-            try:
-                expiry = datetime.fromisoformat(creds_data["expiry"])
-                if expiry.tzinfo is not None:
-                    expiry = expiry.replace(tzinfo=None)
-            except (ValueError, TypeError) as e:
-                logger.warning(f"Could not parse expiry for {user_email}: {e}")
-
-        return Credentials(
-            token=creds_data.get("token"),
-            refresh_token=creds_data.get("refresh_token"),
-            token_uri=creds_data.get("token_uri"),
-            client_id=creds_data.get("client_id"),
-            client_secret=creds_data.get("client_secret"),
-            scopes=creds_data.get("scopes"),
-            expiry=expiry,
-        )
+        return _credentials_from_stored_data(creds_data, user_email)
 
     def store_credential(self, user_email: str, credentials: Credentials) -> bool:
         """Serialize and upload credentials using a generation precondition.
@@ -441,15 +459,7 @@ class GCSCredentialStore(CredentialStore):
         caller to abandon this attempt; the next credential refresh will
         read the latest state and try again.
         """
-        creds_data = {
-            "token": credentials.token,
-            "refresh_token": credentials.refresh_token,
-            "token_uri": credentials.token_uri,
-            "client_id": credentials.client_id,
-            "client_secret": credentials.client_secret,
-            "scopes": credentials.scopes,
-            "expiry": credentials.expiry.isoformat() if credentials.expiry else None,
-        }
+        creds_data = _credential_payload_for_storage(credentials)
         payload = json.dumps(creds_data).encode()
 
         blob = self._bucket.blob(self._blob_name(user_email))

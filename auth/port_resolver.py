@@ -72,7 +72,7 @@ def resolve_port(
     Reads defaults from env when args are None:
       WORKSPACE_MCP_PORT (default 8000)                  -- preferred port
       WORKSPACE_MCP_PORT_FALLBACK_COUNT (default 4)      -- fallback slots
-      WORKSPACE_MCP_HOST (default 0.0.0.0)               -- bind host
+      WORKSPACE_MCP_HOST (default 127.0.0.1)              -- bind host
 
     Side effect: mutates os.environ["WORKSPACE_MCP_PORT"] to the resolved port,
     so every downstream reader (auth.oauth_config singleton on next reload,
@@ -105,7 +105,7 @@ def resolve_port(
                 f"WORKSPACE_MCP_PORT_FALLBACK_COUNT must be an integer, got {raw!r}"
             ) from exc
     if host is None:
-        host = os.getenv("WORKSPACE_MCP_HOST", "0.0.0.0")
+        host = os.getenv("WORKSPACE_MCP_HOST", "127.0.0.1")
 
     candidates = _candidate_ports(preferred, fallback_count)
     for port in candidates:

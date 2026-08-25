@@ -36,7 +36,7 @@ from core.config import (
     set_transport_mode as _set_transport_mode,
     get_oauth_redirect_uri as get_oauth_redirect_uri_for_current_mode,
 )
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastmcp import FastMCP
 from fastmcp.server.auth.providers.google import GoogleProvider
 from mcp.types import ToolAnnotations, Icon
@@ -52,6 +52,11 @@ logger = logging.getLogger(__name__)
 _auth_provider: Optional[GoogleProvider] = None
 _legacy_callback_registered = False
 
+
+class WeakJwtSigningKeyError(Exception):
+    """Raised when FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY is too short."""
+
+
 session_middleware = Middleware(MCPSessionMiddleware)
 
 
@@ -62,9 +67,6 @@ session_middleware = Middleware(MCPSessionMiddleware)
 # (a per-session GUID) to every webview, so its origin can never be enumerated in
 # an allowlist; the scheme itself is the trust boundary.
 TRUSTED_ORIGIN_SCHEMES = frozenset({"vscode-webview"})
-
-
-_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 # Default authority ports per scheme, used to compare an Origin against the Host
 # header that received the request (a same-origin check).
@@ -113,10 +115,15 @@ def _get_allowed_http_origins() -> set[str]:
 
 def _is_origin_allowed(origin: str) -> bool:
     parsed = urlparse(origin)
+    # Scheme-only trust for IDE webviews whose host is a per-session GUID and
+    # cannot be enumerated in an allowlist. Browser pages cannot forge this
+    # forbidden Origin header.
     if parsed.scheme in TRUSTED_ORIGIN_SCHEMES:
         return True
-    if parsed.hostname in _LOOPBACK_HOSTS:
-        return True
+    # Loopback Origins are NOT blanket-trusted: require an explicit allowlist entry
+    # via OAUTH_ALLOWED_ORIGINS (or same-origin-as-Host, checked by the middleware
+    # separately). Cross-port local browser clients (e.g. http://localhost:5173)
+    # may receive 403 unless that origin is listed.
     normalized = _normalize_parsed(parsed)
     if not normalized:
         return False
@@ -202,6 +209,10 @@ class OriginValidationMiddleware:
 
 origin_validation_middleware = Middleware(OriginValidationMiddleware)
 
+from core.rate_limit import RateLimitMiddleware
+
+rate_limit_middleware = Middleware(RateLimitMiddleware)
+
 
 class WellKnownCacheControlMiddleware:
     """Force no-cache headers for OAuth well-known discovery endpoints."""
@@ -251,16 +262,17 @@ class SecureFastMCP(FastMCP):
         app = super().http_app(**kwargs)
 
         # Add middleware in order (first added = outermost layer)
-        app.user_middleware.insert(0, well_known_cache_control_middleware)
-        app.user_middleware.insert(1, origin_validation_middleware)
+        app.user_middleware.insert(0, rate_limit_middleware)
+        app.user_middleware.insert(1, well_known_cache_control_middleware)
+        app.user_middleware.insert(2, origin_validation_middleware)
 
         # Session Management - extracts session info for MCP context
-        app.user_middleware.insert(2, session_middleware)
+        app.user_middleware.insert(3, session_middleware)
 
         # Rebuild middleware stack
         app.middleware_stack = app.build_middleware_stack()
         logger.debug(
-            "Added middleware stack: WellKnownCacheControl, OriginValidation, "
+            "Added middleware stack: RateLimit, WellKnownCacheControl, OriginValidation, "
             "Session Management"
         )
         return app
@@ -450,10 +462,10 @@ def configure_server_for_http():
         ) -> bytes:
             """Validate JWT signing key override and derive the final JWT key."""
             if jwt_signing_key_override:
-                if len(jwt_signing_key_override) < 12:
-                    logger.warning(
-                        "OAuth 2.1: FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY is less than 12 characters; "
-                        "use a longer secret to improve key derivation strength."
+                if len(jwt_signing_key_override.encode("utf-8")) < 32:
+                    raise WeakJwtSigningKeyError(
+                        "OAuth 2.1: FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY must be "
+                        "at least 32 bytes. Refusing to start with a weak signing key."
                     )
                 return derive_jwt_key(
                     low_entropy_material=jwt_signing_key_override,
@@ -782,13 +794,43 @@ def get_auth_provider() -> Optional[GoogleProvider]:
 @server.custom_route("/", methods=["GET"])
 @server.custom_route("/health", methods=["GET"])
 async def health_check(request: Request):
+    """Unauthenticated liveness probe — no version or config disclosure."""
+    return JSONResponse({"status": "ok"})
+
+
+@server.custom_route("/health/details", methods=["GET"])
+async def health_details(request: Request):
+    """Authenticated health details (requires WORKSPACE_HEALTH_TOKEN)."""
+    import hmac
+
+    expected = os.getenv("WORKSPACE_HEALTH_TOKEN", "").strip()
+    if not expected:
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+    provided = (
+        request.headers.get("x-health-token")
+        or request.query_params.get("token")
+        or ""
+    ).strip()
+    auth_header = (request.headers.get("authorization") or "").strip()
+    if auth_header.lower().startswith("bearer "):
+        provided = provided or auth_header[7:].strip()
+
+    authorized = bool(
+        provided
+        and len(provided) == len(expected)
+        and hmac.compare_digest(provided, expected)
+    )
+    if not authorized:
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
     try:
         version = metadata.version("workspace-mcp")
     except metadata.PackageNotFoundError:
         version = "dev"
     return JSONResponse(
         {
-            "status": "healthy",
+            "status": "ok",
             "service": "workspace-mcp",
             "version": version,
             "transport": get_transport_mode(),
@@ -798,27 +840,12 @@ async def health_check(request: Request):
 
 @server.custom_route("/attachments/{file_id}", methods=["GET"])
 async def serve_attachment(request: Request):
-    """Serve a stored attachment file."""
-    from core.attachment_storage import get_attachment_storage
+    """Serve a stored attachment file (requires HMAC download token)."""
+    from core.attachment_storage import serve_attachment_response
 
     file_id = request.path_params["file_id"]
-    storage = get_attachment_storage()
-    metadata = storage.get_attachment_metadata(file_id)
-
-    if not metadata:
-        return JSONResponse(
-            {"error": "Attachment not found or expired"}, status_code=404
-        )
-
-    file_path = storage.get_attachment_path(file_id)
-    if not file_path:
-        return JSONResponse({"error": "Attachment file not found"}, status_code=404)
-
-    return FileResponse(
-        path=str(file_path),
-        filename=metadata["filename"],
-        media_type=metadata["mime_type"],
-    )
+    token = request.query_params.get("token")
+    return serve_attachment_response(file_id, token)
 
 
 async def legacy_oauth2_callback(request: Request) -> HTMLResponse:

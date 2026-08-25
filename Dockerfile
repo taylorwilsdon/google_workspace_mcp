@@ -15,7 +15,8 @@ COPY . .
 # Install Python dependencies using uv sync
 # --extra otel ships the OpenTelemetry SDK/exporter so tracing can be enabled at
 # runtime via OTEL_* env vars; it stays a no-op unless an OTLP endpoint is set.
-RUN uv sync --frozen --no-dev --extra disk --extra otel
+RUN uv sync --frozen --no-dev --extra disk --extra otel \
+    && chmod +x /app/docker-entrypoint.sh
 
 # Create non-root user for security
 RUN useradd --create-home --shell /bin/bash app \
@@ -34,14 +35,16 @@ EXPOSE 8000
 ARG PORT
 EXPOSE ${PORT:-8000}
 
-# Health check
+# Health check — resolve listener port like main.py: PORT, then WORKSPACE_MCP_PORT, then 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD sh -c 'curl -f http://localhost:${PORT:-8000}/health || exit 1'
+    CMD sh -c 'p="${PORT:-${WORKSPACE_MCP_PORT:-8000}}"; curl -f "http://127.0.0.1:${p}/health" || exit 1'
 
-# Set environment variables for Python startup args
+# Optional tool selection via env (consumed by docker-entrypoint.sh, not shell CMD)
 ENV TOOL_TIER=""
 ENV TOOLS=""
+# Containers typically need all interfaces; override locally with WORKSPACE_MCP_HOST=127.0.0.1
+ENV WORKSPACE_MCP_HOST="0.0.0.0"
 
-# Use entrypoint for the base command and CMD for args
-ENTRYPOINT ["/bin/sh", "-c"]
-CMD ["uv run main.py --transport streamable-http ${TOOL_TIER:+--tool-tier \"$TOOL_TIER\"} ${TOOLS:+--tools $TOOLS}"]
+# Exec-form entrypoint — no shell interpolation of TOOLS/TOOL_TIER
+ENTRYPOINT ["./docker-entrypoint.sh"]
+CMD ["--transport", "streamable-http"]

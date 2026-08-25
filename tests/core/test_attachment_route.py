@@ -2,10 +2,12 @@ import pytest
 from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse
 
+from core.attachment_tokens import mint_attachment_token
 from core.server import serve_attachment
 
 
-def _build_request(file_id: str) -> Request:
+def _build_request(file_id: str, token: str | None = None) -> Request:
+    query = f"token={token}".encode() if token else b""
     scope = {
         "type": "http",
         "asgi": {"version": "3.0"},
@@ -14,7 +16,7 @@ def _build_request(file_id: str) -> Request:
         "scheme": "http",
         "path": f"/attachments/{file_id}",
         "raw_path": f"/attachments/{file_id}".encode(),
-        "query_string": b"",
+        "query_string": query,
         "headers": [],
         "client": ("127.0.0.1", 12345),
         "server": ("localhost", 8000),
@@ -45,11 +47,72 @@ async def test_serve_attachment_uses_path_param_file_id(monkeypatch, tmp_path):
         "core.attachment_storage.get_attachment_storage", lambda: DummyStorage()
     )
 
-    response = await serve_attachment(_build_request("abc123"))
+    token = mint_attachment_token("abc123")
+    response = await serve_attachment(_build_request("abc123", token))
 
     assert captured["file_id"] == "abc123"
     assert isinstance(response, FileResponse)
     assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_serve_attachment_rejects_missing_token(monkeypatch, tmp_path):
+    class DummyStorage:
+        def get_attachment_metadata(self, _file_id):
+            raise AssertionError("storage must not be reached without a valid token")
+
+        def get_attachment_path(self, _file_id):
+            raise AssertionError("storage must not be reached without a valid token")
+
+    monkeypatch.setattr(
+        "core.attachment_storage.get_attachment_storage", lambda: DummyStorage()
+    )
+
+    response = await serve_attachment(_build_request("abc123"))
+    assert isinstance(response, JSONResponse)
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_serve_attachment_rejects_token_for_different_file_id(monkeypatch):
+    class DummyStorage:
+        def get_attachment_metadata(self, _file_id):
+            raise AssertionError("storage must not be reached for wrong-file token")
+
+        def get_attachment_path(self, _file_id):
+            raise AssertionError("storage must not be reached for wrong-file token")
+
+    monkeypatch.setattr(
+        "core.attachment_storage.get_attachment_storage", lambda: DummyStorage()
+    )
+
+    token = mint_attachment_token("other-file")
+    response = await serve_attachment(_build_request("abc123", token))
+    assert isinstance(response, JSONResponse)
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_serve_attachment_rejects_expired_token(monkeypatch):
+    class DummyStorage:
+        def get_attachment_metadata(self, _file_id):
+            raise AssertionError("storage must not be reached for expired token")
+
+        def get_attachment_path(self, _file_id):
+            raise AssertionError("storage must not be reached for expired token")
+
+    monkeypatch.setattr(
+        "core.attachment_storage.get_attachment_storage", lambda: DummyStorage()
+    )
+
+    fixed_now = 1_700_000_000
+    monkeypatch.setattr("core.attachment_tokens.time.time", lambda: fixed_now)
+    token = mint_attachment_token("abc123", ttl_seconds=1)
+    monkeypatch.setattr("core.attachment_tokens.time.time", lambda: fixed_now + 10)
+
+    response = await serve_attachment(_build_request("abc123", token))
+    assert isinstance(response, JSONResponse)
+    assert response.status_code == 401
 
 
 @pytest.mark.asyncio
@@ -62,7 +125,8 @@ async def test_serve_attachment_404_when_metadata_missing(monkeypatch):
         "core.attachment_storage.get_attachment_storage", lambda: DummyStorage()
     )
 
-    response = await serve_attachment(_build_request("missing"))
+    token = mint_attachment_token("missing")
+    response = await serve_attachment(_build_request("missing", token))
 
     assert isinstance(response, JSONResponse)
     assert response.status_code == 404

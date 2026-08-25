@@ -416,4 +416,35 @@ def get_attachment_url(file_id: str) -> str:
     else:
         base_url = f"{WORKSPACE_MCP_BASE_URI}:{WORKSPACE_MCP_PORT}"
 
-    return f"{base_url}/attachments/{file_id}"
+    from core.attachment_tokens import mint_attachment_token
+
+    token = mint_attachment_token(file_id)
+    return f"{base_url}/attachments/{file_id}?token={token}"
+
+
+def serve_attachment_response(file_id: str, token: Optional[str]):
+    """Validate token and return a FileResponse or error JSONResponse."""
+    from starlette.responses import FileResponse, JSONResponse
+
+    from core.attachment_tokens import verify_attachment_token
+
+    if not verify_attachment_token(file_id, token):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+    storage = get_attachment_storage()
+    metadata = storage.get_attachment_metadata(file_id)
+
+    if not metadata:
+        return JSONResponse(
+            {"error": "Attachment not found or expired"}, status_code=404
+        )
+
+    file_path = storage.get_attachment_path(file_id)
+    if not file_path:
+        return JSONResponse({"error": "Attachment file not found"}, status_code=404)
+
+    return FileResponse(
+        path=str(file_path),
+        filename=metadata["filename"],
+        media_type=metadata["mime_type"],
+    )

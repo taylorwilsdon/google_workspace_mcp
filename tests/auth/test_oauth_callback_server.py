@@ -262,7 +262,7 @@ def test_ensure_stdio_callback_starts_server_on_demand(monkeypatch):
     assert calls == [("stdio", 8042, "http://localhost")]
 
 
-def test_oauth_callback_missing_state_fallback_follows_single_user_mode(monkeypatch):
+def test_oauth_callback_never_passes_missing_state_fallback(monkeypatch):
     calls = []
 
     async def fake_handle_auth_callback(**kwargs):
@@ -287,10 +287,11 @@ def test_oauth_callback_missing_state_fallback_follows_single_user_mode(monkeypa
     response = TestClient(server.app).get("/oauth2callback?code=code123")
 
     assert response.status_code == 200
-    assert calls[-1]["allow_missing_state_fallback"] is False
+    assert "allow_missing_state_fallback" not in calls[-1]
 
     monkeypatch.setenv("MCP_SINGLE_USER_MODE", "1")
     response = TestClient(server.app).get("/oauth2callback?code=code123")
 
     assert response.status_code == 200
-    assert calls[-1]["allow_missing_state_fallback"] is True
+    # Single-user mode must not bypass OAuth state validation.
+    assert "allow_missing_state_fallback" not in calls[-1]

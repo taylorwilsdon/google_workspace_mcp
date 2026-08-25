@@ -75,8 +75,13 @@ def test_origin_validation_rejects_untrusted_browser_origin(monkeypatch):
     assert (
         client.get("/health", headers={"Origin": "http://evil.test"}).status_code == 403
     )
+    # Loopback Origins are allowlist-only (no blanket localhost trust).
     assert (
         client.get("/health", headers={"Origin": "http://localhost:5173"}).status_code
+        == 403
+    )
+    assert (
+        client.get("/health", headers={"Origin": "http://localhost:8000"}).status_code
         == 200
     )
     assert client.get("/health").status_code == 200

@@ -29,6 +29,11 @@ venv/
 client_secret.json
 client_secrets.json
 .mcpregistry_*_token
+values-secrets.yaml
+**/values-secrets.yaml
+**/secrets.local.yaml
+*.pem
+*.key
 
 # ---- Logs --------------------------------------------------------------
 mcp_server_debug.log

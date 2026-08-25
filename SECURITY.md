@@ -37,6 +37,24 @@ When using this MCP server, please ensure:
 4. Regularly rotate OAuth refresh tokens
 5. Limit OAuth scopes to only what's necessary
 6. Keep local file reads narrowly scoped. By default, path-based attachments are limited to `WORKSPACE_ATTACHMENT_DIR`; expanding `ALLOWED_FILE_DIRS` increases exposure to prompt-injection-driven exfiltration.
+7. Use `helm-chart/workspace-mcp/values-secrets.yaml.example` as a template; keep real Helm secrets in a gitignored `values-secrets.yaml` or inject via CI/CD secret managers.
+8. Enable secret scanning in CI (e.g. gitleaks, trufflehog) and optionally as a pre-commit hook to prevent committing OAuth client secrets, JWT signing keys, or `.env` files.
+
+### Recommended CI / pre-commit secret scanning
+
+```bash
+# One-time local install
+brew install gitleaks   # or: pipx install detect-secrets
+
+# Pre-commit example (.pre-commit-config.yaml)
+# - repo: https://github.com/gitleaks/gitleaks
+#   rev: v8.18.0
+#   hooks:
+#     - id: gitleaks
+
+# CI example
+gitleaks detect --source . --verbose --redact
+```
 
 For more information on securing your use of the project, see https://workspacemcp.com/privacy
 

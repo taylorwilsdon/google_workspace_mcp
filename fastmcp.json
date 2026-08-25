@@ -10,12 +10,11 @@
   },
   "deployment": {
     "transport": "http",
-    "host": "0.0.0.0",
+    "host": "127.0.0.1",
     "port": 8000,
     "log_level": "INFO",
     "env": {
-      "MCP_ENABLE_OAUTH21": "true",
-      "OAUTHLIB_INSECURE_TRANSPORT": "1"
+      "MCP_ENABLE_OAUTH21": "true"
     }
   }
 }
