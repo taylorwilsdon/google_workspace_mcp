@@ -578,6 +578,62 @@ class TestCommentUpdateState:
         assert "Successfully applied 'accept'" in result
 
 
+class TestVerificationLatch:
+    """What may mark a user as confirmed-working.
+
+    The before/after diff is document-wide, so it cannot by itself attribute a
+    new suggestion to this batch. Latching on an unrelated suggestion would
+    mark an unenrolled user verified and silence every later warning.
+    """
+
+    @pytest.mark.asyncio
+    async def test_unrelated_suggestion_does_not_latch(self):
+        """A new ID without a confirmed save must not verify the user."""
+        service = _make_service(
+            [NO_SUGGESTIONS_DOC, DOC_LENGTH_STUB, WITH_SUGGESTION_DOC],
+            batch_update_return={
+                "replies": [{}],
+                # The batch itself saved no suggestion updates; the new ID in
+                # the document came from somewhere else.
+                "commentUpdateState": "NO_UPDATES_REQUESTED",
+            },
+        )
+
+        await _run_batch(service, INSERT_TEXT_OPERATIONS)
+
+        assert USER not in docs_tools._SUGGEST_MODE_VERIFIED_USERS
+
+    @pytest.mark.asyncio
+    async def test_confirmed_save_with_new_id_latches(self):
+        """A new ID plus ALL_SAVED is attributable to this batch."""
+        service = _make_service(
+            [NO_SUGGESTIONS_DOC, DOC_LENGTH_STUB, WITH_SUGGESTION_DOC],
+            batch_update_return={
+                "replies": [{}],
+                "commentUpdateState": "ALL_SAVED",
+            },
+        )
+
+        await _run_batch(service, INSERT_TEXT_OPERATIONS)
+
+        assert USER in docs_tools._SUGGEST_MODE_VERIFIED_USERS
+
+    @pytest.mark.asyncio
+    async def test_failed_save_with_new_id_does_not_latch(self):
+        """An explicit failure state must never verify the user."""
+        service = _make_service(
+            [NO_SUGGESTIONS_DOC, DOC_LENGTH_STUB, WITH_SUGGESTION_DOC],
+            batch_update_return={
+                "replies": [{}],
+                "commentUpdateState": "ALL_FAILED_UNKNOWN_REASON",
+            },
+        )
+
+        await _run_batch(service, INSERT_TEXT_OPERATIONS)
+
+        assert USER not in docs_tools._SUGGEST_MODE_VERIFIED_USERS
+
+
 class TestVerifiableOperationCoverage:
     """The verifiable set must stay in step with what the walk collects.
 

@@ -1471,8 +1471,19 @@ async def batch_update_doc(
             after_suggestion_ids = None
 
         if after_suggestion_ids is not None:
-            if after_suggestion_ids - before_suggestion_ids:
-                _SUGGEST_MODE_VERIFIED_USERS.add(user_google_email)
+            new_suggestion_ids = after_suggestion_ids - before_suggestion_ids
+            if new_suggestion_ids:
+                # The diff is document-wide, so a collaborator's suggestion
+                # landing between the two reads can look like ours. Latching on
+                # that alone would mark an unenrolled user verified and silence
+                # every later warning, so require the API to also confirm this
+                # batch saved suggestion updates. Failing to latch is cheap - it
+                # just re-verifies next time.
+                if (
+                    metadata.get("comment_update_state")
+                    == _COMMENT_UPDATE_ALL_SAVED
+                ):
+                    _SUGGEST_MODE_VERIFIED_USERS.add(user_google_email)
             elif _suggest_mode_diff_is_meaningful(normalized_operations, metadata):
                 logger.warning(
                     f"[batch_update_doc] suggest_mode=true on {document_id} "
