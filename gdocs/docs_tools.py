@@ -76,6 +76,13 @@ HEADER_FOOTER_RUNTIME_CANARY = "docs-hf-canary-20260328b"
 
 _DEVELOPER_PREVIEW_URL = "https://developers.google.com/workspace/preview"
 
+# BatchUpdateDocumentResponse.commentUpdateState. A batch can partially fail:
+# the document model changes commit while the associated comment/suggestion
+# threads fail to save, which means a "suggested" edit actually landed as a
+# direct one. Only ALL_SAVED confirms the suggestion persisted.
+_COMMENT_UPDATE_ALL_SAVED = "ALL_SAVED"
+_COMMENT_UPDATE_NONE_REQUESTED = "NO_UPDATES_REQUESTED"
+
 # Suggested edits (suggest_mode) and suggestion-thread management are gated
 # behind the Workspace Developer Preview Program, and Google exposes no API to
 # query enrollment. The dangerous failure mode is silent: an unenrolled project
@@ -99,15 +106,30 @@ _DEVELOPER_PREVIEW_URL = "https://developers.google.com/workspace/preview"
 # single response it was computed for, or leak across users.
 _SUGGEST_MODE_VERIFIED_USERS: set[str] = set()
 
-# Operation types that record a suggestion on a text run
-# (suggestedInsertionIds/suggestedDeletionIds/suggestedTextStyleChanges), so a
-# before/after ID diff can observe whether suggest_mode took effect at all.
+# Operation types whose suggestion markers _collect_suggestions_from_elements
+# reads, so a before/after ID diff can observe whether suggest_mode took effect.
+# Keep in step with _SUGGESTION_CHANGE_MAPS and the walk: an operation listed
+# here whose markers are not collected would warn on every use.
 _SUGGEST_MODE_VERIFIABLE_OP_TYPES = {
+    # text runs
     "insert_text",
     "delete_text",
     "replace_text",
     "format_text",
     "find_replace",
+    # paragraph-level markers
+    "update_paragraph_style",
+    "create_bullet_list",
+    # structural insertions
+    "insert_table",
+    "insert_table_row",
+    "insert_table_column",
+    "insert_image",
+    "insert_page_break",
+    "insert_section_break",
+    # table style markers
+    "update_table_row_style",
+    "update_table_cell_style",
 }
 
 # Of the verifiable types, find_replace is the one that routinely does nothing:
@@ -1476,9 +1498,8 @@ async def batch_update_doc(
         length_info = f" Document length: {doc_length}." if doc_length else ""
         suggest_info = ""
         if suggest_mode:
-            comment_state = metadata.get("comment_update_state")
-            suggest_info = (
-                f" Applied as suggested edits (comment_update_state: {comment_state})."
+            suggest_info = _describe_comment_update_state(
+                metadata.get("comment_update_state")
             )
         return (
             f"{message} on document {document_id}. "
@@ -1562,11 +1583,22 @@ async def manage_doc_suggestions(
 
     comment_state = result.get("commentUpdateState")
     link = f"https://docs.google.com/document/d/{document_id}/edit"
-    return (
-        f"Successfully requested '{action}' on {len(suggestion_ids)} suggestion(s) "
-        f"in document {document_id} (comment_update_state: {comment_state}). "
-        f"Link: {link}"
-    )
+
+    if comment_state == _COMMENT_UPDATE_ALL_SAVED:
+        outcome = (
+            f"Successfully applied '{action}' to {len(suggestion_ids)} suggestion(s)"
+        )
+    else:
+        # Only ALL_SAVED confirms the thread changes were persisted; anything
+        # else means the request was accepted but may not have taken effect.
+        outcome = (
+            f"Requested '{action}' on {len(suggestion_ids)} suggestion(s), but the "
+            f"API did not confirm the change was saved (comment_update_state: "
+            f"{comment_state}). Re-check with list_doc_suggestions before "
+            f"assuming it applied"
+        )
+
+    return f"{outcome} in document {document_id}. Link: {link}"
 
 
 def _collect_suggestions_from_elements(
@@ -1649,6 +1681,10 @@ _SUGGESTION_CHANGE_MAPS = {
     "suggestedParagraphStyleChanges": "paragraph-style",
     "suggestedBulletChanges": "bullet",
     "suggestedPositionedObjectIds": "positioned-object",
+    "suggestedTableRowStyleChanges": "table-row-style",
+    "suggestedTableCellStyleChanges": "table-cell-style",
+    "suggestedDocumentStyleChanges": "document-style",
+    "suggestedNamedStylesChanges": "named-styles",
 }
 
 
@@ -1746,30 +1782,28 @@ async def _fetch_doc_suggestions(
 
     suggestions: dict[str, dict[str, Any]] = {}
 
-    _collect_suggestions_from_elements(
-        doc_data.get("body", {}).get("content", []), suggestions
-    )
-    _collect_suggestions_from_segment_map(doc_data.get("headers", {}), suggestions)
-    _collect_suggestions_from_segment_map(doc_data.get("footers", {}), suggestions)
-    _collect_suggestions_from_segment_map(doc_data.get("footnotes", {}), suggestions)
+    def collect_container(
+        container: dict[str, Any], tab_id: Optional[str] = None
+    ) -> None:
+        """Walk one Document or DocumentTab: its styles, body, and segments."""
+        # Document-wide style suggestions (update_document_style) hang off the
+        # container itself, not off any content element.
+        _collect_suggestion_markers(container, suggestions, tab_id)
+        _collect_suggestions_from_elements(
+            container.get("body", {}).get("content", []), suggestions, tab_id
+        )
+        for segment in ("headers", "footers", "footnotes"):
+            _collect_suggestions_from_segment_map(
+                container.get(segment, {}), suggestions, tab_id
+            )
+
+    collect_container(doc_data)
 
     def walk_tabs(tab: dict[str, Any]) -> None:
         """Collect suggestions from a tab's segments and its child tabs."""
         doc_tab = tab.get("documentTab")
         if doc_tab:
-            tab_id = tab.get("tabProperties", {}).get("tabId")
-            _collect_suggestions_from_elements(
-                doc_tab.get("body", {}).get("content", []), suggestions, tab_id
-            )
-            _collect_suggestions_from_segment_map(
-                doc_tab.get("headers", {}), suggestions, tab_id
-            )
-            _collect_suggestions_from_segment_map(
-                doc_tab.get("footers", {}), suggestions, tab_id
-            )
-            _collect_suggestions_from_segment_map(
-                doc_tab.get("footnotes", {}), suggestions, tab_id
-            )
+            collect_container(doc_tab, tab.get("tabProperties", {}).get("tabId"))
         for child_tab in tab.get("childTabs", []):
             walk_tabs(child_tab)
 
@@ -2120,6 +2154,45 @@ _SUGGEST_MODE_UNSUPPORTED_DOCUMENT_STYLE_FIELDS = {
     "use_even_page_header_footer",
     "use_first_page_header_footer",
 }
+
+
+def _describe_comment_update_state(comment_state: Optional[str]) -> str:
+    """
+    Render BatchUpdateDocumentResponse.commentUpdateState for a suggest-mode
+    response, without claiming more than the state actually confirms.
+
+    A suggest-mode batch can partially fail: the document model changes commit
+    while the suggestion threads fail to save, leaving what the caller intended
+    as a proposal applied directly. Only ALL_SAVED justifies reporting the batch
+    as suggested; NO_UPDATES_REQUESTED is benign (nothing needed suggesting,
+    e.g. a find_replace that matched nothing); anything else is reported as
+    unconfirmed rather than as success.
+
+    Args:
+        comment_state: The commentUpdateState value, if the API returned one.
+
+    Returns:
+        str: A sentence to append to the tool response, leading with a space.
+    """
+    if comment_state == _COMMENT_UPDATE_ALL_SAVED:
+        return " Applied as suggested edits (comment_update_state: ALL_SAVED)."
+    if comment_state == _COMMENT_UPDATE_NONE_REQUESTED:
+        return (
+            " No suggestion updates were required - the operations matched or "
+            "changed nothing (comment_update_state: NO_UPDATES_REQUESTED)."
+        )
+    if comment_state is None:
+        # Absence is not evidence of failure - only an explicit failure state
+        # is. The before/after diff is the detector for suggest mode silently
+        # not applying; stay factual here rather than warning twice.
+        return " Requested as suggested edits (the API reported no comment_update_state)."
+    return (
+        f" WARNING: the document changes were committed, but the API did not "
+        f"confirm the suggestions were saved (comment_update_state: "
+        f"{comment_state}). The edits may be LIVE in the document rather than "
+        f"pending as suggestions - verify with list_doc_suggestions and undo in "
+        f"the Docs UI (Edit > Undo) if they were not meant to be live."
+    )
 
 
 def _suggest_mode_diff_is_meaningful(

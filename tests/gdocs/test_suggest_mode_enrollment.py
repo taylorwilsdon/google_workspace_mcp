@@ -493,6 +493,175 @@ class TestSuggestionCoverage:
         assert found == {}
 
 
+class TestCommentUpdateState:
+    """Reporting of BatchUpdateDocumentResponse.commentUpdateState.
+
+    A suggest-mode batch can partially fail: the document changes commit while
+    the suggestion threads fail to save, leaving an intended proposal applied
+    directly. Only ALL_SAVED justifies reporting the batch as suggested.
+    """
+
+    def test_all_saved_reports_success(self):
+        """ALL_SAVED is the only state that confirms suggestions persisted."""
+        msg = docs_tools._describe_comment_update_state("ALL_SAVED")
+        assert "Applied as suggested edits" in msg
+        assert "WARNING" not in msg
+
+    def test_no_updates_requested_is_benign(self):
+        """Nothing needed suggesting; that is not a failure."""
+        msg = docs_tools._describe_comment_update_state("NO_UPDATES_REQUESTED")
+        assert "WARNING" not in msg
+        assert "no suggestion updates were required" in msg.lower()
+
+    def test_failure_state_warns_edits_may_be_live(self):
+        """A failed save means the edit may have landed directly."""
+        msg = docs_tools._describe_comment_update_state("ALL_FAILED_UNKNOWN_REASON")
+        assert "WARNING" in msg
+        assert "LIVE" in msg
+
+    def test_absent_state_does_not_warn(self):
+        """Absence is not evidence of failure; the ID diff is the detector."""
+        msg = docs_tools._describe_comment_update_state(None)
+        assert "WARNING" not in msg
+
+    @pytest.mark.asyncio
+    async def test_batch_surfaces_failure_state(self):
+        """A failed save must not be reported as 'Applied as suggested edits'."""
+        service = _make_service(
+            [NO_SUGGESTIONS_DOC, DOC_LENGTH_STUB, WITH_SUGGESTION_DOC],
+            batch_update_return={
+                "replies": [{}],
+                "commentUpdateState": "ALL_FAILED_UNKNOWN_REASON",
+            },
+        )
+
+        result = await _run_batch(service, INSERT_TEXT_OPERATIONS)
+
+        assert "Applied as suggested edits" not in result
+        assert "WARNING" in result
+
+    @pytest.mark.asyncio
+    async def test_manage_suggestions_flags_unconfirmed_save(self):
+        """accept/reject must not claim success on an unconfirmed state."""
+        service = Mock()
+        service.documents.return_value.batchUpdate.return_value.execute.return_value = {
+            "commentUpdateState": "ALL_FAILED_UNKNOWN_REASON"
+        }
+
+        result = await _unwrap(docs_tools.manage_doc_suggestions)(
+            service=service,
+            user_google_email=USER,
+            document_id="a" * 25,
+            action="accept",
+            suggestion_ids=["suggest.abc123"],
+        )
+
+        assert "Successfully applied" not in result
+        assert "did not confirm" in result
+
+    @pytest.mark.asyncio
+    async def test_manage_suggestions_reports_confirmed_save(self):
+        """ALL_SAVED reports plainly as success."""
+        service = Mock()
+        service.documents.return_value.batchUpdate.return_value.execute.return_value = {
+            "commentUpdateState": "ALL_SAVED"
+        }
+
+        result = await _unwrap(docs_tools.manage_doc_suggestions)(
+            service=service,
+            user_google_email=USER,
+            document_id="a" * 25,
+            action="accept",
+            suggestion_ids=["suggest.abc123"],
+        )
+
+        assert "Successfully applied 'accept'" in result
+
+
+class TestVerifiableOperationCoverage:
+    """The verifiable set must stay in step with what the walk collects.
+
+    An operation listed as verifiable whose markers are not collected would
+    warn on every use; one that is collected but unlisted skips verification
+    silently.
+    """
+
+    def test_paragraph_style_and_bullet_are_verifiable(self):
+        """Their markers are collected, so their effect is observable."""
+        assert "update_paragraph_style" in docs_tools._SUGGEST_MODE_VERIFIABLE_OP_TYPES
+        assert "create_bullet_list" in docs_tools._SUGGEST_MODE_VERIFIABLE_OP_TYPES
+
+    def test_table_operations_are_verifiable(self):
+        """Table, row, and cell markers are collected."""
+        for op in (
+            "insert_table",
+            "insert_table_row",
+            "update_table_row_style",
+            "update_table_cell_style",
+        ):
+            assert op in docs_tools._SUGGEST_MODE_VERIFIABLE_OP_TYPES
+
+    def test_unsupported_operations_are_not_verifiable(self):
+        """Operations the API rejects in suggest mode never reach verification."""
+        for op in docs_tools._SUGGEST_MODE_UNSUPPORTED_OPERATION_TYPES:
+            assert op not in docs_tools._SUGGEST_MODE_VERIFIABLE_OP_TYPES
+
+    def test_table_style_suggestions_are_collected(self):
+        """Row and cell style changes carry their own suggestion IDs."""
+        elements = [
+            {
+                "table": {
+                    "tableRows": [
+                        {
+                            "suggestedTableRowStyleChanges": {"suggest.row": {}},
+                            "tableCells": [
+                                {
+                                    "suggestedTableCellStyleChanges": {
+                                        "suggest.cell": {}
+                                    },
+                                    "content": [],
+                                }
+                            ],
+                        }
+                    ]
+                }
+            }
+        ]
+        found = {}
+        docs_tools._collect_suggestions_from_elements(elements, found)
+
+        assert found["suggest.row"]["types"] == {"table-row-style"}
+        assert found["suggest.cell"]["types"] == {"table-cell-style"}
+
+
+class TestDocumentLevelSuggestions:
+    """Document-wide style suggestions hang off the document, not its content."""
+
+    @pytest.mark.asyncio
+    async def test_document_and_tab_style_suggestions_are_collected(self):
+        """update_document_style records on Document/DocumentTab itself."""
+        payload = {
+            "suggestedDocumentStyleChanges": {"suggest.docstyle": {}},
+            "body": {"content": []},
+            "tabs": [
+                {
+                    "tabProperties": {"tabId": "t.0"},
+                    "documentTab": {
+                        "suggestedNamedStylesChanges": {"suggest.tabstyle": {}},
+                        "body": {"content": []},
+                    },
+                }
+            ],
+        }
+        service = _make_service([payload])
+
+        found = await docs_tools._fetch_doc_suggestions(service, "a" * 25)
+
+        assert found["suggest.docstyle"]["types"] == {"document-style"}
+        assert found["suggest.tabstyle"]["types"] == {"named-styles"}
+        assert found["suggest.tabstyle"]["tab_id"] == "t.0"
+
+
 class TestValidateSuggestModeOperations:
     """Client-side rejection of operations the API refuses in suggest mode."""
 
