@@ -1696,7 +1696,14 @@ _SUGGESTION_CHANGE_MAPS = {
     "suggestedTableCellStyleChanges": "table-cell-style",
     "suggestedDocumentStyleChanges": "document-style",
     "suggestedNamedStylesChanges": "named-styles",
+    # Resource maps (lists, inlineObjects, positionedObjects)
+    "suggestedListPropertiesChanges": "list-properties",
+    "suggestedInlineObjectPropertiesChanges": "inline-object-properties",
+    "suggestedPositionedObjectPropertiesChanges": "positioned-object-properties",
 }
+
+# Document resource maps whose entries carry their own suggestion markers.
+_SUGGESTION_RESOURCE_MAPS = ("lists", "inlineObjects", "positionedObjects")
 
 
 def _collect_suggestion_markers(
@@ -1746,6 +1753,14 @@ def _collect_suggestion_markers(
             entry = entry_for(sid)
             entry["types"].add(label)
             apply_preview(entry)
+
+    # Resource entries (List, InlineObject, PositionedObject) carry a single
+    # suggestedInsertionId string rather than the plural array used elsewhere.
+    single_insertion_id = node.get("suggestedInsertionId")
+    if isinstance(single_insertion_id, str) and single_insertion_id:
+        entry = entry_for(single_insertion_id)
+        entry["types"].add("insertion")
+        apply_preview(entry)
 
     for field, label in _SUGGESTION_CHANGE_MAPS.items():
         for sid in node.get(field) or {}:
@@ -1807,6 +1822,12 @@ async def _fetch_doc_suggestions(
             _collect_suggestions_from_segment_map(
                 container.get(segment, {}), suggestions, tab_id
             )
+        # Resource maps keep their own suggestion markers, and a positioned
+        # object's is recorded only here - not on any paragraph element.
+        for resource_map in _SUGGESTION_RESOURCE_MAPS:
+            for resource in (container.get(resource_map) or {}).values():
+                if isinstance(resource, dict):
+                    _collect_suggestion_markers(resource, suggestions, tab_id)
 
     collect_container(doc_data)
 

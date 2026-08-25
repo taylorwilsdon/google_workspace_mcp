@@ -718,6 +718,127 @@ class TestDocumentLevelSuggestions:
         assert found["suggest.tabstyle"]["tab_id"] == "t.0"
 
 
+class TestResourceMapSuggestions:
+    """Suggestions recorded on lists, inlineObjects, and positionedObjects.
+
+    These resources sit in document-level maps rather than in body content,
+    and each carries a singular `suggestedInsertionId` string instead of the
+    plural array used everywhere else. A positioned object's marker is
+    recorded only here, so missing them leaves those suggestions unlistable
+    and therefore unmanageable.
+    """
+
+    @staticmethod
+    def _service(extra):
+        """Mock a documents.get returning an otherwise-empty document."""
+        service = Mock()
+        service.documents.return_value.get.return_value.execute.return_value = {
+            "body": {"content": []},
+            "tabs": [],
+            **extra,
+        }
+        return service
+
+    @pytest.mark.asyncio
+    async def test_list_resource_suggestions(self):
+        """A list resource is the document's only suggestion."""
+        service = self._service(
+            {
+                "lists": {
+                    "l1": {
+                        "suggestedInsertionId": "suggest.list",
+                        "suggestedListPropertiesChanges": {"suggest.listprop": {}},
+                    }
+                }
+            }
+        )
+
+        found = await docs_tools._fetch_doc_suggestions(service, "a" * 25)
+
+        assert found["suggest.list"]["types"] == {"insertion"}
+        assert found["suggest.listprop"]["types"] == {"list-properties"}
+
+    @pytest.mark.asyncio
+    async def test_inline_object_resource_suggestions(self):
+        """An inline object resource is the document's only suggestion."""
+        service = self._service(
+            {
+                "inlineObjects": {
+                    "i1": {
+                        "suggestedInsertionId": "suggest.inline",
+                        "suggestedInlineObjectPropertiesChanges": {
+                            "suggest.inlineprop": {}
+                        },
+                    }
+                }
+            }
+        )
+
+        found = await docs_tools._fetch_doc_suggestions(service, "a" * 25)
+
+        assert found["suggest.inline"]["types"] == {"insertion"}
+        assert found["suggest.inlineprop"]["types"] == {"inline-object-properties"}
+
+    @pytest.mark.asyncio
+    async def test_positioned_object_resource_suggestions(self):
+        """A positioned object's marker exists nowhere else in the document."""
+        service = self._service(
+            {
+                "positionedObjects": {
+                    "p1": {
+                        "suggestedInsertionId": "suggest.pos",
+                        "suggestedPositionedObjectPropertiesChanges": {
+                            "suggest.posprop": {}
+                        },
+                    }
+                }
+            }
+        )
+
+        found = await docs_tools._fetch_doc_suggestions(service, "a" * 25)
+
+        assert found["suggest.pos"]["types"] == {"insertion"}
+        assert found["suggest.posprop"]["types"] == {"positioned-object-properties"}
+
+    @pytest.mark.asyncio
+    async def test_tab_scoped_resource_suggestions(self):
+        """Resources under a tab are attributed to that tab."""
+        service = Mock()
+        service.documents.return_value.get.return_value.execute.return_value = {
+            "body": {"content": []},
+            "tabs": [
+                {
+                    "tabProperties": {"tabId": "t.0"},
+                    "documentTab": {
+                        "body": {"content": []},
+                        "positionedObjects": {
+                            "p1": {"suggestedInsertionId": "suggest.tabpos"}
+                        },
+                    },
+                }
+            ],
+        }
+
+        found = await docs_tools._fetch_doc_suggestions(service, "a" * 25)
+
+        assert found["suggest.tabpos"]["tab_id"] == "t.0"
+
+    def test_singular_insertion_id_is_read(self):
+        """Resources use a singular string, not the plural array."""
+        found = {}
+        docs_tools._collect_suggestion_markers(
+            {"suggestedInsertionId": "suggest.single"}, found
+        )
+        assert found["suggest.single"]["types"] == {"insertion"}
+
+    def test_non_string_singular_insertion_id_is_ignored(self):
+        """A malformed value must not become a bogus suggestion ID."""
+        found = {}
+        docs_tools._collect_suggestion_markers({"suggestedInsertionId": None}, found)
+        docs_tools._collect_suggestion_markers({"suggestedInsertionId": ""}, found)
+        assert found == {}
+
+
 class TestValidateSuggestModeOperations:
     """Client-side rejection of operations the API refuses in suggest mode."""
 
