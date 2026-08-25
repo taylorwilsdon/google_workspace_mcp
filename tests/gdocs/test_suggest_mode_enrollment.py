@@ -1,277 +1,114 @@
-"""
-Tests for suggest_mode's Developer Preview verification behaviour.
+"""Tests for Google Docs suggested-edit creation, listing, and management."""
 
-Suggested edits are gated behind the Workspace Developer Preview Program, which
-exposes no enrollment API. An unenrolled project may silently ignore
-writeControl.writeMode and apply "suggested" edits directly, so batch_update_doc
-diffs suggestion IDs before/after and warns when the expected suggestion does
-not appear.
-
-That signal is a heuristic with known blind spots, so it only ever warns on the
-affected response - it must never disable the feature, and must never leak a
-negative verdict to another user. These tests pin both the detection and, just
-as importantly, the things it is required NOT to do.
-"""
+from unittest.mock import Mock
 
 import pytest
-from unittest.mock import Mock
 
 from gdocs import docs_tools
 
 
 def _unwrap(tool):
-    """Strip MCP/auth decorators to get at the raw tool implementation."""
+    """Strip MCP/auth decorators to get the raw tool implementation."""
     fn = tool.fn if hasattr(tool, "fn") else tool
     while hasattr(fn, "__wrapped__"):
         fn = fn.__wrapped__
     return fn
 
 
-def _doc(*paragraph_elements, headers=None):
-    """Build a minimal documents.get payload with the given paragraph elements."""
-    payload = {
-        "body": {"content": [{"paragraph": {"elements": list(paragraph_elements)}}]},
-        "tabs": [],
-    }
-    if headers is not None:
-        payload["headers"] = headers
-    return payload
-
-
-PLAIN_RUN = {"textRun": {"content": "Hello\n"}}
-SUGGESTED_RUN = {
-    "textRun": {
-        "content": "New sentence\n",
-        "suggestedInsertionIds": ["suggest.abc123"],
-    }
-}
-HEADER_SUGGESTED_RUN = {
-    "textRun": {
-        "content": "Suggested header addition\n",
-        "suggestedInsertionIds": ["suggest.header1"],
-    }
-}
-
-NO_SUGGESTIONS_DOC = _doc(PLAIN_RUN)
-WITH_SUGGESTION_DOC = _doc(PLAIN_RUN, SUGGESTED_RUN)
-NO_SUGGESTIONS_DOC_WITH_HEADER = _doc(
-    PLAIN_RUN, headers={"header1": {"content": [{"paragraph": {"elements": []}}]}}
-)
-WITH_HEADER_SUGGESTION_DOC = _doc(
-    PLAIN_RUN,
-    headers={
-        "header1": {"content": [{"paragraph": {"elements": [HEADER_SUGGESTED_RUN]}}]}
-    },
-)
-
+DOCUMENT_ID = "a" * 25
+USER = "user@example.com"
 DOC_LENGTH_STUB = {"body": {"content": [{"endIndex": 100}]}}
-
 INSERT_TEXT_OPERATIONS = [
     {"type": "insert_text", "end_of_segment": True, "text": "New sentence\n"}
 ]
-HEADER_INSERT_OPERATIONS = [
-    {
-        "type": "insert_text",
-        "end_of_segment": True,
-        "text": "Suggested header addition\n",
-        "segment_id": "header1",
-    }
-]
 FIND_REPLACE_OPERATIONS = [
-    {"type": "find_replace", "find_text": "nonexistent", "replace_text": "x"}
+    {"type": "find_replace", "find_text": "missing", "replace_text": "x"}
 ]
 
-USER = "user@example.com"
-OTHER_USER = "other@example.com"
 
-
-@pytest.fixture(autouse=True)
-def _reset_verified_users():
-    """Isolate the process-wide verified-user cache between tests."""
-    docs_tools._SUGGEST_MODE_VERIFIED_USERS.clear()
-    yield
-    docs_tools._SUGGEST_MODE_VERIFIED_USERS.clear()
-
-
-def _make_service(get_results, batch_update_return=None):
-    """
-    Build a mock Docs service.
-
-    get_results is consumed in order by successive documents().get() calls; an
-    exception instance is raised instead of returned. Once exhausted the last
-    value repeats, so a miscounted test fails on an assertion rather than
-    raising StopIteration inside asyncio.to_thread (which hangs the run).
-    """
-    remaining = list(get_results)
-    last = {"value": None}
-
-    def next_get(*args, **kwargs):
-        """Return the next queued documents.get result, raising exceptions."""
-        value = remaining.pop(0) if remaining else last["value"]
-        last["value"] = value
-        if isinstance(value, Exception):
-            raise value
-        return value
-
+def _make_service(batch_update_return):
     service = Mock()
-    service.documents.return_value.get.return_value.execute = Mock(
-        side_effect=next_get
-    )
-    service.documents.return_value.batchUpdate.return_value.execute.return_value = (
-        batch_update_return
-        if batch_update_return is not None
-        else {"replies": [{}], "commentUpdateState": "ALL_SAVED"}
-    )
+    documents = service.documents.return_value
+    documents.batchUpdate.return_value.execute.return_value = batch_update_return
+    documents.get.return_value.execute.return_value = DOC_LENGTH_STUB
     return service
 
 
-async def _run_batch(service, operations, suggest_mode=True, user=USER):
-    """Invoke batch_update_doc with the standard test arguments."""
+async def _run_batch(service, operations=INSERT_TEXT_OPERATIONS, suggest_mode=True):
     return await _unwrap(docs_tools.batch_update_doc)(
         service=service,
-        user_google_email=user,
-        document_id="a" * 25,
+        user_google_email=USER,
+        document_id=DOCUMENT_ID,
         operations=operations,
         suggest_mode=suggest_mode,
     )
 
 
-class TestSuggestModeVerification:
-    """Detection of suggest_mode silently falling through to direct edits."""
-
+class TestSuggestModeResponseHandling:
     @pytest.mark.asyncio
-    async def test_confirmed_when_new_suggestion_appears(self):
-        """A new suggestion ID confirms suggest mode and sends writeControl."""
+    async def test_all_saved_is_authoritative_and_uses_one_small_read(self):
         service = _make_service(
-            [NO_SUGGESTIONS_DOC, DOC_LENGTH_STUB, WITH_SUGGESTION_DOC]
+            {
+                "replies": [{}],
+                "commentUpdateState": "ALL_SAVED",
+                "suggestionResponses": [
+                    {"updatedSummarySuggestionIds": ["suggest.existing"]}
+                ],
+            }
         )
 
-        result = await _run_batch(service, INSERT_TEXT_OPERATIONS)
+        result = await _run_batch(service)
 
-        assert "Error" not in result
-        assert "WARNING" not in result
         assert "Applied as suggested edits" in result
-        assert USER in docs_tools._SUGGEST_MODE_VERIFIED_USERS
-
+        assert "updated: 1" in result
+        assert "WARNING" not in result
         body = service.documents.return_value.batchUpdate.call_args.kwargs["body"]
         assert body["writeControl"] == {"writeMode": "SUGGEST"}
-
-    @pytest.mark.asyncio
-    async def test_warns_when_no_suggestion_appears(self):
-        """No suggestion where one was expected warns without erroring."""
-        service = _make_service(
-            [NO_SUGGESTIONS_DOC, DOC_LENGTH_STUB, NO_SUGGESTIONS_DOC]
+        # The only read is BatchOperationManager's fields-masked document length.
+        assert service.documents.return_value.get.call_count == 1
+        assert service.documents.return_value.get.call_args.kwargs["fields"] == (
+            "body/content(endIndex)"
         )
 
-        result = await _run_batch(service, INSERT_TEXT_OPERATIONS)
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "comment_state",
+        [None, "NO_UPDATES_REQUESTED", "ALL_FAILED_UNKNOWN_REASON"],
+    )
+    async def test_unconfirmed_mutation_always_warns(self, comment_state):
+        response = {"replies": [{}]}
+        if comment_state is not None:
+            response["commentUpdateState"] = comment_state
+        service = _make_service(response)
+
+        result = await _run_batch(service)
 
         assert "WARNING" in result
-        assert "Developer Preview" in result
-        assert USER not in docs_tools._SUGGEST_MODE_VERIFIED_USERS
+        assert "may be LIVE" in result
+        rendered_state = comment_state or "MISSING"
+        assert f"comment_update_state: {rendered_state}" in result
 
     @pytest.mark.asyncio
-    async def test_warning_does_not_disable_later_calls(self):
-        """A warning must not latch: the next call still attempts suggest mode.
-
-        An earlier revision disabled suggestions process-wide after one
-        negative verdict, turning any heuristic miss into an outage.
-        """
-        first = _make_service([NO_SUGGESTIONS_DOC, DOC_LENGTH_STUB, NO_SUGGESTIONS_DOC])
-        await _run_batch(first, INSERT_TEXT_OPERATIONS)
-
-        second = _make_service(
-            [NO_SUGGESTIONS_DOC, DOC_LENGTH_STUB, WITH_SUGGESTION_DOC]
-        )
-        result = await _run_batch(second, INSERT_TEXT_OPERATIONS)
-
-        assert "Error" not in result
-        assert "WARNING" not in result
-        body = second.documents.return_value.batchUpdate.call_args.kwargs["body"]
-        assert body["writeControl"] == {"writeMode": "SUGGEST"}
-
-    @pytest.mark.asyncio
-    async def test_verdict_does_not_leak_across_users(self):
-        """One user's negative verdict must not affect another user.
-
-        A single process serves many users (OAuth 2.1 multi-user mode) whose
-        accounts and projects can differ in Preview enrollment.
-        """
-        failing = _make_service(
-            [NO_SUGGESTIONS_DOC, DOC_LENGTH_STUB, NO_SUGGESTIONS_DOC]
-        )
-        warned = await _run_batch(failing, INSERT_TEXT_OPERATIONS, user=USER)
-        assert "WARNING" in warned
-
-        working = _make_service(
-            [NO_SUGGESTIONS_DOC, DOC_LENGTH_STUB, WITH_SUGGESTION_DOC]
-        )
-        result = await _run_batch(working, INSERT_TEXT_OPERATIONS, user=OTHER_USER)
-
-        assert "WARNING" not in result
-        assert OTHER_USER in docs_tools._SUGGEST_MODE_VERIFIED_USERS
-        assert USER not in docs_tools._SUGGEST_MODE_VERIFIED_USERS
-
-    @pytest.mark.asyncio
-    async def test_verified_user_skips_reverification(self):
-        """Once confirmed, later calls skip the two extra document reads."""
-        docs_tools._SUGGEST_MODE_VERIFIED_USERS.add(USER)
-        service = _make_service([DOC_LENGTH_STUB])
-
-        result = await _run_batch(service, INSERT_TEXT_OPERATIONS)
-
-        assert "Error" not in result
-        # Only the batch manager's document-length read.
-        assert service.documents.return_value.get.return_value.execute.call_count == 1
-
-    @pytest.mark.asyncio
-    async def test_header_suggestion_is_detected(self):
-        """A suggestion inside a header counts; the walk covers segments.
-
-        _fetch_doc_suggestions once read only body/tabs, so a real header
-        suggestion looked identical before and after.
-        """
+    async def test_zero_match_find_replace_is_the_only_benign_no_update(self):
         service = _make_service(
-            [
-                NO_SUGGESTIONS_DOC_WITH_HEADER,
-                DOC_LENGTH_STUB,
-                WITH_HEADER_SUGGESTION_DOC,
-            ]
-        )
-
-        result = await _run_batch(service, HEADER_INSERT_OPERATIONS)
-
-        assert "WARNING" not in result
-        assert USER in docs_tools._SUGGEST_MODE_VERIFIED_USERS
-
-
-class TestInconclusiveVerification:
-    """Cases where the diff proves nothing and must not produce a warning."""
-
-    @pytest.mark.asyncio
-    async def test_zero_match_find_replace_does_not_warn(self):
-        """A find_replace matching nothing had nothing to suggest."""
-        service = _make_service(
-            [NO_SUGGESTIONS_DOC, DOC_LENGTH_STUB, NO_SUGGESTIONS_DOC],
-            batch_update_return={
+            {
                 "replies": [{"replaceAllText": {"occurrencesChanged": 0}}],
-                "commentUpdateState": "ALL_SAVED",
-            },
+                "commentUpdateState": "NO_UPDATES_REQUESTED",
+            }
         )
 
         result = await _run_batch(service, FIND_REPLACE_OPERATIONS)
 
         assert "WARNING" not in result
-        assert USER not in docs_tools._SUGGEST_MODE_VERIFIED_USERS
+        assert "matched zero occurrences" in result
 
     @pytest.mark.asyncio
-    async def test_matched_find_replace_without_suggestion_warns(self):
-        """A find_replace that did match but left no suggestion is suspicious."""
+    async def test_matched_find_replace_with_no_updates_warns(self):
         service = _make_service(
-            [NO_SUGGESTIONS_DOC, DOC_LENGTH_STUB, NO_SUGGESTIONS_DOC],
-            batch_update_return={
+            {
                 "replies": [{"replaceAllText": {"occurrencesChanged": 2}}],
-                "commentUpdateState": "ALL_SAVED",
-            },
+                "commentUpdateState": "NO_UPDATES_REQUESTED",
+            }
         )
 
         result = await _run_batch(service, FIND_REPLACE_OPERATIONS)
@@ -279,84 +116,99 @@ class TestInconclusiveVerification:
         assert "WARNING" in result
 
     @pytest.mark.asyncio
-    async def test_failed_post_batch_read_does_not_warn(self):
-        """The batch already succeeded; a failed read is inconclusive."""
-        service = _make_service(
-            [NO_SUGGESTIONS_DOC, DOC_LENGTH_STUB, RuntimeError("transient read error")]
-        )
+    async def test_direct_edit_omits_write_control_and_preview_reporting(self):
+        service = _make_service({"replies": [{}]})
 
-        result = await _run_batch(service, INSERT_TEXT_OPERATIONS)
-
-        assert "Error" not in result
-        assert "WARNING" not in result
-        assert USER not in docs_tools._SUGGEST_MODE_VERIFIED_USERS
-
-    @pytest.mark.asyncio
-    async def test_failed_pre_batch_read_skips_verification(self):
-        """Without a baseline there is nothing to diff against."""
-        service = _make_service(
-            [RuntimeError("transient read error"), DOC_LENGTH_STUB]
-        )
-
-        result = await _run_batch(service, INSERT_TEXT_OPERATIONS)
-
-        assert "Error" not in result
-        assert "WARNING" not in result
-
-    @pytest.mark.asyncio
-    async def test_direct_edit_batch_is_not_verified(self):
-        """suggest_mode=false sends no writeControl and skips verification."""
-        service = _make_service([DOC_LENGTH_STUB])
-
-        result = await _run_batch(service, INSERT_TEXT_OPERATIONS, suggest_mode=False)
-
-        assert "Error" not in result
-        assert "WARNING" not in result
-        assert USER not in docs_tools._SUGGEST_MODE_VERIFIED_USERS
+        result = await _run_batch(service, suggest_mode=False)
 
         body = service.documents.return_value.batchUpdate.call_args.kwargs["body"]
         assert "writeControl" not in body
+        assert "comment_update_state" not in result
+        assert "WARNING" not in result
+
+
+class TestSuggestionResponseSummary:
+    def test_summarizes_all_authoritative_response_categories(self):
+        message = docs_tools._describe_suggestion_responses(
+            [
+                {
+                    "createdSuggestionIds": ["s.1", "s.2"],
+                    "updatedSummarySuggestionIds": ["s.3"],
+                },
+                {
+                    "deletedSuggestionIds": ["s.4"],
+                    "acceptedSuggestionIds": ["s.5"],
+                    "rejectedSuggestionIds": ["s.6"],
+                },
+            ]
+        )
+
+        for expected in (
+            "created: 2",
+            "updated: 1",
+            "deleted: 1",
+            "accepted: 1",
+            "rejected: 1",
+        ):
+            assert expected in message
+
+    def test_duplicate_ids_are_counted_once(self):
+        message = docs_tools._describe_suggestion_responses(
+            [
+                {"createdSuggestionIds": ["s.1"]},
+                {"createdSuggestionIds": ["s.1"]},
+            ]
+        )
+        assert "created: 1" in message
 
 
 class TestManageDocSuggestions:
-    """manage_doc_suggestions must stay available regardless of verification."""
-
     @pytest.mark.asyncio
-    async def test_works_after_a_suggest_mode_warning(self):
-        """A prior warning must not block suggestion-thread management."""
-        warned = _make_service(
-            [NO_SUGGESTIONS_DOC, DOC_LENGTH_STUB, NO_SUGGESTIONS_DOC]
+    async def test_manage_suggestions_reports_confirmed_save(self):
+        service = _make_service(
+            {
+                "commentUpdateState": "ALL_SAVED",
+                "suggestionResponses": [{"acceptedSuggestionIds": ["suggest.abc123"]}],
+            }
         )
-        assert "WARNING" in await _run_batch(warned, INSERT_TEXT_OPERATIONS)
-
-        service = Mock()
-        service.documents.return_value.batchUpdate.return_value.execute.return_value = {
-            "commentUpdateState": "ALL_SAVED"
-        }
 
         result = await _unwrap(docs_tools.manage_doc_suggestions)(
             service=service,
             user_google_email=USER,
-            document_id="a" * 25,
+            document_id=DOCUMENT_ID,
             action="accept",
             suggestion_ids=["suggest.abc123"],
         )
 
-        assert "Successfully" in result
+        assert "Successfully applied 'accept'" in result
         request = service.documents.return_value.batchUpdate.call_args.kwargs["body"][
             "requests"
         ][0]
         assert request == {"acceptSuggestion": {"suggestionId": "suggest.abc123"}}
 
     @pytest.mark.asyncio
+    async def test_manage_suggestions_flags_unconfirmed_save(self):
+        service = _make_service({"commentUpdateState": "ALL_FAILED_UNKNOWN_REASON"})
+
+        result = await _unwrap(docs_tools.manage_doc_suggestions)(
+            service=service,
+            user_google_email=USER,
+            document_id=DOCUMENT_ID,
+            action="reject",
+            suggestion_ids=["suggest.abc123"],
+        )
+
+        assert "Successfully" not in result
+        assert "did not confirm" in result
+
+    @pytest.mark.asyncio
     async def test_rejects_empty_suggestion_ids(self):
-        """An empty ID list is a caller error, not an API call."""
         service = Mock()
 
         result = await _unwrap(docs_tools.manage_doc_suggestions)(
             service=service,
             user_google_email=USER,
-            document_id="a" * 25,
+            document_id=DOCUMENT_ID,
             action="accept",
             suggestion_ids=[],
         )
@@ -365,724 +217,102 @@ class TestManageDocSuggestions:
         service.documents.return_value.batchUpdate.assert_not_called()
 
 
-class TestSuggestionCoverage:
-    """Which suggestion types the document walk can actually surface.
-
-    A suggestion the walk cannot see is not merely missing from
-    list_doc_suggestions - it has no reachable ID, so manage_doc_suggestions
-    cannot accept, reject, or delete it either.
-    """
-
-    def test_paragraph_bullet_and_style_suggestions_are_found(self):
-        """Bullet/paragraph-style changes live only on the paragraph.
-
-        create_bullet_list and update_paragraph_style record their suggestion
-        under suggestedBulletChanges / suggestedParagraphStyleChanges with no
-        marker on any text run, so reading text runs alone missed them.
-        """
-        elements = [
+def _thread_payload(status="OPEN"):
+    return {
+        "suggestions": [
             {
-                "paragraph": {
-                    "elements": [{"textRun": {"content": "First item line.\n"}}],
-                    "suggestedBulletChanges": {"suggest.b1": {}},
-                    "suggestedParagraphStyleChanges": {"suggest.b1": {}},
-                }
+                "suggestionId": "suggest.thread-only",
+                "status": status,
+                "summaryText": "Replace old wording with new wording",
+                "headPost": {
+                    "author": {"displayName": "Ada Lovelace"},
+                    "createTime": "2026-08-24T12:34:56Z",
+                },
             }
-        ]
-        found = {}
-        docs_tools._collect_suggestions_from_elements(elements, found)
+        ],
+        "body": {"content": []},
+        "tabs": [],
+    }
 
-        assert set(found) == {"suggest.b1"}
-        assert found["suggest.b1"]["types"] == {"bullet", "paragraph-style"}
-        assert "First item line." in found["suggest.b1"]["text_preview"]
 
-    def test_table_structure_suggestions_are_found(self):
-        """Tables, rows, and cells carry their own suggestion IDs."""
-        elements = [
-            {
-                "table": {
-                    "suggestedInsertionIds": ["suggest.table"],
-                    "tableRows": [
-                        {
-                            "suggestedInsertionIds": ["suggest.row"],
-                            "tableCells": [
-                                {
-                                    "suggestedInsertionIds": ["suggest.cell"],
-                                    "content": [],
-                                }
-                            ],
-                        }
-                    ],
-                }
-            }
-        ]
-        found = {}
-        docs_tools._collect_suggestions_from_elements(elements, found)
+class TestSuggestionThreadListing:
+    @pytest.mark.asyncio
+    async def test_thread_is_source_of_truth_without_inline_marker(self):
+        service = Mock()
+        service.documents.return_value.get.return_value.execute.return_value = (
+            _thread_payload()
+        )
 
-        assert set(found) == {"suggest.table", "suggest.row", "suggest.cell"}
+        found = await docs_tools._fetch_doc_suggestions(service, DOCUMENT_ID)
 
-    def test_non_text_run_paragraph_elements_are_found(self):
-        """Every ParagraphElement variant carries the same suggestion fields."""
-        elements = [
-            {
-                "paragraph": {
-                    "elements": [
-                        {"pageBreak": {"suggestedInsertionIds": ["suggest.break"]}},
-                        {
-                            "inlineObjectElement": {
-                                "inlineObjectId": "kix.1",
-                                "suggestedInsertionIds": ["suggest.image"],
-                            }
-                        },
-                        {
-                            "horizontalRule": {
-                                "suggestedDeletionIds": ["suggest.rule"]
-                            }
-                        },
-                    ]
-                }
-            }
-        ]
-        found = {}
-        docs_tools._collect_suggestions_from_elements(elements, found)
+        assert set(found) == {"suggest.thread-only"}
+        assert found["suggest.thread-only"]["author"] == "Ada Lovelace"
+        assert found["suggest.thread-only"]["create_time"] == ("2026-08-24T12:34:56Z")
+        kwargs = service.documents.return_value.get.call_args.kwargs
+        assert kwargs["commentsViewMode"] == "COMMENTS_VIEW_MODE_INCLUDED"
 
-        assert set(found) == {"suggest.break", "suggest.image", "suggest.rule"}
+    @pytest.mark.asyncio
+    async def test_non_open_threads_are_not_pending(self):
+        service = Mock()
+        service.documents.return_value.get.return_value.execute.return_value = (
+            _thread_payload(status="ACCEPTED")
+        )
 
-    def test_text_run_previews_accumulate_across_fragments(self):
-        """One suggestion split across runs reads as continuous text."""
-        elements = [
-            {
-                "paragraph": {
-                    "elements": [
-                        {
-                            "textRun": {
-                                "content": "Hello ",
-                                "suggestedInsertionIds": ["suggest.t"],
-                            }
-                        },
-                        {
-                            "textRun": {
-                                "content": "world",
-                                "suggestedInsertionIds": ["suggest.t"],
-                            }
-                        },
-                    ]
-                }
-            }
-        ]
-        found = {}
-        docs_tools._collect_suggestions_from_elements(elements, found)
-
-        assert found["suggest.t"]["text_preview"] == "Hello world"
-
-    def test_malformed_nodes_do_not_crash_the_walk(self):
-        """Scalars, None, and lists among element values are skipped."""
-        elements = [
-            {
-                "paragraph": {
-                    "elements": [
-                        {"startIndex": 0, "endIndex": 1, "textRun": None},
-                        {"scalar": 5, "text": "x", "items": [1, 2]},
-                    ]
-                }
-            }
-        ]
-        found = {}
-        docs_tools._collect_suggestions_from_elements(elements, found)
+        found = await docs_tools._fetch_doc_suggestions(service, DOCUMENT_ID)
 
         assert found == {}
 
-
-class TestCommentUpdateState:
-    """Reporting of BatchUpdateDocumentResponse.commentUpdateState.
-
-    A suggest-mode batch can partially fail: the document changes commit while
-    the suggestion threads fail to save, leaving an intended proposal applied
-    directly. Only ALL_SAVED justifies reporting the batch as suggested.
-    """
-
-    def test_all_saved_reports_success(self):
-        """ALL_SAVED is the only state that confirms suggestions persisted."""
-        msg = docs_tools._describe_comment_update_state("ALL_SAVED")
-        assert "Applied as suggested edits" in msg
-        assert "WARNING" not in msg
-
-    def test_no_updates_requested_is_benign(self):
-        """Nothing needed suggesting; that is not a failure."""
-        msg = docs_tools._describe_comment_update_state("NO_UPDATES_REQUESTED")
-        assert "WARNING" not in msg
-        assert "no suggestion updates were required" in msg.lower()
-
-    def test_failure_state_warns_edits_may_be_live(self):
-        """A failed save means the edit may have landed directly."""
-        msg = docs_tools._describe_comment_update_state("ALL_FAILED_UNKNOWN_REASON")
-        assert "WARNING" in msg
-        assert "LIVE" in msg
-
-    def test_absent_state_does_not_warn(self):
-        """Absence is not evidence of failure; the ID diff is the detector."""
-        msg = docs_tools._describe_comment_update_state(None)
-        assert "WARNING" not in msg
-
     @pytest.mark.asyncio
-    async def test_batch_surfaces_failure_state(self):
-        """A failed save must not be reported as 'Applied as suggested edits'."""
-        service = _make_service(
-            [NO_SUGGESTIONS_DOC, DOC_LENGTH_STUB, WITH_SUGGESTION_DOC],
-            batch_update_return={
-                "replies": [{}],
-                "commentUpdateState": "ALL_FAILED_UNKNOWN_REASON",
-            },
+    async def test_list_output_includes_thread_metadata(self):
+        service = Mock()
+        service.documents.return_value.get.return_value.execute.return_value = (
+            _thread_payload()
         )
 
-        result = await _run_batch(service, INSERT_TEXT_OPERATIONS)
-
-        assert "Applied as suggested edits" not in result
-        assert "WARNING" in result
-
-    @pytest.mark.asyncio
-    async def test_manage_suggestions_flags_unconfirmed_save(self):
-        """accept/reject must not claim success on an unconfirmed state."""
-        service = Mock()
-        service.documents.return_value.batchUpdate.return_value.execute.return_value = {
-            "commentUpdateState": "ALL_FAILED_UNKNOWN_REASON"
-        }
-
-        result = await _unwrap(docs_tools.manage_doc_suggestions)(
+        result = await _unwrap(docs_tools.list_doc_suggestions)(
             service=service,
             user_google_email=USER,
-            document_id="a" * 25,
-            action="accept",
-            suggestion_ids=["suggest.abc123"],
+            document_id=DOCUMENT_ID,
         )
 
-        assert "Successfully applied" not in result
-        assert "did not confirm" in result
+        assert "suggest.thread-only" in result
+        assert "Replace old wording" in result
+        assert "author: Ada Lovelace" in result
+        assert "created: 2026-08-24T12:34:56Z" in result
 
     @pytest.mark.asyncio
-    async def test_manage_suggestions_reports_confirmed_save(self):
-        """ALL_SAVED reports plainly as success."""
+    async def test_standard_discovery_client_gets_preview_query_parameter(self):
         service = Mock()
-        service.documents.return_value.batchUpdate.return_value.execute.return_value = {
-            "commentUpdateState": "ALL_SAVED"
-        }
+        documents = service.documents.return_value
+        request = Mock()
+        request.uri = f"https://docs.googleapis.com/v1/documents/{DOCUMENT_ID}?alt=json"
+        request.execute.return_value = _thread_payload()
 
-        result = await _unwrap(docs_tools.manage_doc_suggestions)(
-            service=service,
-            user_google_email=USER,
-            document_id="a" * 25,
-            action="accept",
-            suggestion_ids=["suggest.abc123"],
-        )
+        def build_get(**kwargs):
+            if "commentsViewMode" in kwargs:
+                raise TypeError("unexpected keyword argument commentsViewMode")
+            return request
 
-        assert "Successfully applied 'accept'" in result
+        documents.get.side_effect = build_get
 
+        found = await docs_tools._fetch_doc_suggestions(service, DOCUMENT_ID)
 
-class TestVerificationLatch:
-    """What may mark a user as confirmed-working.
-
-    The before/after diff is document-wide, so it cannot by itself attribute a
-    new suggestion to this batch. Latching on an unrelated suggestion would
-    mark an unenrolled user verified and silence every later warning.
-    """
+        assert "suggest.thread-only" in found
+        assert "commentsViewMode=COMMENTS_VIEW_MODE_INCLUDED" in request.uri
 
     @pytest.mark.asyncio
-    async def test_unrelated_suggestion_does_not_latch(self):
-        """A new ID without a confirmed save must not verify the user."""
-        service = _make_service(
-            [NO_SUGGESTIONS_DOC, DOC_LENGTH_STUB, WITH_SUGGESTION_DOC],
-            batch_update_return={
-                "replies": [{}],
-                # The batch itself saved no suggestion updates; the new ID in
-                # the document came from somewhere else.
-                "commentUpdateState": "NO_UPDATES_REQUESTED",
-            },
-        )
-
-        await _run_batch(service, INSERT_TEXT_OPERATIONS)
-
-        assert USER not in docs_tools._SUGGEST_MODE_VERIFIED_USERS
-
-    @pytest.mark.asyncio
-    async def test_confirmed_save_with_new_id_latches(self):
-        """A new ID plus ALL_SAVED is attributable to this batch."""
-        service = _make_service(
-            [NO_SUGGESTIONS_DOC, DOC_LENGTH_STUB, WITH_SUGGESTION_DOC],
-            batch_update_return={
-                "replies": [{}],
-                "commentUpdateState": "ALL_SAVED",
-            },
-        )
-
-        await _run_batch(service, INSERT_TEXT_OPERATIONS)
-
-        assert USER in docs_tools._SUGGEST_MODE_VERIFIED_USERS
-
-    @pytest.mark.asyncio
-    async def test_failed_save_with_new_id_does_not_latch(self):
-        """An explicit failure state must never verify the user."""
-        service = _make_service(
-            [NO_SUGGESTIONS_DOC, DOC_LENGTH_STUB, WITH_SUGGESTION_DOC],
-            batch_update_return={
-                "replies": [{}],
-                "commentUpdateState": "ALL_FAILED_UNKNOWN_REASON",
-            },
-        )
-
-        await _run_batch(service, INSERT_TEXT_OPERATIONS)
-
-        assert USER not in docs_tools._SUGGEST_MODE_VERIFIED_USERS
-
-
-class TestVerifiableOperationCoverage:
-    """The verifiable set must stay in step with what the walk collects.
-
-    An operation listed as verifiable whose markers are not collected would
-    warn on every use; one that is collected but unlisted skips verification
-    silently.
-    """
-
-    def test_paragraph_style_and_bullet_are_verifiable(self):
-        """Their markers are collected, so their effect is observable."""
-        assert "update_paragraph_style" in docs_tools._SUGGEST_MODE_VERIFIABLE_OP_TYPES
-        assert "create_bullet_list" in docs_tools._SUGGEST_MODE_VERIFIABLE_OP_TYPES
-
-    def test_table_operations_are_verifiable(self):
-        """Table, row, and cell markers are collected."""
-        for op in (
-            "insert_table",
-            "insert_table_row",
-            "update_table_row_style",
-            "update_table_cell_style",
-        ):
-            assert op in docs_tools._SUGGEST_MODE_VERIFIABLE_OP_TYPES
-
-    def test_unsupported_operations_are_not_verifiable(self):
-        """Operations the API rejects in suggest mode never reach verification."""
-        for op in docs_tools._SUGGEST_MODE_UNSUPPORTED_OPERATION_TYPES:
-            assert op not in docs_tools._SUGGEST_MODE_VERIFIABLE_OP_TYPES
-
-    def test_table_style_suggestions_are_collected(self):
-        """Row and cell style changes carry their own suggestion IDs."""
-        elements = [
-            {
-                "table": {
-                    "tableRows": [
-                        {
-                            "suggestedTableRowStyleChanges": {"suggest.row": {}},
-                            "tableCells": [
-                                {
-                                    "suggestedTableCellStyleChanges": {
-                                        "suggest.cell": {}
-                                    },
-                                    "content": [],
-                                }
-                            ],
-                        }
-                    ]
-                }
-            }
-        ]
-        found = {}
-        docs_tools._collect_suggestions_from_elements(elements, found)
-
-        assert found["suggest.row"]["types"] == {"table-row-style"}
-        assert found["suggest.cell"]["types"] == {"table-cell-style"}
-
-
-class TestDocumentLevelSuggestions:
-    """Document-wide style suggestions hang off the document, not its content."""
-
-    @pytest.mark.asyncio
-    async def test_document_and_tab_style_suggestions_are_collected(self):
-        """update_document_style records on Document/DocumentTab itself."""
-        payload = {
-            "suggestedDocumentStyleChanges": {"suggest.docstyle": {}},
-            "body": {"content": []},
-            "tabs": [
-                {
-                    "tabProperties": {"tabId": "t.0"},
-                    "documentTab": {
-                        "suggestedNamedStylesChanges": {"suggest.tabstyle": {}},
-                        "body": {"content": []},
-                    },
-                }
-            ],
-        }
-        service = _make_service([payload])
-
-        found = await docs_tools._fetch_doc_suggestions(service, "a" * 25)
-
-        assert found["suggest.docstyle"]["types"] == {"document-style"}
-        assert found["suggest.tabstyle"]["types"] == {"named-styles"}
-        assert found["suggest.tabstyle"]["tab_id"] == "t.0"
-
-
-class TestResourceMapSuggestions:
-    """Suggestions recorded on lists, inlineObjects, and positionedObjects.
-
-    These resources sit in document-level maps rather than in body content,
-    and each carries a singular `suggestedInsertionId` string instead of the
-    plural array used everywhere else. A positioned object's marker is
-    recorded only here, so missing them leaves those suggestions unlistable
-    and therefore unmanageable.
-    """
-
-    @staticmethod
-    def _service(extra):
-        """Mock a documents.get returning an otherwise-empty document."""
+    async def test_marker_fallback_remains_available_without_thread_field(self):
         service = Mock()
         service.documents.return_value.get.return_value.execute.return_value = {
-            "body": {"content": []},
-            "tabs": [],
-            **extra,
-        }
-        return service
-
-    @pytest.mark.asyncio
-    async def test_list_resource_suggestions(self):
-        """A list resource is the document's only suggestion."""
-        service = self._service(
-            {
-                "lists": {
-                    "l1": {
-                        "suggestedInsertionId": "suggest.list",
-                        "suggestedListPropertiesChanges": {"suggest.listprop": {}},
-                    }
-                }
-            }
-        )
-
-        found = await docs_tools._fetch_doc_suggestions(service, "a" * 25)
-
-        assert found["suggest.list"]["types"] == {"insertion"}
-        assert found["suggest.listprop"]["types"] == {"list-properties"}
-
-    @pytest.mark.asyncio
-    async def test_inline_object_resource_suggestions(self):
-        """An inline object resource is the document's only suggestion."""
-        service = self._service(
-            {
-                "inlineObjects": {
-                    "i1": {
-                        "suggestedInsertionId": "suggest.inline",
-                        "suggestedInlineObjectPropertiesChanges": {
-                            "suggest.inlineprop": {}
-                        },
-                    }
-                }
-            }
-        )
-
-        found = await docs_tools._fetch_doc_suggestions(service, "a" * 25)
-
-        assert found["suggest.inline"]["types"] == {"insertion"}
-        assert found["suggest.inlineprop"]["types"] == {"inline-object-properties"}
-
-    @pytest.mark.asyncio
-    async def test_positioned_object_resource_suggestions(self):
-        """A positioned object's marker exists nowhere else in the document."""
-        service = self._service(
-            {
-                "positionedObjects": {
-                    "p1": {
-                        "suggestedInsertionId": "suggest.pos",
-                        "suggestedPositionedObjectPropertiesChanges": {
-                            "suggest.posprop": {}
-                        },
-                    }
-                }
-            }
-        )
-
-        found = await docs_tools._fetch_doc_suggestions(service, "a" * 25)
-
-        assert found["suggest.pos"]["types"] == {"insertion"}
-        assert found["suggest.posprop"]["types"] == {"positioned-object-properties"}
-
-    @pytest.mark.asyncio
-    async def test_tab_scoped_resource_suggestions(self):
-        """Resources under a tab are attributed to that tab."""
-        service = Mock()
-        service.documents.return_value.get.return_value.execute.return_value = {
-            "body": {"content": []},
-            "tabs": [
-                {
-                    "tabProperties": {"tabId": "t.0"},
-                    "documentTab": {
-                        "body": {"content": []},
-                        "positionedObjects": {
-                            "p1": {"suggestedInsertionId": "suggest.tabpos"}
-                        },
-                    },
-                }
-            ],
-        }
-
-        found = await docs_tools._fetch_doc_suggestions(service, "a" * 25)
-
-        assert found["suggest.tabpos"]["tab_id"] == "t.0"
-
-    def test_singular_insertion_id_is_read(self):
-        """Resources use a singular string, not the plural array."""
-        found = {}
-        docs_tools._collect_suggestion_markers(
-            {"suggestedInsertionId": "suggest.single"}, found
-        )
-        assert found["suggest.single"]["types"] == {"insertion"}
-
-    def test_non_string_singular_insertion_id_is_ignored(self):
-        """A malformed value must not become a bogus suggestion ID."""
-        found = {}
-        docs_tools._collect_suggestion_markers({"suggestedInsertionId": None}, found)
-        docs_tools._collect_suggestion_markers({"suggestedInsertionId": ""}, found)
-        assert found == {}
-
-
-# Every suggestion-marker field in Docs API v1, and the schemas carrying each.
-# Derived from the discovery document:
-#   curl 'https://docs.googleapis.com/$discovery/rest?version=v1'
-# then collect property names starting with "suggested" across all schemas.
-# Regenerate when upgrading API versions; a field absent from
-# _SUGGESTION_CHANGE_MAPS (or from the insertion/deletion handling) is a
-# suggestion nobody can list, and therefore nobody can accept or reject.
-_ALL_SUGGESTION_FIELDS = {
-    "suggestedInsertionIds",  # array, 16 schemas
-    "suggestedDeletionIds",  # array, 19 schemas
-    "suggestedInsertionId",  # STRING (singular) - List, InlineObject, PositionedObject
-    "suggestedTextStyleChanges",
-    "suggestedParagraphStyleChanges",
-    "suggestedBulletChanges",
-    "suggestedPositionedObjectIds",
-    "suggestedTableRowStyleChanges",
-    "suggestedTableCellStyleChanges",
-    "suggestedDocumentStyleChanges",
-    "suggestedNamedStylesChanges",
-    "suggestedListPropertiesChanges",
-    "suggestedInlineObjectPropertiesChanges",
-    "suggestedPositionedObjectPropertiesChanges",
-    "suggestedDateElementPropertiesChanges",
-}
-
-# Every ParagraphElement variant that can carry suggestion markers.
-_PARAGRAPH_ELEMENT_VARIANTS = [
-    "textRun",
-    "autoText",
-    "pageBreak",
-    "columnBreak",
-    "footnoteReference",
-    "horizontalRule",
-    "inlineObjectElement",
-    "person",
-    "richLink",
-    "dateElement",
-    "equation",
-]
-
-
-def _all_marker_ids(node, acc):
-    """Collect every suggestion ID planted anywhere in a document payload."""
-    if isinstance(node, dict):
-        for key, value in node.items():
-            if key in ("suggestedInsertionIds", "suggestedDeletionIds"):
-                acc.update(value)
-            elif key == "suggestedInsertionId":
-                acc.add(value)
-            elif key.startswith("suggested") and isinstance(value, dict):
-                acc.update(value)
-            else:
-                _all_marker_ids(value, acc)
-    elif isinstance(node, list):
-        for item in node:
-            _all_marker_ids(item, acc)
-
-
-def _document_with_every_marker():
-    """Build a document carrying every suggestion field at every location."""
-
-    def element(name):
-        """Build one ParagraphElement variant carrying every marker it can."""
-        node = {
-            "suggestedInsertionIds": [f"s.{name}.ins"],
-            "suggestedDeletionIds": [f"s.{name}.del"],
-            "suggestedTextStyleChanges": {f"s.{name}.style": {}},
-        }
-        if name == "dateElement":
-            node["suggestedDateElementPropertiesChanges"] = {f"s.{name}.dateprops": {}}
-        return {name: node}
-
-    def segment(kind):
-        """Build a header/footer/footnote map with one suggested run."""
-        return {
-            f"{kind}1": {
+            "body": {
                 "content": [
                     {
                         "paragraph": {
                             "elements": [
                                 {
                                     "textRun": {
-                                        "suggestedInsertionIds": [f"s.{kind}"],
-                                        "content": "x",
-                                    }
-                                }
-                            ]
-                        }
-                    }
-                ]
-            }
-        }
-
-    return {
-        "suggestedDocumentStyleChanges": {"s.doc.style": {}},
-        "suggestedNamedStylesChanges": {"s.doc.named": {}},
-        "body": {
-            "content": [
-                {
-                    "paragraph": {
-                        "elements": [
-                            element(n) for n in _PARAGRAPH_ELEMENT_VARIANTS
-                        ],
-                        "suggestedParagraphStyleChanges": {"s.para.style": {}},
-                        "suggestedBulletChanges": {"s.para.bullet": {}},
-                        "suggestedPositionedObjectIds": {"s.para.posobj": {}},
-                    }
-                },
-                {
-                    "table": {
-                        "suggestedInsertionIds": ["s.table.ins"],
-                        "suggestedDeletionIds": ["s.table.del"],
-                        "tableRows": [
-                            {
-                                "suggestedInsertionIds": ["s.row.ins"],
-                                "suggestedTableRowStyleChanges": {"s.row.style": {}},
-                                "tableCells": [
-                                    {
-                                        "suggestedInsertionIds": ["s.cell.ins"],
-                                        "suggestedTableCellStyleChanges": {
-                                            "s.cell.style": {}
-                                        },
-                                        "content": [
-                                            {
-                                                "paragraph": {
-                                                    "elements": [
-                                                        {
-                                                            "textRun": {
-                                                                "suggestedInsertionIds": [
-                                                                    "s.incell"
-                                                                ],
-                                                                "content": "x",
-                                                            }
-                                                        }
-                                                    ]
-                                                }
-                                            }
-                                        ],
-                                    }
-                                ],
-                            }
-                        ],
-                    }
-                },
-                {
-                    "tableOfContents": {
-                        "suggestedInsertionIds": ["s.toc.ins"],
-                        "content": [
-                            {
-                                "paragraph": {
-                                    "elements": [
-                                        {
-                                            "textRun": {
-                                                "suggestedInsertionIds": ["s.intoc"],
-                                                "content": "x",
-                                            }
-                                        }
-                                    ]
-                                }
-                            }
-                        ],
-                    }
-                },
-                {"sectionBreak": {"suggestedInsertionIds": ["s.sec.ins"]}},
-            ]
-        },
-        "headers": segment("header"),
-        "footers": segment("footer"),
-        "footnotes": segment("footnote"),
-        "lists": {
-            "l1": {
-                "suggestedInsertionId": "s.list.ins",
-                "suggestedListPropertiesChanges": {"s.list.props": {}},
-            }
-        },
-        "inlineObjects": {
-            "i1": {
-                "suggestedInsertionId": "s.inline.ins",
-                "suggestedInlineObjectPropertiesChanges": {"s.inline.props": {}},
-            }
-        },
-        "positionedObjects": {
-            "p1": {
-                "suggestedInsertionId": "s.pos.ins",
-                "suggestedPositionedObjectPropertiesChanges": {"s.pos.props": {}},
-            }
-        },
-        "tabs": [],
-    }
-
-
-class TestExhaustiveSuggestionCoverage:
-    """The walk must reach every place the Docs API records a suggestion.
-
-    Three consecutive review rounds found markers in locations the walk did
-    not reach, each leaving real suggestions unlistable and therefore
-    unmanageable. These tests pin the full surface derived from the API
-    discovery document rather than patching one location at a time.
-    """
-
-    def test_every_known_field_is_handled(self):
-        """No suggestion field in the API may go uncollected."""
-        handled = set(docs_tools._SUGGESTION_CHANGE_MAPS) | {
-            "suggestedInsertionIds",
-            "suggestedDeletionIds",
-            "suggestedInsertionId",
-        }
-        assert _ALL_SUGGESTION_FIELDS - handled == set()
-
-    @pytest.mark.asyncio
-    async def test_every_marker_location_is_reached(self):
-        """A document with a marker everywhere yields every planted ID."""
-        payload = _document_with_every_marker()
-        expected = set()
-        _all_marker_ids(payload, expected)
-
-        service = Mock()
-        service.documents.return_value.get.return_value.execute.return_value = payload
-        found = await docs_tools._fetch_doc_suggestions(service, "a" * 25)
-
-        assert expected - set(found) == set(), "markers the walk failed to reach"
-        assert set(found) - expected == set(), "IDs invented by the walk"
-
-    @pytest.mark.asyncio
-    async def test_markers_inside_a_table_of_contents_are_reached(self):
-        """A table of contents nests structural content of its own."""
-        payload = {
-            "body": {
-                "content": [
-                    {
-                        "tableOfContents": {
-                            "content": [
-                                {
-                                    "paragraph": {
-                                        "elements": [
-                                            {
-                                                "textRun": {
-                                                    "suggestedInsertionIds": [
-                                                        "suggest.intoc"
-                                                    ],
-                                                    "content": "Heading",
-                                                }
-                                            }
-                                        ]
+                                        "content": "Suggested text",
+                                        "suggestedInsertionIds": ["suggest.marker"],
                                     }
                                 }
                             ]
@@ -1092,94 +322,106 @@ class TestExhaustiveSuggestionCoverage:
             },
             "tabs": [],
         }
-        service = Mock()
-        service.documents.return_value.get.return_value.execute.return_value = payload
 
-        found = await docs_tools._fetch_doc_suggestions(service, "a" * 25)
+        found = await docs_tools._fetch_doc_suggestions(service, DOCUMENT_ID)
 
-        assert "suggest.intoc" in found
+        assert set(found) == {"suggest.marker"}
+        assert found["suggest.marker"]["types"] == {"insertion"}
 
-    def test_date_element_property_suggestions_are_reached(self):
-        """dateElement carries a properties-change map of its own."""
-        elements = [
+
+class TestSuggestionMarkerEnrichment:
+    def test_deeply_nested_table_marker_has_no_arbitrary_depth_limit(self):
+        content = [
             {
                 "paragraph": {
                     "elements": [
                         {
-                            "dateElement": {
-                                "suggestedDateElementPropertiesChanges": {
-                                    "suggest.date": {}
-                                }
+                            "textRun": {
+                                "content": "deep",
+                                "suggestedInsertionIds": ["suggest.deep"],
                             }
                         }
                     ]
                 }
             }
         ]
-        found = {}
-        docs_tools._collect_suggestions_from_elements(elements, found)
+        for _ in range(8):
+            content = [
+                {"table": {"tableRows": [{"tableCells": [{"content": content}]}]}}
+            ]
 
-        assert found["suggest.date"]["types"] == {"date-element-properties"}
+        found = {}
+        docs_tools._collect_suggestions_from_elements(content, found)
+
+        assert found["suggest.deep"]["text_preview"] == "deep"
+
+    def test_paragraph_and_table_style_markers_are_enriched(self):
+        content = [
+            {
+                "paragraph": {
+                    "elements": [{"textRun": {"content": "line\n"}}],
+                    "suggestedParagraphStyleChanges": {"suggest.p": {}},
+                    "suggestedBulletChanges": {"suggest.p": {}},
+                }
+            },
+            {
+                "table": {
+                    "tableRows": [
+                        {
+                            "suggestedTableRowStyleChanges": {"suggest.r": {}},
+                            "tableCells": [
+                                {
+                                    "suggestedTableCellStyleChanges": {"suggest.c": {}},
+                                    "content": [],
+                                }
+                            ],
+                        }
+                    ]
+                }
+            },
+        ]
+
+        found = {}
+        docs_tools._collect_suggestions_from_elements(content, found)
+
+        assert found["suggest.p"]["types"] == {"paragraph-style", "bullet"}
+        assert found["suggest.r"]["types"] == {"table-row-style"}
+        assert found["suggest.c"]["types"] == {"table-cell-style"}
 
 
 class TestValidateSuggestModeOperations:
-    """Client-side rejection of operations the API refuses in suggest mode."""
-
-    def test_create_header_footer_rejected(self):
-        """CreateHeader/CreateFooter cannot be suggested."""
+    def test_create_header_footer_is_allowed_by_published_contract(self):
         error = docs_tools._validate_suggest_mode_operations(
             [{"type": "create_header_footer", "section_type": "header"}]
         )
-        assert error is not None
-        assert "CreateHeader/CreateFooter" in error
+        assert error is None
 
-    def test_named_range_rejected(self):
-        """Named-range operations cannot be suggested."""
-        error = docs_tools._validate_suggest_mode_operations(
-            [{"type": "delete_named_range", "named_range_name": "x"}]
-        )
+    @pytest.mark.parametrize(
+        "operation",
+        [
+            {"type": "insert_doc_tab", "title": "New tab", "index": 0},
+            {"type": "delete_named_range", "named_range_id": "range.1"},
+            {
+                "type": "update_table_column_properties",
+                "table_start_index": 1,
+                "column_indices": [0],
+                "width": 72,
+            },
+        ],
+    )
+    def test_published_unsupported_requests_are_rejected(self, operation):
+        error = docs_tools._validate_suggest_mode_operations([operation])
         assert error is not None
-        assert "DeleteNamedRange" in error
+        assert operation["type"] in error
 
-    def test_unsupported_document_style_field_rejected(self):
-        """documentFormat and header/footer toggles cannot be suggested."""
+    def test_unsupported_document_style_field_is_rejected(self):
         error = docs_tools._validate_suggest_mode_operations(
-            [{"type": "update_document_style", "document_mode": "PAGELESS"}]
+            [{"type": "update_document_style", "document_mode": "PAGES"}]
         )
         assert error is not None
         assert "document_mode" in error
 
-    def test_plain_insert_text_allowed(self):
-        """Ordinary text operations pass validation."""
-        error = docs_tools._validate_suggest_mode_operations(
-            [{"type": "insert_text", "end_of_segment": True, "text": "hi\n"}]
-        )
-        assert error is None
-
-
-class TestSuggestModeDiffIsMeaningful:
-    """The predicate deciding whether an empty diff is worth warning about."""
-
-    def test_assumed_effect_operation_is_meaningful(self):
-        """insert_text should have left a suggestion behind."""
-        assert docs_tools._suggest_mode_diff_is_meaningful(
-            INSERT_TEXT_OPERATIONS, {}
-        )
-
-    def test_zero_match_find_replace_is_not_meaningful(self):
-        """Nothing matched, so nothing could have been suggested."""
-        assert not docs_tools._suggest_mode_diff_is_meaningful(
-            FIND_REPLACE_OPERATIONS, {"replace_all_text_occurrences": [0]}
-        )
-
-    def test_matched_find_replace_is_meaningful(self):
-        """Something matched, so a suggestion was expected."""
-        assert docs_tools._suggest_mode_diff_is_meaningful(
-            FIND_REPLACE_OPERATIONS, {"replace_all_text_occurrences": [0, 3]}
-        )
-
-    def test_missing_occurrence_metadata_is_not_meaningful(self):
-        """Absent counts must not be read as evidence of a problem."""
-        assert not docs_tools._suggest_mode_diff_is_meaningful(
-            FIND_REPLACE_OPERATIONS, {}
+    def test_plain_insert_text_is_allowed(self):
+        assert (
+            docs_tools._validate_suggest_mode_operations(INSERT_TEXT_OPERATIONS) is None
         )

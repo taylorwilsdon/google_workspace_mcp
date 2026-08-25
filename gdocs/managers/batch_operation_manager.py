@@ -126,6 +126,7 @@ class BatchOperationManager:
             }
             if suggest_mode:
                 metadata["comment_update_state"] = result.get("commentUpdateState")
+                metadata["suggestion_responses"] = result.get("suggestionResponses", [])
                 # ReplaceAllTextResponse.occurrencesChanged can legitimately be 0
                 # when find_replace's search text isn't present - that's not
                 # evidence suggest mode failed, just that there was nothing to
