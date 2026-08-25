@@ -441,6 +441,132 @@ class TestSuggestionThreadListing:
 
 
 class TestSuggestionMarkerEnrichment:
+    def test_style_marker_does_not_duplicate_insertion_preview(self):
+        # A suggested insertion carries both suggestedInsertionIds and
+        # suggestedTextStyleChanges for the same id, so appending the run's
+        # content for each printed the suggested text twice.
+        content = [
+            {
+                "paragraph": {
+                    "elements": [
+                        {
+                            "textRun": {
+                                "content": "Suggested line.\n",
+                                "suggestedInsertionIds": ["suggest.dup"],
+                                "suggestedTextStyleChanges": {"suggest.dup": {}},
+                            }
+                        }
+                    ]
+                }
+            }
+        ]
+
+        found = {}
+        docs_tools._collect_suggestions_from_elements(content, found)
+
+        assert found["suggest.dup"]["text_preview"] == "Suggested line.\n"
+        assert found["suggest.dup"]["types"] == {"insertion", "style"}
+
+    def test_insertion_fragments_still_concatenate(self):
+        # Insertion markers rebuild a run split across elements, so their
+        # fragments must keep accumulating.
+        content = [
+            {
+                "paragraph": {
+                    "elements": [
+                        {
+                            "textRun": {
+                                "content": "Hello ",
+                                "suggestedInsertionIds": ["suggest.frag"],
+                            }
+                        },
+                        {
+                            "textRun": {
+                                "content": "world",
+                                "suggestedInsertionIds": ["suggest.frag"],
+                            }
+                        },
+                    ]
+                }
+            }
+        ]
+
+        found = {}
+        docs_tools._collect_suggestions_from_elements(content, found)
+
+        assert found["suggest.frag"]["text_preview"] == "Hello world"
+
+    def test_style_only_run_still_gets_a_preview(self):
+        # With no insertion marker the style marker must still supply the text.
+        content = [
+            {
+                "paragraph": {
+                    "elements": [
+                        {
+                            "textRun": {
+                                "content": "styled text",
+                                "suggestedTextStyleChanges": {"suggest.style": {}},
+                            }
+                        }
+                    ]
+                }
+            }
+        ]
+
+        found = {}
+        docs_tools._collect_suggestions_from_elements(content, found)
+
+        assert found["suggest.style"]["text_preview"] == "styled text"
+
+    def test_style_marker_fragments_concatenate_across_runs(self):
+        # A format_text suggestion spans every run it covers, carrying the same
+        # id on each, so style fragments must accumulate across runs even
+        # though repeated markers on one run must not.
+        content = [
+            {
+                "paragraph": {
+                    "elements": [
+                        {
+                            "textRun": {
+                                "content": part,
+                                "suggestedTextStyleChanges": {"suggest.fmt": {}},
+                            }
+                        }
+                        for part in ("alpha ", "beta ", "gamma")
+                    ]
+                }
+            }
+        ]
+
+        found = {}
+        docs_tools._collect_suggestions_from_elements(content, found)
+
+        assert found["suggest.fmt"]["text_preview"] == "alpha beta gamma"
+
+    def test_insertion_and_style_on_multiple_runs_counts_each_run_once(self):
+        # Both markers on both runs: each run contributes its text exactly once.
+        content = [
+            {
+                "paragraph": {
+                    "elements": [
+                        {
+                            "textRun": {
+                                "content": part,
+                                "suggestedInsertionIds": ["suggest.both"],
+                                "suggestedTextStyleChanges": {"suggest.both": {}},
+                            }
+                        }
+                        for part in ("Hello ", "world")
+                    ]
+                }
+            }
+        ]
+
+        found = {}
+        docs_tools._collect_suggestions_from_elements(content, found)
+
+        assert found["suggest.both"]["text_preview"] == "Hello world"
+
     def test_deeply_nested_table_marker_has_no_arbitrary_depth_limit(self):
         content = [
             {

@@ -1645,10 +1645,18 @@ def _collect_suggestion_markers(
             sid, {"types": set(), "text_preview": "", "tab_id": tab_id}
         )
 
-    def apply_preview(entry: dict[str, Any]) -> None:
-        """Append or seed the entry's preview text per `accumulate`."""
-        if not preview:
+    # One node can carry several markers for the same suggestion - a suggested
+    # insertion records both suggestedInsertionIds and suggestedTextStyleChanges
+    # on the same run - so a node contributes its text to a given suggestion at
+    # most once. Fragments from *different* nodes still accumulate, which is
+    # what rebuilds a suggestion spanning several runs.
+    contributed: set[str] = set()
+
+    def apply_preview(entry: dict[str, Any], sid: str) -> None:
+        """Append or seed the entry's preview, once per node per suggestion."""
+        if not preview or sid in contributed:
             return
+        contributed.add(sid)
         if accumulate:
             entry["text_preview"] += preview
         elif not entry["text_preview"]:
@@ -1661,7 +1669,7 @@ def _collect_suggestion_markers(
         for sid in node.get(field) or []:
             entry = entry_for(sid)
             entry["types"].add(label)
-            apply_preview(entry)
+            apply_preview(entry, sid)
 
     # Resource entries (List, InlineObject, PositionedObject) carry a single
     # suggestedInsertionId string rather than the plural array used elsewhere.
@@ -1669,13 +1677,13 @@ def _collect_suggestion_markers(
     if isinstance(single_insertion_id, str) and single_insertion_id:
         entry = entry_for(single_insertion_id)
         entry["types"].add("insertion")
-        apply_preview(entry)
+        apply_preview(entry, single_insertion_id)
 
     for field, label in _SUGGESTION_CHANGE_MAPS.items():
         for sid in node.get(field) or {}:
             entry = entry_for(sid)
             entry["types"].add(label)
-            apply_preview(entry)
+            apply_preview(entry, sid)
 
 
 def _collect_suggestions_from_segment_map(
