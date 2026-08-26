@@ -439,9 +439,15 @@ def extract_office_xml_text(file_bytes: bytes, mime_type: str) -> Optional[str]:
                 except OfficeXmlExtractionError:
                     raise
                 except KeyError:
-                    # The member simply is not in the archive. That is ABSENT, not
-                    # damaged: a readable file with nothing to extract yields None,
-                    # which is the distinction this whole change exists to keep.
+                    # ABSENT is not DAMAGED, and the difference is the contract:
+                    # this function returns None for a readable file with no
+                    # extractable text, and raises only when the file cannot be
+                    # read. A member that is simply not in the archive is the
+                    # former.
+                    #
+                    # Do NOT merge this into the generic handler below. That one
+                    # raises, so folding these together would report every archive
+                    # lacking an optional member as corrupt.
                     logger.info(
                         f"Member '{member}' not present in {mime_type} file; skipping."
                     )
