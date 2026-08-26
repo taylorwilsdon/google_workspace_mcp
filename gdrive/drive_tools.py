@@ -29,6 +29,7 @@ from core.utils import (
     GOOGLE_API_WRITE_RETRIES,
     IMAGE_MIME_TYPES,
     encode_image_content,
+    OfficeXmlExtractionError,
     extract_office_xml_text,
     extract_pdf_text,
     handle_http_errors,
@@ -387,11 +388,24 @@ async def get_drive_file_content(
 
     if mime_type in office_mime_types:
         # Offload Office XML extraction to a thread to avoid blocking the event loop
-        office_text = await asyncio.to_thread(
-            extract_office_xml_text, file_content_bytes, mime_type
-        )
+        office_text = None
+        unreadable = None
+        try:
+            office_text = await asyncio.to_thread(
+                extract_office_xml_text, file_content_bytes, mime_type
+            )
+        except OfficeXmlExtractionError as e:
+            # Say the file is damaged. Falling through to the binary branch would
+            # report a corrupt document as "unsupported text encoding", sending
+            # the reader after the wrong problem.
+            unreadable = (
+                f"[Could not read '{mime_type}' file - it appears damaged or is "
+                f"not a valid Office document: {e}]"
+            )
         if office_text:
             body_text = office_text
+        elif unreadable:
+            body_text = unreadable
         else:
             # Fallback: try UTF-8; otherwise flag binary
             try:

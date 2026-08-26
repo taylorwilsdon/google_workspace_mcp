@@ -22,6 +22,7 @@ from mcp.types import ToolAnnotations
 from auth.service_decorator import require_google_service, require_multiple_services
 from core.utils import (
     GOOGLE_API_WRITE_RETRIES,
+    OfficeXmlExtractionError,
     extract_office_xml_text,
     handle_http_errors,
     UserInputError,
@@ -311,9 +312,20 @@ async def get_doc_content(
 
         file_content_bytes = fh.getvalue()
 
-        office_text = extract_office_xml_text(file_content_bytes, mime_type)
+        office_text = None
+        unreadable = None
+        try:
+            office_text = extract_office_xml_text(file_content_bytes, mime_type)
+        except OfficeXmlExtractionError as e:
+            # A damaged file must not be reported as an unsupported encoding.
+            unreadable = (
+                f"[Could not read '{mime_type}' file - it appears damaged or is "
+                f"not a valid Office document: {e}]"
+            )
         if office_text:
             body_text = office_text
+        elif unreadable:
+            body_text = unreadable
         else:
             try:
                 body_text = file_content_bytes.decode("utf-8")
