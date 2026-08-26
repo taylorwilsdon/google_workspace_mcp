@@ -473,8 +473,10 @@ def main():
         metavar="SERVICE:LEVEL",
         help=(
             "Granular per-service permission levels. Format: service:level. "
-            "Example: --permissions gmail:organize drive:readonly. "
+            "Example: --permissions gmail:organize drive:file. "
             "Gmail levels: readonly, organize, drafts, send, full (cumulative). "
+            "Drive levels: readonly, file, full (cumulative; 'file' grants only "
+            "drive.file scope, 'full' adds full account write). "
             "Other services: readonly, full. "
             "Mutually exclusive with --read-only and --tools."
         ),

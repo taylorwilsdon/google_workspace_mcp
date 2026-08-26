@@ -77,6 +77,11 @@ class TestParsePermissionsArg:
         result = parse_permissions_arg(["tasks:manage"])
         assert result == {"tasks": "manage"}
 
+    def test_drive_file_is_valid_level(self):
+        """drive:file should be accepted by parse_permissions_arg."""
+        result = parse_permissions_arg(["drive:file"])
+        assert result == {"drive": "file"}
+
 
 class TestGetScopesForPermission:
     """Tests for get_scopes_for_permission() cumulative scope expansion."""
@@ -108,6 +113,21 @@ class TestGetScopesForPermission:
         scopes = get_scopes_for_permission("drive", "full")
         assert DRIVE_READONLY_SCOPE in scopes
         assert DRIVE_SCOPE in scopes
+
+    def test_drive_file_includes_readonly_and_excludes_full(self):
+        """File level grants drive.file + drive.readonly (cumulative) but
+        not the broader drive scope. This is the whole point of the level —
+        callers can write into folders they target without exposing the
+        authenticated user's entire Drive to the application."""
+        scopes = get_scopes_for_permission("drive", "file")
+        assert DRIVE_READONLY_SCOPE in scopes
+        assert DRIVE_FILE_SCOPE in scopes
+        assert DRIVE_SCOPE not in scopes
+
+    def test_drive_full_cumulatively_includes_file(self):
+        """Full level should cumulatively include the file-level scope."""
+        scopes = get_scopes_for_permission("drive", "full")
+        assert DRIVE_FILE_SCOPE in scopes
 
     def test_unknown_service_raises(self):
         with pytest.raises(ValueError, match="Unknown service"):
