@@ -48,7 +48,7 @@ Key architectural pillars:
 
    * Unit tests for every tool; integration tests for high‑risk flows (email send, file upload).
    * Mock Google APIs with `httpretty` + canned fixtures – do **not** hit live services in CI.
-   * Contract tests: regenerate FastMCP OpenAI‑schema and diff against committed goldens.
+   * Contract tests: tool schemas are diffed against committed goldens. When a schema change is intentional, regenerate the snapshots with `UPDATE_GOLDEN=1 uv run pytest` and commit the updated golden files.
 
 # 🚦 Low‑Value Feedback to Skip
 
