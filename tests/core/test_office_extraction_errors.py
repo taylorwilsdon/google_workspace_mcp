@@ -15,6 +15,7 @@ from core.utils import OfficeXmlExtractionError, extract_office_xml_text
 
 W_NS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
 DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 def _docx(document_xml: str) -> bytes:
@@ -55,6 +56,53 @@ class TestUnreadableRaises:
         with pytest.raises(OfficeXmlExtractionError) as excinfo:
             extract_office_xml_text(b"not a zip", DOCX_MIME)
         assert excinfo.value.__cause__ is not None
+
+
+class TestMemberLevelFailuresAlsoRaise:
+    """A per-member failure is still a failure to READ the file.
+
+    Suppressing it and falling through to "no pieces -> None" presents a damaged
+    document as an empty one, which is the exact conflation this change removes.
+    """
+
+    def test_malformed_document_xml_raises(self):
+        blob = _docx('<?xml version="1.0"?><w:document><unclosed>')
+        with pytest.raises(OfficeXmlExtractionError):
+            extract_office_xml_text(blob, DOCX_MIME)
+
+    def test_malformed_member_names_the_member(self):
+        blob = _docx('<?xml version="1.0"?><w:document><unclosed>')
+        with pytest.raises(OfficeXmlExtractionError) as excinfo:
+            extract_office_xml_text(blob, DOCX_MIME)
+        assert "word/document.xml" in str(excinfo.value)
+
+    def test_malformed_shared_strings_raises(self):
+        """Absent sharedStrings is optional; MALFORMED is not -- every t="s"
+        cell resolves through it, so continuing yields wrong cell text."""
+        ns = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr(
+                "xl/worksheets/sheet1.xml",
+                f'<?xml version="1.0"?><worksheet {ns}><sheetData></sheetData>'
+                "</worksheet>",
+            )
+            zf.writestr("xl/sharedStrings.xml", '<?xml version="1.0"?><sst><unclosed>')
+        with pytest.raises(OfficeXmlExtractionError):
+            extract_office_xml_text(buf.getvalue(), XLSX_MIME)
+
+    def test_absent_shared_strings_is_not_an_error(self):
+        """The optional-member path must stay optional."""
+        ns = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr(
+                "xl/worksheets/sheet1.xml",
+                f'<?xml version="1.0"?><worksheet {ns}><sheetData><row>'
+                '<c r="A1" t="str"><v>alpha</v></c>'
+                "</row></sheetData></worksheet>",
+            )
+        assert extract_office_xml_text(buf.getvalue(), XLSX_MIME) == "alpha"
 
 
 class TestReadableButEmptyStillReturnsNone:

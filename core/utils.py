@@ -352,7 +352,13 @@ def extract_office_xml_text(file_bytes: bytes, mime_type: str) -> Optional[str]:
                         "No sharedStrings.xml found in Excel file (this is optional)."
                     )
                 except ET.ParseError as e:
+                    # Absent sharedStrings is optional (KeyError above). MALFORMED
+                    # is not: every t="s" cell resolves through it, so continuing
+                    # would silently produce wrong cell text.
                     logger.error(f"Error parsing sharedStrings.xml: {e}")
+                    raise OfficeXmlExtractionError(
+                        f"sharedStrings.xml is not parseable XML: {e}"
+                    ) from e
                 except (
                     Exception
                 ) as e:  # Catch any other unexpected error during sharedStrings parsing
@@ -420,15 +426,35 @@ def extract_office_xml_text(file_bytes: bytes, mime_type: str) -> Optional[str]:
                         )  # Join texts from one member with spaces
 
                 except ET.ParseError as e:
+                    # A member that will not parse means we cannot report this
+                    # file's text. Swallowing it here and returning None below
+                    # would present a damaged document as an empty one.
                     logger.warning(
                         f"Could not parse XML in member '{member}' for {mime_type} file: {e}"
                     )
+                    raise OfficeXmlExtractionError(
+                        f"member '{member}' is not parseable XML "
+                        f"(mime_type: {mime_type}): {e}"
+                    ) from e
+                except OfficeXmlExtractionError:
+                    raise
+                except KeyError:
+                    # The member simply is not in the archive. That is ABSENT, not
+                    # damaged: a readable file with nothing to extract yields None,
+                    # which is the distinction this whole change exists to keep.
+                    logger.info(
+                        f"Member '{member}' not present in {mime_type} file; skipping."
+                    )
+                    continue
                 except Exception as e:
                     logger.error(
                         f"Error processing member '{member}' for {mime_type}: {e}",
                         exc_info=True,
                     )
-                    # continue processing other members
+                    raise OfficeXmlExtractionError(
+                        f"could not read member '{member}' "
+                        f"(mime_type: {mime_type}): {e}"
+                    ) from e
 
             if not pieces:  # If no text was extracted at all
                 return None
