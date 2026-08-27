@@ -36,7 +36,13 @@ from core.config import (
     set_transport_mode as _set_transport_mode,
     get_oauth_redirect_uri as get_oauth_redirect_uri_for_current_mode,
 )
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+from fastapi.responses import (
+    HTMLResponse,
+    JSONResponse,
+    FileResponse,
+    Response,
+    StreamingResponse,
+)
 from fastmcp import FastMCP
 from fastmcp.server.auth.providers.google import GoogleProvider
 from mcp.types import ToolAnnotations, Icon
@@ -733,6 +739,12 @@ def configure_server_for_http():
                     client_storage=client_storage,
                     jwt_signing_key=jwt_signing_key,
                     allowed_client_redirect_uris=allowed_client_redirect_uris,
+                    # Refresh the upstream Google token ~5 min before expiry rather
+                    # than only after it lapses. This keeps the credential snapshot
+                    # captured during a request (and stashed for signed-download URLs)
+                    # fuller-lived, so TTL-clamped URLs don't collapse toward their
+                    # floor near the hourly token boundary.
+                    token_expiry_threshold_seconds=300,
                 )
                 if provider.client_registration_options is not None:
                     # Keep protocol-level auth limited to base identity scopes, but
@@ -818,6 +830,148 @@ async def serve_attachment(request: Request):
         path=str(file_path),
         filename=metadata["filename"],
         media_type=metadata["mime_type"],
+    )
+
+
+@server.custom_route("/attachments/signed/{token}", methods=["GET"])
+async def serve_signed_attachment(request: Request):
+    """Stream a Google resource from a signed capability URL (Design A).
+
+    Unlike ``/attachments/{file_id}`` (which serves a file written to disk), this
+    route stores nothing. The signed token carries the resource reference, its
+    source (Gmail attachment, Drive file, ...), and its owner; we verify the
+    signature, recover the owner's Google credentials, dispatch to the matching
+    fetcher (``core.signed_download``), and stream the bytes back. The signature
+    *is* the per-user authorization — no bearer token is needed on the request, so
+    an agent can hand the URL to any HTTP client.
+
+    Credential recovery is two-tier: the in-process OAuth 2.1 session store first,
+    then a shared short-TTL Valkey cache, so the URL works even when the request
+    lands on a replica that never ran the originating tool call.
+    """
+    from core.attachment_signing import verify_attachment_token
+
+    token = request.path_params["token"]
+    claims = verify_attachment_token(token)
+    if not claims:
+        return JSONResponse(
+            {"error": "Invalid or expired download link"}, status_code=403
+        )
+    return await _stream_download_for_claims(claims)
+
+
+@server.custom_route("/dl/{handle}", methods=["GET"])
+async def serve_short_download(request: Request):
+    """Short claim-check variant of ``/attachments/signed/{token}``.
+
+    The handle is a random 128-bit capability; the claims it references live in
+    the shared KV store with the same TTL a signed token would carry (see
+    ``core.download_handles``). Everything after claim recovery is identical to
+    the JWT route.
+    """
+    from core.download_handles import load_download_ref
+
+    claims = await load_download_ref(request.path_params["handle"])
+    if not claims:
+        return JSONResponse(
+            {"error": "Invalid or expired download link"}, status_code=403
+        )
+    return await _stream_download_for_claims(claims)
+
+
+async def _stream_download_for_claims(claims: dict):
+    """Recover the owner's credentials for verified claims and stream the bytes."""
+    from auth.oauth21_session_store import get_oauth21_session_store
+    from core.signed_download import get_fetcher, SignedDownloadError
+
+    user_email = claims.get("sub")
+    fetcher = get_fetcher(claims.get("src", ""))
+    if not (user_email and fetcher):
+        return JSONResponse({"error": "Malformed download link"}, status_code=403)
+
+    # Recover the owner's credentials. In-process session first (the common
+    # same-process case); then the shared short-TTL cache, which is the path that
+    # makes signed URLs work across replicas (Design A, hosted).
+    credentials = get_oauth21_session_store().get_credentials(user_email)
+    if not credentials:
+        from core.attachment_cred_cache import load_credentials
+
+        credentials = await load_credentials(user_email)
+    if not credentials:
+        return JSONResponse(
+            {"error": "No active session for this download's owner"},
+            status_code=401,
+        )
+
+    # The recovered credential may be an expired Google access token. In OAuth 2.1
+    # proxy mode it carries no refresh_token (the proxy holds upstream refresh,
+    # unreachable from this bearer-less route), so an expired token can't be renewed
+    # here. Mirror the repo's own idiom (auth/google_auth.py) and return a precise
+    # retryable 401 instead of letting a failed refresh fall through to a 502. Use
+    # `.valid` (not `.expired`): a cached record may have expiry=None, for which
+    # `.expired` is False and would slip a dead token past this guard.
+    if not credentials.valid:
+        if credentials.refresh_token:  # forward-compat; today always None (see issue)
+            from google.auth.transport.requests import Request as GoogleAuthRequest
+
+            try:
+                await asyncio.to_thread(credentials.refresh, GoogleAuthRequest())
+            except Exception:
+                logger.info(
+                    "Signed download: token refresh failed for %s; re-auth needed",
+                    user_email,
+                )
+                return JSONResponse(
+                    {"error": "credentials expired - re-authenticate"}, status_code=401
+                )
+        else:
+            logger.info(
+                "Signed download: expired non-refreshable credentials for %s; "
+                "re-auth needed",
+                user_email,
+            )
+            return JSONResponse(
+                {"error": "credentials expired - re-authenticate"}, status_code=401
+            )
+
+    try:
+        result = await fetcher(claims, credentials)
+    except SignedDownloadError as e:
+        logger.error("Signed download fetch failed: %s", e)
+        return JSONResponse(
+            {"error": "Failed to fetch the requested resource"}, status_code=502
+        )
+
+    # Build a safe Content-Disposition. The filename comes from Gmail/Drive metadata
+    # (attacker-influenceable), so strip quotes/CR/LF for the ASCII fallback to
+    # prevent header injection, and add an RFC 5987 `filename*` so non-ASCII names
+    # survive intact (percent-encoded, no injection).
+    from urllib.parse import quote as _urlquote
+
+    raw_name = result.filename or "download"
+    ascii_name = (
+        raw_name.encode("ascii", "ignore")
+        .decode()
+        .replace('"', "")
+        .replace("\\", "")
+        .replace("\r", "")
+        .replace("\n", "")
+    ) or "download"
+    headers = {
+        "Content-Disposition": (
+            f'attachment; filename="{ascii_name}"; '
+            f"filename*=UTF-8''{_urlquote(raw_name, safe='')}"
+        )
+    }
+    if result.stream is not None:
+        # Bounded-memory streaming (Drive): chunks flow straight to the client.
+        return StreamingResponse(
+            result.stream, media_type=result.media_type, headers=headers
+        )
+    return Response(
+        content=result.content,
+        media_type=result.media_type,
+        headers=headers,
     )
 
 
