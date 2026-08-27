@@ -16,6 +16,8 @@ from typing import Any, Callable, Dict, Iterable, List, Literal, Mapping, Option
 from fastmcp.exceptions import ToolError as ToolExecutionError
 from googleapiclient.errors import HttpError
 
+from core.utils import GOOGLE_API_WRITE_RETRIES, UserInputError
+
 logger = logging.getLogger(__name__)
 
 RAW_BODY_TRUNCATE_LIMIT = 20000
@@ -43,6 +45,56 @@ GMAIL_METADATA_HEADERS = [
     "Precedence",
     "List-Id",
 ]
+
+
+async def _delete_gmail_draft_by_identifier(service: Any, draft_identifier: str) -> str:
+    """Resolve and permanently delete exactly one Gmail draft.
+
+    ``draft_identifier`` may be either a Draft resource ID or the contained
+    Gmail Message ID. All draft pages are scanned so identifiers from older
+    search results remain usable. Resolution refuses ambiguous identifiers
+    rather than risking deletion of the wrong draft.
+    """
+    matching_draft_ids = set()
+    page_token = None
+
+    while True:
+        request_params = {"userId": "me", "maxResults": 500}
+        if page_token:
+            request_params["pageToken"] = page_token
+        response = await asyncio.to_thread(
+            service.users().drafts().list(**request_params).execute
+        )
+        matching_draft_ids.update(
+            draft.get("id")
+            for draft in response.get("drafts") or []
+            if isinstance(draft, dict)
+            and draft.get("id")
+            and (
+                draft.get("id") == draft_identifier
+                or (draft.get("message") or {}).get("id") == draft_identifier
+            )
+        )
+        page_token = response.get("nextPageToken")
+        if not page_token:
+            break
+
+    if not matching_draft_ids:
+        raise UserInputError(
+            f"No Gmail draft found for identifier '{draft_identifier}'."
+        )
+    if len(matching_draft_ids) > 1:
+        raise UserInputError(
+            f"Identifier '{draft_identifier}' matches multiple Gmail drafts; "
+            "no draft was deleted."
+        )
+
+    draft_id = matching_draft_ids.pop()
+    await asyncio.to_thread(
+        service.users().drafts().delete(userId="me", id=draft_id).execute,
+        num_retries=GOOGLE_API_WRITE_RETRIES,
+    )
+    return f"Draft permanently deleted! Draft ID: {draft_id}"
 
 
 def _normalize_email(address: str) -> str:

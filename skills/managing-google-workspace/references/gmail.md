@@ -4,7 +4,7 @@ MCP tools for Gmail message search, sending, drafting, labels, and filters. All 
 
 ## Contents
 - Search & Read: search_gmail_messages, get_gmail_message_content, get_gmail_messages_content_batch, get_gmail_thread_content, get_gmail_threads_content_batch, get_gmail_attachment_content
-- Send & Draft: send_gmail_message, draft_gmail_message
+- Send & Draft: send_gmail_message, draft_gmail_message, delete_gmail_draft
 - Label Management: list_gmail_labels, manage_gmail_label, modify_gmail_message_labels, batch_modify_gmail_message_labels
 - Filter Management: list_gmail_filters, manage_gmail_filter
 - Tips
@@ -115,6 +115,16 @@ Create a draft. Same capabilities as send but with additional signature/quoting 
 
 Operational Gmail settings errors such as rate limits abort draft creation instead of silently falling back to a potentially unintended sender.
 
+### delete_gmail_draft
+Immediately and permanently delete one draft without sending it. This does not move the draft to Trash.
+
+| Parameter | Type | Required | Default | Notes |
+|-----------|------|----------|---------|-------|
+| user_google_email | string | yes | | |
+| draft_identifier | string | yes | | Either the Draft ID returned by `draft_gmail_message` or the contained Message ID returned by an `in:drafts` search |
+
+The tool scans all draft pages, resolves either identifier form, and deletes only when exactly one draft matches. If multiple drafts share a thread, use each draft's unique Draft ID or contained Message ID rather than the shared Thread ID.
+
 ---
 
 ## Label Management
@@ -218,6 +228,7 @@ Create or delete a filter.
 
 ### Drafts vs Send
 - Use `draft_gmail_message` when you want the user to review before sending. It supports `include_signature` (auto-appends Gmail signature) and `quote_original` (includes quoted reply text).
+- Use `delete_gmail_draft` to permanently remove a draft. For a safe revision workflow, create the replacement successfully before deleting the previous draft.
 - Use `send_gmail_message` for immediate delivery.
 
 ### Attachments

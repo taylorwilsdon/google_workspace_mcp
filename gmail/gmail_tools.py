@@ -61,6 +61,7 @@ from gmail.gmail_helpers import (
     RAW_BODY_TRUNCATE_LIMIT,
     _analyze_thread_ownership_impl,
     _build_forward_content,
+    _delete_gmail_draft_by_identifier,
     _derive_reply_all_recipients,
     _derive_reply_headers,
     _fetch_with_retry,
@@ -3081,6 +3082,53 @@ async def draft_gmail_message(
         attached_count, requested_attachment_count
     )
     return f"Draft created{attachment_info}! Draft ID: {draft_id}"
+
+
+@server.tool(
+    title="Delete Gmail Draft",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("delete_gmail_draft", service_type="gmail")
+@require_google_service("gmail", GMAIL_COMPOSE_SCOPE)
+async def delete_gmail_draft(
+    service,
+    user_google_email: str,
+    draft_identifier: Annotated[
+        str,
+        Field(
+            description="Draft ID returned by draft_gmail_message, or the contained Gmail Message ID returned by search_gmail_messages for a draft. The matching draft is permanently deleted."
+        ),
+    ],
+) -> str:
+    """Permanently delete one Gmail draft without sending it.
+
+    The identifier may be either the Draft resource ID returned when the draft
+    was created or the contained Gmail Message ID found with an ``in:drafts``
+    message search. The server resolves either form across all draft pages and
+    deletes only when exactly one draft matches. Gmail draft deletion is
+    immediate and does not move the draft to Trash.
+
+    Args:
+        user_google_email: The user's Google email address for authentication.
+        draft_identifier: A Gmail Draft ID or contained draft Message ID.
+
+    Returns:
+        Confirmation containing the canonical Draft ID that was deleted.
+
+    Raises:
+        UserInputError: If no draft or more than one draft matches the identifier.
+    """
+    logger.info(
+        "[delete_gmail_draft] Invoked. Email: '%s', identifier: '%s'",
+        user_google_email,
+        draft_identifier,
+    )
+    return await _delete_gmail_draft_by_identifier(service, draft_identifier)
 
 
 def _format_thread_content(
