@@ -284,11 +284,29 @@ def check_credentials_directory_permissions(credentials_dir: str = None) -> None
     )
 
 
+class OfficeXmlExtractionError(Exception):
+    """Raised when an Office file cannot be READ.
+
+    Distinct from a valid file that simply contains no text. Callers that cannot
+    tell those apart end up reporting a damaged document as an empty or
+    unsupported one, which sends the reader looking in the wrong place.
+    """
+
+
 def extract_office_xml_text(file_bytes: bytes, mime_type: str) -> Optional[str]:
     """
     Very light-weight XML scraper for Word, Excel, PowerPoint files.
-    Returns plain-text if something readable is found, else None.
     Uses zipfile + defusedxml.ElementTree.
+
+    Returns:
+        The extracted text, or None if the file is readable but holds no text.
+
+    Raises:
+        OfficeXmlExtractionError: the file could not be read at all — not a ZIP,
+            or its XML will not parse. This is deliberately NOT folded into the
+            None return: "damaged" and "empty" call for different responses from
+            a caller, and conflating them reports a corrupt document as an
+            unsupported or empty one.
     """
     shared_strings: List[str] = []
     ns_excel_main = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
@@ -334,7 +352,13 @@ def extract_office_xml_text(file_bytes: bytes, mime_type: str) -> Optional[str]:
                         "No sharedStrings.xml found in Excel file (this is optional)."
                     )
                 except ET.ParseError as e:
+                    # Absent sharedStrings is optional (KeyError above). MALFORMED
+                    # is not: every t="s" cell resolves through it, so continuing
+                    # would silently produce wrong cell text.
                     logger.error(f"Error parsing sharedStrings.xml: {e}")
+                    raise OfficeXmlExtractionError(
+                        f"sharedStrings.xml is not parseable XML: {e}"
+                    ) from e
                 except (
                     Exception
                 ) as e:  # Catch any other unexpected error during sharedStrings parsing
@@ -402,15 +426,41 @@ def extract_office_xml_text(file_bytes: bytes, mime_type: str) -> Optional[str]:
                         )  # Join texts from one member with spaces
 
                 except ET.ParseError as e:
+                    # A member that will not parse means we cannot report this
+                    # file's text. Swallowing it here and returning None below
+                    # would present a damaged document as an empty one.
                     logger.warning(
                         f"Could not parse XML in member '{member}' for {mime_type} file: {e}"
                     )
+                    raise OfficeXmlExtractionError(
+                        f"member '{member}' is not parseable XML "
+                        f"(mime_type: {mime_type}): {e}"
+                    ) from e
+                except OfficeXmlExtractionError:
+                    raise
+                except KeyError:
+                    # ABSENT is not DAMAGED, and the difference is the contract:
+                    # this function returns None for a readable file with no
+                    # extractable text, and raises only when the file cannot be
+                    # read. A member that is simply not in the archive is the
+                    # former.
+                    #
+                    # Do NOT merge this into the generic handler below. That one
+                    # raises, so folding these together would report every archive
+                    # lacking an optional member as corrupt.
+                    logger.info(
+                        f"Member '{member}' not present in {mime_type} file; skipping."
+                    )
+                    continue
                 except Exception as e:
                     logger.error(
                         f"Error processing member '{member}' for {mime_type}: {e}",
                         exc_info=True,
                     )
-                    # continue processing other members
+                    raise OfficeXmlExtractionError(
+                        f"could not read member '{member}' "
+                        f"(mime_type: {mime_type}): {e}"
+                    ) from e
 
             if not pieces:  # If no text was extracted at all
                 return None
@@ -419,19 +469,30 @@ def extract_office_xml_text(file_bytes: bytes, mime_type: str) -> Optional[str]:
             text = "\n\n".join(pieces).strip()
             return text or None  # Ensure None is returned if text is empty after strip
 
-    except zipfile.BadZipFile:
+    except zipfile.BadZipFile as e:
         logger.warning(f"File is not a valid ZIP archive (mime_type: {mime_type}).")
-        return None
+        raise OfficeXmlExtractionError(
+            f"not a valid Office file (mime_type: {mime_type}): {e}"
+        ) from e
     except (
         ET.ParseError
     ) as e:  # Catch parsing errors at the top level if zipfile itself is XML-like
         logger.error(f"XML parsing error at a high level for {mime_type}: {e}")
-        return None
+        raise OfficeXmlExtractionError(
+            f"Office file XML could not be parsed (mime_type: {mime_type}): {e}"
+        ) from e
+    except OfficeXmlExtractionError:
+        raise
     except Exception as e:
+        # An unexpected failure is still a failure to READ the file, not evidence
+        # that it holds no text. Surface it rather than letting it masquerade as
+        # an empty document.
         logger.error(
             f"Failed to extract office XML text for {mime_type}: {e}", exc_info=True
         )
-        return None
+        raise OfficeXmlExtractionError(
+            f"could not extract text from Office file (mime_type: {mime_type}): {e}"
+        ) from e
 
 
 IMAGE_MIME_TYPES = {
