@@ -54,19 +54,43 @@ def test_resolve_stdio_callback_port_marks_resolved_port(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[str] = []
+    seen_fallback: list[bool] = []
 
-    def fake_resolve_port() -> None:
+    def fake_resolve_port(allow_fallback: bool = True) -> None:
         calls.append("resolve")
+        seen_fallback.append(allow_fallback)
         monkeypatch.setenv("WORKSPACE_MCP_PORT", "8123")
         monkeypatch.setenv("WORKSPACE_MCP_RESOLVED_PORT", "1")
 
+    monkeypatch.delenv("GOOGLE_OAUTH_REDIRECT_URI", raising=False)
     monkeypatch.setattr("auth.port_resolver.resolve_port", fake_resolve_port)
     monkeypatch.setattr(main, "reload_oauth_config", lambda: calls.append("reload"))
 
     main.resolve_stdio_callback_port()
 
     assert calls == ["resolve", "reload"]
+    assert seen_fallback == [True]
     assert os.environ["WORKSPACE_MCP_RESOLVED_PORT"] == "1"
+
+
+def test_resolve_stdio_callback_port_disables_fallback_for_pinned_redirect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit GOOGLE_OAUTH_REDIRECT_URI pins the port; fallback would mismatch."""
+    seen_fallback: list[bool] = []
+
+    def fake_resolve_port(allow_fallback: bool = True) -> None:
+        seen_fallback.append(allow_fallback)
+
+    monkeypatch.setenv(
+        "GOOGLE_OAUTH_REDIRECT_URI", "http://localhost:8103/oauth2callback"
+    )
+    monkeypatch.setattr("auth.port_resolver.resolve_port", fake_resolve_port)
+    monkeypatch.setattr(main, "reload_oauth_config", lambda: None)
+
+    main.resolve_stdio_callback_port()
+
+    assert seen_fallback == [False]
 
 
 def test_resolve_callback_port_for_transport_skips_streamable_http(

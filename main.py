@@ -134,14 +134,34 @@ def resolve_stdio_callback_port() -> None:
     Streamable HTTP/OAuth 2.1 owns its main HTTP port directly and must keep the
     normal PORT/WORKSPACE_MCP_PORT semantics. The fallback range only exists for
     the standalone stdio callback listener.
+
+    Two rules keep this from killing an otherwise healthy server:
+
+      * When GOOGLE_OAUTH_REDIRECT_URI is set explicitly the callback port is
+        pinned by whatever is registered with Google, so falling back to a
+        neighbouring port would only produce a redirect_uri mismatch. Probe the
+        preferred port and nothing else.
+      * A busy port is never fatal. The callback listener starts lazily and a
+        host that already holds cached credentials may never need it -- and MCP
+        clients routinely launch more than one copy of a stdio server, so
+        exiting on a collision takes down a copy that would otherwise work.
     """
     from auth.port_resolver import resolve_port, NoAvailablePortError, PortConfigError
 
+    pinned_redirect = bool(os.getenv("GOOGLE_OAUTH_REDIRECT_URI"))
+
     try:
-        resolve_port()
-    except (NoAvailablePortError, PortConfigError) as exc:
+        resolve_port(allow_fallback=not pinned_redirect)
+    except PortConfigError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
+    except NoAvailablePortError as exc:
+        logger.warning(
+            "%s Continuing without a reserved callback port -- OAuth re-authorization "
+            "will fail until the port frees up, but cached credentials keep working.",
+            exc,
+        )
+        os.environ.pop("WORKSPACE_MCP_RESOLVED_PORT", None)
     reload_oauth_config()
 
 
