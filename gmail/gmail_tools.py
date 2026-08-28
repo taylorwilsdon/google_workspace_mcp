@@ -525,6 +525,13 @@ def _build_message_get_request(
     return service.users().messages().get(**request_kwargs)
 
 
+def _make_batch_callback(results: Dict[str, Dict]):
+    def _batch_callback(request_id, response, exception):
+        results[request_id] = {"data": response, "error": exception}
+
+    return _batch_callback
+
+
 def _validate_message_batch_options(
     response_format: Literal["full", "metadata"],
     body_format: Literal["text", "html", "raw"],
@@ -1420,11 +1427,10 @@ async def _fetch_search_result_headers(
         ]
         results: Dict[str, Dict] = {}
 
-        def _batch_callback(request_id, response, exception):
-            results[request_id] = {"data": response, "error": exception}
-
         try:
-            batch = service.new_batch_http_request(callback=_batch_callback)
+            batch = service.new_batch_http_request(
+                callback=_make_batch_callback(results)
+            )
             for mid in chunk_ids:
                 batch.add(
                     _build_message_get_request(
@@ -1905,15 +1911,13 @@ async def get_gmail_messages_content_batch(
         chunk_ids = message_ids[chunk_start : chunk_start + GMAIL_BATCH_SIZE]
         results: Dict[str, Dict] = {}
 
-        def _batch_callback(request_id, response, exception):
-            """Callback for batch requests"""
-            results[request_id] = {"data": response, "error": exception}
-
         batch_completed = False
 
         # Try to use batch API
         try:
-            batch = service.new_batch_http_request(callback=_batch_callback)
+            batch = service.new_batch_http_request(
+                callback=_make_batch_callback(results)
+            )
 
             for mid in chunk_ids:
                 req = _build_message_get_request(
@@ -3364,10 +3368,6 @@ async def get_gmail_threads_content_batch(
 
     output_threads = []
 
-    def _batch_callback(request_id, response, exception):
-        """Callback for batch requests"""
-        results[request_id] = {"data": response, "error": exception}
-
     # Process in smaller chunks to prevent SSL connection exhaustion
     for chunk_start in range(0, len(thread_ids), GMAIL_BATCH_SIZE):
         chunk_ids = thread_ids[chunk_start : chunk_start + GMAIL_BATCH_SIZE]
@@ -3377,7 +3377,9 @@ async def get_gmail_threads_content_batch(
 
         # Try to use batch API
         try:
-            batch = service.new_batch_http_request(callback=_batch_callback)
+            batch = service.new_batch_http_request(
+                callback=_make_batch_callback(results)
+            )
 
             for tid in chunk_ids:
                 req = service.users().threads().get(userId="me", id=tid, format="full")
