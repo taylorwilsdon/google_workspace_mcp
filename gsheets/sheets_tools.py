@@ -2449,6 +2449,204 @@ async def move_sheet_rows(
     return text_output
 
 
+@server.tool(
+    title="Audit Spreadsheet Errors",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("audit_spreadsheet_errors", is_read_only=True, service_type="sheets")
+@require_google_service("sheets", "sheets_read")
+async def audit_spreadsheet_errors(
+    service,
+    user_google_email: str,
+    spreadsheet_id: str,
+    sheet: Optional[str] = None,
+    max_details: int = 50,
+) -> str:
+    """
+    Scans a spreadsheet for formula error cells (#REF!, #DIV/0!, #N/A, #VALUE!,
+    #NAME?, #NUM!, #ERROR!, #NULL!) and reports per-sheet counts and sample cells.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        spreadsheet_id (str): The ID of the spreadsheet. Required.
+        sheet (str): Optional single sheet/tab name to scan. Defaults to all sheets.
+        max_details (int): Max number of example cell addresses to include. Defaults to 50.
+
+    Returns:
+        str: A summary of formula error cells found.
+    """
+    logger.info(
+        f"[audit_spreadsheet_errors] Invoked. Spreadsheet: {spreadsheet_id}, Email: '{user_google_email}'"
+    )
+
+    info = await asyncio.to_thread(
+        service.spreadsheets()
+        .get(spreadsheetId=spreadsheet_id, fields="sheets(properties(title))")
+        .execute
+    )
+    titles = [s["properties"]["title"] for s in info.get("sheets", [])]
+    if sheet:
+        titles = [t for t in titles if t == sheet]
+        if not titles:
+            return f"Sheet '{sheet}' not found in spreadsheet {spreadsheet_id}."
+
+    total = 0
+    per_sheet_lines: List[str] = []
+    sample_lines: List[str] = []
+    for title in titles:
+        quoted = "'" + title.replace("'", "''") + "'"
+        errors = await _fetch_detailed_sheet_errors(service, spreadsheet_id, quoted)
+        if not errors:
+            continue
+        total += len(errors)
+        per_sheet_lines.append(f"- {title}: {len(errors)} error cell(s)")
+        for item in errors:
+            if len(sample_lines) >= max_details:
+                break
+            cell = item.get("cell") or "?"
+            if "!" not in str(cell):
+                cell = f"{title}!{cell}"
+            etype = item.get("type") or "(error)"
+            sample_lines.append(f"    {cell}: {etype}")
+
+    if total == 0:
+        return (
+            f"No formula error cells found in spreadsheet {spreadsheet_id} "
+            f"({len(titles)} sheet(s) scanned)."
+        )
+
+    out = [f"Found {total} formula error cell(s) in spreadsheet {spreadsheet_id}:"]
+    out.extend(per_sheet_lines)
+    if sample_lines:
+        out.append("\nExamples:")
+        out.extend(sample_lines)
+        if total > len(sample_lines):
+            out.append(f"    ... and {total - len(sample_lines)} more")
+    logger.info(f"[audit_spreadsheet_errors] {total} error cells for {user_google_email}")
+    return "\n".join(out)
+
+
+@server.tool(
+    title="Diff Spreadsheets",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("diff_spreadsheets", is_read_only=True, service_type="sheets")
+@require_google_service("sheets", "sheets_read")
+async def diff_spreadsheets(
+    service,
+    user_google_email: str,
+    spreadsheet_id_a: str,
+    spreadsheet_id_b: str,
+    sheet: str,
+    range_name: Optional[str] = None,
+    max_examples: int = 6,
+) -> str:
+    """
+    Compares the same sheet between two spreadsheets on the formula level. Reports:
+    frozen (a formula in A became a static value in B), changed formulas, cells
+    cleared in B, and cells added in B. Useful to verify or reverse-engineer a
+    transformation between a master spreadsheet and a derived copy.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        spreadsheet_id_a (str): First spreadsheet ID (baseline, e.g. master). Required.
+        spreadsheet_id_b (str): Second spreadsheet ID (comparison, e.g. export). Required.
+        sheet (str): Sheet/tab name to compare (must exist in both). Required.
+        range_name (str): Optional A1 range to limit the comparison. Defaults to whole sheet.
+        max_examples (int): Max examples per category. Defaults to 6.
+
+    Returns:
+        str: A summary of the differences with examples.
+    """
+    logger.info(
+        f"[diff_spreadsheets] Invoked. A: {spreadsheet_id_a}, B: {spreadsheet_id_b}, Sheet: '{sheet}'"
+    )
+
+    quoted = "'" + sheet.replace("'", "''") + "'"
+    full_range = f"{quoted}!{range_name}" if range_name else quoted
+
+    async def grab(sid: str) -> List[List]:
+        result = await asyncio.to_thread(
+            service.spreadsheets()
+            .values()
+            .get(spreadsheetId=sid, range=full_range, valueRenderOption="FORMULA")
+            .execute
+        )
+        return result.get("values", [])
+
+    grid_a = await grab(spreadsheet_id_a)
+    grid_b = await grab(spreadsheet_id_b)
+
+    def a1(row_idx: int, col_idx: int) -> str:
+        letters = ""
+        n = col_idx + 1
+        while n > 0:
+            n, rem = divmod(n - 1, 26)
+            letters = chr(65 + rem) + letters
+        return f"{letters}{row_idx + 1}"
+
+    frozen = changed = cleared = added = same_formula = same_literal = 0
+    examples = {"frozen": [], "changed": [], "cleared": [], "added": []}
+    n_rows = max(len(grid_a), len(grid_b))
+    for i in range(n_rows):
+        row_a = grid_a[i] if i < len(grid_a) else []
+        row_b = grid_b[i] if i < len(grid_b) else []
+        n_cols = max(len(row_a), len(row_b))
+        for j in range(n_cols):
+            av = row_a[j] if j < len(row_a) else ""
+            bv = row_b[j] if j < len(row_b) else ""
+            a_has = av not in (None, "")
+            b_has = bv not in (None, "")
+            a_form = isinstance(av, str) and av.startswith("=")
+            b_form = isinstance(bv, str) and bv.startswith("=")
+            addr = a1(i, j)
+            if a_form and b_has and not b_form:
+                frozen += 1
+                if len(examples["frozen"]) < max_examples:
+                    examples["frozen"].append(f"    {addr}: {str(av)[:40]} -> {str(bv)[:30]}")
+            elif a_form and b_form:
+                if av == bv:
+                    same_formula += 1
+                else:
+                    changed += 1
+                    if len(examples["changed"]) < max_examples:
+                        examples["changed"].append(f"    {addr}: {str(av)[:34]} -> {str(bv)[:34]}")
+            elif a_has and not b_has:
+                cleared += 1
+                if len(examples["cleared"]) < max_examples:
+                    examples["cleared"].append(f"    {addr}: {str(av)[:40]}")
+            elif b_has and not a_has:
+                added += 1
+                if len(examples["added"]) < max_examples:
+                    examples["added"].append(f"    {addr}: {str(bv)[:40]}")
+            elif a_has and b_has:
+                same_literal += 1
+
+    out = [
+        f"Diff of sheet '{sheet}' ({'range ' + range_name if range_name else 'whole sheet'}):",
+        f"- frozen (formula -> value in B): {frozen}",
+        f"- changed formulas: {changed}",
+        f"- cleared in B: {cleared}",
+        f"- added in B: {added}",
+        f"- unchanged formulas: {same_formula} | unchanged literals: {same_literal}",
+    ]
+    for label in ("frozen", "changed", "cleared", "added"):
+        if examples[label]:
+            out.append(f"\n{label} examples:")
+            out.extend(examples[label])
+    return "\n".join(out)
+
+
 # Create comment management tools for sheets
 _comment_tools = create_comment_tools("spreadsheet", "spreadsheet_id")
 
