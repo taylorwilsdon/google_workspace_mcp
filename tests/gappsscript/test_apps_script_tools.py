@@ -437,13 +437,18 @@ async def test_create_deployment():
 
 @pytest.mark.asyncio
 async def test_list_deployments():
-    """Test listing deployments"""
+    """Listing surfaces the bound version and description from deploymentConfig (issue #922)."""
     mock_service = Mock()
+    # The real API nests description and versionNumber under deploymentConfig.
     mock_response = {
         "deployments": [
             {
                 "deploymentId": "deploy123",
-                "description": "Production",
+                "deploymentConfig": {
+                    "scriptId": "test123",
+                    "versionNumber": 7,
+                    "description": "Production",
+                },
                 "updateTime": "2026-01-12T15:30:00Z",
             }
         ]
@@ -457,6 +462,32 @@ async def test_list_deployments():
 
     assert "Production" in result
     assert "deploy123" in result
+    # Version must be visible so callers can verify which version is served.
+    assert "Version: 7" in result
+
+
+@pytest.mark.asyncio
+async def test_list_deployments_head_deployment_has_no_version():
+    """A HEAD deployment (no versionNumber) is labelled rather than shown blank (issue #922)."""
+    mock_service = Mock()
+    mock_response = {
+        "deployments": [
+            {
+                "deploymentId": "head123",
+                "deploymentConfig": {"scriptId": "test123"},
+                "updateTime": "2026-01-12T15:30:00Z",
+            }
+        ]
+    }
+
+    mock_service.projects().deployments().list().execute.return_value = mock_response
+
+    result = await _list_deployments_impl(
+        service=mock_service, user_google_email="test@example.com", script_id="test123"
+    )
+
+    assert "head123" in result
+    assert "HEAD (latest)" in result
 
 
 @pytest.mark.asyncio

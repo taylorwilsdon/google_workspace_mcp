@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import shutil
+import time
 import unicodedata
 import uuid
 from pathlib import Path
@@ -197,6 +198,8 @@ class AttachmentStorage:
         file_path = STORAGE_DIR / save_name
 
         try:
+            # Publish with a fresh mtime so a concurrent sweep cannot expire it.
+            os.utime(src_path, None)
             # shutil.move degrades to a streamed copy across filesystems, so it
             # stays memory-safe when the temp dir is on another mount.
             shutil.move(str(src_path), str(file_path))
@@ -312,6 +315,41 @@ class AttachmentStorage:
                 logger.warning(f"Failed to delete attachment file {file_path}: {e}")
             del self._metadata[file_id]
 
+    def sweep_expired(self) -> int:
+        """Remove files older than the expiration window based on mtime."""
+        cutoff = time.time() - self.expiration_seconds
+        swept: set[str] = set()
+
+        try:
+            if not STORAGE_DIR.exists():
+                return 0
+
+            for path in STORAGE_DIR.iterdir():
+                try:
+                    if not path.is_file():
+                        continue
+                    if path.stat().st_mtime >= cutoff:
+                        continue
+                    path.unlink()
+                except OSError as e:
+                    logger.warning(f"Failed to remove expired attachment {path}: {e}")
+                    continue
+                swept.add(str(path))
+        except OSError as e:
+            logger.warning(f"Failed to scan attachment storage {STORAGE_DIR}: {e}")
+
+        if swept:
+            stale_ids = [
+                file_id
+                for file_id, metadata in self._metadata.items()
+                if metadata["file_path"] in swept
+            ]
+            for file_id in stale_ids:
+                del self._metadata[file_id]
+            logger.info(f"Swept {len(swept)} expired attachment(s) from {STORAGE_DIR}")
+
+        return len(swept)
+
     def cleanup_expired(self) -> int:
         """
         Clean up expired attachments.
@@ -329,7 +367,7 @@ class AttachmentStorage:
         for file_id in expired_ids:
             self._cleanup_file(file_id)
 
-        return len(expired_ids)
+        return len(expired_ids) + self.sweep_expired()
 
 
 # Global instance
@@ -341,6 +379,7 @@ def get_attachment_storage() -> AttachmentStorage:
     global _attachment_storage
     if _attachment_storage is None:
         _attachment_storage = AttachmentStorage()
+    _attachment_storage.sweep_expired()
     return _attachment_storage
 
 

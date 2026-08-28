@@ -8,6 +8,8 @@ This provider acts as a Resource Server only - it validates tokens issued by
 Google's Authorization Server but does not issue tokens itself.
 """
 
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import functools
 import logging
 import os
@@ -29,6 +31,11 @@ GOOGLE_ISSUER_URL = "https://accounts.google.com"
 # Configurable session time in seconds (default: 1 hour, max: 24 hours)
 _DEFAULT_SESSION_TIME = 3600
 _MAX_SESSION_TIME = 86400
+
+# Token validation is unauthenticated work and may block for the full Google API
+# socket timeout. Keep it out of asyncio's process-wide default executor so a burst
+# of invalid tokens cannot starve authenticated Google Workspace operations.
+_DEFAULT_TOKEN_VALIDATION_WORKERS = 4
 
 
 @functools.lru_cache(maxsize=1)
@@ -76,9 +83,13 @@ class ExternalOAuthProvider(GoogleProvider):
         client_id: str,
         client_secret: Optional[str] = None,
         resource_server_url: Optional[str] = None,
+        token_validation_workers: int = _DEFAULT_TOKEN_VALIDATION_WORKERS,
         **kwargs,
     ):
         """Initialize and store client credentials for token validation."""
+        if token_validation_workers < 1:
+            raise ValueError("token_validation_workers must be at least 1")
+
         self._resource_server_url = resource_server_url
         if resource_server_url and "resource_base_url" not in kwargs:
             kwargs["resource_base_url"] = resource_server_url
@@ -88,6 +99,23 @@ class ExternalOAuthProvider(GoogleProvider):
         self._client_secret = client_secret
         # Store as string - Pydantic validates it when passed to models
         self.resource_server_url = self._resource_server_url
+        self._token_validation_executor: Optional[ThreadPoolExecutor] = (
+            ThreadPoolExecutor(
+                max_workers=token_validation_workers,
+                thread_name_prefix="external-token-validation",
+            )
+        )
+        # ThreadPoolExecutor has an unbounded internal queue. Admit no more work
+        # than can run immediately so overload fails closed instead of accumulating.
+        self._token_validation_slots = asyncio.Semaphore(token_validation_workers)
+
+    def close(self) -> None:
+        """Stop accepting token-validation work and release executor resources."""
+        executor = self._token_validation_executor
+        if executor is None:
+            return
+        self._token_validation_executor = None
+        executor.shutdown(wait=False, cancel_futures=True)
 
     async def verify_token(self, token: str) -> Optional[AccessToken]:
         """
@@ -117,8 +145,41 @@ class ExternalOAuthProvider(GoogleProvider):
                     client_secret=self._client_secret,
                 )
 
-                # Validate token by calling userinfo API
-                user_info = get_user_info(credentials, skip_valid_check=True)
+                # Validate token by calling userinfo API. This is deliberately
+                # isolated from asyncio's default executor, which handles the
+                # authenticated Google Workspace API calls throughout the server.
+                if self._token_validation_slots.locked():
+                    logger.warning(
+                        "External token validation capacity exhausted; rejecting token"
+                    )
+                    return None
+
+                await self._token_validation_slots.acquire()
+                executor = self._token_validation_executor
+                if executor is None:
+                    self._token_validation_slots.release()
+                    logger.warning(
+                        "External token validation requested after provider shutdown"
+                    )
+                    return None
+
+                try:
+                    validation_future = asyncio.get_running_loop().run_in_executor(
+                        executor,
+                        functools.partial(
+                            get_user_info, credentials, skip_valid_check=True
+                        ),
+                    )
+                except Exception:
+                    self._token_validation_slots.release()
+                    raise
+
+                # Shield the worker future so request cancellation does not mark it
+                # complete and release the slot while its HTTPS call is still running.
+                validation_future.add_done_callback(
+                    lambda _: self._token_validation_slots.release()
+                )
+                user_info = await asyncio.shield(validation_future)
 
                 if user_info and user_info.get("email"):
                     session_time = get_session_time()

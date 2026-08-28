@@ -337,7 +337,9 @@ async def _create_script_project_impl(
     parent_id: Optional[str] = None,
 ) -> str:
     """Internal implementation for create_script_project."""
-    logger.info(f"[create_script_project] Email: {user_google_email}, Title: {title}")
+    logger.info(
+        f"[create_script_project] Email: {user_google_email}, title_len={len(title)}"
+    )
 
     request_body = {"title": title}
 
@@ -582,7 +584,7 @@ async def _create_deployment_impl(
     Creates a new version first, then creates a deployment using that version.
     """
     logger.info(
-        f"[create_deployment] Email: {user_google_email}, ID: {script_id}, Desc: {description}"
+        f"[create_deployment] Email: {user_google_email}, ID: {script_id}, desc_len={len(description) if description else 0}"
     )
 
     # First, create a new version
@@ -717,10 +719,24 @@ async def _list_deployments_impl(
 
     for i, deployment in enumerate(deployments, 1):
         deployment_id = deployment.get("deploymentId", "Unknown")
-        description = deployment.get("description", "No description")
+        # description and versionNumber live under deploymentConfig; fall back to
+        # any top-level description for forward/backward compatibility.
+        config = deployment.get("deploymentConfig", {})
+        description = (
+            config.get("description")
+            or deployment.get("description")
+            or "No description"
+        )
         update_time = deployment.get("updateTime", "Unknown")
+        # A HEAD deployment has no versionNumber — it always serves the latest
+        # saved content rather than a pinned version.
+        version_number = config.get("versionNumber")
+        version_label = (
+            str(version_number) if version_number is not None else "HEAD (latest)"
+        )
 
         output.append(f"{i}. {description} ({deployment_id})")
+        output.append(f"   Version: {version_label}")
         output.append(f"   Updated: {update_time}")
         output.append("")
 
@@ -745,7 +761,8 @@ async def list_deployments(
     script_id: str,
 ) -> str:
     """
-    Lists all deployments for a script project.
+    Lists all deployments for a script project, including the bound version
+    number of each deployment so callers can verify which version is served.
 
     Args:
         service: Injected Google API service client
@@ -753,7 +770,7 @@ async def list_deployments(
         script_id: The script project ID
 
     Returns:
-        str: Formatted string with deployment list
+        str: Formatted string with deployment list (id, description, version, updated time)
     """
     return await _list_deployments_impl(service, user_google_email, script_id)
 

@@ -204,7 +204,7 @@ async def create_presentation(
         str: Details about the created presentation including ID and URL.
     """
     logger.info(
-        f"[create_presentation] Invoked. Email: '{user_google_email}', Title: '{title}'"
+        f"[create_presentation] Invoked. Email: '{user_google_email}', title_len={len(title)}"
     )
 
     body = {"title": title}

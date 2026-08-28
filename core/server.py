@@ -13,6 +13,7 @@ from core.warning_filters import install_startup_warning_filters
 install_startup_warning_filters()
 
 from auth.auth_info_middleware import AuthInfoMiddleware
+from core.camel_case_middleware import CamelCaseArgumentsMiddleware
 from auth.google_auth import handle_auth_callback, start_auth_flow, check_client_secrets
 from auth.gateway_identity import get_verified_gateway_principal
 from auth.mcp_session_middleware import MCPSessionMiddleware
@@ -23,6 +24,7 @@ from auth.oauth_config import (
     get_oauth_config,
     is_trust_gateway_identity,
 )
+from auth.oauth_proxy_config import get_oauth_proxy_expiry_kwargs
 from auth.oauth_responses import (
     create_error_response,
     create_success_response,
@@ -365,6 +367,11 @@ server = SecureFastMCP(
 auth_info_middleware = AuthInfoMiddleware()
 server.add_middleware(auth_info_middleware)
 
+# Accept camelCase argument names (calendarId, timeMin, ...) from callers that
+# mirror the Google API field names, mapping them onto the snake_case tool
+# parameters. See https://github.com/taylorwilsdon/google_workspace_mcp/issues/918
+server.add_middleware(CamelCaseArgumentsMiddleware())
+
 
 def _parse_allowed_redirect_uris(value: Optional[str]) -> Optional[List[str]]:
     """Parse a comma-separated list of OAuth client redirect URIs.
@@ -684,6 +691,8 @@ def configure_server_for_http():
                     jwt_signing_key_override, config.client_secret
                 )
 
+            expiry_kwargs = get_oauth_proxy_expiry_kwargs()
+
             # Check if external OAuth provider is configured
             if config.is_external_oauth21_provider():
                 # External OAuth mode: use custom provider that handles ya29.* access tokens
@@ -697,6 +706,7 @@ def configure_server_for_http():
                     required_scopes=provider_valid_scopes,
                     resource_server_url=config.get_oauth_base_url(),
                     jwt_signing_key=jwt_signing_key,
+                    **expiry_kwargs,
                 )
                 server.auth = provider
 
@@ -727,6 +737,7 @@ def configure_server_for_http():
                     client_storage=client_storage,
                     jwt_signing_key=jwt_signing_key,
                     allowed_client_redirect_uris=allowed_client_redirect_uris,
+                    **expiry_kwargs,
                 )
                 if provider.client_registration_options is not None:
                     # Keep protocol-level auth limited to base identity scopes, but
@@ -771,6 +782,24 @@ def configure_server_for_http():
 def get_auth_provider() -> Optional[GoogleProvider]:
     """Gets the global authentication provider instance."""
     return _auth_provider
+
+
+def close_auth_provider() -> None:
+    """Release resources owned by the configured authentication provider."""
+    global _auth_provider
+
+    provider = _auth_provider
+    _auth_provider = None
+    set_auth_provider(None)
+    if server.auth is provider:
+        server.auth = None
+
+    close = getattr(provider, "close", None)
+    if callable(close):
+        try:
+            close()
+        except Exception:
+            logger.warning("Failed to close authentication provider", exc_info=True)
 
 
 @server.custom_route("/", methods=["GET"])

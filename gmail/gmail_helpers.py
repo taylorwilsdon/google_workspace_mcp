@@ -11,7 +11,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from email.utils import getaddresses, parseaddr, parsedate_to_datetime
 from html.parser import HTMLParser
-from typing import Any, Callable, Iterable, Literal, Mapping, Optional
+from typing import Any, Callable, Dict, Iterable, List, Literal, Mapping, Optional
 
 from fastmcp.exceptions import ToolError as ToolExecutionError
 from googleapiclient.errors import HttpError
@@ -34,6 +34,7 @@ GMAIL_METADATA_HEADERS = [
     "From",
     "To",
     "Cc",
+    "Reply-To",
     "Message-ID",
     "In-Reply-To",
     "References",
@@ -198,37 +199,49 @@ def _parse_date_header(
 
 
 def _parse_message_id_chain(header_value: Optional[str]) -> list[str]:
-    """Extract Message-IDs from a reply header value."""
+    """Extract RFC Message-IDs from a reply header value."""
     if not header_value:
         return []
 
     message_ids = re.findall(r"<[^>]+>", header_value)
-    if message_ids:
-        return message_ids
-
-    return header_value.split()
+    return message_ids or header_value.split()
 
 
 def _derive_reply_headers(
     thread_message_ids: list[str],
     in_reply_to: Optional[str],
     references: Optional[str],
+    target: Optional[Mapping[str, Any]] = None,
 ) -> tuple[Optional[str], Optional[str]]:
-    """Fill missing reply headers while preserving caller intent."""
+    """Fill reply headers, defaulting to the latest automatically eligible message.
+
+    Automatic targets are non-draft, non-trash messages with an RFC Message-ID.
+    """
     derived_in_reply_to = in_reply_to
     derived_references = references
 
-    if not thread_message_ids:
+    if not thread_message_ids and not target:
         return derived_in_reply_to, derived_references
 
+    target_message_id = target.get("message_id") if target else None
     if not derived_in_reply_to:
-        reference_chain = _parse_message_id_chain(derived_references)
-        derived_in_reply_to = (
-            reference_chain[-1] if reference_chain else thread_message_ids[-1]
-        )
+        # References describe ancestry; only In-Reply-To explicitly selects an
+        # older reply parent. Without one, rebuild both headers from the latest
+        # eligible message in the thread.
+        derived_in_reply_to = target_message_id or thread_message_ids[-1]
+        derived_references = None
 
     if not derived_references:
-        if derived_in_reply_to and derived_in_reply_to in thread_message_ids:
+        if target_message_id and derived_in_reply_to == target_message_id:
+            reference_chain = _parse_message_id_chain(target.get("references"))
+            if not reference_chain:
+                parent_ids = _parse_message_id_chain(target.get("in_reply_to"))
+                if len(parent_ids) == 1:
+                    reference_chain = parent_ids
+            if target_message_id not in reference_chain:
+                reference_chain.append(target_message_id)
+            derived_references = " ".join(reference_chain)
+        elif derived_in_reply_to and derived_in_reply_to in thread_message_ids:
             reply_index = thread_message_ids.index(derived_in_reply_to)
             derived_references = " ".join(thread_message_ids[: reply_index + 1])
         elif derived_in_reply_to:
@@ -638,6 +651,102 @@ def _signature_html_to_text(signature_html: str) -> str:
     return html_to_text_preserving_breaks(signature_html)
 
 
+async def _get_send_as_entries(service) -> List[Dict[str, Any]]:
+    """Fetch the account's Gmail send-as settings."""
+    try:
+        response = await asyncio.to_thread(
+            service.users().settings().sendAs().list(userId="me").execute
+        )
+    except HttpError as e:
+        if _is_benign_signature_http_error(e):
+            logger.info(
+                "Skipping Gmail send-as lookup: missing auth/scope for settings endpoint."
+            )
+            return []
+        logger.error(f"Failed to fetch Gmail send-as settings: {e}", exc_info=True)
+        raise _signature_fetch_tool_error(e) from e
+    except Exception as e:
+        logger.error(f"Failed to fetch Gmail send-as settings: {e}", exc_info=True)
+        raise _signature_fetch_tool_error(e) from e
+
+    return response.get("sendAs", [])
+
+
+def _find_send_as_entry(
+    send_as_entries: List[Dict[str, Any]], from_email: str
+) -> Optional[Dict[str, Any]]:
+    """Find a send-as entry by email address, case-insensitively."""
+    from_email_normalized = from_email.strip().lower()
+    return next(
+        (
+            entry
+            for entry in send_as_entries
+            if entry.get("sendAsEmail", "").strip().lower() == from_email_normalized
+        ),
+        None,
+    )
+
+
+async def _get_send_as_signature_html(service, from_email: Optional[str] = None) -> str:
+    """
+    Fetch signature HTML from Gmail send-as settings.
+
+    Returns empty string when the account has no signature configured or when
+    auth/scope errors mean the settings endpoint is unavailable.
+    """
+    send_as_entries = await _get_send_as_entries(service)
+    if not send_as_entries:
+        return ""
+
+    if from_email:
+        entry = _find_send_as_entry(send_as_entries, from_email)
+        if entry:
+            return entry.get("signature", "") or ""
+
+    for entry in send_as_entries:
+        if entry.get("isPrimary"):
+            return entry.get("signature", "") or ""
+
+    return send_as_entries[0].get("signature", "") or ""
+
+
+async def _get_send_as_identity_and_signature(
+    service,
+    from_email: Optional[str],
+    fallback_email: str,
+) -> tuple[str, str]:
+    """Resolve the requested or default Gmail send-as identity and signature."""
+    send_as_entries = await _get_send_as_entries(service)
+    selected_entry = None
+
+    if from_email:
+        selected_entry = _find_send_as_entry(send_as_entries, from_email)
+    else:
+        selected_entry = next(
+            (entry for entry in send_as_entries if entry.get("isDefault")), None
+        )
+        if selected_entry is None:
+            selected_entry = next(
+                (entry for entry in send_as_entries if entry.get("isPrimary")), None
+            )
+        if selected_entry is None and send_as_entries:
+            selected_entry = send_as_entries[0]
+
+    sender_email = from_email or fallback_email
+    signature_html = ""
+    if selected_entry:
+        if not from_email:
+            sender_email = selected_entry.get("sendAsEmail") or fallback_email
+        signature_html = selected_entry.get("signature", "") or ""
+
+    return sender_email, signature_html
+
+
+async def _get_send_as_signature_html_for_tool(
+    service, from_email: Optional[str] = None
+) -> str:
+    """Fetch signature HTML and convert non-benign failures to tool errors."""
+    return await _get_send_as_signature_html(service, from_email=from_email)
 # ---------------------------------------------------------------------------
 # Quoted-history stripping
 #

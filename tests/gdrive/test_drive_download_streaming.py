@@ -6,14 +6,21 @@ streaming contract: the download handle is a real file, the temp file is always
 cleaned up, and nothing base64-encodes the payload on the way to storage.
 """
 
+import asyncio
 import io
+import os
+import time
 from pathlib import Path
+from threading import Event
 from unittest.mock import Mock, patch
 
 import pytest
+from starlette.requests import Request
+from starlette.responses import FileResponse, JSONResponse
 
 import core.attachment_storage as attachment_storage
 from core.attachment_storage import AttachmentStorage
+from core.server import serve_attachment
 from gdrive.drive_tools import _download_file_to_temp, get_drive_file_download_url
 
 
@@ -22,6 +29,18 @@ def _unwrap(tool):
     while hasattr(fn, "__wrapped__"):
         fn = fn.__wrapped__
     return fn
+
+
+def _attachment_request(file_id):
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": f"/attachments/{file_id}",
+        "headers": [],
+        "query_string": b"",
+        "path_params": {"file_id": file_id},
+    }
+    return Request(scope)
 
 
 class _FakeDownloader:
@@ -124,6 +143,74 @@ async def test_download_url_moves_payload_into_storage(mock_resolve, storage):
     assert "11 bytes" in result
     # The temp file was moved, not copied, so nothing is left behind.
     assert not Path(_FakeDownloader.handles[0].name).exists()
+
+
+@pytest.mark.asyncio
+async def test_worker_save_survives_concurrent_attachment_route_sweep(
+    mock_resolve, tmp_path, monkeypatch
+):
+    storage_dir = tmp_path / "attachments"
+    source = tmp_path / "stale-download.tmp"
+    source.write_bytes(b"video-bytes")
+    past = time.time() - 7200
+    os.utime(source, (past, past))
+
+    async def stale_download(*_args, **_kwargs):
+        return source
+
+    monkeypatch.setattr(attachment_storage, "STORAGE_DIR", storage_dir)
+    monkeypatch.setattr(attachment_storage, "_attachment_storage", None)
+    attachment_id = "00000000-0000-0000-0000-000000000001"
+    monkeypatch.setattr(attachment_storage.uuid, "uuid4", lambda: attachment_id)
+    monkeypatch.setattr("gdrive.drive_tools._download_file_to_temp", stale_download)
+    storage = attachment_storage.get_attachment_storage()
+
+    moved = Event()
+    resume_save = Event()
+    real_move = attachment_storage.shutil.move
+
+    def pause_after_move(src, dst):
+        result = real_move(src, dst)
+        moved.set()
+        if not resume_save.wait(timeout=5):
+            raise TimeoutError("attachment route did not run")
+        return result
+
+    monkeypatch.setattr(attachment_storage.shutil, "move", pause_after_move)
+
+    with (
+        patch("gdrive.drive_tools.is_stateless_mode", return_value=False),
+        patch("gdrive.drive_tools.get_transport_mode", return_value="stdio"),
+    ):
+        download = asyncio.create_task(
+            _unwrap(get_drive_file_download_url)(
+                service=Mock(),
+                user_google_email="user@example.com",
+                file_id="file123",
+            )
+        )
+        move_completed = await asyncio.to_thread(moved.wait, 5)
+        if not move_completed:
+            resume_save.set()
+            await download
+        assert move_completed
+
+        try:
+            racing_response = await serve_attachment(_attachment_request(attachment_id))
+        finally:
+            resume_save.set()
+        result = await download
+
+    assert isinstance(racing_response, JSONResponse)
+    assert racing_response.status_code == 404
+    assert "Saved to:" in result
+    assert not source.exists()
+
+    saved_path = Path(storage._metadata[attachment_id]["file_path"])
+    assert saved_path.read_bytes() == b"video-bytes"
+    assert isinstance(
+        await serve_attachment(_attachment_request(attachment_id)), FileResponse
+    )
 
 
 @pytest.mark.asyncio
