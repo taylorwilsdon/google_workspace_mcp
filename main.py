@@ -1051,6 +1051,12 @@ def main():
 
         cleanup_oauth_callback_server()
         sys.exit(1)
+    finally:
+        # External OAuth owns a bounded validation executor. Close it on every
+        # server exit path, including normal uvicorn shutdown and startup failure.
+        from core.server import close_auth_provider
+
+        close_auth_provider()
 
 
 if __name__ == "__main__":

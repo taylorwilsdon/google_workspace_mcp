@@ -24,6 +24,7 @@ from auth.oauth_config import (
     get_oauth_config,
     is_trust_gateway_identity,
 )
+from auth.oauth_proxy_config import get_oauth_proxy_expiry_kwargs
 from auth.oauth_responses import (
     create_error_response,
     create_success_response,
@@ -690,6 +691,8 @@ def configure_server_for_http():
                     jwt_signing_key_override, config.client_secret
                 )
 
+            expiry_kwargs = get_oauth_proxy_expiry_kwargs()
+
             # Check if external OAuth provider is configured
             if config.is_external_oauth21_provider():
                 # External OAuth mode: use custom provider that handles ya29.* access tokens
@@ -703,6 +706,7 @@ def configure_server_for_http():
                     required_scopes=provider_valid_scopes,
                     resource_server_url=config.get_oauth_base_url(),
                     jwt_signing_key=jwt_signing_key,
+                    **expiry_kwargs,
                 )
                 server.auth = provider
 
@@ -733,6 +737,7 @@ def configure_server_for_http():
                     client_storage=client_storage,
                     jwt_signing_key=jwt_signing_key,
                     allowed_client_redirect_uris=allowed_client_redirect_uris,
+                    **expiry_kwargs,
                 )
                 if provider.client_registration_options is not None:
                     # Keep protocol-level auth limited to base identity scopes, but
@@ -777,6 +782,24 @@ def configure_server_for_http():
 def get_auth_provider() -> Optional[GoogleProvider]:
     """Gets the global authentication provider instance."""
     return _auth_provider
+
+
+def close_auth_provider() -> None:
+    """Release resources owned by the configured authentication provider."""
+    global _auth_provider
+
+    provider = _auth_provider
+    _auth_provider = None
+    set_auth_provider(None)
+    if server.auth is provider:
+        server.auth = None
+
+    close = getattr(provider, "close", None)
+    if callable(close):
+        try:
+            close()
+        except Exception:
+            logger.warning("Failed to close authentication provider", exc_info=True)
 
 
 @server.custom_route("/", methods=["GET"])
