@@ -80,14 +80,15 @@ async def search_custom(
         )
 
     logger.info(
-        f"[search_custom] Invoked. Email: '{user_google_email}', Query: '{q}', CX: '{cx}'"
+        f"[search_custom] Invoked. Email: '{user_google_email}', query_len={len(q)}, CX: '{cx}'"
     )
+    logger.debug(f"[search_custom] Query: '{q}'")
 
     # Apply site restriction if sites are provided
     if sites:
         site_query = " OR ".join([f"site:{site}" for site in sites])
         q = f"{q} ({site_query})"
-        logger.info(f"[search_custom] Applied site restriction: {sites}")
+        logger.debug(f"[search_custom] Applied site restriction: {sites}")
 
     # Build the request parameters
     params = {

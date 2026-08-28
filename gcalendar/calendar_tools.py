@@ -11,6 +11,7 @@ import re
 import uuid
 import json
 from typing import List, Optional, Dict, Any, Union
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import pytz
 from googleapiclient.errors import HttpError
@@ -20,6 +21,7 @@ from auth.service_decorator import require_google_service
 from core.utils import handle_http_errors, StringList
 from gcalendar.calendar_helpers import (
     _format_event_detail_lines,
+    _format_event_time,
     _get_meeting_link,
 )
 
@@ -316,6 +318,38 @@ def _strip_utc_offset(datetime_str: str) -> str:
     return re.sub(r"[+-]\d{2}:\d{2}$", "", datetime_str)
 
 
+def _build_time_boundary(time_value: str, timezone: Optional[str]) -> Dict[str, str]:
+    """Build one Google ``start``/``end`` boundary from a time string and its zone.
+
+    Each boundary carries its OWN ``timeZone``, which is what makes a cross-timezone
+    event expressible: a flight departing 13:45 Asia/Jerusalem and landing 17:50
+    Europe/Amsterdam is one event whose two ends are authored in different zones.
+    Forcing a single zone on both ends silently rewrites one of them -- the arrival
+    above becomes 17:50 Israel time, an hour off, with no error raised.
+    """
+    if "T" not in time_value:
+        return {"date": time_value}
+    # `is None` rather than falsy: an explicitly empty zone is an invalid value, not
+    # an omitted one, and must reach validation below instead of being treated as
+    # "no zone given".
+    if timezone is None:
+        return {"dateTime": time_value}
+    # Reject an unresolvable zone here rather than stripping the caller's offset and
+    # forwarding a name Google will refuse. Falling back to the offset instead would
+    # be worse than erroring: it silently discards the zone the caller asked for and
+    # books the event somewhere else.
+    try:
+        ZoneInfo(timezone)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise ValueError(
+            f"Unrecognized IANA timezone {timezone!r}. Use a zone name such as "
+            "'America/New_York' or 'Europe/Amsterdam'."
+        ) from exc
+    # With an IANA zone present, drop any caller-supplied offset so Google resolves
+    # the DST-correct one from the zone name itself (see _strip_utc_offset).
+    return {"dateTime": _strip_utc_offset(time_value), "timeZone": timezone}
+
+
 @server.tool(
     title="List Calendars",
     annotations=ToolAnnotations(
@@ -380,6 +414,7 @@ async def get_events(
     query: Optional[str] = None,
     detailed: bool = False,
     include_attachments: bool = False,
+    single_events: bool = True,
 ) -> str:
     """
     Retrieves events from a specified Google Calendar. Can retrieve a single event by ID or multiple events within a time range.
@@ -389,18 +424,19 @@ async def get_events(
         user_google_email (str): The user's Google email address. Required.
         calendar_id (str): The ID of the calendar to query. Use 'primary' for the user's primary calendar. Defaults to 'primary'. Calendar IDs can be obtained using `list_calendars`.
         event_id (Optional[str]): The ID of a specific event to retrieve. If provided, retrieves only this event and ignores time filtering parameters.
-        time_min (Optional[str]): The start of the time range (inclusive) in RFC3339 format (e.g., '2024-05-12T10:00:00Z' or '2024-05-12'). If omitted, defaults to the current time. Ignored if event_id is provided.
+        time_min (Optional[str]): The start of the time range (inclusive) in RFC3339 format (e.g., '2024-05-12T10:00:00Z' or '2024-05-12'). If omitted, defaults to the current time when single_events=True. It is omitted from unexpanded queries so recurring masters that began in the past but still have future occurrences remain discoverable. Ignored if event_id is provided.
         time_max (Optional[str]): The end of the time range (exclusive) in RFC3339 format. If omitted, events starting from `time_min` onwards are considered (up to `max_results`). Ignored if event_id is provided.
         max_results (int): The maximum number of events to return. Defaults to 25. Ignored if event_id is provided.
         query (Optional[str]): A keyword to search for within event fields (summary, description, location). Ignored if event_id is provided.
-        detailed (bool): Whether to return detailed event information including description, location, colour (colorId), attendees, and attendee details (response status, organizer, optional flags). Recurring instances also report the parent series ID needed to edit the whole series, and events that are not ordinary confirmed meetings report their event type (outOfOffice, workingLocation, focusTime) and status. Defaults to False.
+        detailed (bool): Whether to return detailed event information including description, location, colour (colorId), attendees, and attendee details (response status, organizer, optional flags). Recurring instances also report the parent series ID needed to edit the whole series; recurring masters report their raw RFC5545 recurrence rules; and events that are not ordinary confirmed meetings report their event type (outOfOffice, workingLocation, focusTime) and status. Defaults to False.
         include_attachments (bool): Whether to include attachment information in detailed event output. When True, shows attachment details (fileId, fileUrl, mimeType, title) for events that have attachments. Only applies when detailed=True. Set this to True when you need to view or access files that have been attached to calendar events, such as meeting documents, presentations, or other shared files. Defaults to False.
+        single_events (bool): Whether to expand recurring series into individual instances. Defaults to True for backwards compatibility. Set to False with detailed=True to retrieve recurring master events and their exact RFC5545 recurrence rules instead of inferring cadence from expanded instances.
 
     Returns:
         str: A formatted list of events (summary, start and end times, link) within the specified range, or detailed information for a single event if event_id is provided.
     """
     logger.info(
-        f"[get_events] Raw parameters - event_id: '{event_id}', time_min: '{time_min}', time_max: '{time_max}', query: '{query}', detailed: {detailed}, include_attachments: {include_attachments}"
+        f"[get_events] Raw parameters - event_id: '{event_id}', time_min: '{time_min}', time_max: '{time_max}', query_len={len(query) if query else 0}, detailed: {detailed}, include_attachments: {include_attachments}, single_events: {single_events}"
     )
 
     # Handle single event retrieval
@@ -418,13 +454,20 @@ async def get_events(
         formatted_time_min = _correct_time_format_for_api(time_min, "time_min", None)
         if formatted_time_min:
             effective_time_min = formatted_time_min
-        else:
+        elif single_events:
             utc_now = datetime.datetime.now(datetime.timezone.utc)
             effective_time_min = utc_now.isoformat().replace("+00:00", "Z")
+        else:
+            effective_time_min = None
         if time_min is None:
-            logger.info(
-                f"time_min not provided, defaulting to current UTC time: {effective_time_min}"
-            )
+            if single_events:
+                logger.info(
+                    f"time_min not provided, defaulting to current UTC time: {effective_time_min}"
+                )
+            else:
+                logger.info(
+                    "time_min not provided for unexpanded events; omitting it so older recurring masters remain discoverable"
+                )
         else:
             logger.info(
                 f"time_min processing: original='{time_min}', formatted='{formatted_time_min}', effective='{effective_time_min}'"
@@ -437,18 +480,25 @@ async def get_events(
             )
 
         logger.info(
-            f"[get_events] Final API parameters - calendarId: '{calendar_id}', timeMin: '{effective_time_min}', timeMax: '{effective_time_max}', maxResults: {max_results}, query: '{query}'"
+            f"[get_events] Final API parameters - calendarId: '{calendar_id}', timeMin: '{effective_time_min}', timeMax: '{effective_time_max}', maxResults: {max_results}, query_len={len(query) if query else 0}"
         )
 
         # Build the request parameters dynamically
         request_params = {
             "calendarId": calendar_id,
-            "timeMin": effective_time_min,
             "timeMax": effective_time_max,
             "maxResults": max_results,
-            "singleEvents": True,
-            "orderBy": "startTime",
+            "singleEvents": single_events,
         }
+
+        if effective_time_min:
+            request_params["timeMin"] = effective_time_min
+
+        # The Calendar API only permits start-time ordering when recurring
+        # series are expanded. Unexpanded results retain the API's stable
+        # default ordering and expose the master event's recurrence array.
+        if single_events:
+            request_params["orderBy"] = "startTime"
 
         if query:
             request_params["q"] = query
@@ -467,8 +517,8 @@ async def get_events(
     if event_id and detailed:
         item = items[0]
         summary = item.get("summary", "No Title")
-        start = item["start"].get("dateTime", item["start"].get("date"))
-        end = item["end"].get("dateTime", item["end"].get("date"))
+        start = _format_event_time(item, "start")
+        end = _format_event_time(item, "end")
         link = item.get("htmlLink", "No Link")
 
         event_details = (
@@ -490,8 +540,8 @@ async def get_events(
     event_details_list = []
     for item in items:
         summary = item.get("summary", "No Title")
-        start_time = item["start"].get("dateTime", item["start"].get("date"))
-        end_time = item["end"].get("dateTime", item["end"].get("date"))
+        start_time = _format_event_time(item, "start")
+        end_time = _format_event_time(item, "end")
         link = item.get("htmlLink", "No Link")
         item_event_id = item.get("id", "No ID")
 
@@ -650,35 +700,29 @@ async def _create_event_impl(
     guests_can_invite_others: Optional[bool] = None,
     guests_can_see_other_guests: Optional[bool] = None,
     send_updates: str = "all",
+    *,
+    start_timezone: Optional[str] = None,
+    end_timezone: Optional[str] = None,
 ) -> str:
     """Internal implementation for creating a calendar event."""
     logger.info(
-        f"[create_event] Invoked. Email: '{user_google_email}', Summary: {summary}"
+        f"[create_event] Invoked. Email: '{user_google_email}', summary_len={len(summary) if summary else 0}"
     )
-    logger.info(f"[create_event] Incoming attachments param: {attachments}")
+    logger.debug(f"[create_event] Incoming attachments param: {attachments}")
     # If attachments value is a string, split by comma and strip whitespace
     if attachments and isinstance(attachments, str):
         attachments = [a.strip() for a in attachments.split(",") if a.strip()]
-        logger.info(
+        logger.debug(
             f"[create_event] Parsed attachments list from string: {attachments}"
         )
-    # When an IANA timezone is provided, strip any UTC offset from dateTime values
-    # so Google Calendar resolves the correct DST-aware offset from the IANA name.
-    effective_start = start_time
-    effective_end = end_time
-    if timezone and "T" in start_time:
-        effective_start = _strip_utc_offset(start_time)
-    if timezone and "T" in end_time:
-        effective_end = _strip_utc_offset(end_time)
+    # Each boundary resolves its own zone, falling back to the event-wide timezone.
     event_body: Dict[str, Any] = {
         "summary": summary,
-        "start": (
-            {"date": start_time}
-            if "T" not in start_time
-            else {"dateTime": effective_start}
+        "start": _build_time_boundary(
+            start_time, start_timezone if start_timezone is not None else timezone
         ),
-        "end": (
-            {"date": end_time} if "T" not in end_time else {"dateTime": effective_end}
+        "end": _build_time_boundary(
+            end_time, end_timezone if end_timezone is not None else timezone
         ),
     }
     if recurrence:
@@ -687,11 +731,6 @@ async def _create_event_impl(
         event_body["location"] = location
     if description:
         event_body["description"] = description
-    if timezone:
-        if "dateTime" in event_body["start"]:
-            event_body["start"]["timeZone"] = timezone
-        if "dateTime" in event_body["end"]:
-            event_body["end"]["timeZone"] = timezone
     if attendees:
         event_body["attendees"] = [{"email": email} for email in attendees]
 
@@ -777,7 +816,7 @@ async def _create_event_impl(
                     match = re.search(r"(?:/d/|/file/d/|id=)([\w-]+)", att)
                     file_id = match.group(1) if match else None
                     logger.info(
-                        f"[create_event] Extracted file_id '{file_id}' from attachment URL '{att}'"
+                        f"[create_event] Extracted file_id '{file_id}' from attachment URL"
                     )
                 else:
                     file_id = att
@@ -893,7 +932,7 @@ def _normalize_attendees(
             normalized.append(att)
         else:
             logger.warning(
-                f"[_normalize_attendees] Invalid attendee format: {att}, skipping"
+                f"[_normalize_attendees] Invalid attendee format (type={type(att).__name__}), skipping"
             )
     return normalized if normalized else None
 
@@ -922,6 +961,9 @@ async def _modify_event_impl(
     guests_can_invite_others: Optional[bool] = None,
     guests_can_see_other_guests: Optional[bool] = None,
     send_updates: str = "all",
+    *,
+    start_timezone: Optional[str] = None,
+    end_timezone: Optional[str] = None,
 ) -> str:
     """Internal implementation for modifying a calendar event."""
     logger.info(
@@ -933,25 +975,13 @@ async def _modify_event_impl(
     if summary is not None:
         event_body["summary"] = summary
     if start_time is not None:
-        effective_start = start_time
-        if timezone is not None and "T" in start_time:
-            effective_start = _strip_utc_offset(start_time)
-        event_body["start"] = (
-            {"date": start_time}
-            if "T" not in start_time
-            else {"dateTime": effective_start}
+        event_body["start"] = _build_time_boundary(
+            start_time, start_timezone if start_timezone is not None else timezone
         )
-        if timezone is not None and "dateTime" in event_body["start"]:
-            event_body["start"]["timeZone"] = timezone
     if end_time is not None:
-        effective_end = end_time
-        if timezone is not None and "T" in end_time:
-            effective_end = _strip_utc_offset(end_time)
-        event_body["end"] = (
-            {"date": end_time} if "T" not in end_time else {"dateTime": effective_end}
+        event_body["end"] = _build_time_boundary(
+            end_time, end_timezone if end_timezone is not None else timezone
         )
-        if timezone is not None and "dateTime" in event_body["end"]:
-            event_body["end"]["timeZone"] = timezone
     if description is not None:
         event_body["description"] = description
     if location is not None:
@@ -1262,7 +1292,7 @@ async def _rsvp_event_impl(
 
     summary = updated_event.get("summary", "Unknown event")
     logger.info(
-        f"[rsvp_event] RSVP for '{summary}' (ID: {event_id}) set to '{response}' for {user_google_email}."
+        f"[rsvp_event] RSVP for event {event_id} set to '{response}' for {user_google_email}."
     )
     return f"Successfully updated RSVP for '{summary}' (ID: {event_id}) to '{response}' for {user_google_email}."
 
@@ -1315,6 +1345,9 @@ async def manage_event(
     response: Optional[str] = None,
     rsvp_comment: Optional[str] = None,
     send_updates: Optional[str] = None,
+    *,
+    start_timezone: Optional[str] = None,
+    end_timezone: Optional[str] = None,
 ) -> str:
     """
     Manages calendar events. Supports creating, updating, deleting, and RSVP.
@@ -1330,7 +1363,15 @@ async def manage_event(
         description (Optional[str]): Event description.
         location (Optional[str]): Event location.
         attendees (Optional[Union[List[str], List[Dict[str, Any]]]]): Attendee email addresses or objects.
-        timezone (Optional[str]): Timezone (e.g., "America/New_York").
+        timezone (Optional[str]): IANA timezone applied to both boundaries (e.g.,
+            "America/New_York"). Overridden per boundary by start_timezone/end_timezone.
+        start_timezone (Optional[str]): IANA timezone for the start boundary only,
+            overriding timezone. Use for events whose two ends sit in different zones -
+            a flight departing 13:45 "Asia/Jerusalem" and landing 17:50
+            "Europe/Amsterdam" is one event authored in two zones. Passing a single
+            timezone for such an event silently rewrites one end's wall-clock.
+        end_timezone (Optional[str]): IANA timezone for the end boundary only,
+            overriding timezone. See start_timezone.
         attachments (Optional[List[str]]): List of Google Drive file URLs or IDs to attach.
         add_google_meet (Optional[bool]): Whether to add/remove native Google Meet.
         conference_data (Optional[Dict[str, Any]]): Raw Google Calendar `conferenceData`
@@ -1398,6 +1439,8 @@ async def manage_event(
             location=location,
             attendees=attendees,
             timezone=timezone,
+            start_timezone=start_timezone,
+            end_timezone=end_timezone,
             attachments=attachments,
             add_google_meet=add_google_meet or False,
             conference_data=resolved_conference_data,
@@ -1428,6 +1471,8 @@ async def manage_event(
             location=location,
             attendees=attendees,
             timezone=timezone,
+            start_timezone=start_timezone,
+            end_timezone=end_timezone,
             add_google_meet=add_google_meet,
             conference_data=resolved_conference_data,
             reminders=reminders,
@@ -2443,7 +2488,7 @@ async def query_freebusy(
         request_body["calendarExpansionMax"] = calendar_expansion_max
 
     logger.info(
-        f"[query_freebusy] Request body: timeMin={formatted_time_min}, timeMax={formatted_time_max}, calendars={calendar_ids}"
+        f"[query_freebusy] Request body: timeMin={formatted_time_min}, timeMax={formatted_time_max}, calendar_count={len(calendar_ids)}"
     )
 
     # Execute the freebusy query
@@ -2531,7 +2576,7 @@ async def create_calendar(
         str: The ID and summary of the newly created calendar.
     """
     logger.info(
-        f"[create_calendar] Invoked. Email: '{user_google_email}', summary: '{summary}'"
+        f"[create_calendar] Invoked. Email: '{user_google_email}', summary_len={len(summary)}"
     )
 
     body: Dict[str, Any] = {"summary": summary}
@@ -2546,7 +2591,5 @@ async def create_calendar(
 
     calendar_id = result["id"]
     calendar_summary = result.get("summary", summary)
-    logger.info(
-        f"[create_calendar] Created calendar '{calendar_summary}' with ID: {calendar_id}"
-    )
+    logger.info(f"[create_calendar] Created calendar with ID: {calendar_id}")
     return f"Created calendar '{calendar_summary}' (ID: {calendar_id})"

@@ -148,7 +148,9 @@ async def create_form(
     Returns:
         str: Confirmation message with form ID and edit URL.
     """
-    logger.info(f"[create_form] Invoked. Email: '{user_google_email}', Title: {title}")
+    logger.info(
+        f"[create_form] Invoked. Email: '{user_google_email}', title_len={len(title)}"
+    )
 
     form_body: Dict[str, Any] = {"info": {"title": title}}
 

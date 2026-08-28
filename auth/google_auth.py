@@ -96,6 +96,8 @@ def _build_authorized_http(
 ) -> google_auth_httplib2.AuthorizedHttp:
     """Return credentialed HTTP with an explicit socket timeout."""
     http = httplib2.Http(timeout=timeout)
+    # Drive uses 308 Resume Incomplete with Range during resumable uploads, not a redirect.
+    http.redirect_codes = http.redirect_codes - {308}
     return google_auth_httplib2.AuthorizedHttp(credentials, http=http)
 
 

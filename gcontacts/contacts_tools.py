@@ -711,8 +711,9 @@ async def search_contacts(
         str: Matching contacts with their basic information.
     """
     logger.info(
-        f"[search_contacts] Invoked. Email: '{user_google_email}', Query: '{query}'"
+        f"[search_contacts] Invoked. Email: '{user_google_email}', query_len={len(query)}"
     )
+    logger.debug(f"[search_contacts] Query: '{query}'")
 
     if page_size < 1:
         raise UserInputError("page_size must be >= 1")
@@ -742,9 +743,7 @@ async def search_contacts(
         person = item.get("person", {})
         response += _format_contact(person) + "\n\n"
 
-    logger.info(
-        f"Found {len(results)} contacts matching '{query}' for {user_google_email}"
-    )
+    logger.info(f"Found {len(results)} contacts for {user_google_email}")
     return response
 
 
@@ -1591,7 +1590,7 @@ async def manage_contact_group(
         response += f"ID: {created_group_id}\n"
         response += f"Type: {result.get('groupType', 'USER_CONTACT_GROUP')}\n"
 
-        logger.info(f"Created contact group '{name}' for {user_google_email}")
+        logger.info(f"Created contact group for {user_google_email}")
         return response
 
     # All other actions require group_id

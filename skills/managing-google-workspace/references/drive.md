@@ -83,7 +83,9 @@ Default export formats for Google native files:
 ## Create & Modify
 
 ### create_drive_file
-Create a new file in Drive.
+Create a new file in Drive without converting it to a native Google format. For
+Office-to-Google conversion, use `import_to_google_doc`,
+`import_to_google_sheets`, or `import_to_google_slides`.
 
 | Parameter | Type | Required | Default | Notes |
 |-----------|------|----------|---------|-------|
@@ -93,6 +95,13 @@ Create a new file in Drive.
 | folder_id | string | no | root | Parent folder ID |
 | mime_type | string | no | text/plain | MIME type of the file |
 | fileUrl | string | no | | Fetch content from this URL (file://, http://, https://) |
+| base64_content | string | no | | Standard base64-encoded binary content |
+| content_mime_type | string | with base64_content | | Source MIME type; Google-native MIME types are rejected |
+| base64_sha256 | string | no | | Optional SHA-256 integrity check for decoded binary content |
+
+The import tools also accept `base64_content` and optional `base64_sha256` for
+binary Office/OpenDocument sources. ZIP-based formats are checked for required
+members and CRC/decompression errors before Drive is called.
 
 ### create_drive_folder
 Create a new folder.

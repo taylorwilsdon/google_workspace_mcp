@@ -6,9 +6,14 @@ remote content download, and import-time format conversion.
 """
 
 import asyncio
+import base64
+import binascii
+import hashlib
 import io
 import logging
 import re
+import zipfile
+import zlib
 from pathlib import Path
 from tempfile import SpooledTemporaryFile
 from typing import List, Dict, Any, Awaitable, BinaryIO, Callable, Optional, Tuple
@@ -44,6 +49,57 @@ def check_public_link_permission(permissions: List[Dict[str, Any]]) -> bool:
         p.get("type") == "anyone" and p.get("role") in ["reader", "writer", "commenter"]
         for p in permissions
     )
+
+
+def list_all_permissions(service, file_id: str) -> List[Dict[str, Any]]:
+    """
+    Return the complete permission set for a file, including Shared Drive items.
+
+    files.get() does NOT populate the inline `permissions` field (nor the `shared`
+    boolean) for items that live in a Shared Drive, even when supportsAllDrives=True
+    is passed. permissions.list() is the only reliable source in that case. This
+    helper paginates and always sets supportsAllDrives=True.
+    """
+    permissions: List[Dict[str, Any]] = []
+    page_token = None
+    while True:
+        resp = (
+            service.permissions()
+            .list(
+                fileId=file_id,
+                supportsAllDrives=True,
+                pageSize=100,
+                pageToken=page_token,
+                fields=(
+                    "nextPageToken, permissions(id, type, role, emailAddress, "
+                    "domain, expirationTime, permissionDetails, allowFileDiscovery)"
+                ),
+            )
+            .execute()
+        )
+        permissions.extend(resp.get("permissions", []))
+        page_token = resp.get("nextPageToken")
+        if not page_token:
+            break
+    return permissions
+
+
+def derive_shared_state(
+    file_metadata: Dict[str, Any], permissions: List[Dict[str, Any]]
+) -> bool:
+    """
+    Determine whether a file is shared.
+
+    The Drive API omits the `shared` boolean for Shared Drive items, so derive it
+    from the driveId and the resolved permission set instead of trusting `shared`.
+    """
+    if file_metadata.get("shared"):
+        return True
+    if file_metadata.get("driveId"):
+        return True
+    if any(p.get("type") in ("anyone", "domain") for p in permissions):
+        return True
+    return len([p for p in permissions if p.get("type") in ("user", "group")]) > 1
 
 
 def format_public_sharing_error(file_name: str, file_id: str) -> str:
@@ -380,11 +436,16 @@ async def resolve_drive_item(
     *,
     extra_fields: Optional[str] = None,
     max_depth: int = 5,
+    follow_shortcuts: bool = True,
 ) -> Tuple[str, Dict[str, Any]]:
     """
-    Resolve a Drive shortcut so downstream callers operate on the real item.
+    Fetch Drive item metadata and optionally resolve shortcuts to their targets.
 
-    Returns the resolved file ID and its metadata. Raises if shortcut targets loop
+    By default shortcuts are followed so content-oriented callers operate on the real
+    item. Set ``follow_shortcuts=False`` for resource-local metadata mutations (rename,
+    move, trash, star, description, etc.) that must act on the shortcut itself.
+
+    Returns the selected file ID and its metadata. Raises if shortcut targets loop
     or exceed max_depth to avoid infinite recursion.
     """
     current_id = file_id
@@ -400,7 +461,7 @@ async def resolve_drive_item(
             .execute
         )
         mime_type = metadata.get("mimeType")
-        if mime_type != SHORTCUT_MIME_TYPE:
+        if not follow_shortcuts or mime_type != SHORTCUT_MIME_TYPE:
             return current_id, metadata
 
         shortcut_details = metadata.get("shortcutDetails") or {}
@@ -441,6 +502,140 @@ async def resolve_folder_id(
 DOWNLOAD_CHUNK_SIZE_BYTES = 256 * 1024  # 256 KB
 UPLOAD_CHUNK_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB (Google recommended minimum)
 MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB safety limit for URL downloads
+
+MAX_INLINE_BASE64_BYTES = 100 * 1024 * 1024  # 100 MB decoded payload ceiling
+MAX_ZIP_MEMBER_COUNT = 10_000
+MAX_ZIP_UNCOMPRESSED_BYTES = 500 * 1024 * 1024  # 500 MB total uncompressed
+MAX_ZIP_COMPRESSION_RATIO = 100
+
+# Office Open XML and OpenDocument payloads are ZIP containers. Drive accepts
+# malformed bytes at upload time and may only surface the corruption minutes later
+# when its Docs/Sheets/Slides importer opens the file, so validate inline payloads
+# before making a write request.
+ZIP_CONTAINER_REQUIRED_MEMBERS = {
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {
+        "[Content_Types].xml",
+        "word/document.xml",
+    },
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+        "[Content_Types].xml",
+        "xl/workbook.xml",
+    },
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": {
+        "[Content_Types].xml",
+        "ppt/presentation.xml",
+    },
+    "application/vnd.oasis.opendocument.text": {
+        "mimetype",
+        "META-INF/manifest.xml",
+    },
+    "application/vnd.oasis.opendocument.spreadsheet": {
+        "mimetype",
+        "META-INF/manifest.xml",
+    },
+    "application/vnd.oasis.opendocument.presentation": {
+        "mimetype",
+        "META-INF/manifest.xml",
+    },
+}
+
+
+def _decode_base64_upload(
+    base64_content: str,
+    *,
+    tool_name: str,
+    mime_type: str,
+    expected_sha256: Optional[str] = None,
+) -> bytes:
+    """Decode and validate an inline binary upload before sending it to Drive."""
+    max_encoded_len = ((MAX_INLINE_BASE64_BYTES + 2) // 3) * 4
+    if len(base64_content) > max_encoded_len:
+        estimated_decoded_size = len(base64_content) * 3 // 4
+        raise ValueError(
+            f"[{tool_name}] Inline payload exceeds the "
+            f"{MAX_INLINE_BASE64_BYTES // (1024 * 1024)} MB limit "
+            f"(estimated {estimated_decoded_size // (1024 * 1024)} MB). "
+            "Upload via 'fileUrl' instead."
+        )
+
+    try:
+        file_data = base64.b64decode(base64_content, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("'base64_content' must be valid standard base64.") from exc
+
+    if len(file_data) > MAX_INLINE_BASE64_BYTES:
+        raise ValueError(
+            f"[{tool_name}] Inline payload exceeds the "
+            f"{MAX_INLINE_BASE64_BYTES // (1024 * 1024)} MB limit "
+            f"({len(file_data) // (1024 * 1024)} MB). "
+            "Upload via 'fileUrl' instead."
+        )
+
+    if expected_sha256 is not None:
+        normalized_sha256 = expected_sha256.strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", normalized_sha256):
+            raise ValueError(
+                "'base64_sha256' must be a 64-character hexadecimal SHA-256."
+            )
+        actual_sha256 = hashlib.sha256(file_data).hexdigest()
+        if actual_sha256 != normalized_sha256:
+            raise ValueError(
+                f"[{tool_name}] Inline binary payload failed its SHA-256 integrity check. "
+                "The base64 content was altered or truncated before reaching the server."
+            )
+
+    required_members = ZIP_CONTAINER_REQUIRED_MEMBERS.get(mime_type)
+    if required_members is not None:
+        try:
+            with zipfile.ZipFile(io.BytesIO(file_data)) as archive:
+                members = archive.infolist()
+                if len(members) > MAX_ZIP_MEMBER_COUNT:
+                    raise ValueError(
+                        f"[{tool_name}] Inline {mime_type} archive contains "
+                        f"{len(members)} members (limit {MAX_ZIP_MEMBER_COUNT})."
+                    )
+                total_uncompressed = sum(m.file_size for m in members)
+                if total_uncompressed > MAX_ZIP_UNCOMPRESSED_BYTES:
+                    raise ValueError(
+                        f"[{tool_name}] Inline {mime_type} archive uncompressed size "
+                        f"({total_uncompressed // (1024 * 1024)} MB) exceeds the "
+                        f"{MAX_ZIP_UNCOMPRESSED_BYTES // (1024 * 1024)} MB limit."
+                    )
+                if (
+                    len(file_data) > 0
+                    and total_uncompressed // max(len(file_data), 1)
+                    > MAX_ZIP_COMPRESSION_RATIO
+                ):
+                    raise ValueError(
+                        f"[{tool_name}] Inline {mime_type} archive compression ratio "
+                        f"exceeds {MAX_ZIP_COMPRESSION_RATIO}x."
+                    )
+                names = set(archive.namelist())
+                missing = required_members - names
+                if missing:
+                    raise ValueError(
+                        f"[{tool_name}] Inline {mime_type} payload is missing required "
+                        f"archive members: {', '.join(sorted(missing))}."
+                    )
+                corrupt_member = archive.testzip()
+                if corrupt_member is not None:
+                    raise ValueError(
+                        f"[{tool_name}] Inline {mime_type} payload contains a corrupt "
+                        f"archive member: {corrupt_member}."
+                    )
+        except ValueError:
+            raise
+        except (zipfile.BadZipFile, EOFError, RuntimeError, zlib.error) as exc:
+            raise ValueError(
+                f"[{tool_name}] Inline {mime_type} payload is not a valid, intact archive."
+            ) from exc
+
+    return file_data
+
+
+def _use_resumable_upload(size: int) -> bool:
+    """Use Drive's resumable protocol only when a simple upload is too large."""
+    return size > UPLOAD_CHUNK_SIZE_BYTES
 
 
 async def _stream_url_with_validation(
@@ -581,13 +776,16 @@ async def _resolve_import_media(
     file_path: Optional[str],
     file_url: Optional[str],
     source_format: Optional[str],
+    base64_content: Optional[str] = None,
+    base64_sha256: Optional[str] = None,
     format_map: Optional[Dict[str, str]] = None,
     passthrough_mime_type: Optional[str] = None,
 ) -> Tuple[MediaIoBaseUpload, str, Optional[BinaryIO]]:
     """
     Resolve a content source into an upload ``MediaIoBaseUpload`` and source MIME type.
 
-    Exactly one of ``content``, ``file_path``, or ``file_url`` must be provided.
+    Exactly one of ``content``, ``file_path``, ``file_url``, or
+    ``base64_content`` must be provided.
     The source bytes are uploaded with their *source* MIME type so the Drive API can
     convert them into the destination Google Apps format. ``format_map`` is the
     extension → source MIME allowlist used for detection and validation.
@@ -599,13 +797,21 @@ async def _resolve_import_media(
     Returns ``(media, source_mime_type, closeable)``; when the source is a remote URL,
     ``closeable`` is the download stream the caller must close after upload (else None).
     """
-    source_count = sum(1 for x in (content, file_path, file_url) if x is not None)
+    source_count = sum(
+        1 for x in (content, file_path, file_url, base64_content) if x is not None
+    )
     if source_count == 0:
         raise ValueError(
-            "You must provide one of: 'content', 'file_path', or 'file_url'."
+            "You must provide one of: 'content', 'file_path', 'file_url', or "
+            "'base64_content'."
         )
     if source_count > 1:
-        raise ValueError("Provide only one of: 'content', 'file_path', or 'file_url'.")
+        raise ValueError(
+            "Provide only one of: 'content', 'file_path', 'file_url', or "
+            "'base64_content'."
+        )
+    if base64_sha256 is not None and base64_content is None:
+        raise ValueError("'base64_sha256' can only be used with 'base64_content'.")
 
     # Determine source MIME type from the explicit hint or auto-detection.
     if passthrough_mime_type:
@@ -638,6 +844,17 @@ async def _resolve_import_media(
             )
         file_data = content.encode("utf-8")
         logger.info(f"[{tool_name}] Using content: {len(file_data)} bytes")
+
+    elif base64_content is not None:
+        file_data = _decode_base64_upload(
+            base64_content,
+            tool_name=tool_name,
+            mime_type=source_mime_type,
+            expected_sha256=base64_sha256,
+        )
+        logger.info(
+            f"[{tool_name}] Decoded inline binary content: {len(file_data)} bytes"
+        )
 
     elif file_path is not None:
         parsed_url = urlparse(file_path)
@@ -696,10 +913,21 @@ async def _resolve_import_media(
             f"{', '.join(ext.lstrip('.') for ext in sorted(format_map.keys()))}."
         )
 
+    upload_stream = (
+        remote_file_data if remote_file_data is not None else io.BytesIO(file_data)
+    )
+    if remote_file_data is not None:
+        current_position = remote_file_data.tell()
+        remote_file_data.seek(0, io.SEEK_END)
+        upload_size = remote_file_data.tell()
+        remote_file_data.seek(current_position)
+    else:
+        upload_size = len(file_data)
+
     media = MediaIoBaseUpload(
-        remote_file_data if remote_file_data is not None else io.BytesIO(file_data),
+        upload_stream,
         mimetype=source_mime_type,  # Source format drives Drive's auto-conversion
-        resumable=True,
+        resumable=_use_resumable_upload(upload_size),
         chunksize=UPLOAD_CHUNK_SIZE_BYTES,
     )
     return media, source_mime_type, remote_file_data

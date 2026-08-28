@@ -20,6 +20,7 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
+from gcalendar.calendar_helpers import _format_event_time
 from gcalendar.calendar_tools import get_events
 
 
@@ -38,15 +39,31 @@ def _mock_service(items):
     return mock_service
 
 
-async def _ranged_detail(item):
-    """Detailed output via the time_min/time_max branch."""
-    return await _unwrap(get_events)(
-        service=_mock_service([item]),
+async def _ranged_detail(item, *, single_events=True):
+    """Detailed output via the time_min/time_max branch.
+
+    Also asserts the forwarded request matches what was asked for, so tests
+    using this helper check the actual events.list() call, not just the
+    formatted text it produced.
+    """
+    service = _mock_service([item])
+    result = await _unwrap(get_events)(
+        service=service,
         user_google_email="user@example.com",
         time_min="2026-04-06T00:00:00Z",
         time_max="2026-04-07T00:00:00Z",
         detailed=True,
+        single_events=single_events,
     )
+
+    params = service.events().list.call_args.kwargs
+    assert params["singleEvents"] is single_events
+    if single_events:
+        assert params["orderBy"] == "startTime"
+    else:
+        assert "orderBy" not in params
+
+    return result
 
 
 async def _single_detail(item):
@@ -59,9 +76,35 @@ async def _single_detail(item):
     )
 
 
+async def _ranged_basic(item):
+    """Basic output via the time_min/time_max branch."""
+    return await _unwrap(get_events)(
+        service=_mock_service([item]),
+        user_google_email="user@example.com",
+        time_min="2026-04-06T00:00:00Z",
+        time_max="2026-04-07T00:00:00Z",
+        detailed=False,
+    )
+
+
+async def _single_basic(item):
+    """Basic output via the event_id branch."""
+    return await _unwrap(get_events)(
+        service=_mock_service([item]),
+        user_google_email="user@example.com",
+        event_id=item["id"],
+        detailed=False,
+    )
+
+
 # Every test runs through both formatters. Their disagreement was the bug.
 both_branches = pytest.mark.parametrize(
     "detail", [_ranged_detail, _single_detail], ids=["ranged", "single"]
+)
+all_get_paths = pytest.mark.parametrize(
+    "read",
+    [_ranged_basic, _single_basic, _ranged_detail, _single_detail],
+    ids=["ranged-basic", "single-basic", "ranged-detailed", "single-detailed"],
 )
 
 RECURRING_INSTANCE = {
@@ -72,6 +115,25 @@ RECURRING_INSTANCE = {
     "htmlLink": "https://calendar.google.com/event?eid=evt123",
     "colorId": "8",
     "recurringEventId": "evt123",
+    "status": "confirmed",
+}
+
+RECURRING_SERIES = {
+    "id": "evt123",
+    "summary": "Standup",
+    "start": {
+        "dateTime": "2026-04-06T09:00:00Z",
+        "timeZone": "Europe/London",
+    },
+    "end": {
+        "dateTime": "2026-04-06T09:15:00Z",
+        "timeZone": "Europe/London",
+    },
+    "htmlLink": "https://calendar.google.com/event?eid=evt123",
+    "recurrence": [
+        "RRULE:FREQ=WEEKLY;INTERVAL=4;BYDAY=MO",
+        "EXDATE:20260504T090000Z",
+    ],
     "status": "confirmed",
 }
 
@@ -98,6 +160,16 @@ ORDINARY_MEETING = {
     "htmlLink": "https://calendar.google.com/event?eid=evt1",
     "eventType": "default",
     "status": "confirmed",
+}
+
+CANCELLED_RECURRING_EXCEPTION = {
+    "id": "evt123_20260420T090000Z",
+    "status": "cancelled",
+    "recurringEventId": "evt123",
+    "originalStartTime": {
+        "dateTime": "2026-04-20T11:00:00+02:00",
+        "timeZone": "Europe/Paris",
+    },
 }
 
 
@@ -188,3 +260,224 @@ async def test_basic_ranged_output_is_unchanged():
 
     assert "Color ID" not in result
     assert "Recurring Event ID" not in result
+
+
+@pytest.mark.asyncio
+@both_branches
+async def test_detailed_recurring_master_emits_lossless_recurrence(detail):
+    """Detailed output preserves every recurrence line from a series master."""
+    result = await detail(RECURRING_SERIES)
+
+    assert (
+        'Recurrence: ["RRULE:FREQ=WEEKLY;INTERVAL=4;BYDAY=MO", '
+        '"EXDATE:20260504T090000Z"]' in result
+    )
+
+
+@pytest.mark.asyncio
+async def test_cancelled_recurring_exception_uses_original_start_time():
+    """Sparse Google tombstones render as exclusions instead of crashing."""
+    result = await _single_detail(CANCELLED_RECURRING_EXCEPTION)
+
+    assert "Starts: 2026-04-20T11:00:00+02:00" in result
+    assert "Ends: Unavailable" in result
+    assert (
+        'Original Start Time: {"dateTime": "2026-04-20T11:00:00+02:00", '
+        '"timeZone": "Europe/Paris"}' in result
+    )
+    assert "Recurring Event ID: evt123" in result
+    assert "Status: cancelled" in result
+
+
+@pytest.mark.asyncio
+async def test_ranged_cancelled_exception_uses_original_start_time():
+    """Unexpanded ranges render sparse cancelled exceptions."""
+    result = await _ranged_detail(CANCELLED_RECURRING_EXCEPTION, single_events=False)
+
+    assert "Starts: 2026-04-20T11:00:00+02:00" in result
+    assert "Ends: Unavailable" in result
+    assert (
+        'Original Start Time: {"dateTime": "2026-04-20T11:00:00+02:00", '
+        '"timeZone": "Europe/Paris"}' in result
+    )
+    assert "Recurring Event ID: evt123" in result
+    assert "Status: cancelled" in result
+
+
+@pytest.mark.asyncio
+async def test_all_day_cancelled_exception_uses_original_date():
+    """All-day exclusions use originalStartTime.date as their start boundary."""
+    result = await _ranged_detail(
+        {
+            **CANCELLED_RECURRING_EXCEPTION,
+            "originalStartTime": {"date": "2026-04-20"},
+        },
+        single_events=False,
+    )
+
+    assert "Starts: 2026-04-20" in result
+    assert "Ends: Unavailable" in result
+    assert 'Original Start Time: {"date": "2026-04-20"}' in result
+
+
+@pytest.mark.asyncio
+async def test_get_events_can_return_unexpanded_recurring_masters():
+    """Unexpanded requests reach Google without start-time ordering."""
+    service = _mock_service([RECURRING_SERIES])
+
+    await _unwrap(get_events)(
+        service=service,
+        user_google_email="user@example.com",
+        time_min="2026-04-01T00:00:00Z",
+        time_max="2026-05-01T00:00:00Z",
+        detailed=True,
+        single_events=False,
+    )
+
+    params = service.events().list.call_args.kwargs
+    assert params["singleEvents"] is False
+    assert "orderBy" not in params
+
+
+@pytest.mark.asyncio
+async def test_unexpanded_query_without_time_min_keeps_older_masters_discoverable():
+    """Do not filter masters by their first occurrence when no range was requested."""
+    older_series = {
+        **RECURRING_SERIES,
+        "start": {"dateTime": "2020-01-06T09:00:00Z"},
+        "end": {"dateTime": "2020-01-06T09:15:00Z"},
+        "recurrence": ["RRULE:FREQ=WEEKLY;BYDAY=MO"],
+    }
+    service = _mock_service([older_series])
+
+    await _unwrap(get_events)(
+        service=service,
+        user_google_email="user@example.com",
+        detailed=True,
+        single_events=False,
+    )
+
+    params = service.events().list.call_args.kwargs
+    assert "timeMin" not in params
+
+
+@pytest.mark.asyncio
+async def test_get_events_expands_recurring_series_by_default():
+    """The default request remains expanded and chronologically ordered."""
+    service = _mock_service([RECURRING_INSTANCE])
+
+    await _unwrap(get_events)(
+        service=service,
+        user_google_email="user@example.com",
+        time_min="2026-04-01T00:00:00Z",
+        time_max="2026-05-01T00:00:00Z",
+    )
+
+    params = service.events().list.call_args.kwargs
+    assert params["singleEvents"] is True
+    assert params["orderBy"] == "startTime"
+
+
+@pytest.mark.asyncio
+@all_get_paths
+@pytest.mark.parametrize(
+    "item,start_evidence,end_evidence",
+    [
+        (
+            {
+                **ORDINARY_MEETING,
+                "start": {"dateTime": "2026-08-20T17:15:00+02:00"},
+                "end": {"dateTime": "2026-08-20T18:00:00+02:00"},
+            },
+            "2026-08-20T17:15:00+02:00 [weekday: Thursday; ISO weekday: 4]",
+            "2026-08-20T18:00:00+02:00 [weekday: Thursday; ISO weekday: 4]",
+        ),
+        (
+            {
+                **ORDINARY_MEETING,
+                "start": {"dateTime": "2026-08-20T00:15:00+14:00"},
+                "end": {"dateTime": "2026-08-19T23:45:00-10:00"},
+            },
+            "2026-08-20T00:15:00+14:00 [weekday: Thursday; ISO weekday: 4]",
+            "2026-08-19T23:45:00-10:00 [weekday: Wednesday; ISO weekday: 3]",
+        ),
+        (
+            {
+                **ORDINARY_MEETING,
+                "start": {"dateTime": "2026-03-29T01:30:00+01:00"},
+                "end": {"dateTime": "2026-03-29T03:30:00+02:00"},
+            },
+            "2026-03-29T01:30:00+01:00 [weekday: Sunday; ISO weekday: 7]",
+            "2026-03-29T03:30:00+02:00 [weekday: Sunday; ISO weekday: 7]",
+        ),
+        (
+            {
+                **ORDINARY_MEETING,
+                "start": {"dateTime": "2026-08-20T23:30:00Z"},
+                "end": {"dateTime": "2026-08-21T00:30:00Z"},
+            },
+            "2026-08-20T23:30:00Z [weekday: Thursday; ISO weekday: 4]",
+            "2026-08-21T00:30:00Z [weekday: Friday; ISO weekday: 5]",
+        ),
+        (
+            {
+                **ORDINARY_MEETING,
+                "start": {"dateTime": "2026-08-20T17:15:00"},
+                "end": {"dateTime": "2026-08-20T18:00:00"},
+            },
+            "2026-08-20T17:15:00",
+            "2026-08-20T18:00:00",
+        ),
+        (
+            {
+                **ALL_FIELDS_INSTANCE,
+                "start": {"date": "2026-08-20"},
+                "end": {"date": "2026-08-22"},
+            },
+            "2026-08-20 [weekday: Thursday; ISO weekday: 4]",
+            "2026-08-22 [weekday: Saturday; ISO weekday: 6; exclusive all-day end]",
+        ),
+    ],
+    ids=["timed", "offset-crossing", "dst-offsets", "z", "offset-less", "all-day"],
+)
+async def test_get_events_always_retains_raw_times_with_deterministic_weekdays(
+    read, item, start_evidence, end_evidence
+):
+    result = await read(item)
+
+    assert f"Starts: {start_evidence}" in result
+    assert f"Ends: {end_evidence}" in result
+
+
+@pytest.mark.parametrize(
+    "boundary",
+    [
+        {"dateTime": "20260820T171500+0200"},
+        {"dateTime": "2026-08-20T17:15:00+02"},
+        {"dateTime": "2026-08-20T17:15:00+02:00:30"},
+        {"dateTime": "2026-08-20T17:15:00,5+02:00"},
+        {"dateTime": "2026-08-20T24:00:00+02:00"},
+        {"dateTime": "2026-08-20T17:15:00+02:60"},
+        {"dateTime": "2026-08-20"},
+        {"date": "2026-08-20T17:15:00+02:00"},
+        {"date": "20260820"},
+        {"date": "2026-W34-4"},
+    ],
+    ids=[
+        "basic-datetime",
+        "short-offset",
+        "offset-seconds",
+        "comma-fraction",
+        "out-of-range-hour",
+        "out-of-range-offset-minute",
+        "date-in-datetime-field",
+        "datetime-in-date-field",
+        "compact-date",
+        "week-date",
+    ],
+)
+def test_format_event_time_preserves_non_google_formats(boundary):
+    """Python's permissive ISO parser must not define Google's wire format."""
+    value = next(iter(boundary.values()))
+
+    assert _format_event_time({"start": boundary}, "start") == value

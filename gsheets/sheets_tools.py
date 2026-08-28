@@ -1226,7 +1226,7 @@ async def create_spreadsheet(
         str: Information about the newly created spreadsheet including ID, URL, and locale.
     """
     logger.info(
-        f"[create_spreadsheet] Invoked. Email: '{user_google_email}', Title: {title}"
+        f"[create_spreadsheet] Invoked. Email: '{user_google_email}', title_len={len(title)}"
     )
 
     spreadsheet_body = {"properties": {"title": title}}
@@ -1333,12 +1333,12 @@ async def create_sheet(
 
         logger.info(
             f"Successfully duplicated sheet for {user_google_email}. "
-            f"New sheet: '{new_title}' (ID: {new_id})"
+            f"New sheet ID: {new_id}"
         )
         return text_output
 
     logger.info(
-        f"[create_sheet] Invoked. Email: '{user_google_email}', Spreadsheet: {spreadsheet_id}, Sheet: {sheet_name}"
+        f"[create_sheet] Invoked. Email: '{user_google_email}', Spreadsheet: {spreadsheet_id}, sheet_name_len={len(sheet_name) if sheet_name else 0}"
     )
 
     add_request: dict = {"properties": {}}
