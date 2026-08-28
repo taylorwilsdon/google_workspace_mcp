@@ -232,32 +232,6 @@ def get_scopes_for_permission(service: str, level: str) -> List[str]:
     return sorted(set(cumulative))
 
 
-def get_additive_scopes_for_level(service: str, level: str) -> List[str]:
-    """
-    Get only the scopes *added* at a given level (non-cumulative).
-
-    Unlike :func:`get_scopes_for_permission`, this returns just the additive
-    delta declared at the named level — it does not include scopes from
-    earlier levels. Used by union mode (``--permissions gmail:readonly+send``)
-    where the caller explicitly composes a scope set from selected level deltas.
-
-    Raises ValueError if service or level is unknown.
-    """
-    levels = SERVICE_PERMISSION_LEVELS.get(service)
-    if levels is None:
-        raise ValueError(f"Unknown service: '{service}'")
-
-    for level_name, level_scopes in levels:
-        if level_name == level:
-            return sorted(set(level_scopes))
-
-    valid = [name for name, _ in levels]
-    raise ValueError(
-        f"Unknown permission level '{level}' for service '{service}'. "
-        f"Valid levels: {valid}"
-    )
-
-
 def get_scopes_for_union(service: str, levels: FrozenSet[str]) -> List[str]:
     """
     Get the union of additive scopes for a set of levels (non-cumulative).
@@ -267,13 +241,22 @@ def get_scopes_for_union(service: str, levels: FrozenSet[str]) -> List[str]:
 
     Raises ValueError if any level is unknown.
     """
+    service_levels = SERVICE_PERMISSION_LEVELS.get(service)
+    if service_levels is None:
+        raise ValueError(f"Unknown service: '{service}'")
     if not levels:
         raise ValueError(f"Empty level set for service '{service}'")
 
-    combined: set = set()
-    for level in levels:
-        combined.update(get_additive_scopes_for_level(service, level))
-    return sorted(combined)
+    additive_scopes = dict(service_levels)
+    unknown = levels.difference(additive_scopes)
+    if unknown:
+        level = sorted(unknown)[0]
+        raise ValueError(
+            f"Unknown permission level '{level}' for service '{service}'. "
+            f"Valid levels: {list(additive_scopes)}"
+        )
+
+    return sorted({scope for level in levels for scope in additive_scopes[level]})
 
 
 def get_all_permission_scopes() -> List[str]:
@@ -286,7 +269,7 @@ def get_all_permission_scopes() -> List[str]:
     if _PERMISSIONS is None:
         return []
 
-    all_scopes: set = set()
+    all_scopes: set[str] = set()
     for service, value in _PERMISSIONS.items():
         if isinstance(value, frozenset):
             all_scopes.update(get_scopes_for_union(service, value))
@@ -295,7 +278,7 @@ def get_all_permission_scopes() -> List[str]:
     return list(all_scopes)
 
 
-def get_allowed_scopes_set() -> Optional[set]:
+def get_allowed_scopes_set() -> Optional[set[str]]:
     """
     Get the set of allowed scopes under permissions mode (for tool filtering).
 

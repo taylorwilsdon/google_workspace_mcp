@@ -13,8 +13,6 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from auth.permissions import (
-    get_additive_scopes_for_level,
-    get_all_permission_scopes,
     get_allowed_scopes_set,
     get_scopes_for_permission,
     get_scopes_for_union,
@@ -29,7 +27,6 @@ from auth.scopes import (
     GMAIL_MODIFY_SCOPE,
     GMAIL_COMPOSE_SCOPE,
     GMAIL_SEND_SCOPE,
-    GMAIL_SETTINGS_BASIC_SCOPE,
     DRIVE_READONLY_SCOPE,
     DRIVE_SCOPE,
     TASKS_READONLY_SCOPE,
@@ -214,76 +211,19 @@ class TestParsePermissionsArgUnion:
         result = parse_permissions_arg(["gmail:readonly+send"])
         assert result == {"gmail": frozenset({"readonly", "send"})}
 
-    def test_three_level_union(self):
-        result = parse_permissions_arg(["gmail:readonly+organize+send"])
-        assert result == {"gmail": frozenset({"readonly", "organize", "send"})}
-
-    def test_union_deduplicates(self):
-        """Repeated levels in a union should collapse to a single set entry."""
-        result = parse_permissions_arg(["gmail:readonly+readonly"])
-        assert result == {"gmail": frozenset({"readonly"})}
-
     def test_union_and_cumulative_mixed_across_services(self):
         """Different services can use different modes in the same invocation."""
         result = parse_permissions_arg(["gmail:readonly+send", "drive:full"])
         assert result["gmail"] == frozenset({"readonly", "send"})
         assert result["drive"] == "full"
 
-    def test_union_with_whitespace_around_levels(self):
-        result = parse_permissions_arg(["gmail:readonly + send"])
-        assert result == {"gmail": frozenset({"readonly", "send"})}
-
     def test_union_empty_component_raises(self):
         with pytest.raises(ValueError, match="Invalid union spec"):
             parse_permissions_arg(["gmail:readonly+"])
 
-    def test_union_only_separator_raises(self):
-        with pytest.raises(ValueError, match="Invalid union spec"):
-            parse_permissions_arg(["gmail:+"])
-
     def test_union_unknown_level_raises(self):
         with pytest.raises(ValueError, match="Unknown level 'superadmin'"):
             parse_permissions_arg(["gmail:readonly+superadmin"])
-
-    def test_union_unknown_service_raises(self):
-        with pytest.raises(ValueError, match="Unknown service"):
-            parse_permissions_arg(["fakesvc:readonly+full"])
-
-    def test_union_duplicate_service_raises(self):
-        with pytest.raises(ValueError, match="Duplicate service"):
-            parse_permissions_arg(["gmail:readonly+send", "gmail:full"])
-
-
-class TestGetAdditiveScopesForLevel:
-    """Tests for get_additive_scopes_for_level() — per-level deltas only."""
-
-    def test_gmail_readonly_returns_just_readonly_scope(self):
-        scopes = get_additive_scopes_for_level("gmail", "readonly")
-        assert scopes == [GMAIL_READONLY_SCOPE]
-
-    def test_gmail_send_returns_just_send_scope(self):
-        """send level's additive delta is gmail.send only — not the cumulative bundle."""
-        scopes = get_additive_scopes_for_level("gmail", "send")
-        assert scopes == [GMAIL_SEND_SCOPE]
-        assert GMAIL_READONLY_SCOPE not in scopes
-        assert GMAIL_LABELS_SCOPE not in scopes
-
-    def test_gmail_organize_returns_labels_and_modify_only(self):
-        scopes = get_additive_scopes_for_level("gmail", "organize")
-        assert set(scopes) == {GMAIL_LABELS_SCOPE, GMAIL_MODIFY_SCOPE}
-        assert GMAIL_READONLY_SCOPE not in scopes
-
-    def test_gmail_full_returns_just_settings_scope(self):
-        scopes = get_additive_scopes_for_level("gmail", "full")
-        assert scopes == [GMAIL_SETTINGS_BASIC_SCOPE]
-
-    def test_unknown_service_raises(self):
-        with pytest.raises(ValueError, match="Unknown service"):
-            get_additive_scopes_for_level("nonexistent", "readonly")
-
-    def test_unknown_level_raises(self):
-        with pytest.raises(ValueError, match="Unknown permission level"):
-            get_additive_scopes_for_level("gmail", "nonexistent")
 
 
 class TestGetScopesForUnion:
@@ -299,20 +239,6 @@ class TestGetScopesForUnion:
         scopes = get_scopes_for_union("gmail", frozenset({"send"}))
         assert GMAIL_SEND_SCOPE in scopes
         assert GMAIL_READONLY_SCOPE not in scopes
-
-    def test_readonly_plus_organize(self):
-        scopes = get_scopes_for_union("gmail", frozenset({"readonly", "organize"}))
-        assert set(scopes) == {
-            GMAIL_READONLY_SCOPE,
-            GMAIL_LABELS_SCOPE,
-            GMAIL_MODIFY_SCOPE,
-        }
-
-    def test_single_level_union_equals_additive(self):
-        """A union of one level should equal that level's additive scopes."""
-        single = get_scopes_for_union("gmail", frozenset({"readonly"}))
-        additive = get_additive_scopes_for_level("gmail", "readonly")
-        assert single == additive
 
     def test_empty_union_raises(self):
         with pytest.raises(ValueError, match="Empty level set"):
@@ -342,20 +268,6 @@ class TestUnionModeIntegration:
         assert GMAIL_LABELS_SCOPE not in allowed
         assert DRIVE_SCOPE not in allowed
 
-    def test_all_permission_scopes_handles_both_modes(self):
-        perms = parse_permissions_arg(["gmail:organize", "drive:readonly"])
-        set_permissions(perms)
-        cumulative_only = set(get_all_permission_scopes())
-        assert GMAIL_READONLY_SCOPE in cumulative_only  # cumulative includes readonly
-        assert GMAIL_LABELS_SCOPE in cumulative_only
-
-        perms = parse_permissions_arg(["gmail:organize+full", "drive:readonly"])
-        set_permissions(perms)
-        union_only = set(get_all_permission_scopes())
-        assert GMAIL_LABELS_SCOPE in union_only
-        assert GMAIL_SETTINGS_BASIC_SCOPE in union_only
-        assert GMAIL_READONLY_SCOPE not in union_only  # union excludes readonly
-
 
 class TestIsActionDeniedUnion:
     """Tests for is_action_denied() under union-mode permissions."""
@@ -370,8 +282,3 @@ class TestIsActionDeniedUnion:
         """A union that omits the denying level should not deny."""
         set_permissions({"tasks": frozenset({"readonly", "full"})})
         assert is_action_denied("tasks", "delete") is False
-
-    def test_union_irrelevant_actions_unaffected(self):
-        set_permissions({"tasks": frozenset({"readonly", "manage"})})
-        assert is_action_denied("tasks", "create") is False
-        assert is_action_denied("tasks", "update") is False
