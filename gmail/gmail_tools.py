@@ -2608,6 +2608,9 @@ async def send_gmail_message(
             f"Could not derive a recipient from thread '{thread_id}'. Pass 'to' explicitly."
         )
 
+    # Re-check now that thread-derived (reply_all) recipients are folded in.
+    enforce_recipients([to, cc, bcc], "send_gmail_message")
+
     # Optionally append the Gmail signature from send-as settings, mirroring
     # draft_gmail_message so sent mail respects the user's Settings > Signature.
     signature_html = ""

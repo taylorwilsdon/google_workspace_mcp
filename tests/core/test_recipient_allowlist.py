@@ -15,6 +15,7 @@ from core.recipient_allowlist import (
     RecipientNotAllowedError,
     allowlist_active,
     enforce_drive_access,
+    enforce_event_attendees,
     enforce_public_sharing,
     enforce_recipients,
 )
@@ -156,7 +157,10 @@ class TestEnforceDriveAccess:
                 recipients=[{"email": "mum@example.com"}, {"email": "x@example.com"}],
             )
         with pytest.raises(RecipientNotAllowedError):
-            enforce_drive_access("grant_batch", recipients=[{"domain": "example.com"}])
+            enforce_drive_access(
+                "grant_batch",
+                recipients=[{"share_type": "domain", "domain": "example.com"}],
+            )
 
     def test_transfer_owner_unlisted_refused(self, monkeypatch):
         monkeypatch.setenv(ALLOWLIST_ENV, "mum@example.com")
@@ -167,3 +171,46 @@ class TestEnforceDriveAccess:
         monkeypatch.setenv(ALLOWLIST_ENV, "")
         enforce_drive_access("update", share_with="x@example.com")
         enforce_drive_access("revoke", share_with="x@example.com")
+
+    def test_grant_batch_routes_by_share_type(self, monkeypatch):
+        monkeypatch.setenv(ALLOWLIST_ENV, "mum@example.com")
+        monkeypatch.delenv(PUBLIC_SHARING_ENV, raising=False)
+        enforce_drive_access(
+            "grant_batch",
+            recipients=[{"share_type": "group", "email": "mum@example.com"}],
+        )
+        # A listed email does not make an "anyone"/"domain" grant private.
+        for entry in (
+            {"share_type": "anyone", "email": "mum@example.com"},
+            {"share_type": "domain", "domain": "example.com"},
+        ):
+            with pytest.raises(RecipientNotAllowedError):
+                enforce_drive_access("grant_batch", recipients=[entry])
+
+
+class TestEnforceEventAttendees:
+    def test_skips_self_and_resources(self, monkeypatch):
+        monkeypatch.setenv(ALLOWLIST_ENV, "mum@example.com")
+        enforce_event_attendees(
+            [
+                {"email": "me@example.com", "self": True},
+                {"email": "room@resource.calendar.google.com", "resource": True},
+                {"email": "mum@example.com"},
+            ],
+            "modify_event",
+        )
+
+    def test_unlisted_third_party_refused(self, monkeypatch):
+        monkeypatch.setenv(ALLOWLIST_ENV, "mum@example.com")
+        with pytest.raises(RecipientNotAllowedError, match="x@example.com"):
+            enforce_event_attendees(
+                [{"email": "me@example.com", "self": True}, {"email": "x@example.com"}],
+                "modify_event",
+            )
+
+    def test_accepts_strings_and_none(self, monkeypatch):
+        monkeypatch.setenv(ALLOWLIST_ENV, "mum@example.com")
+        enforce_event_attendees(None, "create_event")
+        enforce_event_attendees(["Mum <mum@example.com>"], "create_event")
+        with pytest.raises(RecipientNotAllowedError):
+            enforce_event_attendees(["x@example.com"], "create_event")

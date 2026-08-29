@@ -118,6 +118,25 @@ def enforce_recipients(
         )
 
 
+def enforce_event_attendees(
+    attendees: Optional[Iterable[Union[str, dict, None]]],
+    operation: str,
+) -> None:
+    """Apply :func:`enforce_recipients` to a Calendar attendee list.
+
+    Skips entries that are not third parties: the authenticated account's own
+    entry (``self``) and room/resource calendars (``resource``). Call it on the
+    *effective* attendee list of an event write — including attendees preserved
+    from the existing event — because an update notifies everyone left on it.
+    """
+    third_parties = [
+        a
+        for a in (attendees or [])
+        if not (isinstance(a, dict) and (a.get("self") or a.get("resource")))
+    ]
+    enforce_recipients(third_parties, operation)
+
+
 def enforce_public_sharing(operation: str) -> None:
     """Refuse public/anyone-with-the-link sharing unless explicitly allowed.
 
@@ -151,9 +170,9 @@ def enforce_drive_access(
     """Apply the outbound policy to a ``manage_drive_access`` call.
 
     Grants to user/group addresses and ownership transfers are recipient-bearing
-    and go through :func:`enforce_recipients`; ``domain``/``anyone`` grants (and
-    batch entries without an email) expose the file to unlisted recipients and
-    fall under :func:`enforce_public_sharing`. ``update`` and ``revoke`` act on
+    and go through :func:`enforce_recipients`; ``domain``/``anyone`` grants
+    (single or batch, judged by each entry's ``share_type``) expose the file to
+    unlisted recipients and fall under :func:`enforce_public_sharing`. ``update`` and ``revoke`` act on
     existing grants only and are never gated. No-op unless the allowlist is
     active.
     """
@@ -165,9 +184,12 @@ def enforce_drive_access(
             enforce_public_sharing(operation)
     elif action == "grant_batch":
         for recipient in recipients or []:
-            if recipient.get("domain") or not recipient.get("email"):
-                enforce_public_sharing(operation)
-            else:
+            # Route by the entry's own share_type (default "user"), exactly as
+            # the tool does: a listed email does not make an "anyone"/"domain"
+            # grant private.
+            if recipient.get("share_type", "user") in ("user", "group"):
                 enforce_recipients([recipient], operation)
+            else:
+                enforce_public_sharing(operation)
     elif action == "transfer_owner":
         enforce_recipients([new_owner_email], operation)

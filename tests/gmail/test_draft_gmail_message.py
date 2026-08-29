@@ -14,6 +14,7 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 import gmail.gmail_tools as gmail_tools
+from core.recipient_allowlist import ALLOWLIST_ENV, RecipientNotAllowedError
 from core.utils import UserInputError
 from gmail.gmail_tools import (
     draft_gmail_message,
@@ -1859,3 +1860,32 @@ async def test_send_gmail_message_does_not_fetch_thread_for_a_new_message():
     )
 
     assert mock_service.users.return_value.threads.return_value.get.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_send_gmail_message_reply_all_recipients_are_allowlisted(monkeypatch):
+    """Thread-derived reply_all recipients are checked, not just explicit ones."""
+    monkeypatch.setenv(ALLOWLIST_ENV, "alice@example.com")
+    mock_service = _mock_gmail_service()
+    mock_service.users().messages().send().execute.return_value = {"id": "sent_reply"}
+    mock_service.users().threads().get().execute.return_value = {
+        "messages": [
+            _thread_message(
+                "<msg1@example.com>",
+                from_value="Alice Example <alice@example.com>",
+                to_value="user@example.com, bob@example.com",
+                cc_value="carol@example.com",
+            )
+        ]
+    }
+    with pytest.raises(RecipientNotAllowedError, match="bob@example.com"):
+        await _unwrap(send_gmail_message)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            subject="Re: Meeting tomorrow",
+            body="Thanks all.",
+            thread_id="thread123",
+            reply_all=True,
+            include_signature=False,
+        )
+    mock_service.users().messages().send().execute.assert_not_called()
