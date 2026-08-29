@@ -130,6 +130,11 @@ Then download and read the PDF to check:
 - Heading hierarchy is correct (H1 > H2 > H3)
 - No stray empty paragraphs or list items
 
+The last point is cheaper to check first: `inspect_doc_structure` reports
+`empty_paragraphs` and `last_paragraph.is_list_item` in its basic mode, so stray
+empty paragraphs and a body left inside a list can be found and fixed before a
+PDF is rendered. The PDF pass remains the way to verify everything else.
+
 ---
 
 ## Common Pitfalls & Fixes

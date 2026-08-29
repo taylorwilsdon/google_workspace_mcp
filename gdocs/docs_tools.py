@@ -51,6 +51,7 @@ from gdocs.docs_structure import (
     parse_document_structure,
     find_tables,
     analyze_document_complexity,
+    summarize_paragraph_layout,
 )
 from gdocs.docs_tables import extract_table_as_data
 from gdocs.docs_markdown import (
@@ -1381,6 +1382,28 @@ async def inspect_doc_structure(
     - table_details: Position and dimensions of each table
     - headers / footers: Real segment IDs and previews for header/footer editing
     - tabs: List of available tabs in the document (if no tab_id specified)
+    - empty_paragraphs: count of literal empty paragraphs in the body
+    - empty_paragraph_ranges: their start/end ranges, capped at 100 entries
+    - empty_paragraph_ranges_truncated: whether that cap was reached
+    - last_paragraph: whether the body ends in a list item, and whether it is empty
+
+    VERIFYING A RENDERED DOCUMENT:
+    The paragraph layout fields are reported in both modes - at the top level
+    when detailed=false, and under "statistics" when detailed=true - so checking
+    whether a render left stray empty paragraphs behind, or ended inside a list
+    (where the next insertion would inherit that bullet), does not require the
+    full element listing. Use detailed=true when you need per-element indices.
+
+    Two things to know before deleting by these ranges:
+    - They are paragraph extents, not ready-made delete ranges. When
+      last_paragraph.is_empty is true, the final range is the body-final
+      paragraph, whose end is the segment-terminating newline that Docs refuses
+      to delete; deleting from start to end - 1 is an empty range and is
+      rejected as well. Remove that paragraph by deleting from start - 1 to
+      end - 1 instead, which is the preceding paragraph's newline.
+    - A body ending in a table always carries one trailing empty paragraph,
+      because Docs requires a paragraph after a table, so empty_paragraphs does
+      not reach zero on such a document.
 
     WORKFLOW FOR TABLE INSERTION:
     Step 1: Call this function
@@ -1493,6 +1516,7 @@ async def inspect_doc_structure(
                 "named_ranges": len(structure["named_ranges"]),
                 "has_headers": bool(structure["headers"]),
                 "has_footers": bool(structure["footers"]),
+                **summarize_paragraph_layout(structure),
             },
             "elements": [],
         }
@@ -1511,6 +1535,7 @@ async def inspect_doc_structure(
                 elem_summary["cell_count"] = len(element.get("cells", []))
             elif element["type"] == "paragraph":
                 elem_summary["text_preview"] = element.get("text", "")[:100]
+                elem_summary["is_list_item"] = bool(element.get("is_list_item"))
 
             result["elements"].append(elem_summary)
 

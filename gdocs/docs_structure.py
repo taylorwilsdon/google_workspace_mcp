@@ -10,6 +10,11 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
+# Cap on the number of empty-paragraph ranges reported by
+# summarize_paragraph_layout, so the basic inspection stays small even on a
+# badly rendered document. The count itself is never capped.
+EMPTY_PARAGRAPH_RANGE_LIMIT = 100
+
 
 def parse_document_structure(doc_data: dict[str, Any]) -> dict[str, Any]:
     """
@@ -94,6 +99,7 @@ def _parse_element(element: dict[str, Any]) -> Optional[dict[str, Any]]:
         element_info["type"] = "paragraph"
         element_info["text"] = _extract_paragraph_text(paragraph)
         element_info["style"] = paragraph.get("paragraphStyle", {})
+        element_info["is_list_item"] = "bullet" in paragraph
 
     elif "table" in element:
         table = element["table"]
@@ -343,6 +349,56 @@ def get_next_paragraph_index(doc_data: dict[str, Any], after_index: int = 0) -> 
     return structure["total_length"] - 1 if structure["total_length"] > 0 else 1
 
 
+def summarize_paragraph_layout(structure: dict[str, Any]) -> dict[str, Any]:
+    """
+    Summarize the paragraph-level layout signals of a parsed document body.
+
+    These answer the two questions that follow a markdown render without
+    requiring the full element listing: how many literal empty paragraphs the
+    body carries, and whether it ends inside a list (the next insertion would
+    inherit that list's bullet).
+
+    Only top-level body paragraphs are considered; paragraphs nested in table
+    cells are not part of this summary.
+
+    Args:
+        structure: Parsed structure from parse_document_structure
+
+    The ranges are paragraph extents, not ready-made delete ranges: the
+    body-final paragraph ends at the segment-terminating newline, which Google
+    Docs refuses to delete. At most EMPTY_PARAGRAPH_RANGE_LIMIT ranges are
+    returned; the count is always exact.
+
+    Returns:
+        Dictionary with empty_paragraphs, empty_paragraph_ranges,
+        empty_paragraph_ranges_truncated and last_paragraph (None when the body
+        holds no paragraph at all)
+    """
+    paragraphs = [e for e in structure["body"] if e.get("type") == "paragraph"]
+
+    empty_ranges = [
+        {"start": p["start_index"], "end": p["end_index"]}
+        for p in paragraphs
+        if p["end_index"] - p["start_index"] == 1
+    ]
+
+    last_paragraph = None
+    if paragraphs:
+        last = paragraphs[-1]
+        last_paragraph = {
+            "is_list_item": bool(last.get("is_list_item")),
+            "is_empty": last["end_index"] - last["start_index"] == 1,
+        }
+
+    return {
+        "empty_paragraphs": len(empty_ranges),
+        "empty_paragraph_ranges": empty_ranges[:EMPTY_PARAGRAPH_RANGE_LIMIT],
+        "empty_paragraph_ranges_truncated": len(empty_ranges)
+        > EMPTY_PARAGRAPH_RANGE_LIMIT,
+        "last_paragraph": last_paragraph,
+    }
+
+
 def analyze_document_complexity(doc_data: dict[str, Any]) -> dict[str, Any]:
     """
     Analyze document complexity and provide statistics.
@@ -365,6 +421,7 @@ def analyze_document_complexity(doc_data: dict[str, Any]) -> dict[str, Any]:
         "total_length": structure["total_length"],
         "has_headers": bool(structure["headers"]),
         "has_footers": bool(structure["footers"]),
+        **summarize_paragraph_layout(structure),
     }
 
     # Add table statistics

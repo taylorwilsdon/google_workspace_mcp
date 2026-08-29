@@ -280,6 +280,11 @@ Key output fields:
 - `tables` -- count of existing tables
 - `table_details` -- position and dimensions per table
 - `tabs` -- list of tabs with IDs (when no tab_id specified)
+- `empty_paragraphs` / `empty_paragraph_ranges` -- literal empty paragraphs left in the body (ranges are capped, with a truncation flag)
+- `last_paragraph` -- whether the body ends in a list item, and whether it is empty
+
+The last two are reported in both modes, so checking a rendered document does not
+need `detailed=true`.
 
 ### debug_table_structure
 Detailed view of a single table's layout: dimensions, cell positions, current content, and insertion indices per cell. Use after creating or populating a table to verify results.
