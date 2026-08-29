@@ -55,10 +55,12 @@ def test_resolve_stdio_callback_port_marks_resolved_port(
 ) -> None:
     calls: list[str] = []
     seen_fallback: list[bool] = []
+    seen_preferred: list[object] = []
 
-    def fake_resolve_port(allow_fallback: bool = True) -> None:
+    def fake_resolve_port(preferred=None, allow_fallback: bool = True) -> None:
         calls.append("resolve")
         seen_fallback.append(allow_fallback)
+        seen_preferred.append(preferred)
         monkeypatch.setenv("WORKSPACE_MCP_PORT", "8123")
         monkeypatch.setenv("WORKSPACE_MCP_RESOLVED_PORT", "1")
 
@@ -70,6 +72,8 @@ def test_resolve_stdio_callback_port_marks_resolved_port(
 
     assert calls == ["resolve", "reload"]
     assert seen_fallback == [True]
+    # No redirect URI pinned, so no preferred port is forced.
+    assert seen_preferred == [None]
     assert os.environ["WORKSPACE_MCP_RESOLVED_PORT"] == "1"
 
 
@@ -78,9 +82,11 @@ def test_resolve_stdio_callback_port_disables_fallback_for_pinned_redirect(
 ) -> None:
     """An explicit GOOGLE_OAUTH_REDIRECT_URI pins the port; fallback would mismatch."""
     seen_fallback: list[bool] = []
+    seen_preferred: list[object] = []
 
-    def fake_resolve_port(allow_fallback: bool = True) -> None:
+    def fake_resolve_port(preferred=None, allow_fallback: bool = True) -> None:
         seen_fallback.append(allow_fallback)
+        seen_preferred.append(preferred)
 
     monkeypatch.setenv(
         "GOOGLE_OAUTH_REDIRECT_URI", "http://localhost:8103/oauth2callback"
@@ -91,6 +97,65 @@ def test_resolve_stdio_callback_port_disables_fallback_for_pinned_redirect(
     main.resolve_stdio_callback_port()
 
     assert seen_fallback == [False]
+    # The pinned loopback port, not WORKSPACE_MCP_PORT, drives the probe.
+    assert seen_preferred == [8103]
+
+
+def test_loopback_redirect_port_extracts_explicit_port():
+    """An explicit loopback redirect URI names the port the listener must bind."""
+    assert main._loopback_redirect_port("http://localhost:8103/oauth2callback") == 8103
+    assert main._loopback_redirect_port("http://127.0.0.1:9000/oauth2callback") == 9000
+    assert main._loopback_redirect_port("http://[::1]:9100/oauth2callback") == 9100
+
+
+def test_loopback_redirect_port_ignores_unusable_uris():
+    """Only an explicit loopback port may override WORKSPACE_MCP_PORT."""
+    # No URI at all, and no explicit port, leave the env-var default in charge.
+    assert main._loopback_redirect_port(None) is None
+    assert main._loopback_redirect_port("") is None
+    assert main._loopback_redirect_port("http://localhost/oauth2callback") is None
+    # A non-loopback URI means a proxy fronts the callback; its public port says
+    # nothing about which local port the listener should own.
+    assert (
+        main._loopback_redirect_port("https://mcp.example.com:443/oauth2callback")
+        is None
+    )
+    # A malformed port must not raise out of startup.
+    assert main._loopback_redirect_port("http://localhost:notaport/oauth2") is None
+
+
+def test_resolve_stdio_callback_port_binds_the_redirect_uris_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: listener port must follow an explicit loopback redirect URI.
+
+    OAuthConfig returns GOOGLE_OAUTH_REDIRECT_URI verbatim, so Google sends the
+    browser to that port regardless of WORKSPACE_MCP_PORT. If the resolver keeps
+    the env-var port, the listener binds one port while the redirect targets
+    another and the auth flow hangs.
+    """
+    import socket
+
+    def _free_port() -> int:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", 0))
+            return s.getsockname()[1]
+
+    env_port, redirect_port = _free_port(), _free_port()
+    assert env_port != redirect_port
+
+    monkeypatch.setenv("WORKSPACE_MCP_PORT", str(env_port))
+    monkeypatch.delenv("PORT", raising=False)
+    monkeypatch.setenv("WORKSPACE_MCP_HOST", "127.0.0.1")
+    monkeypatch.setenv(
+        "GOOGLE_OAUTH_REDIRECT_URI", f"http://localhost:{redirect_port}/oauth2callback"
+    )
+    monkeypatch.setattr(main, "reload_oauth_config", lambda: None)
+
+    main.resolve_stdio_callback_port()
+
+    assert os.environ["WORKSPACE_MCP_PORT"] == str(redirect_port)
+    assert os.environ["WORKSPACE_MCP_RESOLVED_PORT"] == "1"
 
 
 def test_resolve_callback_port_for_transport_skips_streamable_http(

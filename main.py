@@ -7,6 +7,7 @@ import socket
 import sys
 from functools import partial
 from importlib import metadata, import_module
+from urllib.parse import urlparse
 from dotenv import load_dotenv
 from core.startup_ui import StartupDisplay, collapse_home, wordmark_lines
 
@@ -127,6 +128,35 @@ install_noisy_log_filters()
 configure_file_logging()
 
 
+def _loopback_redirect_port(redirect_uri: str | None) -> int | None:
+    """
+    Return the port an explicit loopback GOOGLE_OAUTH_REDIRECT_URI targets.
+
+    OAuthConfig._get_redirect_uri() hands back an explicit GOOGLE_OAUTH_REDIRECT_URI
+    unchanged, so that URI -- not WORKSPACE_MCP_PORT -- decides where Google sends
+    the browser. The stdio callback listener therefore has to bind the URI's port.
+
+    Returns None when the URI is absent, unparseable, carries no explicit port, or
+    points somewhere other than loopback. A non-loopback URI means a reverse proxy
+    fronts the callback, and its public port says nothing about which local port the
+    listener should own.
+    """
+    if not redirect_uri:
+        return None
+    try:
+        parsed = urlparse(redirect_uri)
+        port = parsed.port
+    except ValueError:
+        # urlparse raises on a malformed port; fall back to the env-var default.
+        return None
+    if port is None:
+        return None
+    hostname = (parsed.hostname or "").lower()
+    if hostname not in {"localhost", "127.0.0.1", "::1"}:
+        return None
+    return port
+
+
 def resolve_stdio_callback_port() -> None:
     """
     Late-bind the legacy stdio OAuth callback port.
@@ -135,12 +165,16 @@ def resolve_stdio_callback_port() -> None:
     normal PORT/WORKSPACE_MCP_PORT semantics. The fallback range only exists for
     the standalone stdio callback listener.
 
-    Two rules keep this from killing an otherwise healthy server:
+    Three rules keep this correct and non-lethal:
 
-      * When GOOGLE_OAUTH_REDIRECT_URI is set explicitly the callback port is
-        pinned by whatever is registered with Google, so falling back to a
-        neighbouring port would only produce a redirect_uri mismatch. Probe the
-        preferred port and nothing else.
+      * When GOOGLE_OAUTH_REDIRECT_URI points at a loopback address with an
+        explicit port, that port IS the callback port -- OAuthConfig returns the
+        explicit URI verbatim, so Google sends the browser there no matter what
+        WORKSPACE_MCP_PORT says. Bind it, or the listener and the redirect end
+        up on different ports and the auth flow hangs.
+      * When the redirect URI is set at all, never fall back to a neighbouring
+        port: the advertised URI cannot follow, so a fallback port guarantees a
+        redirect_uri mismatch. Probe the pinned port and nothing else.
       * A busy port is never fatal. The callback listener starts lazily and a
         host that already holds cached credentials may never need it -- and MCP
         clients routinely launch more than one copy of a stdio server, so
@@ -148,10 +182,11 @@ def resolve_stdio_callback_port() -> None:
     """
     from auth.port_resolver import resolve_port, NoAvailablePortError, PortConfigError
 
-    pinned_redirect = bool(os.getenv("GOOGLE_OAUTH_REDIRECT_URI"))
+    redirect_uri = os.getenv("GOOGLE_OAUTH_REDIRECT_URI")
+    pinned_port = _loopback_redirect_port(redirect_uri)
 
     try:
-        resolve_port(allow_fallback=not pinned_redirect)
+        resolve_port(preferred=pinned_port, allow_fallback=not redirect_uri)
     except PortConfigError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
