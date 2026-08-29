@@ -136,10 +136,18 @@ def _loopback_redirect_port(redirect_uri: str | None) -> int | None:
     unchanged, so that URI -- not WORKSPACE_MCP_PORT -- decides where Google sends
     the browser. The stdio callback listener therefore has to bind the URI's port.
 
-    Returns None when the URI is absent, unparseable, carries no explicit port, or
-    points somewhere other than loopback. A non-loopback URI means a reverse proxy
-    fronts the callback, and its public port says nothing about which local port the
-    listener should own.
+    Returns None -- leaving WORKSPACE_MCP_PORT in charge -- unless the URI is an
+    http:// loopback address carrying an explicit port. Each exclusion is load-bearing:
+
+      * Not loopback: a reverse proxy fronts the callback, and its public port says
+        nothing about which local port the listener should own.
+      * https:// even on loopback: MinimalOAuthServer builds its uvicorn.Config
+        without ssl_keyfile/ssl_certfile, so it can only ever serve plaintext. An
+        https loopback URI therefore means a local TLS terminator (Caddy, stunnel)
+        owns that port and forwards to the plaintext listener on a *different* one.
+        Binding the URI's port would collide with the terminator; WORKSPACE_MCP_PORT
+        is what names the backend port in that topology.
+      * No explicit port, malformed port, or no URI: nothing to pin.
     """
     if not redirect_uri:
         return None
@@ -150,6 +158,8 @@ def _loopback_redirect_port(redirect_uri: str | None) -> int | None:
         # urlparse raises on a malformed port; fall back to the env-var default.
         return None
     if port is None:
+        return None
+    if (parsed.scheme or "").lower() != "http":
         return None
     hostname = (parsed.hostname or "").lower()
     if hostname not in {"localhost", "127.0.0.1", "::1"}:

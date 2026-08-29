@@ -122,6 +122,10 @@ def test_loopback_redirect_port_ignores_unusable_uris():
     )
     # A malformed port must not raise out of startup.
     assert main._loopback_redirect_port("http://localhost:notaport/oauth2") is None
+    # https on loopback means a local TLS terminator owns that port and forwards to
+    # the plaintext listener elsewhere; MinimalOAuthServer cannot serve TLS itself.
+    assert main._loopback_redirect_port("https://localhost:8104/oauth2callback") is None
+    assert main._loopback_redirect_port("https://127.0.0.1:8443/oauth2callback") is None
 
 
 def test_resolve_stdio_callback_port_binds_the_redirect_uris_port(
@@ -133,17 +137,16 @@ def test_resolve_stdio_callback_port_binds_the_redirect_uris_port(
     browser to that port regardless of WORKSPACE_MCP_PORT. If the resolver keeps
     the env-var port, the listener binds one port while the redirect targets
     another and the auth flow hangs.
+
+    The probe is stubbed rather than binding real sockets: a free port discovered
+    by bind-then-close can be taken by another process before the assertion runs,
+    and this test is about which port the resolver *chooses*, not about whether
+    the OS had it free.
     """
-    import socket
+    import auth.port_resolver as port_resolver
 
-    def _free_port() -> int:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(("127.0.0.1", 0))
-            return s.getsockname()[1]
-
-    env_port, redirect_port = _free_port(), _free_port()
-    assert env_port != redirect_port
-
+    env_port, redirect_port = 8000, 8103
+    monkeypatch.setattr(port_resolver, "_is_port_free", lambda host, port: True)
     monkeypatch.setenv("WORKSPACE_MCP_PORT", str(env_port))
     monkeypatch.delenv("PORT", raising=False)
     monkeypatch.setenv("WORKSPACE_MCP_HOST", "127.0.0.1")
