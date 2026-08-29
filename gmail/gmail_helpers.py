@@ -687,40 +687,68 @@ def _find_send_as_entry(
     )
 
 
-async def _get_send_as_signature_html(service, from_email: Optional[str] = None) -> str:
+def _accepted_send_as_emails(send_as_entries: List[Dict[str, Any]]) -> List[str]:
     """
-    Fetch signature HTML from Gmail send-as settings.
+    Addresses Gmail will actually honour in a From header.
 
-    Returns empty string when the account has no signature configured or when
-    auth/scope errors mean the settings endpoint is unavailable.
+    An entry is usable unless Gmail explicitly reports it as not yet verified.
+    A missing verificationStatus is treated as usable rather than as a failure:
+    the primary address never carries one, and the field is not guaranteed on
+    every entry, so absence means "not reported", not "rejected".
     """
-    send_as_entries = await _get_send_as_entries(service)
-    if not send_as_entries:
-        return ""
+    return [
+        email
+        for entry in send_as_entries
+        if (email := (entry.get("sendAsEmail") or "").strip())
+        and _send_as_entry_is_usable(entry)
+    ]
 
-    if from_email:
-        entry = _find_send_as_entry(send_as_entries, from_email)
-        if entry:
-            return entry.get("signature", "") or ""
 
-    for entry in send_as_entries:
-        if entry.get("isPrimary"):
-            return entry.get("signature", "") or ""
-
-    return send_as_entries[0].get("signature", "") or ""
+def _send_as_entry_is_usable(entry: Dict[str, Any]) -> bool:
+    """True unless Gmail explicitly reports this send-as entry as unverified."""
+    if entry.get("isPrimary"):
+        return True
+    status = entry.get("verificationStatus")
+    return not status or status == "accepted"
 
 
 async def _get_send_as_identity_and_signature(
     service,
     from_email: Optional[str],
     fallback_email: str,
-) -> tuple[str, str]:
-    """Resolve the requested or default Gmail send-as identity and signature."""
+) -> tuple[str, str, str]:
+    """
+    Resolve the send-as identity, refusing an alias Gmail would silently discard.
+
+    Returns (sender_email, display_name, signature_html).
+
+    users.messages.send does NOT reject a From header naming an unconfigured
+    address -- it quietly substitutes the default sender and reports success. A
+    caller asking for one identity and getting another, with no error, is the
+    worst available outcome, so an unusable from_email raises here instead,
+    naming the addresses that would have worked.
+
+    When the send-as list cannot be read at all (no gmail.settings.basic scope --
+    _get_send_as_entries returns [] for that case by design) validation is skipped
+    rather than blocking the send: an unverifiable alias is not a known-bad one.
+    """
     send_as_entries = await _get_send_as_entries(service)
     selected_entry = None
 
     if from_email:
+        if not send_as_entries:
+            # Nothing to validate against; preserve the caller's intent.
+            return from_email, "", ""
         selected_entry = _find_send_as_entry(send_as_entries, from_email)
+        if selected_entry is None or not _send_as_entry_is_usable(selected_entry):
+            accepted = _accepted_send_as_emails(send_as_entries)
+            raise ToolExecutionError(
+                f"'{from_email}' is not an accepted 'Send mail as' address for this "
+                f"mailbox, and Gmail would silently send from the default address "
+                f"instead. Accepted: {', '.join(accepted) or '(none)'}. Add the "
+                f"address under Gmail Settings > Accounts > Send mail as, or omit "
+                f"from_email to use the default sender."
+            )
     else:
         selected_entry = next(
             (entry for entry in send_as_entries if entry.get("isDefault")), None
@@ -733,17 +761,12 @@ async def _get_send_as_identity_and_signature(
             selected_entry = send_as_entries[0]
 
     sender_email = from_email or fallback_email
+    display_name = ""
     signature_html = ""
     if selected_entry:
         if not from_email:
             sender_email = selected_entry.get("sendAsEmail") or fallback_email
+        display_name = (selected_entry.get("displayName") or "").strip()
         signature_html = selected_entry.get("signature", "") or ""
 
-    return sender_email, signature_html
-
-
-async def _get_send_as_signature_html_for_tool(
-    service, from_email: Optional[str] = None
-) -> str:
-    """Fetch signature HTML and convert non-benign failures to tool errors."""
-    return await _get_send_as_signature_html(service, from_email=from_email)
+    return sender_email, display_name, signature_html
