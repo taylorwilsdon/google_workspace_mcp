@@ -66,7 +66,6 @@ from gmail.gmail_helpers import (
     _derive_reply_headers,
     _fetch_with_retry,
     _get_send_as_identity_and_signature,
-    _get_send_as_signature_html_for_tool,
     _http_error_status,
     _retryable_result_ids,
     _signature_html_to_text,
@@ -2569,9 +2568,35 @@ async def send_gmail_message(
         f"[send_gmail_message] Invoked. Email: '{user_google_email}', subject_len={len(subject) if subject else 0}, Attachments: {len(attachments) if attachments else 0}"
     )
 
-    # Prepare the email message
-    # Use from_email (Send As alias) if provided, otherwise default to authenticated user
-    sender_email = from_email or user_google_email
+    # Prepare the email message. Where the send-as settings are fetched anyway,
+    # resolving the identity there also validates an explicit from_email: Gmail
+    # silently rewrites an unconfigured From to the default sender rather than
+    # erroring, so an unusable alias must be caught here or the caller gets a
+    # successful send from the wrong address. The explicit-alias-without-signature
+    # branch keeps upstream's fast path -- it exists so a caller holding only
+    # gmail.send, without gmail.settings.basic, can still send.
+    if not include_signature:
+        sender_email, sender_display_name, resolved_signature_html = (
+            from_email or user_google_email,
+            "",
+            "",
+        )
+    else:
+        (
+            sender_email,
+            sender_display_name,
+            resolved_signature_html,
+        ) = await _get_send_as_identity_and_signature(
+            service,
+            from_email=from_email,
+            fallback_email=user_google_email,
+        )
+    # An explicitly requested alias carries its own display name in Gmail's
+    # settings; without it the From header is a bare address, which is rarely
+    # what someone picking an alias wants. Scoped to explicit aliases so the
+    # default-sender path keeps its existing header exactly.
+    if from_email and not from_name:
+        from_name = sender_display_name or None
 
     # A reply's headers, recipients and quoted original are all derivable from the
     # thread, so a caller should not have to assemble them by hand. Mirrors
@@ -2605,11 +2630,7 @@ async def send_gmail_message(
 
     # Optionally append the Gmail signature from send-as settings, mirroring
     # draft_gmail_message so sent mail respects the user's Settings > Signature.
-    signature_html = ""
-    if include_signature:
-        signature_html = await _get_send_as_signature_html_for_tool(
-            service, from_email=sender_email
-        )
+    signature_html = resolved_signature_html if include_signature else ""
 
     if quote_original and target_reply:
         send_body_content = _build_quoted_reply_body(
@@ -2985,16 +3006,19 @@ async def draft_gmail_message(
     # its signature is disabled. Otherwise resolve the identity and signature
     # together so Gmail's default sender and its signature stay aligned.
     if from_email and not include_signature:
-        sender_email, resolved_signature_html = from_email, ""
+        sender_email, sender_display_name, resolved_signature_html = from_email, "", ""
     else:
         (
             sender_email,
+            sender_display_name,
             resolved_signature_html,
         ) = await _get_send_as_identity_and_signature(
             service,
             from_email=from_email,
             fallback_email=user_google_email,
         )
+    if from_email and not from_name:
+        from_name = sender_display_name or None
     draft_body = body
     signature_html = resolved_signature_html if include_signature else ""
 
