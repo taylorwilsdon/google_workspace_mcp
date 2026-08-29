@@ -18,6 +18,7 @@ from googleapiclient.errors import HttpError
 from googleapiclient.discovery import build
 
 from auth.service_decorator import require_google_service
+from core.recipient_allowlist import enforce_recipients
 from core.utils import handle_http_errors, StringList
 from gcalendar.calendar_helpers import (
     _format_event_detail_lines,
@@ -705,6 +706,7 @@ async def _create_event_impl(
     end_timezone: Optional[str] = None,
 ) -> str:
     """Internal implementation for creating a calendar event."""
+    enforce_recipients(attendees or [], "create_event")
     logger.info(
         f"[create_event] Invoked. Email: '{user_google_email}', summary_len={len(summary) if summary else 0}"
     )
@@ -966,6 +968,7 @@ async def _modify_event_impl(
     end_timezone: Optional[str] = None,
 ) -> str:
     """Internal implementation for modifying a calendar event."""
+    enforce_recipients(attendees or [], "modify_event")
     logger.info(
         f"[modify_event] Invoked. Email: '{user_google_email}', Event ID: {event_id}"
     )

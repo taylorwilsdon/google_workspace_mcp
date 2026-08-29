@@ -264,6 +264,7 @@ A few things worth internalizing before you connect an LLM to your email:
 - **Prompt injection is real.** Emails, docs, and events can contain hidden instructions. Only connect trusted data to an LLM, and be deliberate about which write tools you enable.
 - **Never commit** `.env`, `client_secret.json`, or `.credentials/` to source control.
 - **Local file reads are sandboxed** to the managed attachment directory. Broaden with `ALLOWED_FILE_DIRS` only if you trust the client and its data sources; `.env*`, `~/.ssh/`, `~/.aws/`, and similar paths are always blocked.
+- **Restrict who the agent can reach.** For unattended deployments, set `WORKSPACE_ALLOWED_RECIPIENTS=a@example.com,b@example.com`: Gmail send/forward recipients, auto-forward filter targets, Calendar attendees, Drive access grants and ownership transfers are then checked in code before any API call and refused unless every address is listed. `*` lifts the restriction explicitly; public "anyone with the link" sharing is blocked while the list is active unless `WORKSPACE_ALLOW_PUBLIC_SHARING=true`. Unset means off.
 - **Production** deployments should use HTTPS and OAuth 2.1.
 
 ## Development
