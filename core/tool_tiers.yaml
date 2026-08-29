@@ -33,6 +33,7 @@ drive:
     - get_drive_shareable_link
   extended:
     - list_drive_items
+    - list_drive_file_revisions
     - copy_drive_file
     - update_drive_file
     - manage_drive_access

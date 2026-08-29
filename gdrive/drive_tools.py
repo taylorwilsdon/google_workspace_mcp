@@ -54,7 +54,9 @@ from gdrive.drive_helpers import (
     build_drive_list_params,
     check_public_link_permission,
     list_all_permissions,
+    list_drive_file_revisions_data,
     derive_shared_state,
+    download_drive_revision_to_temp,
     format_permission_info,
     get_drive_image_url,
     has_explicit_trashed_clause,
@@ -342,6 +344,7 @@ async def get_drive_file_content(
     service,
     user_google_email: str,
     file_id: str,
+    revision_id: Optional[str] = None,
 ) -> str:
     """
     Retrieves the content of a specific Google Drive file by ID, supporting files in shared drives.
@@ -353,15 +356,19 @@ async def get_drive_file_content(
       fall back to a download hint.
     • Images → returned as base64 with MIME metadata for multimodal clients.
     • Any other file → downloaded; tries UTF-8 decode, else notes binary.
+    • Historical revisions → pass revision_id from list_drive_file_revisions.
 
     Args:
         user_google_email: The user’s Google email address.
         file_id: Drive file ID.
+        revision_id: Optional historical revision ID to read instead of the current file.
 
     Returns:
         str: The file content as plain text with metadata header.
     """
-    logger.info(f"[get_drive_file_content] Invoked. File ID: '{file_id}'")
+    logger.info(
+        f"[get_drive_file_content] Invoked. File ID: '{file_id}', Revision: {revision_id}"
+    )
 
     resolved_file_id, file_metadata = await resolve_drive_item(
         service,
@@ -371,13 +378,37 @@ async def get_drive_file_content(
     file_id = resolved_file_id
     mime_type = file_metadata.get("mimeType", "")
     file_name = file_metadata.get("name", "Unknown File")
-    export_mime_type = {
-        "application/vnd.google-apps.document": "text/plain",
-        "application/vnd.google-apps.spreadsheet": "text/csv",
-        "application/vnd.google-apps.presentation": "text/plain",
-    }.get(mime_type)
+    revision_modified_time = None
 
-    file_content_bytes = await _download_file_bytes(service, file_id, export_mime_type)
+    if revision_id:
+        revision_export_format = {
+            "application/vnd.google-apps.document": "docx",
+            "application/vnd.google-apps.spreadsheet": "xlsx",
+            "application/vnd.google-apps.presentation": "pptx",
+        }.get(mime_type)
+        revision_download = await download_drive_revision_to_temp(
+            service,
+            file_id,
+            revision_id,
+            export_format=revision_export_format,
+        )
+        revision_path = revision_download["path"]
+        try:
+            file_content_bytes = await asyncio.to_thread(revision_path.read_bytes)
+        finally:
+            revision_path.unlink(missing_ok=True)
+        parse_mime_type = revision_download["output_mime_type"]
+        revision_modified_time = revision_download["revision_modified_time"]
+    else:
+        export_mime_type = {
+            "application/vnd.google-apps.document": "text/plain",
+            "application/vnd.google-apps.spreadsheet": "text/csv",
+            "application/vnd.google-apps.presentation": "text/plain",
+        }.get(mime_type)
+        file_content_bytes = await _download_file_bytes(
+            service, file_id, export_mime_type
+        )
+        parse_mime_type = mime_type
 
     # Attempt Office XML extraction only for actual Office XML files
     office_mime_types = {
@@ -386,10 +417,10 @@ async def get_drive_file_content(
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     }
 
-    if mime_type in office_mime_types:
+    if parse_mime_type in office_mime_types:
         # Offload Office XML extraction to a thread to avoid blocking the event loop
         office_text = await asyncio.to_thread(
-            extract_office_xml_text, file_content_bytes, mime_type
+            extract_office_xml_text, file_content_bytes, parse_mime_type
         )
         if office_text:
             body_text = office_text
@@ -399,10 +430,10 @@ async def get_drive_file_content(
                 body_text = file_content_bytes.decode("utf-8")
             except UnicodeDecodeError:
                 body_text = (
-                    f"[Binary or unsupported text encoding for mimeType '{mime_type}' - "
+                    f"[Binary or unsupported text encoding for mimeType '{parse_mime_type}' - "
                     f"{len(file_content_bytes)} bytes]"
                 )
-    elif mime_type == "application/pdf":
+    elif parse_mime_type == "application/pdf":
         # Offload PDF text extraction to a thread to avoid blocking the event loop
         pdf_text = await asyncio.to_thread(extract_pdf_text, file_content_bytes)
         if pdf_text:
@@ -413,24 +444,77 @@ async def get_drive_file_content(
                 f"- the file may be scanned/image-only. "
                 f"Use get_drive_file_download_url to get a direct download link instead.]"
             )
-    elif mime_type in IMAGE_MIME_TYPES:
-        body_text = encode_image_content(file_content_bytes, mime_type)
+    elif parse_mime_type in IMAGE_MIME_TYPES:
+        body_text = encode_image_content(file_content_bytes, parse_mime_type)
     else:
         # For non-Office files (including Google native files), try UTF-8 decode directly
         try:
             body_text = file_content_bytes.decode("utf-8")
         except UnicodeDecodeError:
             body_text = (
-                f"[Binary or unsupported text encoding for mimeType '{mime_type}' - "
+                f"[Binary or unsupported text encoding for mimeType '{parse_mime_type}' - "
                 f"{len(file_content_bytes)} bytes]"
             )
 
     # Assemble response
+    revision_line = (
+        f"Revision: {revision_id} ({revision_modified_time or 'modified time unavailable'})\n"
+        if revision_id
+        else ""
+    )
     header = (
         f'File: "{file_name}" (ID: {file_id}, Type: {mime_type})\n'
+        f"{revision_line}"
         f"Link: {file_metadata.get('webViewLink', '#')}\n\n--- CONTENT ---\n"
     )
     return header + body_text
+
+
+@server.tool(
+    title="List Drive File Revisions",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors(
+    "list_drive_file_revisions", is_read_only=True, service_type="drive"
+)
+@require_google_service("drive", "drive_read")
+async def list_drive_file_revisions(
+    service,
+    user_google_email: str,
+    file_id: str,
+    page_size: int = 100,
+    page_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    """List one page of Drive-visible revision history for a file.
+
+    The response includes revision IDs, timestamps, editors, MIME/size metadata,
+    pagination, and whether Drive can retrieve each revision's content. Drive can
+    compact or omit older revisions, so the result is not guaranteed to be a
+    complete audit log.
+
+    Args:
+        user_google_email: The user's Google email address. Required.
+        file_id: Drive file ID or shortcut target. Required.
+        page_size: Revisions to return, 1-1000. Defaults to 100.
+        page_token: Token from a previous response for the next page.
+
+    Returns:
+        dict: File metadata, revision entries, pagination token, and history caveat.
+    """
+    logger.info(
+        f"[list_drive_file_revisions] Invoked. File ID: '{file_id}', page_size={page_size}"
+    )
+    return await list_drive_file_revisions_data(
+        service,
+        file_id,
+        page_size=page_size,
+        page_token=page_token,
+    )
 
 
 @server.tool(
@@ -451,6 +535,7 @@ async def get_drive_file_download_url(
     user_google_email: str,
     file_id: str,
     export_format: Optional[str] = None,
+    revision_id: Optional[str] = None,
 ) -> str:
     """
     Downloads a Google Drive file and saves it to local disk.
@@ -463,7 +548,10 @@ async def get_drive_file_download_url(
     - Google Sheets -> XLSX (default), PDF if export_format='pdf', or CSV if export_format='csv'
     - Google Slides -> PDF (default) or PPTX if export_format='pptx'
 
-    For other files, downloads the original file format.
+    For other files, downloads the original file format. Pass revision_id to
+    download a Drive-visible historical revision. Native Google files are exported
+    in the same formats as current files; historical blob revisions must still be
+    downloadable by Drive (normally the head revision or one pinned keepForever).
 
     Args:
         user_google_email: The user's Google email address. Required.
@@ -472,81 +560,94 @@ async def get_drive_file_download_url(
                       Options: 'pdf', 'docx', 'xlsx', 'csv', 'pptx'.
                       If not specified, uses sensible defaults (PDF for Docs/Slides, XLSX for Sheets).
                       For Sheets: supports 'csv', 'pdf', or 'xlsx' (default).
+        revision_id: Optional revision ID from list_drive_file_revisions. When set,
+                     downloads that historical revision instead of the current file.
 
     Returns:
         str: File metadata with either a local file path or download URL.
     """
     logger.info(
-        f"[get_drive_file_download_url] Invoked. File ID: '{file_id}', Export format: {export_format}"
+        f"[get_drive_file_download_url] Invoked. File ID: '{file_id}', "
+        f"Export format: {export_format}, Revision: {revision_id}"
     )
 
-    # Resolve shortcuts and get file metadata
-    resolved_file_id, file_metadata = await resolve_drive_item(
-        service,
-        file_id,
-        extra_fields="name, webViewLink, mimeType",
-    )
-    file_id = resolved_file_id
-    mime_type = file_metadata.get("mimeType", "")
-    file_name = file_metadata.get("name", "Unknown File")
-
-    # Determine export format for Google native files
     export_mime_type = None
-    output_filename = file_name
-    output_mime_type = mime_type
+    revision_modified_time = None
 
-    if mime_type == "application/vnd.google-apps.document":
-        # Google Docs
-        if export_format == "docx":
-            export_mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            output_mime_type = export_mime_type
-            if not output_filename.endswith(".docx"):
-                output_filename = f"{Path(output_filename).stem}.docx"
-        else:
-            # Default to PDF
-            export_mime_type = "application/pdf"
-            output_mime_type = export_mime_type
-            if not output_filename.endswith(".pdf"):
-                output_filename = f"{Path(output_filename).stem}.pdf"
+    if revision_id:
+        revision_download = await download_drive_revision_to_temp(
+            service,
+            file_id,
+            revision_id,
+            export_format=export_format,
+        )
+        file_id = revision_download["file_id"]
+        file_name = revision_download["file_name"]
+        output_filename = revision_download["output_filename"]
+        output_mime_type = revision_download["output_mime_type"]
+        revision_modified_time = revision_download["revision_modified_time"]
+        tmp_path = revision_download["path"]
+    else:
+        # Resolve shortcuts and get file metadata
+        resolved_file_id, file_metadata = await resolve_drive_item(
+            service,
+            file_id,
+            extra_fields="name, webViewLink, mimeType",
+        )
+        file_id = resolved_file_id
+        mime_type = file_metadata.get("mimeType", "")
+        file_name = file_metadata.get("name", "Unknown File")
 
-    elif mime_type == "application/vnd.google-apps.spreadsheet":
-        # Google Sheets
-        if export_format == "csv":
-            export_mime_type = "text/csv"
-            output_mime_type = export_mime_type
-            if not output_filename.endswith(".csv"):
-                output_filename = f"{Path(output_filename).stem}.csv"
-        elif export_format == "pdf":
-            export_mime_type = "application/pdf"
-            output_mime_type = export_mime_type
-            if not output_filename.endswith(".pdf"):
-                output_filename = f"{Path(output_filename).stem}.pdf"
-        else:
-            # Default to XLSX
-            export_mime_type = (
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-            output_mime_type = export_mime_type
-            if not output_filename.endswith(".xlsx"):
-                output_filename = f"{Path(output_filename).stem}.xlsx"
+        # Determine export format for Google native files
+        output_filename = file_name
+        output_mime_type = mime_type
 
-    elif mime_type == "application/vnd.google-apps.presentation":
-        # Google Slides
-        if export_format == "pptx":
-            export_mime_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-            output_mime_type = export_mime_type
-            if not output_filename.endswith(".pptx"):
-                output_filename = f"{Path(output_filename).stem}.pptx"
-        else:
-            # Default to PDF
-            export_mime_type = "application/pdf"
-            output_mime_type = export_mime_type
-            if not output_filename.endswith(".pdf"):
-                output_filename = f"{Path(output_filename).stem}.pdf"
+        if mime_type == "application/vnd.google-apps.document":
+            if export_format == "docx":
+                export_mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                output_mime_type = export_mime_type
+                if not output_filename.endswith(".docx"):
+                    output_filename = f"{Path(output_filename).stem}.docx"
+            else:
+                export_mime_type = "application/pdf"
+                output_mime_type = export_mime_type
+                if not output_filename.endswith(".pdf"):
+                    output_filename = f"{Path(output_filename).stem}.pdf"
 
-    # Stream the download straight to disk. The payload is never held in memory
-    # as a whole, so file size no longer bounds how much RAM this tool needs.
-    tmp_path = await _download_file_to_temp(service, file_id, export_mime_type)
+        elif mime_type == "application/vnd.google-apps.spreadsheet":
+            if export_format == "csv":
+                export_mime_type = "text/csv"
+                output_mime_type = export_mime_type
+                if not output_filename.endswith(".csv"):
+                    output_filename = f"{Path(output_filename).stem}.csv"
+            elif export_format == "pdf":
+                export_mime_type = "application/pdf"
+                output_mime_type = export_mime_type
+                if not output_filename.endswith(".pdf"):
+                    output_filename = f"{Path(output_filename).stem}.pdf"
+            else:
+                export_mime_type = (
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+                output_mime_type = export_mime_type
+                if not output_filename.endswith(".xlsx"):
+                    output_filename = f"{Path(output_filename).stem}.xlsx"
+
+        elif mime_type == "application/vnd.google-apps.presentation":
+            if export_format == "pptx":
+                export_mime_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                output_mime_type = export_mime_type
+                if not output_filename.endswith(".pptx"):
+                    output_filename = f"{Path(output_filename).stem}.pptx"
+            else:
+                export_mime_type = "application/pdf"
+                output_mime_type = export_mime_type
+                if not output_filename.endswith(".pdf"):
+                    output_filename = f"{Path(output_filename).stem}.pdf"
+
+        # Stream the download straight to disk. The payload is never held in memory
+        # as a whole, so file size no longer bounds how much RAM this tool needs.
+        tmp_path = await _download_file_to_temp(service, file_id, export_mime_type)
     size_bytes = tmp_path.stat().st_size
     size_kb = size_bytes / 1024 if size_bytes else 0
 
@@ -567,6 +668,11 @@ async def get_drive_file_download_url(
             "\nBase64-encoded content (first 100 characters shown):",
             f"{base64.b64encode(preview_bytes).decode('utf-8')}...",
         ]
+        if revision_id:
+            result_lines.insert(
+                3,
+                f"Revision: {revision_id} ({revision_modified_time or 'modified time unavailable'})",
+            )
         logger.info(
             f"[get_drive_file_download_url] Successfully downloaded {size_kb:.1f} KB file (stateless mode)"
         )
@@ -592,6 +698,12 @@ async def get_drive_file_download_url(
             f"Size: {size_kb:.1f} KB ({size_bytes} bytes)",
             f"MIME Type: {output_mime_type}",
         ]
+
+        if revision_id:
+            result_lines.insert(
+                3,
+                f"Revision: {revision_id} ({revision_modified_time or 'modified time unavailable'})",
+            )
 
         if get_transport_mode() == "stdio":
             result_lines.append(f"\n📎 Saved to: {result.path}")
