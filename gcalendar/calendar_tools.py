@@ -706,7 +706,7 @@ async def _create_event_impl(
     end_timezone: Optional[str] = None,
 ) -> str:
     """Internal implementation for creating a calendar event."""
-    enforce_event_attendees(attendees, "create_event")
+    enforce_event_attendees(attendees, "create_event", self_email=user_google_email)
     logger.info(
         f"[create_event] Invoked. Email: '{user_google_email}', summary_len={len(summary) if summary else 0}"
     )
@@ -968,7 +968,7 @@ async def _modify_event_impl(
     end_timezone: Optional[str] = None,
 ) -> str:
     """Internal implementation for modifying a calendar event."""
-    enforce_event_attendees(attendees, "modify_event")
+    enforce_event_attendees(attendees, "modify_event", self_email=user_google_email)
     logger.info(
         f"[modify_event] Invoked. Email: '{user_google_email}', Event ID: {event_id}"
     )
@@ -1136,7 +1136,9 @@ async def _modify_event_impl(
         # The patch notifies everyone left on the event, so validate the
         # effective attendee list — including attendees preserved from the
         # existing event — not just the ones passed in.
-        enforce_event_attendees(event_body.get("attendees"), "modify_event")
+        enforce_event_attendees(
+            event_body.get("attendees"), "modify_event", self_email=user_google_email
+        )
 
         if add_google_meet is None and "conferenceData" in existing_event:
             logger.info(
@@ -1271,7 +1273,11 @@ async def _rsvp_event_impl(
 
     if comment:
         # A free-text RSVP comment is content delivered to the organizer.
-        enforce_event_attendees([existing_event.get("organizer")], "rsvp_event")
+        enforce_event_attendees(
+            [existing_event.get("organizer")],
+            "rsvp_event",
+            self_email=user_google_email,
+        )
 
     attendees = existing_event.get("attendees")
     if not attendees:

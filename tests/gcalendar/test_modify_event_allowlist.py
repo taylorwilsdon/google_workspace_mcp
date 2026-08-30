@@ -87,3 +87,16 @@ async def test_rsvp_comment_to_unlisted_organizer_refused(monkeypatch):
         await _rsvp_event_impl(
             _service(event), "user@example.com", "evt1", "accepted", comment="See you"
         )
+
+
+@pytest.mark.asyncio
+async def test_caller_supplied_self_flag_does_not_bypass(monkeypatch):
+    """A caller-supplied attendee dict flagged self is still judged by address."""
+    monkeypatch.setenv(ALLOWLIST_ENV, "mum@example.com")
+    service = _service({"attendees": [SELF]})
+    with pytest.raises(RecipientNotAllowedError, match="stranger@example.com"):
+        await _modify(
+            service,
+            attendees=[SELF, {"email": "stranger@example.com", "self": True}],
+        )
+    service.events().patch().execute.assert_not_called()

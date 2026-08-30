@@ -118,21 +118,35 @@ def enforce_recipients(
         )
 
 
+RESOURCE_CALENDAR_SUFFIX = "@resource.calendar.google.com"
+
+
 def enforce_event_attendees(
     attendees: Optional[Iterable[Union[str, dict, None]]],
     operation: str,
+    *,
+    self_email: Optional[str] = None,
 ) -> None:
     """Apply :func:`enforce_recipients` to a Calendar attendee list.
 
-    Skips entries that are not third parties: the authenticated account's own
-    entry (``self``) and room/resource calendars (``resource``). Call it on the
-    *effective* attendee list of an event write — including attendees preserved
-    from the existing event — because an update notifies everyone left on it.
+    Two kinds of entry are not third parties and are exempt — judged by
+    *address only*, never by flags on the record: the authenticated account
+    itself (``self_email``, taken by the caller from the verified request
+    context) and Google room/resource calendars (addresses ending in
+    ``@resource.calendar.google.com``). ``self``/``resource`` keys on attendee
+    dicts are deliberately ignored: on ``modify_event`` the attendee objects
+    come from the caller, so honouring them would let
+    ``{"email": "x@…", "self": true}`` bypass the policy.
+
+    Call it on the *effective* attendee list of an event write — including
+    attendees preserved from the existing event — because an update notifies
+    everyone left on it.
     """
+    own = (self_email or "").strip().lower()
     third_parties = [
-        a
-        for a in (attendees or [])
-        if not (isinstance(a, dict) and (a.get("self") or a.get("resource")))
+        addr
+        for addr in _extract_addresses(attendees or [])
+        if addr != own and not addr.endswith(RESOURCE_CALENDAR_SUFFIX)
     ]
     enforce_recipients(third_parties, operation)
 

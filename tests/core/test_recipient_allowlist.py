@@ -216,25 +216,48 @@ class TestEnforceDriveAccess:
 
 
 class TestEnforceEventAttendees:
-    def test_skips_self_and_resources(self, monkeypatch):
-        """The account's own entry and room resources are not third parties."""
+    def test_skips_own_address_and_resources(self, monkeypatch):
+        """The account's own address and room resources are not third parties."""
         monkeypatch.setenv(ALLOWLIST_ENV, "mum@example.com")
         enforce_event_attendees(
             [
-                {"email": "me@example.com", "self": True},
+                {"email": "Me@Example.com", "self": True},
                 {"email": "room@resource.calendar.google.com", "resource": True},
                 {"email": "mum@example.com"},
             ],
             "modify_event",
+            self_email="me@example.com",
         )
+
+    def test_caller_flags_are_not_trusted(self, monkeypatch):
+        """A self/resource flag on an unlisted address does not exempt it."""
+        monkeypatch.setenv(ALLOWLIST_ENV, "mum@example.com")
+        for entry in (
+            {"email": "x@example.com", "self": True},
+            {"email": "x@example.com", "resource": True},
+        ):
+            with pytest.raises(RecipientNotAllowedError, match="x@example.com"):
+                enforce_event_attendees(
+                    [entry], "modify_event", self_email="me@example.com"
+                )
+
+    def test_without_self_email_only_resources_are_exempt(self, monkeypatch):
+        """With no self_email, an own-address claim is just another attendee."""
+        monkeypatch.setenv(ALLOWLIST_ENV, "mum@example.com")
+        enforce_event_attendees(["room@resource.calendar.google.com"], "create_event")
+        with pytest.raises(RecipientNotAllowedError):
+            enforce_event_attendees(
+                [{"email": "me@example.com", "self": True}], "create_event"
+            )
 
     def test_unlisted_third_party_refused(self, monkeypatch):
         """An unlisted third-party attendee is refused."""
         monkeypatch.setenv(ALLOWLIST_ENV, "mum@example.com")
         with pytest.raises(RecipientNotAllowedError, match="x@example.com"):
             enforce_event_attendees(
-                [{"email": "me@example.com", "self": True}, {"email": "x@example.com"}],
+                [{"email": "me@example.com"}, {"email": "x@example.com"}],
                 "modify_event",
+                self_email="me@example.com",
             )
 
     def test_accepts_strings_and_none(self, monkeypatch):
