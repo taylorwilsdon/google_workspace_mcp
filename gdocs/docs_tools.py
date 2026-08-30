@@ -1384,7 +1384,7 @@ async def inspect_doc_structure(
     - tabs: List of available tabs in the document (if no tab_id specified)
     - empty_paragraphs: count of literal empty paragraphs in the body
     - empty_paragraph_ranges: their start/end ranges, capped at 100 entries
-    - empty_paragraph_ranges_truncated: whether that cap was reached
+    - empty_paragraph_ranges_truncated: whether further ranges were omitted
     - last_paragraph: whether the body ends in a list item, and whether it is empty
 
     VERIFYING A RENDERED DOCUMENT:
@@ -1399,8 +1399,10 @@ async def inspect_doc_structure(
       last_paragraph.is_empty is true, the final range is the body-final
       paragraph, whose end is the segment-terminating newline that Docs refuses
       to delete; deleting from start to end - 1 is an empty range and is
-      rejected as well. Remove that paragraph by deleting from start - 1 to
-      end - 1 instead, which is the preceding paragraph's newline.
+      rejected as well. When a paragraph precedes it, remove it by deleting from
+      start - 1 to end - 1 instead, which is that paragraph's newline. A body
+      holding nothing else cannot be emptied further: index 0 is the leading
+      section break, and the body always keeps one paragraph.
     - A body ending in a table always carries one trailing empty paragraph,
       because Docs requires a paragraph after a table, so empty_paragraphs does
       not reach zero on such a document.
