@@ -20,9 +20,7 @@ def _unwrap(tool):
 def _mock_service(label_response: dict) -> Mock:
     """Build a mock Gmail service that returns the given label response."""
     service = Mock()
-    service.users.return_value.labels.return_value.get.return_value.execute.return_value = (
-        label_response
-    )
+    service.users.return_value.labels.return_value.get.return_value.execute.return_value = label_response
     return service
 
 
@@ -111,9 +109,7 @@ async def test_missing_optional_fields():
     service = _mock_service(response)
     fn = _unwrap(get_gmail_label_stats)
 
-    result = await fn(
-        service, user_google_email="test@example.com", label_id="STARRED"
-    )
+    result = await fn(service, user_google_email="test@example.com", label_id="STARRED")
 
     assert "STARRED" in result
     assert "Messages total:  0" in result
