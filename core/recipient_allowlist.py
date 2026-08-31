@@ -13,7 +13,14 @@ Semantics:
 - Set but empty → **fail closed**: every recipient-bearing operation is refused.
 - ``WORKSPACE_ALLOWED_RECIPIENTS=*`` → explicitly unrestricted.
 - Otherwise → each recipient's bare address (case-insensitive; ``Name <a@b>``
-  forms accepted) must appear in the comma-separated list.
+  forms accepted) must match an entry in the comma-separated list. An entry is
+  either an exact address (``mum@example.com``) or a **domain wildcard**
+  (``*@example.com``, or the equivalent shorthand ``@example.com``) allowing
+  every address at that domain. The two forms mix freely, so a deployment can
+  trust its own workspace domain while still naming individual outsiders:
+  ``WORKSPACE_ALLOWED_RECIPIENTS=*@mycompany.com,accountant@example.org``.
+  Domain matching is exact — ``*@example.com`` does **not** cover
+  ``user@mail.example.com``; list the subdomain separately if you want it.
 
 Public link sharing ("anyone with the link") is governed separately by
 ``WORKSPACE_ALLOW_PUBLIC_SHARING`` (default: blocked whenever the recipient
@@ -24,13 +31,14 @@ recipient.
 import logging
 import os
 from email.utils import getaddresses
-from typing import Iterable, List, Optional, Set, Union
+from typing import Iterable, List, NamedTuple, Optional, Set, Union
 
 logger = logging.getLogger(__name__)
 
 ALLOWLIST_ENV = "WORKSPACE_ALLOWED_RECIPIENTS"
 PUBLIC_SHARING_ENV = "WORKSPACE_ALLOW_PUBLIC_SHARING"
 _WILDCARD = "*"
+_DOMAIN_WILDCARD_PREFIX = "*@"
 
 
 class RecipientNotAllowedError(ValueError):
@@ -46,14 +54,50 @@ def allowlist_active() -> bool:
     return ALLOWLIST_ENV in os.environ
 
 
-def _allowed() -> Optional[Set[str]]:
-    """Return the normalized allow set, ``None`` for wildcard/inactive."""
+class _AllowSpec(NamedTuple):
+    """Parsed allowlist: exact addresses plus whole-domain wildcards."""
+
+    exact: Set[str]
+    domains: Set[str]
+
+
+def _allowed() -> Optional[_AllowSpec]:
+    """Return the parsed allow spec, ``None`` for wildcard/inactive.
+
+    Entries are either exact addresses or domain wildcards (``*@example.com``,
+    shorthand ``@example.com``). An entry with no ``@`` at all cannot match any
+    address, so it is kept in ``exact`` and simply never matches — a typo fails
+    closed rather than silently widening the policy.
+    """
     if not allowlist_active():
         return None
     raw = os.environ.get(ALLOWLIST_ENV, "")
     if raw.strip() == _WILDCARD:
         return None
-    return {addr.strip().lower() for addr in raw.split(",") if addr.strip()}
+    exact: Set[str] = set()
+    domains: Set[str] = set()
+    for entry in raw.split(","):
+        entry = entry.strip().lower()
+        if not entry:
+            continue
+        if entry.startswith(_DOMAIN_WILDCARD_PREFIX):
+            domain = entry[len(_DOMAIN_WILDCARD_PREFIX) :]
+        elif entry.startswith("@"):
+            domain = entry[1:]
+        else:
+            exact.add(entry)
+            continue
+        if domain:
+            domains.add(domain)
+    return _AllowSpec(exact=exact, domains=domains)
+
+
+def _matches(address: str, spec: _AllowSpec) -> bool:
+    """True when *address* is listed exactly or covered by a domain wildcard."""
+    if address in spec.exact:
+        return True
+    _, _, domain = address.rpartition("@")
+    return bool(domain) and domain in spec.domains
 
 
 def _extract_addresses(values: Iterable[Union[str, dict, None]]) -> List[str]:
@@ -88,6 +132,7 @@ def enforce_recipients(
     When the env var is absent the deployment has not opted in and this is a
     no-op. When it IS set — even to an empty string — enforcement is
     fail-closed: only listed addresses pass, and an empty list blocks all.
+    A recipient matches either an exact entry or a ``*@domain`` wildcard.
 
     Raises:
         RecipientNotAllowedError: naming the offending addresses.
@@ -103,7 +148,7 @@ def enforce_recipients(
     if not recipients:
         return  # nothing outbound (e.g. event without attendees)
 
-    rejected = sorted({r for r in recipients if r not in allowed})
+    rejected = sorted({r for r in recipients if not _matches(r, allowed)})
     if rejected:
         logger.warning(
             "Blocked %s: recipient(s) not in %s: %s",
@@ -189,6 +234,12 @@ def enforce_drive_access(
     unlisted recipients and fall under :func:`enforce_public_sharing`. ``update`` and ``revoke`` act on
     existing grants only and are never gated. No-op unless the allowlist is
     active.
+
+    Note a deliberate asymmetry: a Drive ``domain`` grant stays under the
+    public-sharing gate even when that domain is allowlisted for email.
+    Allowing mail to ``*@example.com`` says "these people may be written to";
+    exposing a file to an entire domain is a different act, so it keeps
+    requiring ``WORKSPACE_ALLOW_PUBLIC_SHARING``.
     """
     operation = "manage_drive_access"
     if action == "grant":

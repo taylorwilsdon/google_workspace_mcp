@@ -1,7 +1,8 @@
 """Tests for core/recipient_allowlist.py.
 
 Covers the WORKSPACE_ALLOWED_RECIPIENTS semantics (absent → no-op, empty →
-fail-closed, wildcard → allow all, list → exact case-insensitive match),
+fail-closed, wildcard → allow all, list → exact case-insensitive match or
+``*@domain`` whole-domain wildcard),
 address extraction (Name <addr> forms, comma-separated strings, calendar
 attendee dicts), the WORKSPACE_ALLOW_PUBLIC_SHARING gate, and the
 manage_drive_access policy mapping.
@@ -111,6 +112,91 @@ class TestEnforceRecipients:
         monkeypatch.setenv(ALLOWLIST_ENV, "")
         enforce_recipients([], "create_event")
         enforce_recipients([None, None], "create_event")
+
+
+class TestDomainWildcards:
+    """``*@domain`` entries allow every address at that domain."""
+
+    def test_domain_wildcard_allows_any_address_there(self, monkeypatch):
+        """Any local part at an allowlisted domain passes."""
+        monkeypatch.setenv(ALLOWLIST_ENV, "*@mycompany.com")
+        enforce_recipients(["anyone@mycompany.com"], "send")
+        enforce_recipients(["someone.else+tag@mycompany.com"], "send")
+
+    def test_domain_wildcard_refuses_other_domains(self, monkeypatch):
+        """A wildcard for one domain does not cover another."""
+        monkeypatch.setenv(ALLOWLIST_ENV, "*@mycompany.com")
+        with pytest.raises(RecipientNotAllowedError, match="stranger@example.com"):
+            enforce_recipients(["stranger@example.com"], "send")
+
+    def test_at_prefix_shorthand(self, monkeypatch):
+        """``@domain`` is accepted as shorthand for ``*@domain``."""
+        monkeypatch.setenv(ALLOWLIST_ENV, "@mycompany.com")
+        enforce_recipients(["anyone@mycompany.com"], "send")
+        with pytest.raises(RecipientNotAllowedError):
+            enforce_recipients(["anyone@example.com"], "send")
+
+    def test_subdomains_are_not_covered(self, monkeypatch):
+        """Domain matching is exact: a subdomain needs its own entry."""
+        monkeypatch.setenv(ALLOWLIST_ENV, "*@mycompany.com")
+        with pytest.raises(RecipientNotAllowedError):
+            enforce_recipients(["user@mail.mycompany.com"], "send")
+        monkeypatch.setenv(ALLOWLIST_ENV, "*@mycompany.com,*@mail.mycompany.com")
+        enforce_recipients(["user@mail.mycompany.com"], "send")
+
+    def test_mixes_with_exact_addresses(self, monkeypatch):
+        """The two entry forms coexist in one list."""
+        monkeypatch.setenv(ALLOWLIST_ENV, "*@mycompany.com, accountant@example.org")
+        enforce_recipients(["dev@mycompany.com"], "send")
+        enforce_recipients(["accountant@example.org"], "send")
+        with pytest.raises(RecipientNotAllowedError, match="other@example.org"):
+            enforce_recipients(["other@example.org"], "send")
+
+    def test_case_insensitive(self, monkeypatch):
+        """Domain wildcards match regardless of case, both sides."""
+        monkeypatch.setenv(ALLOWLIST_ENV, "*@MyCompany.COM")
+        enforce_recipients(["Someone@MYCOMPANY.com"], "send")
+
+    def test_name_addr_form_against_wildcard(self, monkeypatch):
+        """``Name <addr>`` is reduced before the domain is compared."""
+        monkeypatch.setenv(ALLOWLIST_ENV, "*@mycompany.com")
+        enforce_recipients(["Dev Person <dev@mycompany.com>"], "send")
+
+    def test_bare_domain_without_at_never_matches(self, monkeypatch):
+        """A malformed entry (no '@') fails closed rather than widening."""
+        monkeypatch.setenv(ALLOWLIST_ENV, "mycompany.com")
+        with pytest.raises(RecipientNotAllowedError):
+            enforce_recipients(["anyone@mycompany.com"], "send")
+
+    def test_star_alone_still_means_everything(self, monkeypatch):
+        """The bare '*' wildcard is unchanged by domain support."""
+        monkeypatch.setenv(ALLOWLIST_ENV, "*")
+        enforce_recipients(["anyone@anywhere.example"], "send")
+
+    def test_applies_to_calendar_attendees(self, monkeypatch):
+        """Domain wildcards work wherever enforce_recipients is used."""
+        monkeypatch.setenv(ALLOWLIST_ENV, "*@mycompany.com")
+        enforce_event_attendees([{"email": "colleague@mycompany.com"}], "create_event")
+        with pytest.raises(RecipientNotAllowedError):
+            enforce_event_attendees([{"email": "outsider@example.com"}], "create_event")
+
+    def test_applies_to_drive_grants(self, monkeypatch):
+        """A user/group grant to an allowlisted domain passes."""
+        monkeypatch.setenv(ALLOWLIST_ENV, "*@mycompany.com")
+        enforce_drive_access(
+            "grant", share_type="user", share_with="colleague@mycompany.com"
+        )
+        with pytest.raises(RecipientNotAllowedError):
+            enforce_drive_access(
+                "grant", share_type="user", share_with="outsider@example.com"
+            )
+
+    def test_drive_domain_grant_still_needs_public_sharing(self, monkeypatch):
+        """Deliberate asymmetry: emailing a domain != exposing a file to it."""
+        monkeypatch.setenv(ALLOWLIST_ENV, "*@mycompany.com")
+        monkeypatch.delenv(PUBLIC_SHARING_ENV, raising=False)
+        with pytest.raises(RecipientNotAllowedError):
+            enforce_drive_access("grant", share_type="domain")
 
 
 class TestEnforcePublicSharing:
