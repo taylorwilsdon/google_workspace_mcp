@@ -24,6 +24,7 @@ from mcp.types import ToolAnnotations
 from auth.service_decorator import require_google_service
 from auth.oauth_config import is_stateless_mode
 from core.attachment_storage import get_attachment_storage, get_attachment_url
+from core.recipient_allowlist import enforce_drive_access, enforce_public_sharing
 from core.utils import (
     GOOGLE_API_WRITE_RETRIES,
     IMAGE_MIME_TYPES,
@@ -2423,6 +2424,10 @@ async def manage_drive_access(
             f"Invalid action '{action}'. Must be one of: {', '.join(valid_actions)}"
         )
 
+    # Outbound policy gate (no-op unless WORKSPACE_ALLOWED_RECIPIENTS is set),
+    # before any resolution or API call.
+    enforce_drive_access(action, share_type, share_with, recipients, new_owner_email)
+
     logger.info(
         f"[manage_drive_access] Invoked. Email: '{user_google_email}', "
         f"File ID: '{file_id}', Action: '{action}'"
@@ -2865,6 +2870,11 @@ async def set_drive_file_permissions(
         raise ValueError(
             f"Invalid link_sharing '{link_sharing}'. Must be one of: {', '.join(sorted(valid_link_sharing))}"
         )
+
+    # Enabling "anyone with the link" makes the file public — gate it behind
+    # the deployment policy. Turning link sharing off is always allowed.
+    if link_sharing in {"reader", "commenter", "writer"}:
+        enforce_public_sharing("set_drive_file_permissions")
 
     resolved_file_id, file_metadata = await resolve_drive_item(
         service, file_id, extra_fields="name, webViewLink"

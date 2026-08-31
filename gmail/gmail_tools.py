@@ -41,6 +41,7 @@ from core.config import (
     WORKSPACE_MCP_PORT,
 )
 from core.http_utils import ssrf_safe_stream
+from core.recipient_allowlist import enforce_recipients
 from core.utils import (
     GOOGLE_API_WRITE_RETRIES,
     handle_http_errors,
@@ -2520,6 +2521,10 @@ async def send_gmail_message(
             include_forwarded_attachments=False
         )
     """
+    # Recipient allowlist gate: applies to both the send and forward paths,
+    # before any message is built or fetched.
+    enforce_recipients([to, cc, bcc], "send_gmail_message")
+
     # Forwarding reuses the original message's content, so it follows a dedicated
     # path that fetches and quotes the source message.
     if forward_message_id:
@@ -2602,6 +2607,9 @@ async def send_gmail_message(
         raise UserInputError(
             f"Could not derive a recipient from thread '{thread_id}'. Pass 'to' explicitly."
         )
+
+    # Re-check now that thread-derived (reply_all) recipients are folded in.
+    enforce_recipients([to, cc, bcc], "send_gmail_message")
 
     # Optionally append the Gmail signature from send-as settings, mirroring
     # draft_gmail_message so sent mail respects the user's Settings > Signature.
@@ -3770,6 +3778,10 @@ async def manage_gmail_filter(
                 "criteria and filter_action are required for create action"
             )
         logger.info("[manage_gmail_filter] Creating filter")
+        # A filter with a "forward" action auto-forwards matching mail — that
+        # recipient must be allowlisted like any other outbound address.
+        if filter_action.get("forward"):
+            enforce_recipients([filter_action["forward"]], "manage_gmail_filter")
         filter_body = {"criteria": criteria, "action": filter_action}
         created_filter = await asyncio.to_thread(
             service.users()
