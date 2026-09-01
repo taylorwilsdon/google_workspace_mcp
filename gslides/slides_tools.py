@@ -525,6 +525,151 @@ You can view or download the thumbnail using the provided URL."""
     return confirmation_message
 
 
+@server.tool(
+    title="Set Speaker Notes",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("set_speaker_notes", service_type="slides")
+@require_google_service("slides", "slides")
+async def set_speaker_notes(
+    service,
+    user_google_email: str,
+    presentation_id: str,
+    notes_text: str,
+    slide_object_id: str = "",
+    slide_index: int = -1,
+    mode: str = "replace",
+) -> str:
+    """
+    Write speaker notes to a slide.
+
+    Resolves the slide's speakerNotesObjectId internally so callers do not
+    need to fetch it. Identify the slide by either slide_object_id or
+    slide_index (0-based). Exactly one must be provided.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        presentation_id (str): The ID of the presentation.
+        notes_text (str): Text to write into the speaker notes.
+        slide_object_id (str): Object ID of the slide. Mutually exclusive with slide_index.
+        slide_index (int): 0-based slide index. Mutually exclusive with slide_object_id.
+        mode (str): "replace" (default) clears existing notes first; "append" adds to end.
+
+    Returns:
+        str: Confirmation with slide ID, notes shape ID, and char count written.
+    """
+    from core.utils import UserInputError
+
+    logger.info(
+        f"[set_speaker_notes] Email: '{user_google_email}', Pres: '{presentation_id}', "
+        f"slide_object_id='{slide_object_id}', slide_index={slide_index}, mode='{mode}'"
+    )
+
+    has_id = bool(slide_object_id)
+    has_idx = slide_index >= 0
+    if has_id == has_idx:
+        raise UserInputError(
+            "Provide exactly one of slide_object_id or slide_index (>=0)."
+        )
+    if mode not in ("replace", "append"):
+        raise UserInputError("mode must be 'replace' or 'append'.")
+
+    fields = (
+        "slides(objectId,"
+        "slideProperties/notesPage("
+        "objectId,"
+        "notesProperties/speakerNotesObjectId,"
+        "pageElements(objectId,shape(text(textElements(textRun(content)))))"
+        "))"
+    )
+
+    pres = await asyncio.to_thread(
+        service.presentations()
+        .get(presentationId=presentation_id, fields=fields)
+        .execute
+    )
+    slides = pres.get("slides", [])
+    if not slides:
+        raise UserInputError("Presentation has no slides.")
+
+    target = None
+    if has_id:
+        for s in slides:
+            if s.get("objectId") == slide_object_id:
+                target = s
+                break
+        if target is None:
+            raise UserInputError(
+                f"slide_object_id '{slide_object_id}' not found in presentation."
+            )
+    else:
+        if slide_index >= len(slides):
+            raise UserInputError(
+                f"slide_index {slide_index} out of range (presentation has {len(slides)} slides)."
+            )
+        target = slides[slide_index]
+
+    slide_id = target.get("objectId")
+    notes_page = target.get("slideProperties", {}).get("notesPage", {}) or {}
+    notes_obj_id = (
+        notes_page.get("notesProperties", {}).get("speakerNotesObjectId")
+    )
+    if not notes_obj_id:
+        raise UserInputError(
+            f"Could not resolve speakerNotesObjectId for slide '{slide_id}'."
+        )
+
+    existing_len = 0
+    for pe in notes_page.get("pageElements", []):
+        if pe.get("objectId") != notes_obj_id:
+            continue
+        text = pe.get("shape", {}).get("text", {}) or {}
+        for te in text.get("textElements", []):
+            tr = te.get("textRun") or {}
+            content = tr.get("content") or ""
+            existing_len += len(content)
+
+    requests: List[Dict[str, Any]] = []
+    if mode == "replace" and existing_len > 0:
+        requests.append(
+            {"deleteText": {"objectId": notes_obj_id, "textRange": {"type": "ALL"}}}
+        )
+
+    insertion_index = 0
+    if mode == "append" and existing_len > 0:
+        insertion_index = max(existing_len - 1, 0)
+
+    requests.append(
+        {
+            "insertText": {
+                "objectId": notes_obj_id,
+                "insertionIndex": insertion_index,
+                "text": notes_text,
+            }
+        }
+    )
+
+    await asyncio.to_thread(
+        service.presentations()
+        .batchUpdate(presentationId=presentation_id, body={"requests": requests})
+        .execute
+    )
+
+    return (
+        f"Speaker notes {mode}d for {user_google_email}:\n"
+        f"- Presentation ID: {presentation_id}\n"
+        f"- Slide ID: {slide_id}\n"
+        f"- Notes Shape ID: {notes_obj_id}\n"
+        f"- Chars written: {len(notes_text)}\n"
+        f"- URL: https://docs.google.com/presentation/d/{presentation_id}/edit"
+    )
+
+
 # Create comment management tools for slides
 _comment_tools = create_comment_tools("presentation", "presentation_id")
 list_presentation_comments = _comment_tools["list_comments"]
