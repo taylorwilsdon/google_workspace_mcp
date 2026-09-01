@@ -146,8 +146,16 @@ def resolve_stdio_callback_port() -> None:
 
 
 def resolve_callback_port_for_transport(transport: str) -> None:
-    """Apply callback port fallback only to legacy stdio transport."""
-    if transport == "stdio":
+    """Apply callback port fallback only to legacy stdio transport.
+
+    Only a pinned port (``WORKSPACE_MCP_PORT``/``PORT`` set, as Web/confidential
+    clients require) is resolved eagerly at startup. When unpinned, no port is
+    reserved here; the stdio OAuth callback binds a fresh ephemeral port per auth
+    flow and releases it on completion (see ``ensure_stdio_oauth_callback_available``).
+    """
+    from auth.oauth_callback_server import _callback_port_is_pinned
+
+    if transport == "stdio" and _callback_port_is_pinned():
         resolve_stdio_callback_port()
     else:
         os.environ.pop("WORKSPACE_MCP_RESOLVED_PORT", None)

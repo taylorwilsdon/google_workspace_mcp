@@ -55,6 +55,11 @@ async def test_start_google_auth_preflights_in_stdio(monkeypatch):
     monkeypatch.setattr(
         "auth.oauth_callback_server.get_transport_mode", lambda: "stdio"
     )
+    # Pin the port so this exercises the fixed-port preflight path (the ephemeral
+    # path has dedicated coverage in test_oauth_ephemeral_port.py).
+    monkeypatch.setattr(
+        "auth.oauth_callback_server._OPERATOR_PINNED_CALLBACK_PORT", True
+    )
     monkeypatch.setattr("core.server.asyncio.to_thread", fake_to_thread)
     monkeypatch.setattr(
         "core.server.get_oauth_redirect_uri_for_current_mode",
