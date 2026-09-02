@@ -779,22 +779,40 @@ def _extract_attachments(payload: dict) -> List[Dict[str, Any]]:
         payload: The message payload from Gmail API
 
     Returns:
-        List of attachment dictionaries with filename, mimeType, size, and attachmentId
+        List of attachment dictionaries with filename, mimeType, size, attachmentId
+        and content_id. ``content_id`` is the bare Content-ID (angle brackets
+        stripped) for inline parts referenced from the HTML body via
+        ``src="cid:<content-id>"`` (signature logos, pasted screenshots), or None
+        for regular attachments. Surfacing it lets a client resolve which
+        attachment belongs to which ``cid:`` reference without guessing by part
+        order or size.
     """
     attachments = []
 
     def search_parts(part):
         """Recursively search for attachments in message parts"""
-        # Check if this part is an attachment
-        if part.get("filename") and part.get("body", {}).get("attachmentId"):
-            attachments.append(
-                {
-                    "filename": part["filename"],
-                    "mimeType": part.get("mimeType", "application/octet-stream"),
-                    "size": part.get("body", {}).get("size", 0),
-                    "attachmentId": part["body"]["attachmentId"],
-                }
-            )
+        body = part.get("body", {})
+        attachment_id = body.get("attachmentId")
+        if attachment_id:
+            # Read the part's Content-ID header (inline parts have one).
+            cid = None
+            for header in part.get("headers", []):
+                if header.get("name", "").lower() == "content-id":
+                    cid = (header.get("value") or "").strip().strip("<>").strip()
+                    break
+            # A part counts as an attachment when it has a filename (classic
+            # attachment) OR a Content-ID (inline cid: image, sometimes filename-
+            # less). Either way it carries an attachmentId we can fetch.
+            if part.get("filename") or cid:
+                attachments.append(
+                    {
+                        "filename": part.get("filename", ""),
+                        "mimeType": part.get("mimeType", "application/octet-stream"),
+                        "size": body.get("size", 0),
+                        "attachmentId": attachment_id,
+                        "content_id": cid,
+                    }
+                )
 
         # Recursively search sub-parts
         if "parts" in part:
@@ -804,6 +822,27 @@ def _extract_attachments(payload: dict) -> List[Dict[str, Any]]:
     # Start searching from the root payload
     search_parts(payload)
     return attachments
+
+
+def _format_attachment_entry(index: int, att: Dict[str, Any], message_id: str) -> str:
+    """Format one ATTACHMENTS list entry. Includes a ``Content-ID`` line when the
+    attachment is an inline (cid:) part, so a client can map inline images to the
+    right attachment (``src="cid:<id>"``) without heuristics."""
+    size_kb = att.get("size", 0) / 1024
+    name = att["filename"] or f"(inline image, cid:{att.get('content_id')})"
+    lines = [
+        f"{index}. {name} ({att['mimeType']}, {size_kb:.1f} KB)",
+        f"   Attachment ID: {att['attachmentId']}",
+    ]
+    if att.get("content_id"):
+        lines.append(
+            f"   Content-ID: {att['content_id']} (inline; referenced as cid:{att['content_id']})"
+        )
+    lines.append(
+        f"   Use get_gmail_attachment_content(message_id='{message_id}', "
+        f"attachment_id='{att['attachmentId']}') to download"
+    )
+    return "\n".join(lines)
 
 
 def _extract_headers(payload: dict, header_names: List[str]) -> Dict[str, str]:
@@ -1831,12 +1870,7 @@ async def get_gmail_message_content(
     if attachments:
         content_lines.append("\n--- ATTACHMENTS ---")
         for i, att in enumerate(attachments, 1):
-            size_kb = att["size"] / 1024
-            content_lines.append(
-                f"{i}. {att['filename']} ({att['mimeType']}, {size_kb:.1f} KB)\n"
-                f"   Attachment ID: {att['attachmentId']}\n"
-                f"   Use get_gmail_attachment_content(message_id='{message_id}', attachment_id='{att['attachmentId']}') to download"
-            )
+            content_lines.append(_format_attachment_entry(i, att, message_id))
 
     return "\n".join(content_lines)
 
@@ -2032,12 +2066,7 @@ async def get_gmail_messages_content_batch(
                     if attachments:
                         msg_output += "\n--- ATTACHMENTS ---\n"
                         for i, att in enumerate(attachments, 1):
-                            size_kb = att["size"] / 1024
-                            msg_output += (
-                                f"{i}. {att['filename']} ({att['mimeType']}, {size_kb:.1f} KB)\n"
-                                f"   Attachment ID: {att['attachmentId']}\n"
-                                f"   Use get_gmail_attachment_content(message_id='{mid}', attachment_id='{att['attachmentId']}') to download\n"
-                            )
+                            msg_output += _format_attachment_entry(i, att, mid) + "\n"
 
                     output_messages.append(msg_output)
 
@@ -3199,12 +3228,7 @@ def _format_thread_content(
         if attachments:
             content_lines.append("--- ATTACHMENTS ---")
             for j, att in enumerate(attachments, 1):
-                size_kb = att["size"] / 1024
-                content_lines.append(
-                    f"{j}. {att['filename']} ({att['mimeType']}, {size_kb:.1f} KB)\n"
-                    f"   Attachment ID: {att['attachmentId']}\n"
-                    f"   Use get_gmail_attachment_content(message_id='{message_id}', attachment_id='{att['attachmentId']}') to download"
-                )
+                content_lines.append(_format_attachment_entry(j, att, message_id))
             content_lines.append("")
 
     return "\n".join(content_lines)
