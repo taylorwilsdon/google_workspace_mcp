@@ -146,6 +146,7 @@ contacts:
     - search_contacts
     - get_contact
     - list_contacts
+    - sync_contacts
     - manage_contact
   extended:
     - list_contact_groups
