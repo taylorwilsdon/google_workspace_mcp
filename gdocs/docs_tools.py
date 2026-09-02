@@ -74,6 +74,25 @@ import json
 logger = logging.getLogger(__name__)
 HEADER_FOOTER_RUNTIME_CANARY = "docs-hf-canary-20260328b"
 
+_DEVELOPER_PREVIEW_URL = "https://developers.google.com/workspace/preview"
+
+# BatchUpdateDocumentResponse.commentUpdateState. A batch can partially fail:
+# the document model changes commit while the associated comment/suggestion
+# threads fail to save, which means a "suggested" edit actually landed as a
+# direct one. Only ALL_SAVED confirms the suggestion persisted.
+_COMMENT_UPDATE_ALL_SAVED = "ALL_SAVED"
+_COMMENT_UPDATE_NONE_REQUESTED = "NO_UPDATES_REQUESTED"
+_COMMENTS_VIEW_MODE_INCLUDED = "COMMENTS_VIEW_MODE_INCLUDED"
+
+# The preview API reports suggestion persistence directly in
+# BatchUpdateDocumentResponse.commentUpdateState. Do not infer it from a second
+# document read: suggestions can be updated, merged, or withdrawn without
+# creating a new ID, and collaborators can change the document between reads.
+
+
+class _DeveloperPreviewUnavailable(Exception):
+    """The active Google Cloud project cannot use Docs Preview features."""
+
 
 @server.tool(
     title="Search Docs",
@@ -1080,6 +1099,7 @@ async def batch_update_doc(
     user_google_email: str,
     document_id: str,
     operations: BatchDocOperations,
+    suggest_mode: bool = False,
 ) -> str:
     """
     Executes multiple low-level document operations in a single atomic batch update.
@@ -1296,6 +1316,34 @@ async def batch_update_doc(
             {"type": "update_document_style", "margin_top": 72, "margin_bottom": 72}
         ]
 
+    Example - Propose changes as suggestions instead of direct edits:
+        suggest_mode=true with:
+        [{"type": "find_replace", "find_text": "teh", "replace_text": "the"}]
+        The edit lands as a pending suggestion (as if made in "Suggesting" mode
+        in the Docs UI) rather than being applied directly. Use manage_doc_suggestions
+        to accept, reject, or delete it afterwards.
+
+    Args:
+        user_google_email: User's Google email address
+        document_id: ID of the document to update
+        operations: List of operation dicts. Each operation MUST have a 'type' field.
+                    All operations accept an optional 'tab_id' to target a specific tab.
+        suggest_mode: If true, apply every operation in this batch as a suggested
+            edit (pending approval) instead of a direct edit, equivalent to
+            enabling "Suggesting" mode in the Docs UI. Requires the requesting
+            Google Cloud project to be enrolled in the Workspace Developer
+            Preview Program. The tool verifies Preview access before sending any
+            mutation, because an unenrolled project can otherwise apply the edits
+            DIRECTLY. The response's comment_update_state is also checked after
+            the write, and carries an explicit warning unless suggestion
+            persistence is confirmed. Not every
+            operation type can be suggested - insert_doc_tab, delete_doc_tab,
+            update_doc_tab, create_named_range, delete_named_range, and
+            update_table_column_properties are rejected by the API in suggest
+            mode, as are the
+            document_mode/use_even_page_header_footer/
+            use_first_page_header_footer fields of update_document_style.
+
     Returns:
         str: Confirmation message with batch results and document length for chaining
     """
@@ -1307,7 +1355,8 @@ async def batch_update_doc(
     ]
 
     logger.debug(
-        f"[batch_update_doc] Doc={document_id}, operations={len(normalized_operations)}"
+        f"[batch_update_doc] Doc={document_id}, operations={len(normalized_operations)}, "
+        f"suggest_mode={suggest_mode}"
     )
 
     # Input validation
@@ -1321,11 +1370,25 @@ async def batch_update_doc(
     if not is_valid:
         return f"Error: {error_msg}"
 
+    if suggest_mode:
+        unsupported_error = _validate_suggest_mode_operations(normalized_operations)
+        if unsupported_error:
+            return f"Error: {unsupported_error}"
+        try:
+            await _require_suggest_mode_preview(service, document_id)
+        except _DeveloperPreviewUnavailable as error:
+            return (
+                "Error: suggest_mode is unavailable for this connection because "
+                f"{error}. No document changes were made. Enroll the Google Cloud "
+                "project in the Workspace Developer Preview Program and retry: "
+                f"{_DEVELOPER_PREVIEW_URL}"
+            )
+
     # Use BatchOperationManager to handle the complex logic
     batch_manager = BatchOperationManager(service)
 
     success, message, metadata = await batch_manager.execute_batch_operations(
-        document_id, normalized_operations
+        document_id, normalized_operations, suggest_mode=suggest_mode
     )
 
     if success:
@@ -1333,14 +1396,569 @@ async def batch_update_doc(
         replies_count = metadata.get("replies_count", 0)
         doc_length = metadata.get("document_length")
         length_info = f" Document length: {doc_length}." if doc_length else ""
+        suggest_info = ""
+        if suggest_mode:
+            suggest_info = _describe_comment_update_state(
+                metadata.get("comment_update_state"),
+                normalized_operations,
+                metadata,
+            )
+            suggest_info += _describe_suggestion_responses(
+                metadata.get("suggestion_responses", [])
+            )
         return (
             f"{message} on document {document_id}. "
-            f"API replies: {replies_count}.{length_info} "
+            f"API replies: {replies_count}.{length_info}{suggest_info}"
+            " "
             f"To apply formatting, call inspect_doc_structure to get exact text positions. "
             f"Link: {link}"
         )
     else:
         return f"Error: {message}"
+
+
+@server.tool(
+    title="Manage Doc Suggestions",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("manage_doc_suggestions", service_type="docs")
+@require_google_service("docs", "docs_write")
+async def manage_doc_suggestions(
+    service: Any,
+    user_google_email: str,
+    document_id: str,
+    action: Literal["accept", "reject", "delete"],
+    suggestion_ids: List[str],
+) -> str:
+    """
+    Accepts, rejects, or deletes pending suggestion threads on a Google Doc
+    (the suggested edits produced by "Suggesting" mode in the Docs UI, or by
+    calling batch_update_doc with suggest_mode=true).
+
+    Requires the requesting Google Cloud project to be enrolled in the
+    Workspace Developer Preview Program; otherwise the API call will fail.
+
+    To find suggestion_ids, call list_doc_suggestions first - it returns each
+    pending suggestion thread's ID (e.g. "suggest.vcti8ewm4mww") along with a
+    text preview.
+
+    Args:
+        user_google_email: User's Google email address
+        document_id: ID of the document containing the suggestions
+        action: "accept" applies the suggestion (requires edit access),
+            "reject" discards it (requires edit access or being its author),
+            "delete" removes the suggestion thread entirely (requires being
+            its author)
+        suggestion_ids: One or more suggestion thread IDs to act on
+
+    Returns:
+        str: Confirmation message including how many suggestions were processed
+    """
+    if not suggestion_ids:
+        return "Error: suggestion_ids cannot be empty"
+
+    request_key = {
+        "accept": "acceptSuggestion",
+        "reject": "rejectSuggestion",
+        "delete": "deleteSuggestion",
+    }.get(action)
+    if not request_key:
+        return (
+            f"Error: action must be one of 'accept', 'reject', 'delete', got '{action}'"
+        )
+
+    try:
+        await _require_suggest_mode_preview(service, document_id)
+    except _DeveloperPreviewUnavailable as error:
+        return (
+            "Error: suggestion management is unavailable for this connection "
+            f"because {error}. No suggestion changes were made. Enroll the Google "
+            "Cloud project in the Workspace Developer Preview Program and retry: "
+            f"{_DEVELOPER_PREVIEW_URL}"
+        )
+
+    requests = [
+        {request_key: {"suggestionId": suggestion_id}}
+        for suggestion_id in suggestion_ids
+    ]
+
+    logger.debug(
+        f"[manage_doc_suggestions] Doc={document_id}, action={action}, "
+        f"suggestion_ids={suggestion_ids}"
+    )
+
+    result = await asyncio.to_thread(
+        service.documents()
+        .batchUpdate(documentId=document_id, body={"requests": requests})
+        .execute
+    )
+
+    comment_state = result.get("commentUpdateState")
+    link = f"https://docs.google.com/document/d/{document_id}/edit"
+
+    if comment_state == _COMMENT_UPDATE_ALL_SAVED:
+        outcome = (
+            f"Successfully applied '{action}' to {len(suggestion_ids)} suggestion(s)"
+        )
+    else:
+        # Only ALL_SAVED confirms the thread changes were persisted; anything
+        # else means the request was accepted but may not have taken effect.
+        outcome = (
+            f"Requested '{action}' on {len(suggestion_ids)} suggestion(s), but the "
+            f"API did not confirm the change was saved (comment_update_state: "
+            f"{comment_state}). Re-check with list_doc_suggestions before "
+            f"assuming it applied"
+        )
+
+    return f"{outcome} in document {document_id}. Link: {link}"
+
+
+def _collect_suggestions_from_elements(
+    elements: list[dict[str, Any]],
+    suggestions: dict[str, dict[str, Any]],
+    tab_id: Optional[str] = None,
+) -> None:
+    """
+    Recursively walk document content elements collecting suggestion IDs,
+    keyed by suggestion ID.
+
+    Covers, at every level that carries them:
+      - suggestedInsertionIds / suggestedDeletionIds
+      - suggestedTextStyleChanges (text runs)
+      - suggestedParagraphStyleChanges / suggestedBulletChanges /
+        suggestedPositionedObjectIds (paragraphs)
+
+    Every ParagraphElement variant (textRun, autoText, pageBreak, columnBreak,
+    footnoteReference, horizontalRule, inlineObjectElement, person, richLink,
+    date) carries the insertion/deletion fields the same way, so paragraph
+    elements are walked generically rather than special-casing textRun.
+    Structural nodes (paragraph, table, tableRow, tableCell, sectionBreak,
+    tableOfContents) are read directly, since a suggestion can be recorded
+    there without appearing on any text run - a suggested bullet or paragraph
+    style is stored only on the paragraph. SuggestionThread remains the source
+    of truth for IDs; this walk enriches those threads with type and text.
+    """
+    for element in elements:
+        section_break = element.get("sectionBreak")
+        if isinstance(section_break, dict):
+            _collect_suggestion_markers(section_break, suggestions, tab_id)
+
+        table_of_contents = element.get("tableOfContents")
+        if isinstance(table_of_contents, dict):
+            _collect_suggestion_markers(table_of_contents, suggestions, tab_id)
+            # A table of contents nests its own structural content.
+            _collect_suggestions_from_elements(
+                table_of_contents.get("content", []), suggestions, tab_id
+            )
+
+        paragraph = element.get("paragraph")
+        if paragraph:
+            # Paragraph-level suggestions carry no text of their own, so use
+            # the paragraph's text as the preview.
+            paragraph_text = "".join(
+                sub.get("content", "")
+                for pe in paragraph.get("elements", [])
+                for sub in pe.values()
+                if isinstance(sub, dict)
+            )
+            _collect_suggestion_markers(
+                paragraph, suggestions, tab_id, preview=paragraph_text
+            )
+
+            for pe in paragraph.get("elements", []):
+                for sub in pe.values():
+                    if isinstance(sub, dict):
+                        _collect_suggestion_markers(
+                            sub,
+                            suggestions,
+                            tab_id,
+                            preview=sub.get("content", ""),
+                            accumulate=True,
+                        )
+
+        table = element.get("table")
+        if table:
+            _collect_suggestion_markers(table, suggestions, tab_id)
+            for row in table.get("tableRows", []):
+                _collect_suggestion_markers(row, suggestions, tab_id)
+                for cell in row.get("tableCells", []):
+                    _collect_suggestion_markers(cell, suggestions, tab_id)
+                    _collect_suggestions_from_elements(
+                        cell.get("content", []), suggestions, tab_id
+                    )
+
+
+# Suggestion-change maps (suggestion ID -> change payload) and the label each
+# contributes to a suggestion's reported type.
+_SUGGESTION_CHANGE_MAPS = {
+    "suggestedTextStyleChanges": "style",
+    "suggestedParagraphStyleChanges": "paragraph-style",
+    "suggestedBulletChanges": "bullet",
+    "suggestedPositionedObjectIds": "positioned-object",
+    "suggestedTableRowStyleChanges": "table-row-style",
+    "suggestedTableCellStyleChanges": "table-cell-style",
+    "suggestedDocumentStyleChanges": "document-style",
+    "suggestedNamedStylesChanges": "named-styles",
+    # Resource maps (lists, inlineObjects, positionedObjects)
+    "suggestedListPropertiesChanges": "list-properties",
+    "suggestedInlineObjectPropertiesChanges": "inline-object-properties",
+    "suggestedPositionedObjectPropertiesChanges": "positioned-object-properties",
+    "suggestedDateElementPropertiesChanges": "date-element-properties",
+}
+
+# Document resource maps whose entries carry their own suggestion markers.
+_SUGGESTION_RESOURCE_MAPS = ("lists", "inlineObjects", "positionedObjects")
+
+
+def _collect_suggestion_markers(
+    node: dict[str, Any],
+    suggestions: dict[str, dict[str, Any]],
+    tab_id: Optional[str] = None,
+    preview: str = "",
+    accumulate: bool = False,
+) -> None:
+    """
+    Read the suggestion fields off a single document node into `suggestions`.
+
+    Applies to any node that carries them - paragraphs, paragraph elements,
+    tables, rows, cells, section breaks - since the Docs API records the same
+    field names at every level.
+
+    Args:
+        node: The document node to inspect.
+        suggestions: Accumulator keyed by suggestion ID.
+        tab_id: Tab the node belongs to, if any.
+        preview: Text to show for this suggestion.
+        accumulate: True to append `preview` to any existing preview (text runs
+            are fragments of one suggestion); False to use it only when no
+            preview has been recorded yet.
+    """
+
+    def entry_for(sid: str) -> dict[str, Any]:
+        """Get or create the accumulator entry for a suggestion ID."""
+        return suggestions.setdefault(
+            sid, {"types": set(), "text_preview": "", "tab_id": tab_id}
+        )
+
+    # One node can carry several markers for the same suggestion - a suggested
+    # insertion records both suggestedInsertionIds and suggestedTextStyleChanges
+    # on the same run - so a node contributes its text to a given suggestion at
+    # most once. Fragments from *different* nodes still accumulate, which is
+    # what rebuilds a suggestion spanning several runs.
+    contributed: set[str] = set()
+
+    def apply_preview(entry: dict[str, Any], sid: str) -> None:
+        """Append or seed the entry's preview, once per node per suggestion."""
+        if not preview or sid in contributed:
+            return
+        contributed.add(sid)
+        if accumulate:
+            entry["text_preview"] += preview
+        elif not entry["text_preview"]:
+            entry["text_preview"] = preview
+
+    for field, label in (
+        ("suggestedInsertionIds", "insertion"),
+        ("suggestedDeletionIds", "deletion"),
+    ):
+        for sid in node.get(field) or []:
+            entry = entry_for(sid)
+            entry["types"].add(label)
+            apply_preview(entry, sid)
+
+    # Resource entries (List, InlineObject, PositionedObject) carry a single
+    # suggestedInsertionId string rather than the plural array used elsewhere.
+    single_insertion_id = node.get("suggestedInsertionId")
+    if isinstance(single_insertion_id, str) and single_insertion_id:
+        entry = entry_for(single_insertion_id)
+        entry["types"].add("insertion")
+        apply_preview(entry, single_insertion_id)
+
+    for field, label in _SUGGESTION_CHANGE_MAPS.items():
+        for sid in node.get(field) or {}:
+            entry = entry_for(sid)
+            entry["types"].add(label)
+            apply_preview(entry, sid)
+
+
+def _collect_suggestions_from_segment_map(
+    segment_map: dict[str, Any],
+    suggestions: dict[str, dict[str, Any]],
+    tab_id: Optional[str] = None,
+) -> None:
+    """Walk a headers/footers/footnotes map (id -> {"content": [...]})."""
+    for segment in segment_map.values():
+        _collect_suggestions_from_elements(
+            segment.get("content", []), suggestions, tab_id
+        )
+
+
+def _build_comments_included_get_request(service: Any, **get_kwargs: Any) -> Any:
+    """Build a documents.get request that opts into Preview thread fields."""
+    documents = service.documents()
+    try:
+        return documents.get(
+            **get_kwargs,
+            commentsViewMode=_COMMENTS_VIEW_MODE_INCLUDED,
+        )
+    except TypeError:
+        # A locally cached standard discovery document may not expose the new
+        # Preview parameter yet. The API still accepts it for enrolled projects,
+        # so append it to the authorized request URI in that case.
+        request = documents.get(**get_kwargs)
+        uri = getattr(request, "uri", None)
+        if not isinstance(uri, str):
+            raise RuntimeError(
+                "Docs client does not expose commentsViewMode and its request URI "
+                "cannot be extended for Developer Preview fields"
+            )
+        separator = "&" if "?" in uri else "?"
+        request.uri = f"{uri}{separator}commentsViewMode={_COMMENTS_VIEW_MODE_INCLUDED}"
+        return request
+
+
+def _is_comments_view_mode_unavailable(error: HttpError) -> bool:
+    """Recognize the API response returned to projects outside Preview."""
+    if getattr(error.resp, "status", None) != 400:
+        return False
+    details = str(error).lower()
+    return (
+        "comments_view_mode" in details
+        and "field" in details
+        and "could not be found" in details
+    )
+
+
+async def _require_suggest_mode_preview(service: Any, document_id: str) -> None:
+    """Fail before mutation unless the API positively confirms Preview access."""
+    request = _build_comments_included_get_request(
+        service,
+        documentId=document_id,
+        fields="documentId,commentsViewMode",
+    )
+    try:
+        doc_data = await asyncio.to_thread(request.execute)
+    except HttpError as error:
+        if _is_comments_view_mode_unavailable(error):
+            raise _DeveloperPreviewUnavailable(
+                "the Docs API rejected its Developer Preview commentsViewMode field"
+            ) from error
+        raise
+
+    if doc_data.get("commentsViewMode") != _COMMENTS_VIEW_MODE_INCLUDED:
+        raise _DeveloperPreviewUnavailable(
+            "the Docs API did not confirm Developer Preview comments access"
+        )
+
+
+async def _fetch_doc_suggestions(
+    service: Any, document_id: str, *, include_threads: bool = True
+) -> dict[str, dict[str, Any]]:
+    """
+    Fetch a document with suggestion threads included and return every open
+    SuggestionThread keyed by suggestion ID. Inline markers are used only to
+    enrich each thread with type, tab, and affected-text information.
+
+    When include_threads is false, use the standard API and return suggestion
+    markers only. This degraded mode remains useful when the active Cloud
+    project is not enrolled in Developer Preview.
+    """
+    get_kwargs = {
+        "documentId": document_id,
+        "includeTabsContent": True,
+        "suggestionsViewMode": "SUGGESTIONS_INLINE",
+    }
+    if include_threads:
+        request = _build_comments_included_get_request(service, **get_kwargs)
+    else:
+        request = service.documents().get(**get_kwargs)
+
+    try:
+        doc_data = await asyncio.to_thread(request.execute)
+    except HttpError as error:
+        if include_threads and _is_comments_view_mode_unavailable(error):
+            raise _DeveloperPreviewUnavailable(
+                "the Docs API rejected its Developer Preview commentsViewMode field"
+            ) from error
+        raise
+
+    marker_suggestions: dict[str, dict[str, Any]] = {}
+
+    def collect_container(
+        container: dict[str, Any], tab_id: Optional[str] = None
+    ) -> None:
+        """Walk one Document or DocumentTab: its styles, body, and segments."""
+        # Document-wide style suggestions (update_document_style) hang off the
+        # container itself, not off any content element.
+        _collect_suggestion_markers(container, marker_suggestions, tab_id)
+        _collect_suggestions_from_elements(
+            container.get("body", {}).get("content", []), marker_suggestions, tab_id
+        )
+        for segment in ("headers", "footers", "footnotes"):
+            _collect_suggestions_from_segment_map(
+                container.get(segment, {}), marker_suggestions, tab_id
+            )
+        # Resource maps keep their own suggestion markers, and a positioned
+        # object's is recorded only here - not on any paragraph element.
+        for resource_map in _SUGGESTION_RESOURCE_MAPS:
+            for resource in (container.get(resource_map) or {}).values():
+                if isinstance(resource, dict):
+                    _collect_suggestion_markers(resource, marker_suggestions, tab_id)
+
+    collect_container(doc_data)
+
+    def walk_tabs(tab: dict[str, Any]) -> None:
+        """Collect suggestions from a tab's segments and its child tabs."""
+        doc_tab = tab.get("documentTab")
+        if doc_tab:
+            collect_container(doc_tab, tab.get("tabProperties", {}).get("tabId"))
+        for child_tab in tab.get("childTabs", []):
+            walk_tabs(child_tab)
+
+    for tab in doc_data.get("tabs", []):
+        walk_tabs(tab)
+
+    threads = doc_data.get("suggestions")
+    if threads is None:
+        # Preserve ID-only compatibility with older discovery responses, while
+        # making the degraded result explicit to logs. Preview-enabled responses
+        # use SuggestionThread as the source of truth and cannot miss an ID just
+        # because a future marker field was added.
+        logger.warning(
+            "[list_doc_suggestions] SuggestionThread data was absent; falling "
+            "back to inline suggestion markers. Confirm Developer Preview enrollment."
+        )
+        for info in marker_suggestions.values():
+            info.update(
+                {
+                    "status": "OPEN",
+                    "author": None,
+                    "create_time": None,
+                }
+            )
+        return marker_suggestions
+
+    suggestions: dict[str, dict[str, Any]] = {}
+    for thread in threads:
+        if thread.get("status") != "OPEN":
+            continue
+        suggestion_id = thread.get("suggestionId")
+        if not isinstance(suggestion_id, str) or not suggestion_id:
+            continue
+
+        marker = marker_suggestions.get(suggestion_id, {})
+        head_post = thread.get("headPost") or {}
+        author = head_post.get("author") or {}
+        author_name = author.get("displayName")
+        if not author_name and author.get("anonymous"):
+            author_name = "Anonymous"
+
+        suggestions[suggestion_id] = {
+            "types": marker.get("types", set()),
+            "text_preview": thread.get("summaryText") or marker.get("text_preview", ""),
+            "tab_id": marker.get("tab_id"),
+            "status": thread.get("status"),
+            "author": author_name,
+            "create_time": head_post.get("createTime"),
+        }
+
+    return suggestions
+
+
+@server.tool(
+    title="List Doc Suggestions",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("list_doc_suggestions", is_read_only=True, service_type="docs")
+@require_google_service("docs", "docs_read")
+async def list_doc_suggestions(
+    service: Any,
+    user_google_email: str,
+    document_id: str,
+) -> str:
+    """
+    Lists pending suggestion threads in a Google Doc, with the suggestion_id
+    values needed to call manage_doc_suggestions (accept/reject/delete).
+
+    Fetches open SuggestionThread resources, including each thread's summary,
+    author, and creation time. Inline suggestion markers enrich the output with
+    the affected tab and change types when available.
+
+    Args:
+        user_google_email: User's Google email address
+        document_id: ID of the document to inspect
+
+    Returns:
+        str: One line per suggestion thread ("suggestion_id | types | text
+             preview"), or a message if there are no pending suggestions.
+    """
+    preview_unavailable = False
+    try:
+        suggestions = await _fetch_doc_suggestions(service, document_id)
+    except _DeveloperPreviewUnavailable:
+        preview_unavailable = True
+        logger.warning(
+            "[list_doc_suggestions] Developer Preview is unavailable; listing "
+            "standard inline suggestion markers only for document %s",
+            document_id,
+        )
+        suggestions = await _fetch_doc_suggestions(
+            service, document_id, include_threads=False
+        )
+
+    link = f"https://docs.google.com/document/d/{document_id}/edit"
+
+    preview_warning = ""
+    if preview_unavailable:
+        preview_warning = (
+            "Developer Preview suggestion-thread metadata is unavailable for "
+            "this connection. Showing standard inline suggestion markers only; "
+            "author and creation metadata are unavailable. Creating and managing "
+            "suggestions requires Workspace Developer Preview enrollment: "
+            f"{_DEVELOPER_PREVIEW_URL}\n"
+        )
+
+    if not suggestions:
+        if preview_unavailable:
+            return (
+                f"{preview_warning}No inline pending suggestion markers found in "
+                f"document {document_id}. Link: {link}"
+            )
+        return f"No pending suggestions found in document {document_id}. Link: {link}"
+
+    lines = []
+    if preview_warning:
+        lines.append(preview_warning.rstrip())
+    lines.append(f"Pending suggestions in document {document_id}:")
+    for sid, info in suggestions.items():
+        types = "+".join(sorted(info["types"])) or "suggestion"
+        tab_info = f" (tab: {info['tab_id']})" if info["tab_id"] else ""
+        preview = info["text_preview"].replace("\n", "\\n")
+        if len(preview) > 80:
+            preview = preview[:80] + "..."
+        # Structural suggestions (a suggested table row, say) carry no text of
+        # their own; an empty pair of quotes would read as "suggests empty text".
+        rendered = f'"{preview}"' if preview else "(no text preview)"
+        metadata = []
+        if info.get("author"):
+            metadata.append(f"author: {info['author']}")
+        if info.get("create_time"):
+            metadata.append(f"created: {info['create_time']}")
+        metadata_info = f" | {', '.join(metadata)}" if metadata else ""
+        lines.append(f"  {sid} | {types}{tab_info} | {rendered}{metadata_info}")
+
+    lines.append(f"Link: {link}")
+    return "\n".join(lines)
 
 
 @server.tool(
@@ -1604,6 +2222,143 @@ async def inspect_doc_structure(
 
     link = f"https://docs.google.com/document/d/{document_id}/edit"
     return f"Document structure analysis for {document_id}:\n\n{json.dumps(result, indent=2)}\n\nLink: {link}"
+
+
+# Operation types this codebase exposes that the Docs API rejects when
+# WriteControl.writeMode is SUGGEST (see "Unsupported requests in suggest
+# mode" at https://developers.google.com/workspace/docs/api/how-tos/suggestions).
+_SUGGEST_MODE_UNSUPPORTED_OPERATION_TYPES = {
+    "insert_doc_tab": "AddDocumentTab",
+    "delete_doc_tab": "DeleteTab",
+    "update_doc_tab": "UpdateDocumentTabProperties",
+    "create_named_range": "CreateNamedRange",
+    "delete_named_range": "DeleteNamedRange",
+    "update_table_column_properties": "UpdateTableColumnProperties",
+}
+
+# update_document_style fields the API rejects as suggestions.
+_SUGGEST_MODE_UNSUPPORTED_DOCUMENT_STYLE_FIELDS = {
+    "document_mode",
+    "use_even_page_header_footer",
+    "use_first_page_header_footer",
+}
+
+
+def _describe_comment_update_state(
+    comment_state: Optional[str],
+    operations: list[dict[str, Any]],
+    metadata: dict[str, Any],
+) -> str:
+    """
+    Render BatchUpdateDocumentResponse.commentUpdateState for a suggest-mode
+    response, without claiming more than the state actually confirms.
+
+    A suggest-mode batch can partially fail: the document model changes commit
+    while the suggestion threads fail to save, leaving what the caller intended
+    as a proposal applied directly. Only ALL_SAVED justifies reporting the batch
+    as suggested. NO_UPDATES_REQUESTED is benign only when every operation is a
+    find/replace that the API proved matched zero occurrences. Anything else is
+    reported as unconfirmed rather than as success.
+
+    Args:
+        comment_state: The commentUpdateState value, if the API returned one.
+        operations: Normalized operations submitted in the batch.
+        metadata: Batch response metadata, including replace-all occurrence
+            counts.
+
+    Returns:
+        str: A sentence to append to the tool response, leading with a space.
+    """
+    if comment_state == _COMMENT_UPDATE_ALL_SAVED:
+        return " Applied as suggested edits (comment_update_state: ALL_SAVED)."
+    if (
+        comment_state == _COMMENT_UPDATE_NONE_REQUESTED
+        and _all_operations_are_proven_noops(operations, metadata)
+    ):
+        return (
+            " No suggestion updates were required because every find/replace "
+            "matched zero occurrences (comment_update_state: "
+            "NO_UPDATES_REQUESTED)."
+        )
+    rendered_state = comment_state or "MISSING"
+    return (
+        " WARNING: the API did not confirm that suggestion threads were saved "
+        f"(comment_update_state: {rendered_state}). The edits may be LIVE in the "
+        "document rather than pending as suggestions. This can happen when the "
+        "Google Cloud project is not enrolled in the Workspace Developer Preview "
+        f"Program ({_DEVELOPER_PREVIEW_URL}) or when suggestion persistence fails. "
+        "Verify with list_doc_suggestions and undo in the Docs UI (Edit > Undo) "
+        "if they were not meant to be live."
+    )
+
+
+def _all_operations_are_proven_noops(
+    operations: list[dict[str, Any]],
+    metadata: dict[str, Any],
+) -> bool:
+    """Return True only when response data proves the entire batch was a no-op."""
+    if not operations or any(op.get("type") != "find_replace" for op in operations):
+        return False
+    occurrences = metadata.get("replace_all_text_occurrences", [])
+    return len(occurrences) == len(operations) and all(n == 0 for n in occurrences)
+
+
+_SUGGESTION_RESPONSE_FIELDS = {
+    "createdSuggestionIds": "created",
+    "updatedSummarySuggestionIds": "updated",
+    "deletedSuggestionIds": "deleted",
+    "acceptedSuggestionIds": "accepted",
+    "rejectedSuggestionIds": "rejected",
+}
+
+
+def _describe_suggestion_responses(responses: list[dict[str, Any]]) -> str:
+    """Summarize the authoritative per-request suggestion response IDs."""
+    affected: dict[str, set[str]] = {
+        label: set() for label in _SUGGESTION_RESPONSE_FIELDS.values()
+    }
+    for response in responses:
+        for field, label in _SUGGESTION_RESPONSE_FIELDS.items():
+            affected[label].update(response.get(field, []))
+
+    parts = [f"{label}: {len(ids)}" for label, ids in affected.items() if ids]
+    return f" Suggestion results: {', '.join(parts)}." if parts else ""
+
+
+def _validate_suggest_mode_operations(
+    operations: list[dict[str, Any]],
+) -> Optional[str]:
+    """
+    Reject operations client-side that the Docs API is known to refuse when
+    executed with WriteControl.writeMode = SUGGEST, so callers get an
+    actionable error instead of an opaque API failure.
+    """
+    problems: list[str] = []
+    for i, op in enumerate(operations):
+        op_type = op.get("type")
+        api_name = _SUGGEST_MODE_UNSUPPORTED_OPERATION_TYPES.get(op_type)
+        if api_name:
+            problems.append(
+                f"operation {i} ('{op_type}') maps to {api_name}, which suggest mode does not support"
+            )
+        elif op_type == "update_document_style":
+            bad_fields = sorted(
+                _SUGGEST_MODE_UNSUPPORTED_DOCUMENT_STYLE_FIELDS & set(op.keys())
+            )
+            if bad_fields:
+                problems.append(
+                    f"operation {i} ('update_document_style') sets {bad_fields}, "
+                    "which cannot be suggested"
+                )
+
+    if not problems:
+        return None
+
+    return (
+        "suggest_mode=true but this batch includes operations the Docs API cannot "
+        "apply as suggestions: " + "; ".join(problems) + ". Remove them or run this "
+        "batch with suggest_mode=false."
+    )
 
 
 def _rewrite_modify_doc_text_http_error(
