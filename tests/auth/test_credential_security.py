@@ -173,6 +173,48 @@ class TestPathTraversal:
 
         assert resolved == legacy_path
 
+    def test_get_credential_path_normalizes_case(self, cred_store):
+        """Differently capitalized spellings map to one lower-cased filename."""
+        expected = f"user@example.com{CredentialStore.FILE_EXTENSION}"
+
+        for spelling in (
+            "user@example.com",
+            "User@example.com",
+            "USER@EXAMPLE.COM",
+            "  User@Example.com  ",
+        ):
+            assert os.path.basename(cred_store._get_credential_path(spelling)) == expected
+
+    def test_get_credential_path_finds_existing_mixed_case_file(self, cred_store):
+        """Credentials stored before normalization stay readable."""
+        mixed_case_path = os.path.join(
+            cred_store.base_dir,
+            f"User@Example.com{CredentialStore.FILE_EXTENSION}",
+        )
+        os.makedirs(cred_store.base_dir, exist_ok=True)
+        with open(mixed_case_path, "w") as f:
+            json.dump({}, f)
+
+        assert cred_store._get_credential_path("user@example.com") == mixed_case_path
+        assert cred_store._get_credential_path("USER@EXAMPLE.COM") == mixed_case_path
+
+    def test_get_credential_path_prefers_normalized_over_mixed_case(self, cred_store):
+        """A normalized file wins when both spellings exist on disk."""
+        os.makedirs(cred_store.base_dir, exist_ok=True)
+        normalized_path = os.path.join(
+            cred_store.base_dir, f"user@example.com{CredentialStore.FILE_EXTENSION}"
+        )
+        for path in (
+            normalized_path,
+            os.path.join(
+                cred_store.base_dir, f"User@Example.com{CredentialStore.FILE_EXTENSION}"
+            ),
+        ):
+            with open(path, "w") as f:
+                json.dump({}, f)
+
+        assert cred_store._get_credential_path("User@Example.com") == normalized_path
+
     def test_list_users_includes_legacy_filename_variants(self, cred_store):
         """Legacy sanitized filenames remain discoverable during migration."""
         os.makedirs(cred_store.base_dir, exist_ok=True)
