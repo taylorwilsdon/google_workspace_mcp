@@ -110,10 +110,17 @@ CONFIG_CLIENT_SECRETS_PATH = get_client_secrets_path()
 
 def _find_any_credentials(
     base_dir: str = DEFAULT_CREDENTIALS_DIR,
+    preferred_user_email: Optional[str] = None,
 ) -> tuple[Optional[Credentials], Optional[str]]:
     """
     Find and load any valid credentials from the credentials directory.
     Used in single-user mode to bypass session-to-OAuth mapping.
+
+    Args:
+        preferred_user_email: When set, this user's stored credentials are
+            tried first so single-user mode doesn't accidentally select a
+            different (possibly expired) account when more than one credential
+            file exists.
 
     Returns:
         Tuple of (Credentials, user_email) or (None, None) if none exist.
@@ -128,18 +135,25 @@ def _find_any_credentials(
             )
             return None, None
 
-        # Return credentials for the first user found
-        first_user = users[0]
-        credentials = store.get_credential(first_user)
-        if credentials:
-            logger.info(
-                f"[single-user] Found credentials for {first_user} via credential store"
-            )
-            return credentials, first_user
-        else:
-            logger.warning(
-                f"[single-user] Could not load credentials for {first_user} via credential store"
-            )
+        # Prefer the explicitly requested user so single-user mode doesn't
+        # accidentally pick a different (possibly expired) account when more
+        # than one credential file exists.
+        ordered_users = list(users)
+        if preferred_user_email and preferred_user_email in ordered_users:
+            ordered_users.remove(preferred_user_email)
+            ordered_users.insert(0, preferred_user_email)
+
+        for candidate in ordered_users:
+            credentials = store.get_credential(candidate)
+            if credentials:
+                logger.info(
+                    f"[single-user] Found credentials for {candidate} via credential store"
+                )
+                return credentials, candidate
+            else:
+                logger.warning(
+                    f"[single-user] Could not load credentials for {candidate} via credential store"
+                )
 
     except Exception as e:
         logger.error(
@@ -148,6 +162,43 @@ def _find_any_credentials(
 
     logger.info("[single-user] No valid credentials found via credential store")
     return None, None
+
+
+def _store_credential_without_scope_shrink(
+    credential_store, user_email: str, credentials: Credentials
+) -> bool:
+    """Persist refreshed credentials without ever dropping scopes.
+
+    A stale, narrower-scoped credential (e.g. an in-memory session token issued
+    before the user granted additional scopes) must never overwrite a broader
+    credential already on file. The google-auth library does not update
+    ``credentials.scopes`` on refresh, so refreshing such a token and persisting
+    it permanently clobbers the freshly re-authorized scopes, forcing an endless
+    re-authentication loop for tools that need scopes added in a later grant. If
+    the stored credential has scopes the incoming one lacks, keep the broader
+    stored credential instead of overwriting it.
+
+    Returns True when the stored credential is at least as broad as before
+    (either freshly written or intentionally preserved), False if the underlying
+    write failed.
+    """
+    try:
+        existing = credential_store.get_credential(user_email)
+    except Exception:
+        existing = None
+
+    new_scopes = set(credentials.scopes or [])
+    existing_scopes = set(existing.scopes) if existing and existing.scopes else set()
+    missing = existing_scopes - new_scopes
+    if missing:
+        logger.warning(
+            f"[get_credentials] Not persisting refreshed credentials for {user_email}: "
+            f"refreshed token is missing scopes already on file ({sorted(missing)}). "
+            "Keeping the broader stored credential to avoid a scope-shrink clobber."
+        )
+        return True
+
+    return credential_store.store_credential(user_email, credentials)
 
 
 def save_credentials_to_session(session_id: str, credentials: Credentials):
@@ -1000,8 +1051,8 @@ def get_credentials(
                                     try:
                                         credential_store = get_credential_store()
                                         persist_succeeded = (
-                                            credential_store.store_credential(
-                                                user_email, credentials
+                                            _store_credential_without_scope_shrink(
+                                                credential_store, user_email, credentials
                                             )
                                         )
                                         if not persist_succeeded:
@@ -1169,8 +1220,8 @@ def get_credentials(
                 if not is_stateless_mode():
                     try:
                         credential_store = get_credential_store()
-                        persist_succeeded = credential_store.store_credential(
-                            user_google_email, credentials
+                        persist_succeeded = _store_credential_without_scope_shrink(
+                            credential_store, user_google_email, credentials
                         )
                     except Exception as persist_error:
                         persist_succeeded = False
