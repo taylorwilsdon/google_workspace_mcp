@@ -19,6 +19,34 @@ if sys.platform == "darwin":
     sys.stdout = io.StringIO()
 
 
+def _bridge_ca_bundle_env():
+    """Make httplib2 honor the standard SSL_CERT_FILE / REQUESTS_CA_BUNDLE vars.
+
+    httplib2 (which backs every Google API client here) reads its trust store
+    from its own ``HTTPLIB2_CA_CERTS`` env var, falling back to ``certifi`` — it
+    does NOT consult ``SSL_CERT_FILE`` / ``REQUESTS_CA_BUNDLE`` the way
+    ``requests``/``urllib`` do, and it freezes the value at import time. Behind a
+    TLS-inspecting proxy (Zscaler/Netskope/corporate MITM) whose root is not in
+    ``certifi``, this makes every call fail ``CERTIFICATE_VERIFY_FAILED`` even
+    when the user has set the conventional vars.
+
+    Bridge them to ``HTTPLIB2_CA_CERTS`` (when not already set) BEFORE httplib2 is
+    imported, so a single conventional configuration works. Explicit
+    ``HTTPLIB2_CA_CERTS`` always wins; non-existent paths are ignored. Idempotent.
+    """
+    if os.environ.get("HTTPLIB2_CA_CERTS"):
+        return
+    for var in ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE"):
+        path = os.environ.get(var)
+        if path and os.path.isfile(path):
+            os.environ["HTTPLIB2_CA_CERTS"] = path
+            return
+
+
+# Bridge process-supplied CA env vars before any Google/httplib2 import below.
+_bridge_ca_bundle_env()
+
+
 def _load_startup_dependencies():
     from auth.credential_store import get_credential_store, get_selected_backend
     from auth.oauth_config import (
@@ -90,6 +118,10 @@ def _load_startup_dependencies():
 
 dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
 load_dotenv(dotenv_path=dotenv_path)
+
+# Re-bridge in case the CA bundle path was supplied via the .env file rather
+# than the process environment.
+_bridge_ca_bundle_env()
 
 # Suppress googleapiclient discovery cache warning
 logging.getLogger("googleapiclient.discovery_cache").setLevel(logging.ERROR)
