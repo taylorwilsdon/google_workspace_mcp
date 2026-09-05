@@ -12,6 +12,7 @@ from core.warning_filters import install_startup_warning_filters
 
 install_startup_warning_filters()
 
+from auth.account_identity import get_legacy_account_identity
 from auth.auth_info_middleware import AuthInfoMiddleware
 from core.camel_case_middleware import CamelCaseArgumentsMiddleware
 from auth.google_auth import handle_auth_callback, start_auth_flow, check_client_secrets
@@ -39,6 +40,7 @@ from core.config import (
 )
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastmcp import FastMCP
+from fastmcp.exceptions import ToolError
 from fastmcp.server.auth.providers.google import GoogleProvider
 from mcp.types import ToolAnnotations, Icon
 from starlette.applications import Starlette
@@ -267,13 +269,13 @@ class SecureFastMCP(FastMCP):
         return app
 
     async def list_tools(self, *, run_middleware: bool = True):
-        """Override to mark user_google_email as optional when USER_GOOGLE_EMAIL is set.
+        """Expose a safe default account when legacy auth has one canonical user.
 
-        In single-user / self-hosted mode the env var provides the default email, so
-        callers (agents, MCP adapters) should not be required to supply it.  We patch
-        the JSON schema returned by list_tools to remove 'user_google_email' from the
-        ``required`` array and inject the env-var value as the ``default``.  The
-        runtime still resolves the email correctly via the service decorator.
+        OAuth 2.1 and trusted-gateway modes derive identity from verified request
+        context. Legacy/self-hosted mode may instead have an explicit
+        ``USER_GOOGLE_EMAIL`` or, in ``--single-user`` mode, exactly one stored
+        credential account. In either case callers should not have to guess the
+        account string, so the tool schema advertises it as an optional default.
         """
         tools = list(await super().list_tools(run_middleware=run_middleware))
         if is_trust_gateway_identity():
@@ -293,8 +295,13 @@ class SecureFastMCP(FastMCP):
                 schema.update(required=required, properties=properties)
                 patched.append(tool.model_copy(update={"parameters": schema}))
             return patched
-        if not USER_GOOGLE_EMAIL or is_oauth21_enabled():
+        if is_oauth21_enabled():
             return tools
+
+        default_email = get_legacy_account_identity().default_email
+        if not default_email:
+            return tools
+
         patched = []
         for tool in tools:
             schema = dict(tool.parameters)
@@ -303,7 +310,7 @@ class SecureFastMCP(FastMCP):
                 required = [r for r in required if r != "user_google_email"]
                 props = {k: dict(v) for k, v in schema.get("properties", {}).items()}
                 if "user_google_email" in props:
-                    props["user_google_email"]["default"] = USER_GOOGLE_EMAIL
+                    props["user_google_email"]["default"] = default_email
                 schema = dict(schema, required=required, properties=props)
                 patched.append(tool.model_copy(update={"parameters": schema}))
             else:
@@ -311,13 +318,7 @@ class SecureFastMCP(FastMCP):
         return patched
 
     async def call_tool(self, name: str, arguments: Optional[dict], *args, **kwargs):
-        """Inject user_google_email before pydantic validates the call arguments.
-
-        When USER_GOOGLE_EMAIL is configured and OAuth 2.1 is not active, callers
-        (agents, adapters) are allowed to omit user_google_email.  FastMCP validates
-        arguments against the function signature BEFORE calling the tool, so we must
-        inject the default BEFORE that validation step.
-        """
+        """Resolve legacy account identity before pydantic validates tool arguments."""
         arguments = arguments or {}
         if is_trust_gateway_identity():
             # The verified gateway principal is authoritative for every tool, and the
@@ -329,12 +330,31 @@ class SecureFastMCP(FastMCP):
                 for key, value in arguments.items()
                 if key != "user_google_email"
             }
-        elif (
-            not is_oauth21_enabled()
-            and USER_GOOGLE_EMAIL
-            and "user_google_email" not in arguments
-        ):
-            arguments = {**arguments, "user_google_email": USER_GOOGLE_EMAIL}
+        elif not is_oauth21_enabled():
+            identity = get_legacy_account_identity()
+            requested_email = arguments.get("user_google_email")
+
+            if requested_email and identity.single_user:
+                canonical_email = identity.canonical_stored_email(str(requested_email))
+                if canonical_email:
+                    arguments = {
+                        **arguments,
+                        "user_google_email": canonical_email,
+                    }
+                elif identity.default_is_sole_stored and name != "start_google_auth":
+                    raise ToolError(
+                        "This single-user server has one stored credential account, "
+                        f"'{identity.sole_stored_email}', but the call requested "
+                        f"'{requested_email}'. Retry with the authenticated account, "
+                        "or use start_google_auth to explicitly authenticate a different account."
+                    )
+
+            if "user_google_email" not in arguments and identity.default_email:
+                arguments = {
+                    **arguments,
+                    "user_google_email": identity.default_email,
+                }
+
         return await super().call_tool(name, arguments, *args, **kwargs)
 
 

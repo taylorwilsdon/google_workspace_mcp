@@ -2,8 +2,10 @@ import inspect
 from types import SimpleNamespace
 
 import pytest
+from fastmcp.exceptions import ToolError
 
 import auth.service_decorator as service_decorator
+from auth.account_identity import LegacyAccountIdentity
 import core.server as server_module
 from core.server import SecureFastMCP
 
@@ -33,16 +35,48 @@ def test_extract_oauth20_user_email_falls_back_to_env(monkeypatch):
 
 def test_extract_oauth20_user_email_raises_without_arg_or_env(monkeypatch):
     monkeypatch.setattr(service_decorator, "_ENV_USER_EMAIL", None)
+    monkeypatch.delenv("USER_GOOGLE_EMAIL", raising=False)
+    monkeypatch.setattr(
+        service_decorator,
+        "get_legacy_account_identity",
+        lambda: LegacyAccountIdentity(
+            single_user=False,
+            configured_email=None,
+            stored_users=(),
+        ),
+    )
 
     with pytest.raises(Exception, match="user_google_email"):
         service_decorator._extract_oauth20_user_email((), {}, _sample_sig())
+
+
+def test_extract_oauth20_user_email_falls_back_to_sole_stored_account(monkeypatch):
+    monkeypatch.setattr(service_decorator, "_ENV_USER_EMAIL", None)
+    monkeypatch.delenv("USER_GOOGLE_EMAIL", raising=False)
+    monkeypatch.setattr(
+        service_decorator,
+        "get_legacy_account_identity",
+        lambda: LegacyAccountIdentity(
+            single_user=True,
+            configured_email=None,
+            stored_users=("stored@example.com",),
+        ),
+    )
+    kwargs = {}
+
+    user_google_email = service_decorator._extract_oauth20_user_email(
+        (), kwargs, _sample_sig()
+    )
+
+    assert user_google_email == "stored@example.com"
+    assert kwargs["user_google_email"] == "stored@example.com"
 
 
 @pytest.mark.asyncio
 async def test_list_tools_marks_user_google_email_optional_when_default_configured(
     monkeypatch,
 ):
-    monkeypatch.setattr(server_module, "USER_GOOGLE_EMAIL", "configured@example.com")
+    monkeypatch.setenv("USER_GOOGLE_EMAIL", "configured@example.com")
     monkeypatch.setattr(server_module, "is_oauth21_enabled", lambda: False)
     monkeypatch.setattr(server_module, "is_trust_gateway_identity", lambda: False)
 
@@ -68,7 +102,7 @@ async def test_list_tools_marks_user_google_email_optional_when_default_configur
 
 @pytest.mark.asyncio
 async def test_list_tools_leaves_schema_unchanged_without_default(monkeypatch):
-    monkeypatch.setattr(server_module, "USER_GOOGLE_EMAIL", None)
+    monkeypatch.delenv("USER_GOOGLE_EMAIL", raising=False)
     monkeypatch.setattr(server_module, "is_oauth21_enabled", lambda: False)
     monkeypatch.setattr(server_module, "is_trust_gateway_identity", lambda: False)
 
@@ -91,7 +125,7 @@ async def test_list_tools_leaves_schema_unchanged_without_default(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_call_tool_injects_default_email_before_validation(monkeypatch):
-    monkeypatch.setattr(server_module, "USER_GOOGLE_EMAIL", "configured@example.com")
+    monkeypatch.setenv("USER_GOOGLE_EMAIL", "configured@example.com")
     monkeypatch.setattr(server_module, "is_oauth21_enabled", lambda: False)
     monkeypatch.setattr(server_module, "is_trust_gateway_identity", lambda: False)
 
@@ -108,10 +142,128 @@ async def test_call_tool_injects_default_email_before_validation(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_single_user_sole_credential_becomes_tool_default(monkeypatch):
+    monkeypatch.delenv("USER_GOOGLE_EMAIL", raising=False)
+    monkeypatch.setattr(server_module, "is_oauth21_enabled", lambda: False)
+    monkeypatch.setattr(server_module, "is_trust_gateway_identity", lambda: False)
+    monkeypatch.setattr(
+        server_module,
+        "get_legacy_account_identity",
+        lambda: LegacyAccountIdentity(
+            single_user=True,
+            configured_email=None,
+            stored_users=("stored@example.com",),
+        ),
+    )
+
+    server = SecureFastMCP(name="test_server")
+
+    def echo_email(user_google_email: str) -> str:
+        return user_google_email
+
+    server.tool()(echo_email)
+
+    tool = next(
+        t
+        for t in await server.list_tools(run_middleware=False)
+        if t.name == "echo_email"
+    )
+    result = await server.call_tool("echo_email", None)
+
+    assert "user_google_email" not in tool.parameters.get("required", [])
+    assert (
+        tool.parameters["properties"]["user_google_email"]["default"]
+        == "stored@example.com"
+    )
+    assert _result_text(result) == "stored@example.com"
+
+
+@pytest.mark.asyncio
+async def test_single_user_sole_credential_rejects_wrong_caller_email(monkeypatch):
+    monkeypatch.setattr(server_module, "is_oauth21_enabled", lambda: False)
+    monkeypatch.setattr(server_module, "is_trust_gateway_identity", lambda: False)
+    monkeypatch.setattr(
+        server_module,
+        "get_legacy_account_identity",
+        lambda: LegacyAccountIdentity(
+            single_user=True,
+            configured_email=None,
+            stored_users=("stored@example.com",),
+        ),
+    )
+
+    server = SecureFastMCP(name="test_server")
+
+    def echo_email(user_google_email: str) -> str:
+        return user_google_email
+
+    server.tool()(echo_email)
+
+    with pytest.raises(ToolError, match="stored@example.com"):
+        await server.call_tool("echo_email", {"user_google_email": "wrong@example.com"})
+
+
+@pytest.mark.asyncio
+async def test_single_user_canonicalizes_case_only_email_mismatch(monkeypatch):
+    monkeypatch.setattr(server_module, "is_oauth21_enabled", lambda: False)
+    monkeypatch.setattr(server_module, "is_trust_gateway_identity", lambda: False)
+    monkeypatch.setattr(
+        server_module,
+        "get_legacy_account_identity",
+        lambda: LegacyAccountIdentity(
+            single_user=True,
+            configured_email=None,
+            stored_users=("Stored@Example.com",),
+        ),
+    )
+
+    server = SecureFastMCP(name="test_server")
+
+    def echo_email(user_google_email: str) -> str:
+        return user_google_email
+
+    server.tool()(echo_email)
+
+    result = await server.call_tool(
+        "echo_email", {"user_google_email": "stored@example.com"}
+    )
+
+    assert _result_text(result) == "Stored@Example.com"
+
+
+@pytest.mark.asyncio
+async def test_start_google_auth_allows_explicit_different_account(monkeypatch):
+    monkeypatch.setattr(server_module, "is_oauth21_enabled", lambda: False)
+    monkeypatch.setattr(server_module, "is_trust_gateway_identity", lambda: False)
+    monkeypatch.setattr(
+        server_module,
+        "get_legacy_account_identity",
+        lambda: LegacyAccountIdentity(
+            single_user=True,
+            configured_email=None,
+            stored_users=("stored@example.com",),
+        ),
+    )
+
+    server = SecureFastMCP(name="test_server")
+
+    def start_google_auth(user_google_email: str) -> str:
+        return user_google_email
+
+    server.tool()(start_google_auth)
+
+    result = await server.call_tool(
+        "start_google_auth", {"user_google_email": "new@example.com"}
+    )
+
+    assert _result_text(result) == "new@example.com"
+
+
+@pytest.mark.asyncio
 async def test_gateway_mode_strips_email_and_ignores_configured_default(monkeypatch):
     """In gateway mode call_tool must drop caller-supplied user_google_email and
     never inject USER_GOOGLE_EMAIL — tool signatures no longer accept the param."""
-    monkeypatch.setattr(server_module, "USER_GOOGLE_EMAIL", "configured@example.com")
+    monkeypatch.setenv("USER_GOOGLE_EMAIL", "configured@example.com")
     monkeypatch.setattr(server_module, "is_oauth21_enabled", lambda: False)
     monkeypatch.setattr(server_module, "is_trust_gateway_identity", lambda: True)
 
@@ -132,7 +284,7 @@ async def test_gateway_mode_strips_email_and_ignores_configured_default(monkeypa
 
 @pytest.mark.asyncio
 async def test_gateway_mode_hides_start_google_auth_email(monkeypatch):
-    monkeypatch.setattr(server_module, "USER_GOOGLE_EMAIL", None)
+    monkeypatch.delenv("USER_GOOGLE_EMAIL", raising=False)
     monkeypatch.setattr(server_module, "is_oauth21_enabled", lambda: False)
     monkeypatch.setattr(server_module, "is_trust_gateway_identity", lambda: True)
 
@@ -244,6 +396,39 @@ async def test_authenticate_service_account_raises_without_configured_user(
     monkeypatch.setattr(service_decorator, "_ENV_USER_EMAIL", None)
     monkeypatch.delenv("USER_GOOGLE_EMAIL", raising=False)
     monkeypatch.setattr(service_decorator, "is_service_account_enabled", lambda: True)
+
+    with pytest.raises(
+        service_decorator.GoogleAuthenticationError,
+        match="Service account mode requires USER_GOOGLE_EMAIL to be configured",
+    ):
+        await service_decorator._authenticate_service(
+            use_oauth21=False,
+            service_name="gmail",
+            service_version="v1",
+            tool_name="sample_tool",
+            user_google_email="caller@example.com",
+            resolved_scopes=["scope-a"],
+            mcp_session_id=None,
+            authenticated_user=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_service_account_does_not_use_inferred_single_user_identity(monkeypatch):
+    """A sole OAuth credential must not satisfy service-account configuration."""
+    monkeypatch.setattr(service_decorator, "_ENV_USER_EMAIL", None)
+    monkeypatch.delenv("USER_GOOGLE_EMAIL", raising=False)
+    monkeypatch.setenv("MCP_SINGLE_USER_MODE", "1")
+    monkeypatch.setattr(service_decorator, "is_service_account_enabled", lambda: True)
+    monkeypatch.setattr(
+        service_decorator,
+        "get_legacy_account_identity",
+        lambda: LegacyAccountIdentity(
+            single_user=True,
+            configured_email=None,
+            stored_users=("stored@example.com",),
+        ),
+    )
 
     with pytest.raises(
         service_decorator.GoogleAuthenticationError,
