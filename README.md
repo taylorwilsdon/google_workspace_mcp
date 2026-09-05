@@ -18,7 +18,7 @@
 
 By leveraging native OAuth 2.1, stateless deployment capability and external auth server & gateway passthrough auth support, it's also the only Workspace MCP you can host for your whole organization centrally & securely!
 
-###### Supports all free Google accounts & Google Workspace plans with expanded app options like Chat & Spaces. <br/>Interested in a managed cloud instance? [That can be arranged](https://workspacemcp.com/workspace-mcp-cloud?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=hero-cloud) (starting at $5/mo).
+Supports all free Google accounts & Google Workspace plans with expanded app options like Chat & Spaces. <br/>Interested in a managed cloud instance? [That can be arranged](https://workspacemcp.com/workspace-mcp-cloud?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=hero-cloud) (starting at $5/mo).
 
 
 </div>
@@ -195,6 +195,8 @@ uvx workspace-mcp --tools gmail drive calendar
 export MCP_ENABLE_OAUTH21=true
 export GOOGLE_OAUTH_CLIENT_ID="..."
 export GOOGLE_OAUTH_CLIENT_SECRET="..."
+#    Alternatively, point GOOGLE_CLIENT_SECRET_PATH at a client_secret.json
+#    that contains the client id and secret (env vars take precedence).
 export WORKSPACE_MCP_PORT=8000
 export GOOGLE_OAUTH_REDIRECT_URI="http://localhost:${WORKSPACE_MCP_PORT}/oauth2callback"
 export OAUTHLIB_INSECURE_TRANSPORT=1
@@ -252,6 +254,7 @@ Everything you need to run this in production lives in two places. The [document
 - **Docker** - `docker build -t workspace-mcp . && docker run -p 8000:8000 workspace-mcp`
 
 The **[Advanced Deployment guide](https://workspacemcp.com/docs/deployment?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=deploy-advanced)** covers self-hosting specifics: reverse proxy setup with `WORKSPACE_EXTERNAL_URL` (including the nginx `Origin: null` consent workaround, the `WORKSPACE_MCP_ALLOW_NULL_ORIGIN_CONSENT` escape hatch, and the `Referrer-Policy` pitfall), origin validation and VS Code webview allowlisting, credential store backends (local directory or GCS with CMEK enforcement), and the **[complete environment variable reference](https://workspacemcp.com/docs/deployment?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=deploy-env-vars#environment-variables)**.
+Optional per-download payload ceiling for container deployments: set `WORKSPACE_MCP_MAX_FILE_BYTES` to a positive byte count (e.g. `5242880` for 5 MiB) to reject Drive / Gmail / Chat / Google Docs downloads that would otherwise be fully buffered in-process. Unset or `0` leaves the total size uncapped; uncapped Drive transfers still use 256 KiB transport chunks instead of the Google client's 100 MiB default. This is a file-size limit, not a process-RSS limit: leave headroom for parsing, base64/JSON representation, and concurrent tool calls. Invalid or negative values fail server startup instead of silently disabling the limit. Downloads streamed directly to disk are not subject to this in-memory payload ceiling.
 
 Advanced OAuth 2.1 deployments affected by concurrent client token refreshes can tune FastMCP's early-refresh threshold and client-facing access-token lifetime. See [`.env.oauth21`](.env.oauth21) for the bounded settings, recommended values, and security tradeoffs. These settings reduce how often the race occurs; they do not add a grace period to FastMCP's one-time-use refresh-token rotation.
 

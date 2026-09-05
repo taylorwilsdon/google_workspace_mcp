@@ -137,6 +137,13 @@ Create, update, or delete a label.
 | label_id | string | conditional | | Required for update and delete |
 | label_list_visibility | string | no | "labelShow" | "labelShow" or "labelHide" |
 | message_list_visibility | string | no | "show" | "show" or "hide" |
+| background_color | string | no | | Hex color, e.g. "#fb4c2f". Set with text_color. Gmail accepts only its own [palette](https://developers.google.com/gmail/api/reference/rest/v1/users.labels#Label); other values are rejected before the request. User labels only |
+| text_color | string | no | | Hex color, e.g. "#ffffff". Set with background_color. Same palette |
+| clear_color | boolean | no | false | On update, remove the current color. Cannot be combined with background_color or text_color |
+
+Colors are optional, but Gmail requires both when one is given, so passing only
+one is rejected. On update, passing neither keeps the color the label already had;
+set clear_color to remove it. Color parameters are ignored for delete actions.
 
 ### modify_gmail_message_labels
 Add or remove labels on a single message.

@@ -120,11 +120,6 @@ class AttachmentStorage:
         Returns:
             SavedAttachment with file_id (UUID) and path (absolute file path)
         """
-        _ensure_storage_dir()
-
-        # Generate unique file ID for metadata tracking
-        file_id = str(uuid.uuid4())
-
         # Decode base64 data
         try:
             file_bytes = base64.urlsafe_b64decode(base64_data)
@@ -132,6 +127,18 @@ class AttachmentStorage:
             logger.error(f"Failed to decode base64 attachment data: {e}")
             raise ValueError(f"Invalid base64 data: {e}")
 
+        return self.save_attachment_bytes(file_bytes, filename, mime_type)
+
+    def save_attachment_bytes(
+        self,
+        file_bytes: bytes,
+        filename: Optional[str] = None,
+        mime_type: Optional[str] = None,
+    ) -> SavedAttachment:
+        """Save an already-decoded attachment without a base64 round trip."""
+        _ensure_storage_dir()
+
+        file_id = str(uuid.uuid4())
         save_name = _build_save_name(file_id, filename, mime_type)
 
         # Save file with restrictive permissions (sensitive email/drive content)
@@ -145,8 +152,9 @@ class AttachmentStorage:
             try:
                 total_written = 0
                 data_len = len(file_bytes)
+                data_view = memoryview(file_bytes)
                 while total_written < data_len:
-                    written = os.write(fd, file_bytes[total_written:])
+                    written = os.write(fd, data_view[total_written:])
                     if written == 0:
                         raise OSError(
                             "os.write returned 0 bytes; could not write attachment data"

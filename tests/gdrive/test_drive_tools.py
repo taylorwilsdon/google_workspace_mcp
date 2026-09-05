@@ -2367,6 +2367,44 @@ async def test_update_drive_file_replaces_content_with_conversion(mock_resolve_i
 
 
 @pytest.mark.asyncio
+@patch("gdrive.drive_tools._get_content_update_lock")
+@patch("gdrive.drive_tools.resolve_drive_item", new_callable=AsyncMock)
+async def test_update_drive_file_replace_uses_content_lock(
+    mock_resolve_item, mock_get_lock
+):
+    """Replace must serialize with append/prepend read-modify-write operations."""
+    mock_resolve_item.return_value = (
+        "file123",
+        {"name": "note.md", "mimeType": "text/markdown"},
+    )
+    events = []
+    lock = Mock()
+    lock.acquire = AsyncMock(side_effect=lambda: events.append("acquire"))
+    lock.release = Mock(side_effect=lambda: events.append("release"))
+    mock_get_lock.return_value = lock
+    mock_service = Mock()
+
+    def _execute(**kwargs):
+        events.append("update")
+        return {"id": "file123", "name": "note.md", "mimeType": "text/markdown"}
+
+    mock_service.files().update().execute.side_effect = _execute
+
+    await _unwrap(update_drive_file)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        file_id="file123",
+        content="replacement",
+        mode="replace",
+    )
+
+    mock_get_lock.assert_called_once_with("file123")
+    lock.acquire.assert_awaited_once_with()
+    lock.release.assert_called_once_with()
+    assert events == ["acquire", "update", "release"]
+
+
+@pytest.mark.asyncio
 @patch("gdrive.drive_tools.resolve_drive_item", new_callable=AsyncMock)
 async def test_update_drive_file_replaces_sheet_content_with_sheet_formats(
     mock_resolve_item,

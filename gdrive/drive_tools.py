@@ -24,6 +24,11 @@ from mcp.types import ToolAnnotations
 from auth.service_decorator import require_google_service
 from auth.oauth_config import is_stateless_mode
 from core.attachment_storage import get_attachment_storage, get_attachment_url
+from core.file_limits import (
+    FileTooLargeError,
+    download_media_bytes,
+    ensure_within_file_size_limit,
+)
 from core.utils import (
     GOOGLE_API_WRITE_RETRIES,
     IMAGE_MIME_TYPES,
@@ -112,15 +117,9 @@ async def _download_file_bytes(
     to be parsed as text anyway; anything that ends up on disk should go through
     _download_file_to_temp instead.
     """
-    fh = io.BytesIO()
-    downloader = MediaIoBaseDownload(
-        fh, _media_request(service, file_id, export_mime_type)
+    return await download_media_bytes(
+        _media_request(service, file_id, export_mime_type)
     )
-    loop = asyncio.get_event_loop()
-    done = False
-    while not done:
-        _status, done = await loop.run_in_executor(None, downloader.next_chunk)
-    return fh.getvalue()
 
 
 async def _download_file_to_temp(
@@ -366,18 +365,40 @@ async def get_drive_file_content(
     resolved_file_id, file_metadata = await resolve_drive_item(
         service,
         file_id,
-        extra_fields="name, webViewLink",
+        extra_fields="name, webViewLink, size",
     )
     file_id = resolved_file_id
     mime_type = file_metadata.get("mimeType", "")
     file_name = file_metadata.get("name", "Unknown File")
+    web_view_link = file_metadata.get("webViewLink", "#")
     export_mime_type = {
         "application/vnd.google-apps.document": "text/plain",
         "application/vnd.google-apps.spreadsheet": "text/csv",
         "application/vnd.google-apps.presentation": "text/plain",
     }.get(mime_type)
 
-    file_content_bytes = await _download_file_bytes(service, file_id, export_mime_type)
+    # Declared Drive size is only meaningful for binary downloads (not exports).
+    if not export_mime_type:
+        try:
+            ensure_within_file_size_limit(
+                file_metadata.get("size"),
+                file_name=file_name,
+                file_id=file_id,
+                web_view_link=web_view_link,
+            )
+        except FileTooLargeError as e:
+            return str(e)
+
+    request_obj = _media_request(service, file_id, export_mime_type)
+    try:
+        file_content_bytes = await download_media_bytes(
+            request_obj,
+            file_name=file_name,
+            file_id=file_id,
+            web_view_link=web_view_link,
+        )
+    except FileTooLargeError as e:
+        return str(e)
 
     # Attempt Office XML extraction only for actual Office XML files
     office_mime_types = {
@@ -428,7 +449,7 @@ async def get_drive_file_content(
     # Assemble response
     header = (
         f'File: "{file_name}" (ID: {file_id}, Type: {mime_type})\n'
-        f"Link: {file_metadata.get('webViewLink', '#')}\n\n--- CONTENT ---\n"
+        f"Link: {web_view_link}\n\n--- CONTENT ---\n"
     )
     return header + body_text
 
@@ -2135,9 +2156,7 @@ async def update_drive_file(
     remote_file_data = None
     format_map = None
     content_update_lock = (
-        _get_content_update_lock(file_id)
-        if replacing_content and mode != "replace"
-        else None
+        _get_content_update_lock(file_id) if replacing_content else None
     )
     if content_update_lock is not None:
         await content_update_lock.acquire()

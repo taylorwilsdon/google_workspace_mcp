@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -169,6 +170,77 @@ def test_configure_server_for_http_rejects_google_provider_without_client_secret
 
     with pytest.raises(RuntimeError, match="requires GOOGLE_OAUTH_CLIENT_SECRET"):
         server_module.configure_server_for_http()
+
+
+def test_configure_server_for_http_accepts_client_secret_from_file(
+    monkeypatch,
+    tmp_path,
+):
+    """OAuth 2.1 startup must accept a secret supplied via a client secrets file.
+
+    Regression test: the OAuth 2.1 config path only read environment
+    variables, so GOOGLE_CLIENT_SECRET_PATH was ignored and startup failed
+    with "OAuth 2.1 requires GOOGLE_OAUTH_CLIENT_SECRET".
+    """
+    secret_path = tmp_path / "client_secret.json"
+    secret_path.write_text(
+        json.dumps({"web": {"client_id": "env-id", "client_secret": "file-secret"}})
+    )
+
+    monkeypatch.setenv("MCP_ENABLE_OAUTH21", "true")
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "env-id")
+    monkeypatch.setenv("GOOGLE_CLIENT_SECRET_PATH", str(secret_path))
+    monkeypatch.delenv("GOOGLE_OAUTH_CLIENT_SECRET", raising=False)
+    monkeypatch.delenv("GOOGLE_CLIENT_SECRETS", raising=False)
+    monkeypatch.delenv("EXTERNAL_OAUTH21_PROVIDER", raising=False)
+    for var in (
+        "FASTMCP_SERVER_AUTH",
+        "FASTMCP_SERVER_AUTH_GOOGLE_CLIENT_ID",
+        "FASTMCP_SERVER_AUTH_GOOGLE_CLIENT_SECRET",
+        "FASTMCP_SERVER_AUTH_GOOGLE_BASE_URL",
+        "FASTMCP_SERVER_AUTH_GOOGLE_REDIRECT_PATH",
+        "FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY",
+        "WORKSPACE_MCP_OAUTH_PROXY_STORAGE_BACKEND",
+        "WORKSPACE_MCP_OAUTH_PROXY_VALKEY_HOST",
+        "WORKSPACE_MCP_OAUTH_PROXY_DISK_DIRECTORY",
+        "WORKSPACE_MCP_ALLOWED_CLIENT_REDIRECT_URIS",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
+    from auth.oauth_config import reload_oauth_config
+
+    reload_oauth_config()
+
+    captured = {}
+
+    class FakeGoogleProvider:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+            self.client_registration_options = None
+
+    monkeypatch.setattr(server_module, "get_transport_mode", lambda: "streamable-http")
+    monkeypatch.setattr(server_module, "GoogleProvider", FakeGoogleProvider)
+    monkeypatch.setattr(
+        server_module,
+        "get_current_scopes",
+        lambda: ["https://www.googleapis.com/auth/userinfo.email", "openid"],
+    )
+    monkeypatch.setattr(server_module, "set_auth_provider", lambda provider: None)
+    monkeypatch.setattr(
+        server_module,
+        "get_oauth_proxy_expiry_kwargs",
+        lambda: {
+            "token_expiry_threshold_seconds": 120,
+            "fastmcp_access_token_expiry_seconds": 86400,
+        },
+    )
+    monkeypatch.setattr(server_module, "_auth_provider", server_module._auth_provider)
+    monkeypatch.setattr(server_module.server, "auth", server_module.server.auth)
+
+    server_module.configure_server_for_http()
+
+    assert captured["client_id"] == "env-id"
+    assert captured["client_secret"] == "file-secret"
 
 
 def test_configure_server_for_http_rejects_external_provider_without_jwt_key(

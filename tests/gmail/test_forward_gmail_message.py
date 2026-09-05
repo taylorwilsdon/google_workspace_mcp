@@ -12,6 +12,7 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from gmail.gmail_tools import _forward_gmail_message_impl
+from core.utils import UserInputError
 
 
 def get_sent_mime_message(mock_service):
@@ -456,6 +457,40 @@ async def test_forward_attachment_download_failure_raises():
             include_attachments=True,
             user_google_email="me@example.com",
         )
+
+
+@pytest.mark.asyncio
+async def test_forward_rejects_oversized_attachment_before_download(monkeypatch):
+    monkeypatch.setenv("WORKSPACE_MCP_MAX_FILE_BYTES", "100")
+    message = create_mock_message(
+        subject="Oversized attachment",
+        text_body="See attached.",
+        attachments=[
+            {
+                "filename": "huge.zip",
+                "mimeType": "application/zip",
+                "attachmentId": "att-large",
+                "size": 500,
+            }
+        ],
+    )
+    mock_service = create_mock_service(message)
+    attachment_get = mock_service.users().messages().attachments().get
+    attachment_get.reset_mock()
+    send_execute = mock_service.users().messages().send().execute
+    send_execute.reset_mock()
+
+    with pytest.raises(UserInputError, match="huge.zip.*too large"):
+        await _forward_gmail_message_impl(
+            service=mock_service,
+            message_id="msg-large",
+            to="recipient@example.com",
+            include_attachments=True,
+            user_google_email="me@example.com",
+        )
+
+    attachment_get.assert_not_called()
+    send_execute.assert_not_called()
 
 
 @pytest.mark.asyncio

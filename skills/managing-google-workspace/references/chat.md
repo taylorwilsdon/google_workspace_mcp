@@ -40,7 +40,7 @@ Searches for messages in Google Chat spaces by text content.
 | page_size | integer | no | 25 | |
 
 ### send_message
-Sends a message to a Google Chat space. Can reply to existing threads.
+Sends a message to a Google Chat space. Can reply to existing threads, or edit a message already sent.
 
 | Parameter | Type | Required | Default | Notes |
 |-----------|------|----------|---------|-------|
@@ -49,6 +49,7 @@ Sends a message to a Google Chat space. Can reply to existing threads.
 | message_text | string | yes | | |
 | thread_key | any | no | | App-defined key; creates thread if not found |
 | thread_name | any | no | | Resource name, e.g. `spaces/X/threads/Y` |
+| message_name | any | no | | Edit this message in place, e.g. `spaces/X/messages/Y`; must sit in `space_id`, own messages only, cannot be combined with a thread parameter |
 
 ---
 

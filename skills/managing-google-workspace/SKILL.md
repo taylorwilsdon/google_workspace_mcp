@@ -222,6 +222,7 @@ For parameters: [references/contacts.md](references/contacts.md)
 | Get messages | `get_messages` |
 | Search messages | `search_messages` |
 | Send message | `send_message` |
+| Edit a message already sent | `send_message` with `message_name` |
 | React to message | `create_reaction` |
 | Download attachment | `download_chat_attachment` |
 

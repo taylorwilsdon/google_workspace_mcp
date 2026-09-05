@@ -442,8 +442,10 @@ def configure_server_for_http():
                 "OAuth 2.1 requires GOOGLE_OAUTH_CLIENT_SECRET: Google rejects the "
                 "authorization code exchange without a client secret (invalid_request: "
                 "client_secret is missing), even for public clients using PKCE. Set "
-                "GOOGLE_OAUTH_CLIENT_SECRET, or set EXTERNAL_OAUTH21_PROVIDER=true if "
-                "another identity provider performs the code exchange."
+                "GOOGLE_OAUTH_CLIENT_SECRET (or provide it via a client secrets file "
+                "through GOOGLE_CLIENT_SECRET_PATH), or set "
+                "EXTERNAL_OAUTH21_PROVIDER=true if another identity provider performs "
+                "the code exchange."
             )
 
         def validate_and_derive_jwt_key(

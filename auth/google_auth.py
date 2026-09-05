@@ -2,7 +2,6 @@
 
 import asyncio
 import hashlib
-import json
 import jwt
 import logging
 import os
@@ -20,6 +19,7 @@ from googleapiclient.errors import HttpError
 import httplib2
 import google_auth_httplib2
 from auth.scopes import SCOPES, get_current_scopes, has_required_scopes  # noqa
+from auth.client_secrets import get_client_secrets_path, load_client_secrets_file
 from auth.oauth21_session_store import get_oauth21_session_store
 from auth.credential_store import get_credential_store
 from auth.gateway_identity import normalize_principal_email
@@ -103,17 +103,7 @@ def _build_authorized_http(
 
 # Session credentials now handled by OAuth21SessionStore - no local cache needed
 # Centralized Client Secrets Path Logic
-_client_secrets_env = os.getenv("GOOGLE_CLIENT_SECRET_PATH") or os.getenv(
-    "GOOGLE_CLIENT_SECRETS"
-)
-if _client_secrets_env:
-    CONFIG_CLIENT_SECRETS_PATH = _client_secrets_env
-else:
-    # Assumes this file is in auth/ and client_secret.json is in the root
-    CONFIG_CLIENT_SECRETS_PATH = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "client_secret.json",
-    )
+CONFIG_CLIENT_SECRETS_PATH = get_client_secrets_path()
 
 # --- Helper Functions ---
 
@@ -287,27 +277,12 @@ def load_client_secrets(client_secrets_path: str) -> Dict[str, Any]:
 
     # Fall back to loading from file
     try:
-        with open(client_secrets_path, "r") as f:
-            client_config = json.load(f)
-            # The file usually contains a top-level key like "web" or "installed"
-            if "web" in client_config:
-                logger.info(
-                    f"Loaded OAuth client credentials from file: {client_secrets_path}"
-                )
-                return client_config["web"]
-            elif "installed" in client_config:
-                logger.info(
-                    f"Loaded OAuth client credentials from file: {client_secrets_path}"
-                )
-                return client_config["installed"]
-            else:
-                logger.error(
-                    f"Client secrets file {client_secrets_path} has unexpected format."
-                )
-                raise ValueError("Invalid client secrets file format")
-    except (IOError, json.JSONDecodeError) as e:
+        client_config = load_client_secrets_file(client_secrets_path)
+    except (IOError, ValueError) as e:
         logger.error(f"Error loading client secrets file {client_secrets_path}: {e}")
         raise
+    logger.info(f"Loaded OAuth client credentials from file: {client_secrets_path}")
+    return client_config
 
 
 def check_client_secrets() -> Optional[str]:

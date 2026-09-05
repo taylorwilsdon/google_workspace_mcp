@@ -347,6 +347,11 @@ def _client_secret_field() -> tuple[str, str, str]:
     name = "GOOGLE_OAUTH_CLIENT_SECRET"
     secret = os.getenv(name)
     if not secret:
+        # Report the resolved configuration rather than re-reading the file, so
+        # the banner cannot claim a secret the OAuth config declined to use.
+        config = get_oauth_config()
+        if config.client_secret and config.client_secrets_file:
+            return name, f"set · via {collapse_home(config.client_secrets_file)}", "on"
         return name, "not set", "off"
     if len(secret) <= 8:
         return name, "set · unexpectedly short", "warn"
@@ -480,6 +485,16 @@ def main():
         ),
     )
     args = parser.parse_args()
+
+    # Validate the memory-safety setting once at startup. Tool helpers parse it
+    # defensively as well, but a deployment typo must not silently disable the
+    # configured limit.
+    from core.file_limits import get_max_file_bytes
+
+    try:
+        get_max_file_bytes()
+    except ValueError as exc:
+        parser.error(str(exc))
 
     # Env var fallbacks for plugin users who configure via userConfig.
     # Non-empty but invalid values fail closed to prevent silent access widening.

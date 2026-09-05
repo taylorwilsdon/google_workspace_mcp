@@ -644,6 +644,34 @@ async def test_full_export_raw_saves_complete_eml(stdio_storage):
 
 
 @pytest.mark.asyncio
+async def test_full_export_rejects_size_estimate_before_fetch(monkeypatch):
+    monkeypatch.setenv("WORKSPACE_MCP_MAX_FILE_BYTES", "100")
+    metadata = _metadata_response("msg-large")
+    metadata["sizeEstimate"] = 500
+    service = _build_service(
+        message_responses={
+            ("msg-large", "metadata"): metadata,
+            ("msg-large", "raw"): {"raw": _encode("should not be fetched")},
+        }
+    )
+
+    result = await _unwrap(get_gmail_message_content)(
+        service=service,
+        message_id="msg-large",
+        user_google_email="user@example.com",
+        body_format="raw",
+        full=True,
+    )
+
+    assert result.startswith("Error:")
+    assert "WORKSPACE_MCP_MAX_FILE_BYTES" in result
+    request_formats = [
+        call.kwargs["format"] for call in service.users().messages().get.call_args_list
+    ]
+    assert request_formats == ["metadata"]
+
+
+@pytest.mark.asyncio
 async def test_full_export_text_uses_plaintext(stdio_storage):
     service = _build_service(
         message_responses={
