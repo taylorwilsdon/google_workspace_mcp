@@ -254,3 +254,67 @@ def test_palette_exactly_matches_the_discovery_document_snapshot():
         fingerprint
         == "3a734f759085172c6803b4aeef05b8dd92df341f56d66a5cf86b658f36c8a948"
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "stored",
+    [
+        {"labelListVisibility": "labelHide", "messageListVisibility": "hide"},
+        {"labelListVisibility": "labelHide", "messageListVisibility": "show"},
+        {"labelListVisibility": "labelShow", "messageListVisibility": "hide"},
+    ],
+)
+async def test_update_without_visibility_keeps_the_stored_visibility(stored):
+    """users.labels.update is a PUT, so a parameter default overwrites what
+    Gmail has stored. Renaming a hidden label used to make it visible."""
+    service = _build_mock_service({"id": "Label_1", "name": "Urgent", **stored})
+
+    await _update(service, name="Renamed")
+
+    body = _sent_body(service, "update")
+    assert body["labelListVisibility"] == stored["labelListVisibility"]
+    assert body["messageListVisibility"] == stored["messageListVisibility"]
+
+
+@pytest.mark.asyncio
+async def test_update_still_applies_visibility_when_asked():
+    service = _build_mock_service(
+        {
+            "id": "Label_1",
+            "name": "Urgent",
+            "labelListVisibility": "labelHide",
+            "messageListVisibility": "hide",
+        }
+    )
+
+    await _update(
+        service, label_list_visibility="labelShow", message_list_visibility="show"
+    )
+
+    body = _sent_body(service, "update")
+    assert body["labelListVisibility"] == "labelShow"
+    assert body["messageListVisibility"] == "show"
+
+
+@pytest.mark.asyncio
+async def test_update_falls_back_when_gmail_reports_no_visibility():
+    """Gmail omits these fields on some labels; the previous behaviour applies."""
+    service = _build_mock_service({"id": "Label_1", "name": "Urgent"})
+
+    await _update(service, name="Renamed")
+
+    body = _sent_body(service, "update")
+    assert body["labelListVisibility"] == "labelShow"
+    assert body["messageListVisibility"] == "show"
+
+
+@pytest.mark.asyncio
+async def test_create_sends_the_same_defaults_as_before():
+    service = _build_mock_service()
+
+    await _create(service)
+
+    body = _sent_body(service, "create")
+    assert body["labelListVisibility"] == "labelShow"
+    assert body["messageListVisibility"] == "show"
