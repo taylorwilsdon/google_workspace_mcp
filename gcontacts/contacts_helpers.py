@@ -385,6 +385,34 @@ def _merge_organizations(
     return result
 
 
+# displayName and displayNameLastFirst are output-only on people.Name.
+_NAME_OUTPUT_ONLY_FIELDS = frozenset({"displayName", "displayNameLastFirst", "metadata"})
+
+
+def _merge_name(
+    existing: Dict[str, Any],
+    new_name: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Merge one name object over the stored one, field by field.
+
+    people.updateContact replaces `names` outright, so a body carrying only
+    givenName drops the surname, middle name and any honorific the contact
+    had. Every other multi-value field on this request is merged against the
+    fetched contact; this does the same for the single name object.
+
+    displayName and displayNameLastFirst are output-only and are dropped, so
+    the merged object can be sent straight back.
+    """
+    merged = {
+        key: value
+        for key, value in existing.items()
+        if key not in _NAME_OUTPUT_ONLY_FIELDS
+    }
+    merged.update({key: value for key, value in new_name.items() if value})
+    return merged
+
+
 def _merge_nicknames(
     existing: List[Dict[str, Any]],
     new_nicknames: List[Dict[str, Any]],
