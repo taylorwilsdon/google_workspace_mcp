@@ -299,7 +299,7 @@ async def test_update_still_applies_visibility_when_asked():
 
 @pytest.mark.asyncio
 async def test_update_falls_back_when_gmail_reports_no_visibility():
-    """Gmail omits these fields on some labels; the previous behaviour applies."""
+    """Gmail omits these fields on some labels; the previous behavior applies."""
     service = _build_mock_service({"id": "Label_1", "name": "Urgent"})
 
     await _update(service, name="Renamed")
