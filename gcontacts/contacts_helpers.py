@@ -385,12 +385,6 @@ def _merge_organizations(
     return result
 
 
-# displayName and displayNameLastFirst are output-only on people.Name.
-_NAME_OUTPUT_ONLY_FIELDS = frozenset(
-    {"displayName", "displayNameLastFirst", "metadata"}
-)
-
-
 def _merge_name(
     existing: Dict[str, Any],
     new_name: Dict[str, Any],
@@ -409,7 +403,7 @@ def _merge_name(
     merged = {
         key: value
         for key, value in existing.items()
-        if key not in _NAME_OUTPUT_ONLY_FIELDS
+        if key not in ("displayName", "displayNameLastFirst", "metadata")
     }
     merged.update({key: value for key, value in new_name.items() if value})
     return merged
