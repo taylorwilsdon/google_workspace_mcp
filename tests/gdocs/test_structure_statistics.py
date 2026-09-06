@@ -165,6 +165,137 @@ class TestInspectDocStructureReportsStatistics:
         return service
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("detailed", [False, True])
+    @pytest.mark.parametrize(
+        "api_key, output_key, anchors",
+        [
+            ("positionedObjectIds", "positioned_object_ids", ["image1"]),
+            (
+                "suggestedPositionedObjectIds",
+                "suggested_positioned_object_ids",
+                {"suggestion1": {"objectIds": ["image1"]}},
+            ),
+        ],
+    )
+    async def test_object_anchors_are_not_empty(
+        self, detailed, api_key, output_key, anchors
+    ):
+        anchored = _paragraph(2, 3, "\n")
+        anchored["paragraph"][api_key] = anchors
+        result = _extract_json(
+            await _unwrap(docs_tools.inspect_doc_structure)(
+                service=self._service(_doc(_paragraph(1, 2, "\n"), anchored)),
+                user_google_email="user@example.com",
+                document_id="doc123",
+                detailed=detailed,
+            )
+        )
+
+        stats = result["statistics"] if detailed else result
+        assert stats["empty_paragraphs"] == 1
+        assert stats["empty_paragraph_ranges"] == [{"start": 1, "end": 2}]
+        assert stats["last_paragraph"]["is_empty"] is False
+        if detailed:
+            assert result["elements"][-1][output_key] == anchors
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("detailed", [False, True])
+    async def test_truncated_ranges_do_not_identify_the_terminal_paragraph(
+        self, detailed
+    ):
+        # Put text between the last returned blank and the actual terminal blank.
+        count = EMPTY_PARAGRAPH_RANGE_LIMIT
+        doc = _doc(
+            *[_paragraph(i, i + 1, "\n") for i in range(1, count + 1)],
+            _paragraph(count + 1, count + 7, "Hello\n"),
+            _paragraph(count + 7, count + 8, "\n"),
+        )
+        result = _extract_json(
+            await _unwrap(docs_tools.inspect_doc_structure)(
+                service=self._service(doc),
+                user_google_email="user@example.com",
+                document_id="doc123",
+                detailed=detailed,
+            )
+        )
+
+        stats = result["statistics"] if detailed else result
+        assert stats["empty_paragraphs"] == count + 1
+        assert len(stats["empty_paragraph_ranges"]) == count
+        assert stats["empty_paragraph_ranges_truncated"] is True
+        assert stats["last_paragraph"]["is_empty"] is True
+        assert stats["empty_paragraph_ranges"][-1]["end"] < result["total_length"]
+        assert result["total_length"] == count + 8
+        if detailed:
+            assert result["elements"][-1]["end_index"] == result["total_length"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "structural_element, element_type",
+        [
+            (
+                {
+                    "startIndex": 2,
+                    "endIndex": 7,
+                    "table": {
+                        "tableRows": [
+                            {
+                                "tableCells": [
+                                    {
+                                        "startIndex": 4,
+                                        "endIndex": 6,
+                                        "content": [_paragraph(5, 6, "\n")],
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                },
+                "table",
+            ),
+            (
+                {
+                    "startIndex": 2,
+                    "endIndex": 4,
+                    "tableOfContents": {"content": [_paragraph(3, 4, "\n")]},
+                },
+                "table_of_contents",
+            ),
+            (_section_break(2, 3), "section_break"),
+        ],
+    )
+    async def test_protected_empty_paragraphs_keep_adjacency_in_detailed_output(
+        self, structural_element, element_type
+    ):
+        end = structural_element["endIndex"]
+        result = _extract_json(
+            await _unwrap(docs_tools.inspect_doc_structure)(
+                service=self._service(
+                    _doc(
+                        _paragraph(1, 2, "\n"),
+                        structural_element,
+                        _paragraph(end, end + 1, "\n"),
+                    )
+                ),
+                user_google_email="user@example.com",
+                document_id="doc123",
+                detailed=True,
+            )
+        )
+
+        # The summary counts literal blanks, including protected separators,
+        # but never the empty paragraph nested inside a table or TOC.
+        assert result["statistics"]["empty_paragraphs"] == 2
+        assert result["statistics"]["empty_paragraph_ranges"] == [
+            {"start": 1, "end": 2},
+            {"start": end, "end": end + 1},
+        ]
+        preceding, protected, terminal = result["elements"]
+        assert preceding["end_index"] == protected["start_index"]
+        assert protected["type"] == element_type
+        assert terminal["end_index"] == result["total_length"]
+
+    @pytest.mark.asyncio
     async def test_basic_and_detailed_modes_agree(self):
         doc = _doc(
             _paragraph(1, 7, "Hello\n"),

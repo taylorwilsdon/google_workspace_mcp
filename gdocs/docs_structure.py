@@ -100,6 +100,12 @@ def _parse_element(element: dict[str, Any]) -> Optional[dict[str, Any]]:
         element_info["text"] = _extract_paragraph_text(paragraph)
         element_info["style"] = paragraph.get("paragraphStyle", {})
         element_info["is_list_item"] = "bullet" in paragraph
+        for api_key, key in (
+            ("positionedObjectIds", "positioned_object_ids"),
+            ("suggestedPositionedObjectIds", "suggested_positioned_object_ids"),
+        ):
+            if paragraph.get(api_key):
+                element_info[key] = paragraph[api_key]
 
     elif "table" in element:
         table = element["table"]
@@ -349,6 +355,15 @@ def get_next_paragraph_index(doc_data: dict[str, Any], after_index: int = 0) -> 
     return structure["total_length"] - 1 if structure["total_length"] > 0 else 1
 
 
+def _is_empty_paragraph(paragraph: dict[str, Any]) -> bool:
+    """A newline-only paragraph with no existing or suggested object anchors."""
+    return (
+        paragraph["end_index"] - paragraph["start_index"] == 1
+        and not paragraph.get("positioned_object_ids")
+        and not paragraph.get("suggested_positioned_object_ids")
+    )
+
+
 def summarize_paragraph_layout(structure: dict[str, Any]) -> dict[str, Any]:
     """
     Summarize the paragraph-level layout signals of a parsed document body.
@@ -359,7 +374,8 @@ def summarize_paragraph_layout(structure: dict[str, Any]) -> dict[str, Any]:
     inherit that list's bullet).
 
     Only top-level body paragraphs are considered; paragraphs nested in table
-    cells are not part of this summary.
+    cells are not part of this summary. Paragraphs anchoring existing or
+    suggested positioned objects are not considered empty.
 
     Args:
         structure: Parsed structure from parse_document_structure
@@ -367,7 +383,10 @@ def summarize_paragraph_layout(structure: dict[str, Any]) -> dict[str, Any]:
     The ranges are paragraph extents, not ready-made delete ranges: the
     body-final paragraph ends at the segment-terminating newline, which Google
     Docs refuses to delete. At most EMPTY_PARAGRAPH_RANGE_LIMIT ranges are
-    returned; the count is always exact.
+    returned; the count is always exact. Truncation can omit the body-final
+    paragraph: identify it by end == structure["total_length"], not list position.
+    Newlines immediately before tables, tables of contents, and section breaks
+    are also protected, even when their paragraphs are empty.
 
     Returns:
         Dictionary with empty_paragraphs, empty_paragraph_ranges,
@@ -379,7 +398,7 @@ def summarize_paragraph_layout(structure: dict[str, Any]) -> dict[str, Any]:
     empty_ranges = [
         {"start": p["start_index"], "end": p["end_index"]}
         for p in paragraphs
-        if p["end_index"] - p["start_index"] == 1
+        if _is_empty_paragraph(p)
     ]
 
     last_paragraph = None
@@ -387,7 +406,7 @@ def summarize_paragraph_layout(structure: dict[str, Any]) -> dict[str, Any]:
         last = paragraphs[-1]
         last_paragraph = {
             "is_list_item": bool(last.get("is_list_item")),
-            "is_empty": last["end_index"] - last["start_index"] == 1,
+            "is_empty": _is_empty_paragraph(last),
         }
 
     return {
