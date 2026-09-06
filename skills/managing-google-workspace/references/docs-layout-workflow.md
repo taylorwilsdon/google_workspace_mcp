@@ -130,15 +130,9 @@ Then download and read the PDF to check:
 - Heading hierarchy is correct (H1 > H2 > H3)
 - No stray empty paragraphs or list items
 
-The last point is cheaper to check first: `inspect_doc_structure` reports
-`empty_paragraphs` and `last_paragraph.is_list_item` in its basic mode, so potential
-stray empty paragraphs and a body left inside a list can be found before a PDF
-is rendered. Paragraphs anchoring existing or suggested positioned objects are
-excluded from the empty count. Before deleting, inspect adjacent elements with
-`detailed=true`: empty paragraphs can be required structural separators. The
-body-final newline and newlines directly before tables, tables of contents, or
-section breaks must be preserved. Capped ranges may omit the final paragraph;
-identify it by `end == total_length`. The PDF pass verifies the visual layout.
+Before exporting, check `empty_paragraphs` and `last_paragraph.is_list_item` with
+`inspect_doc_structure`. Some empty paragraphs are required; see the
+[cleanup constraints](docs.md#inspect_doc_structure) before deleting them.
 
 ---
 

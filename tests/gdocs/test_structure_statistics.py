@@ -1,4 +1,4 @@
-"""Tests for empty-paragraph and trailing-paragraph statistics in structure analysis."""
+"""Paragraph layout statistics."""
 
 import json
 from unittest.mock import Mock
@@ -21,7 +21,6 @@ def _unwrap(tool):
 
 
 def _paragraph(start, end, text, bullet=False):
-    """Build a minimal Docs API paragraph element."""
     paragraph = {"elements": [{"textRun": {"content": text}}]}
     if bullet:
         paragraph["bullet"] = {"listId": "kix.list1", "nestingLevel": 0}
@@ -203,7 +202,6 @@ class TestInspectDocStructureReportsStatistics:
     async def test_truncated_ranges_do_not_identify_the_terminal_paragraph(
         self, detailed
     ):
-        # Put text between the last returned blank and the actual terminal blank.
         count = EMPTY_PARAGRAPH_RANGE_LIMIT
         doc = _doc(
             *[_paragraph(i, i + 1, "\n") for i in range(1, count + 1)],
@@ -283,8 +281,7 @@ class TestInspectDocStructureReportsStatistics:
             )
         )
 
-        # The summary counts literal blanks, including protected separators,
-        # but never the empty paragraph nested inside a table or TOC.
+        # Count protected separators, excluding nested paragraphs.
         assert result["statistics"]["empty_paragraphs"] == 2
         assert result["statistics"]["empty_paragraph_ranges"] == [
             {"start": 1, "end": 2},

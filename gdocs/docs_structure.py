@@ -10,9 +10,7 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
-# Cap on the number of empty-paragraph ranges reported by
-# summarize_paragraph_layout, so the basic inspection stays small even on a
-# badly rendered document. The count itself is never capped.
+# Limit returned ranges; the count remains exact.
 EMPTY_PARAGRAPH_RANGE_LIMIT = 100
 
 
@@ -365,33 +363,11 @@ def _is_empty_paragraph(paragraph: dict[str, Any]) -> bool:
 
 
 def summarize_paragraph_layout(structure: dict[str, Any]) -> dict[str, Any]:
-    """
-    Summarize the paragraph-level layout signals of a parsed document body.
+    """Count empty body paragraphs and report the last paragraph's state.
 
-    These answer the two questions that follow a markdown render without
-    requiring the full element listing: how many literal empty paragraphs the
-    body carries, and whether it ends inside a list (the next insertion would
-    inherit that list's bullet).
-
-    Only top-level body paragraphs are considered; paragraphs nested in table
-    cells are not part of this summary. Paragraphs anchoring existing or
-    suggested positioned objects are not considered empty.
-
-    Args:
-        structure: Parsed structure from parse_document_structure
-
-    The ranges are paragraph extents, not ready-made delete ranges: the
-    body-final paragraph ends at the segment-terminating newline, which Google
-    Docs refuses to delete. At most EMPTY_PARAGRAPH_RANGE_LIMIT ranges are
-    returned; the count is always exact. Truncation can omit the body-final
-    paragraph: identify it by end == structure["total_length"], not list position.
-    Newlines immediately before tables, tables of contents, and section breaks
-    are also protected, even when their paragraphs are empty.
-
-    Returns:
-        Dictionary with empty_paragraphs, empty_paragraph_ranges,
-        empty_paragraph_ranges_truncated and last_paragraph (None when the body
-        holds no paragraph at all)
+    Only top-level paragraphs are included; object anchors do not count as empty.
+    Ranges are capped extents, including protected newlines. last_paragraph is
+    None if absent.
     """
     paragraphs = [e for e in structure["body"] if e.get("type") == "paragraph"]
 

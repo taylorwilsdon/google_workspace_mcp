@@ -1400,37 +1400,17 @@ async def inspect_doc_structure(
     - table_details: Position and dimensions of each table
     - headers / footers: Real segment IDs and previews for header/footer editing
     - tabs: List of available tabs in the document (if no tab_id specified)
-    - empty_paragraphs: count of newline-only body paragraphs without existing
-      or suggested positioned-object anchors
-    - empty_paragraph_ranges: their start/end ranges, capped at 100 entries
-    - empty_paragraph_ranges_truncated: whether further ranges were omitted
-    - last_paragraph: whether the body ends in a list item, and whether it is empty
+    - empty_paragraphs: newline-only count, excluding existing/suggested object anchors
+    - empty_paragraph_ranges: start/end extents, capped at 100
+    - empty_paragraph_ranges_truncated: whether ranges were omitted
+    - last_paragraph: is_list_item and is_empty, or null if no body paragraphs
 
-    VERIFYING A RENDERED DOCUMENT:
-    The paragraph layout fields are reported in both modes - at the top level
-    when detailed=false, and under "statistics" when detailed=true - so checking
-    whether a render left stray empty paragraphs behind, or ended inside a list
-    (where the next insertion would inherit that bullet), does not require the
-    full element listing. Use detailed=true when you need per-element indices.
-
-    Before deleting by these ranges:
-    - These are paragraph extents, not ready-made delete ranges. Use
-      detailed=true to check adjacent elements and positioned_object_ids /
-      suggested_positioned_object_ids before deleting paragraph boundaries;
-      merging paragraphs can affect styles, lists, and anchored objects.
-    - Identify a body-final range by end == total_length, not its position in
-      the returned list. When ranges are truncated, the body-final paragraph
-      may be omitted even when last_paragraph.is_empty is true.
-    - Docs refuses to delete the body-final newline; start to end - 1 is also
-      invalid for an empty paragraph. Only when another paragraph immediately
-      precedes it, consider deleting start - 1 to end - 1 to merge them after
-      checking that paragraph's formatting and anchors. A body holding only
-      one paragraph cannot be emptied further.
-    - Docs also refuses to delete the newline immediately before a table,
-      table of contents, or section break unless that element is deleted too.
-      Keep these structural separators when cleaning up empty paragraphs.
-    - Docs requires a paragraph after a table. When that trailing paragraph is
-      empty it is still counted, so cleanup need not make empty_paragraphs zero.
+    Paragraph statistics cover top-level body paragraphs and appear at the top
+    level in basic mode or under "statistics" in detailed mode.
+    Ranges can include required empty paragraphs. Before cleanup, use detailed=true
+    to check adjacent elements, formatting, and object anchors. Preserve the final
+    newline and newlines before tables, tables of contents, or section breaks.
+    The final range has end == total_length and may be omitted by truncation.
 
     WORKFLOW FOR TABLE INSERTION:
     Step 1: Call this function

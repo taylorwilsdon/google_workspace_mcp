@@ -280,18 +280,15 @@ Key output fields:
 - `tables` -- count of existing tables
 - `table_details` -- position and dimensions per table
 - `tabs` -- list of tabs with IDs (when no tab_id specified)
-- `empty_paragraphs` / `empty_paragraph_ranges` -- newline-only body paragraphs without existing or suggested positioned-object anchors (ranges are capped, with a truncation flag)
-- `last_paragraph` -- whether the body ends in a list item, and whether it is empty
+- `empty_paragraphs` -- newline-only body paragraph count, excluding existing or suggested object anchors
+- `empty_paragraph_ranges` / `empty_paragraph_ranges_truncated` -- first 100 start/end extents and whether more exist
+- `last_paragraph` -- `is_list_item` and `is_empty`, or null if no body paragraphs
 
-The last two are reported in both modes, so checking a rendered document does not
-need `detailed=true`.
-
-Ranges are paragraph extents, not deletion instructions. A body-final range has
-`end == total_length`; truncation may omit it. Before cleanup, use `detailed=true`
-to check adjacent elements and any `positioned_object_ids` or
-`suggested_positioned_object_ids`. Keep the terminal newline and newlines directly
-before tables, tables of contents, or section breaks. Merging paragraphs can
-change formatting, list membership, and anchored objects.
+Paragraph statistics exclude nested paragraphs and appear at the top level in basic
+mode, under `statistics` in detailed mode. Before cleanup, use `detailed=true` to
+check adjacent elements, formatting, and object anchors. Preserve the final newline
+(`end == total_length`, possibly omitted by truncation) and newlines before tables,
+tables of contents, or section breaks. Required empty paragraphs are still counted.
 
 ### debug_table_structure
 Detailed view of a single table's layout: dimensions, cell positions, current content, and insertion indices per cell. Use after creating or populating a table to verify results.
