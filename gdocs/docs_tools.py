@@ -1476,7 +1476,8 @@ async def inspect_doc_structure(
     Ranges can include required empty paragraphs. Before cleanup, use detailed=true
     to check adjacent elements, formatting, and object anchors. Preserve the final
     newline and newlines before tables, tables of contents, or section breaks.
-    The final range has end == total_length and may be omitted by truncation.
+    If the body ends with an empty paragraph, that paragraph's range has
+    end == total_length; truncation may omit that range.
 
     WORKFLOW FOR TABLE INSERTION:
     Step 1: Call this function
