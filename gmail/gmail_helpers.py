@@ -206,6 +206,24 @@ def build_label_color(
     }
 
 
+def build_label_visibility(
+    requested: Optional[str],
+    stored: Optional[str],
+    fallback: str,
+) -> str:
+    """Resolve one visibility field for a label update.
+
+    `users.labels.update` is a PUT, so the body it receives replaces the label
+    outright: any field taken from a parameter default overwrites what Gmail
+    has stored. Visibility is therefore carried over from the fetched label
+    whenever the caller did not ask to change it, which is what `name` and
+    `color` already do in the same request body.
+    """
+    if requested is not None:
+        return requested
+    return stored if stored is not None else fallback
+
+
 def _normalize_email(address: str) -> str:
     """Lowercase an email address and strip plus-addressing so that
     e.g. 'Alex <alex+foo@scopestack.io>' normalizes to 'alex@scopestack.io'.

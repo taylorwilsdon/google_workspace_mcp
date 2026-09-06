@@ -77,6 +77,7 @@ from gmail.gmail_helpers import (
     _retryable_result_ids,
     _signature_html_to_text,
     build_label_color,
+    build_label_visibility,
     html_to_text_preserving_breaks,
 )
 
@@ -3745,8 +3746,8 @@ async def manage_gmail_label(
     action: Literal["create", "update", "delete"],
     name: Optional[str] = None,
     label_id: Optional[str] = None,
-    label_list_visibility: Literal["labelShow", "labelHide"] = "labelShow",
-    message_list_visibility: Literal["show", "hide"] = "show",
+    label_list_visibility: Optional[Literal["labelShow", "labelHide"]] = None,
+    message_list_visibility: Optional[Literal["show", "hide"]] = None,
     background_color: Optional[str] = None,
     text_color: Optional[str] = None,
     clear_color: bool = False,
@@ -3759,8 +3760,8 @@ async def manage_gmail_label(
         action (Literal["create", "update", "delete"]): Action to perform on the label.
         name (Optional[str]): Label name. Required for create, optional for update.
         label_id (Optional[str]): Label ID. Required for update and delete operations.
-        label_list_visibility (Literal["labelShow", "labelHide"]): Whether the label is shown in the label list.
-        message_list_visibility (Literal["show", "hide"]): Whether the label is shown in the message list.
+        label_list_visibility (Optional[Literal["labelShow", "labelHide"]]): Whether the label is shown in the label list. Defaults to "labelShow" on create. On update, omitting it keeps the label's current setting.
+        message_list_visibility (Optional[Literal["show", "hide"]]): Whether the label's messages are shown in the message list. Defaults to "show" on create. On update, omitting it keeps the label's current setting.
         background_color (Optional[str]): Label background color as a hex string, e.g. "#fb4c2f". Set together with text_color; Gmail requires both. Gmail accepts only its own palette, and an unsupported value is rejected before the request. Colors apply to user labels, not system labels.
         text_color (Optional[str]): Label text color as a hex string, e.g. "#ffffff". Set together with background_color. Same palette. On update, omitting both keeps the label's current color.
         clear_color (bool): On update, remove the label's current color. Cannot be combined with background_color or text_color.
@@ -3796,8 +3797,8 @@ async def manage_gmail_label(
     if action == "create":
         label_object = {
             "name": name,
-            "labelListVisibility": label_list_visibility,
-            "messageListVisibility": message_list_visibility,
+            "labelListVisibility": label_list_visibility or "labelShow",
+            "messageListVisibility": message_list_visibility or "show",
         }
         if color:
             label_object["color"] = color
@@ -3814,8 +3815,16 @@ async def manage_gmail_label(
         label_object = {
             "id": label_id,
             "name": name if name is not None else current_label["name"],
-            "labelListVisibility": label_list_visibility,
-            "messageListVisibility": message_list_visibility,
+            "labelListVisibility": build_label_visibility(
+                label_list_visibility,
+                current_label.get("labelListVisibility"),
+                "labelShow",
+            ),
+            "messageListVisibility": build_label_visibility(
+                message_list_visibility,
+                current_label.get("messageListVisibility"),
+                "show",
+            ),
         }
         label_color = None if clear_color else color or current_label.get("color")
         if label_color:
