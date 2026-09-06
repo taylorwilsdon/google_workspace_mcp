@@ -10,6 +10,9 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
+# Limit returned ranges; the count remains exact.
+EMPTY_PARAGRAPH_RANGE_LIMIT = 100
+
 
 def truncate_preview(text: str, preview_chars: Optional[int]) -> str:
     """Truncate preview text; None or a non-positive limit disables truncation."""
@@ -107,6 +110,13 @@ def _parse_element(element: dict[str, Any]) -> Optional[dict[str, Any]]:
         element_info["type"] = "paragraph"
         element_info["text"] = _extract_paragraph_text(paragraph)
         element_info["style"] = paragraph.get("paragraphStyle", {})
+        element_info["is_list_item"] = "bullet" in paragraph
+        for api_key, key in (
+            ("positionedObjectIds", "positioned_object_ids"),
+            ("suggestedPositionedObjectIds", "suggested_positioned_object_ids"),
+        ):
+            if paragraph.get(api_key):
+                element_info[key] = paragraph[api_key]
 
     elif "table" in element:
         table = element["table"]
@@ -358,6 +368,47 @@ def get_next_paragraph_index(doc_data: dict[str, Any], after_index: int = 0) -> 
     return structure["total_length"] - 1 if structure["total_length"] > 0 else 1
 
 
+def _is_empty_paragraph(paragraph: dict[str, Any]) -> bool:
+    """A newline-only paragraph with no existing or suggested object anchors."""
+    return (
+        paragraph["end_index"] - paragraph["start_index"] == 1
+        and not paragraph.get("positioned_object_ids")
+        and not paragraph.get("suggested_positioned_object_ids")
+    )
+
+
+def summarize_paragraph_layout(structure: dict[str, Any]) -> dict[str, Any]:
+    """Count empty body paragraphs and report the last paragraph's state.
+
+    Only top-level paragraphs are included; object anchors do not count as empty.
+    Ranges are capped extents, including protected newlines. last_paragraph is
+    None if absent.
+    """
+    paragraphs = [e for e in structure["body"] if e.get("type") == "paragraph"]
+
+    empty_ranges = [
+        {"start": p["start_index"], "end": p["end_index"]}
+        for p in paragraphs
+        if _is_empty_paragraph(p)
+    ]
+
+    last_paragraph = None
+    if paragraphs:
+        last = paragraphs[-1]
+        last_paragraph = {
+            "is_list_item": bool(last.get("is_list_item")),
+            "is_empty": _is_empty_paragraph(last),
+        }
+
+    return {
+        "empty_paragraphs": len(empty_ranges),
+        "empty_paragraph_ranges": empty_ranges[:EMPTY_PARAGRAPH_RANGE_LIMIT],
+        "empty_paragraph_ranges_truncated": len(empty_ranges)
+        > EMPTY_PARAGRAPH_RANGE_LIMIT,
+        "last_paragraph": last_paragraph,
+    }
+
+
 def analyze_document_complexity(doc_data: dict[str, Any]) -> dict[str, Any]:
     """
     Analyze document complexity and provide statistics.
@@ -380,6 +431,7 @@ def analyze_document_complexity(doc_data: dict[str, Any]) -> dict[str, Any]:
         "total_length": structure["total_length"],
         "has_headers": bool(structure["headers"]),
         "has_footers": bool(structure["footers"]),
+        **summarize_paragraph_layout(structure),
     }
 
     # Add table statistics

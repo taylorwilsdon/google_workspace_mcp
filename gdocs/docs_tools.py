@@ -59,6 +59,7 @@ from gdocs.docs_structure import (
     parse_document_structure,
     find_tables,
     analyze_document_complexity,
+    summarize_paragraph_layout,
     truncate_preview,
 )
 from gdocs.docs_tables import extract_table_as_data
@@ -90,7 +91,8 @@ HEADER_FOOTER_RUNTIME_CANARY = "docs-hf-canary-20260328b"
 _STRUCTURE_CONTENT_FIELDS = (
     "content("
     "startIndex,endIndex,"
-    "paragraph(elements(startIndex,endIndex,textRun/content),paragraphStyle,bullet),"
+    "paragraph(elements(startIndex,endIndex,textRun/content),paragraphStyle,bullet,"
+    "positionedObjectIds,suggestedPositionedObjectIds),"
     "table(tableRows/tableCells(startIndex,endIndex,content),tableStyle),"
     "sectionBreak/sectionStyle,"
     "tableOfContents"
@@ -1464,6 +1466,17 @@ async def inspect_doc_structure(
     - table_details: Position and dimensions of each table
     - headers / footers: Real segment IDs and previews for header/footer editing
     - tabs: List of available tabs in the document (if no tab_id specified)
+    - empty_paragraphs: newline-only count, excluding existing/suggested object anchors
+    - empty_paragraph_ranges: start/end extents, capped at 100
+    - empty_paragraph_ranges_truncated: whether ranges were omitted
+    - last_paragraph: is_list_item and is_empty, or null if no body paragraphs
+
+    Paragraph statistics cover top-level body paragraphs and appear at the top
+    level in basic mode or under "statistics" in detailed mode.
+    Ranges can include required empty paragraphs. Before cleanup, use detailed=true
+    to check adjacent elements, formatting, and object anchors. Preserve the final
+    newline and newlines before tables, tables of contents, or section breaks.
+    The final range has end == total_length and may be omitted by truncation.
 
     WORKFLOW FOR TABLE INSERTION:
     Step 1: Call this function
@@ -1584,6 +1597,7 @@ async def inspect_doc_structure(
                 "named_ranges": len(structure["named_ranges"]),
                 "has_headers": bool(structure["headers"]),
                 "has_footers": bool(structure["footers"]),
+                **summarize_paragraph_layout(structure),
             },
             "elements": [],
         }
@@ -1604,6 +1618,10 @@ async def inspect_doc_structure(
                 elem_summary["text_preview"] = truncate_preview(
                     element.get("text", ""), preview_chars
                 )
+                elem_summary["is_list_item"] = bool(element.get("is_list_item"))
+                for key in ("positioned_object_ids", "suggested_positioned_object_ids"):
+                    if key in element:
+                        elem_summary[key] = element[key]
 
             result["elements"].append(elem_summary)
 
