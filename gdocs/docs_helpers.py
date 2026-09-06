@@ -1929,37 +1929,18 @@ def validate_operation(operation: Dict[str, Any]) -> tuple[bool, str]:
         "insert_section_break",
         "insert_image",
     }:
-        end_of_segment = operation.get("end_of_segment", False)
-        # A semantic anchor stands in for index here; it is resolved into one
-        # against the live document just before the requests are built.
-        has_anchor = any(
-            operation.get(field) is not None
-            for field in ("after_heading", "before_heading", "anchor_text")
+        provided = sum(
+            [operation.get("index") is not None, bool(operation.get("end_of_segment"))]
+            + [
+                operation.get(field) is not None
+                for field in ("after_heading", "before_heading", "anchor_text")
+            ]
         )
-        if end_of_segment and "index" in operation:
+        if provided != 1:
             return (
                 False,
-                "Cannot specify both 'index' and 'end_of_segment=true'. Use one or the other.",
-            )
-        if (
-            not end_of_segment
-            and not has_anchor
-            and "index" not in operation
-            and op_type != "insert_image"
-        ):
-            return (
-                False,
-                "Missing required field: index (or set end_of_segment=true to append)",
-            )
-        if (
-            op_type == "insert_image"
-            and not end_of_segment
-            and not has_anchor
-            and "index" not in operation
-        ):
-            return (
-                False,
-                "Missing required field: index (or set end_of_segment=true to append)",
+                "Provide exactly one of 'index', 'end_of_segment=true', "
+                "'after_heading', 'before_heading' or 'anchor_text'.",
             )
 
     return True, ""
@@ -1974,11 +1955,17 @@ OBJECT_PLACEHOLDER = "\ufffc"
 TAB_HEADER_FORMAT = "\n--- TAB: {tab_name} (ID: {tab_id}) ---\n"
 
 
+def utf16_length(text: str) -> int:
+    """Number of Google Docs index units in Unicode text (two for non-BMP characters)."""
+    return len(text.encode("utf-16-le")) // 2
+
+
 def _paragraph_element_text(element: Dict[str, Any]) -> str:
     """Text a single paragraph element contributes to index-aligned output.
 
-    A textRun contributes its content verbatim. Every other element type is
-    matched by its own index span rather than by name: the Docs API can add
+    A textRun contributes its content verbatim; convert Python search offsets
+    with utf16_length(text[:offset]) before constructing a Docs range. Every
+    other element type is matched by its own index span rather than by name: the Docs API can add
     element types, and a type this code has not heard of still occupies indices,
     so deriving the width from startIndex/endIndex keeps alignment correct
     without a list to maintain.
@@ -2002,6 +1989,10 @@ def extract_text_from_elements(
     Empty paragraphs are preserved: a paragraph whose only content is a newline
     still occupies an index, so dropping it shifts every subsequent offset and
     silently corrupts any index computed by searching the result.
+
+    Search offsets are Python code points: use utf16_length(text[:offset])
+    to convert them to Docs UTF-16 units before adding the range start index.
+    A tab header, when requested, must be excluded from that conversion.
 
     Table cell text is included but is not index-aligned; the table, row and cell
     structure itself occupies indices that are not represented here.

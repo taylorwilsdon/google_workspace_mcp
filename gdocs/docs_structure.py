@@ -11,13 +11,17 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 
-def truncate_preview(text: str, preview_chars: int) -> str:
-    """Truncate preview text, treating a non-positive limit as no truncation."""
-    return text[:preview_chars] if preview_chars > 0 else text
+def truncate_preview(text: str, preview_chars: Optional[int]) -> str:
+    """Truncate preview text; None or a non-positive limit disables truncation."""
+    return (
+        text[:preview_chars]
+        if preview_chars is not None and preview_chars > 0
+        else text
+    )
 
 
 def parse_document_structure(
-    doc_data: dict[str, Any], preview_chars: int = 100
+    doc_data: dict[str, Any], preview_chars: Optional[int] = 100
 ) -> dict[str, Any]:
     """
     Parse the full document structure into a navigable format.
@@ -25,7 +29,7 @@ def parse_document_structure(
     Args:
         doc_data: Raw document data from Google Docs API
         preview_chars: Maximum characters of header/footer text preview.
-            Zero or negative means no truncation.
+            None, zero or negative means no truncation.
 
     Returns:
         Dictionary containing parsed structure with elements and their positions
@@ -190,7 +194,7 @@ def _extract_cell_text(cell: dict[str, Any]) -> str:
 
 
 def _parse_segment(
-    segment_data: dict[str, Any], preview_chars: int = 100
+    segment_data: dict[str, Any], preview_chars: Optional[int] = 100
 ) -> dict[str, Any]:
     """Parse a document segment (header/footer)."""
     content = segment_data.get("content", [])

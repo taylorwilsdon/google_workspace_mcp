@@ -2257,7 +2257,17 @@ async def manage_sheet_tab(
             fields = "hidden"
             summary = f"{action_lower} sheet '{sheet_name}'"
         else:
-            properties["index"] = new_index
+            if new_index >= len(sheets):
+                raise UserInputError(
+                    f"new_index must be less than the number of sheets ({len(sheets)})."
+                )
+            current_index = target_sheet["properties"].get(
+                "index", sheets.index(target_sheet)
+            )
+            # Sheets interprets indices before removing the tab from its old position.
+            properties["index"] = (
+                new_index + 1 if new_index > current_index else new_index
+            )
             fields = "index"
             summary = f"moved sheet '{sheet_name}' to index {new_index}"
         request = {

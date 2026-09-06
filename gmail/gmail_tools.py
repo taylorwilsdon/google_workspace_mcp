@@ -2537,8 +2537,10 @@ async def send_gmail_message(
     send-time parameter; Schedule send is a web-UI feature with no API equivalent,
     so no argument to this tool can defer delivery. Never tell a user a message
     was scheduled. For "prepare now, deliver later", create a draft with
-    draft_gmail_message and either have an external scheduler call this tool at
-    the chosen time, or let the user schedule that draft in the Gmail UI.
+    draft_gmail_message. An external scheduler must retain the message data to
+    create and send a new message via send_gmail_message at the chosen time, or
+    call users.drafts.send with the draft ID returned by draft_gmail_message.
+    Alternatively, let the user schedule that draft in the Gmail UI.
 
     Args:
         to (str): Recipient email address.
@@ -3066,8 +3068,10 @@ async def draft_gmail_message(
     parameter; the Schedule send feature is web-UI only, and a message cannot be
     placed in the Scheduled folder through the API. Do not claim a message was
     scheduled. To deliver at a chosen time, create a draft with
-    draft_gmail_message and have an external scheduler call send_gmail_message
-    then, or let the user schedule the draft in the Gmail UI.
+    draft_gmail_message. An external scheduler must retain the message data to
+    create and send a new message via send_gmail_message then, or call
+    users.drafts.send with the draft ID returned by draft_gmail_message.
+    Alternatively, let the user schedule the draft in the Gmail UI.
 
     Args:
         user_google_email (str): The user's Google email address. Required for authentication.

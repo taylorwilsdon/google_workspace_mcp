@@ -119,6 +119,8 @@ class BatchOperationManager:
             )
 
         try:
+            # Anchor resolution rewrites locations and order; leave caller data intact.
+            operations = [dict(op) for op in operations]
             anchor_error = await self._resolve_semantic_anchors(document_id, operations)
             if anchor_error:
                 return False, anchor_error, {}
@@ -160,24 +162,39 @@ class BatchOperationManager:
                     self.service.documents()
                     .get(
                         documentId=document_id,
-                        fields=(
-                            "revisionId,body/content(startIndex,endIndex,"
-                            "paragraph(elements/textRun/content,"
-                            "paragraphStyle/namedStyleType,bullet))"
-                        ),
+                        includeTabsContent=True,
+                        fields="revisionId,tabs,body,headers,footers,footnotes",
                     )
                     .execute
                 )
-                body_content = doc.get("body", {}).get("content", [])
-                metadata["document_length"] = (
-                    body_content[-1].get("endIndex", 0) if body_content else 1
-                )
                 metadata["revision_after"] = doc.get("revisionId")
-                affected = self._affected_range(operations)
-                if affected:
-                    metadata["affected_range"] = self._snapshot_range(
-                        body_content, *affected
-                    )
+                targets = {}
+                for op in operations:
+                    key = (op.get("tab_id"), op.get("segment_id"))
+                    targets.setdefault(key, []).append(op)
+                target_ranges = []
+                for (tab_id, segment_id), target_ops in targets.items():
+                    segment = self._target_segment(doc, tab_id, segment_id)
+                    content = segment.get("content", []) if segment is not None else []
+                    target = {
+                        "tab_id": tab_id,
+                        "segment_id": segment_id,
+                        "document_length": (
+                            (content[-1].get("endIndex", 0) if content else 1)
+                            if segment is not None
+                            else None
+                        ),
+                    }
+                    affected = self._affected_range(target_ops)
+                    if affected and segment is not None:
+                        target["affected_range"] = self._snapshot_range(
+                            content, *affected
+                        )
+                    target_ranges.append(target)
+                metadata["target_ranges"] = target_ranges
+                # Preserve the existing fields only when there is one coordinate space.
+                if len(target_ranges) == 1:
+                    metadata.update(target_ranges[0])
             except Exception:
                 metadata["document_length"] = None
 
@@ -221,6 +238,25 @@ class BatchOperationManager:
         if not anchored:
             return None
 
+        for op in anchored:
+            if op.get("type") not in {
+                "insert_text",
+                "insert_table",
+                "insert_page_break",
+                "insert_section_break",
+                "insert_image",
+            }:
+                return "Semantic anchors are supported only for insertion operations."
+            valid, error = validate_operation(op)
+            if not valid:
+                return error
+        if len(anchored) != len(operations):
+            return (
+                "Semantic anchors cannot be mixed with other operations in one batch. "
+                "Submit anchored insertions separately so earlier mutations cannot "
+                "invalidate their indices."
+            )
+
         doc = await asyncio.to_thread(
             self.service.documents()
             .get(documentId=document_id, includeTabsContent=True)
@@ -228,9 +264,12 @@ class BatchOperationManager:
         )
 
         for op in anchored:
-            body = self._anchor_body(doc, op.get("tab_id"))
+            body = self._target_segment(doc, op.get("tab_id"), op.get("segment_id"))
             if body is None:
-                return f"Tab '{op.get('tab_id')}' not found in document {document_id}."
+                return (
+                    f"Tab '{op.get('tab_id')}' or segment '{op.get('segment_id')}' "
+                    f"not found in document {document_id}."
+                )
             try:
                 op["index"] = resolve_operation_anchor(
                     body,
@@ -246,22 +285,39 @@ class BatchOperationManager:
                 op.pop(field, None)
             op.pop("anchor_position", None)
 
+        # Every operation is an anchored insertion into the pre-batch document.
+        # Higher indices first avoid shifting later targets; reverse ties preserve
+        # the caller's text order for multiple insertions at the same location.
+        operations[:] = [
+            op
+            for _, op in sorted(
+                enumerate(operations),
+                key=lambda item: (item[1]["index"], item[0]),
+                reverse=True,
+            )
+        ]
         return None
 
     @staticmethod
-    def _anchor_body(doc: dict[str, Any], tab_id: str | None) -> dict[str, Any] | None:
-        """Body to resolve anchors against: the named tab, else the main body."""
-        if not tab_id:
-            body = doc.get("body")
-            if body:
-                return body
-            # Tab-aware responses leave body empty; fall back to the first tab,
-            # matching what inspect_doc_structure reports for an unnamed tab.
-            first = _first_document_tab(doc.get("tabs", []))
-            return first.get("body", {}) if first else {}
-
-        tab = _find_document_tab(doc.get("tabs", []), tab_id)
-        return tab.get("body", {}) if tab else None
+    def _target_segment(
+        doc: dict[str, Any], tab_id: str | None, segment_id: str | None = None
+    ) -> dict[str, Any] | None:
+        """Select one tab and its body, header, footer or footnote coordinate space."""
+        tabs = doc.get("tabs", [])
+        if tab_id:
+            tab = _find_document_tab(tabs, tab_id)
+        elif tabs:
+            tab = _first_document_tab(tabs)
+        else:
+            tab = doc
+        if tab is None:
+            return None
+        if not segment_id:
+            return tab.get("body", {})
+        for kind in ("headers", "footers", "footnotes"):
+            if segment_id in tab.get(kind, {}):
+                return tab[kind][segment_id]
+        return None
 
     async def _get_revision_id(self, document_id: str) -> str | None:
         """Document revision before the batch, for correlating with version history."""

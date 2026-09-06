@@ -1162,10 +1162,12 @@ async def batch_update_doc(
       ]
 
     ALTERNATIVE - SEMANTIC ANCHORS (target existing structure without indices):
-      insert_text accepts after_heading, before_heading, or anchor_text with
+      Insertion operations accept after_heading, before_heading, or anchor_text with
       anchor_position instead of index. Each is resolved against the document at
       execution time, so it cannot go stale the way a pre-computed index can, and
-      an anchor matching zero or several places is refused rather than guessed. [
+      an anchor matching zero or several places is refused rather than guessed.
+      Submit anchored insertions in their own batch; they execute from highest
+      index to lowest to keep targets stable. [
         {"type": "insert_text", "after_heading": "Results",
          "text": "Revenue grew 15%.\\n"},
         {"type": "insert_text", "anchor_text": "Conclusion",
@@ -1391,17 +1393,28 @@ async def batch_update_doc(
 
         # Reporting what the edited range now looks like lets the caller confirm
         # styles and list membership landed without a second round trip.
-        affected = metadata.get("affected_range")
-        if affected:
-            parts.append("\nAffected range after edit:")
-            for entry in affected:
-                bullet = ", in list" if entry["in_list"] else ""
-                preview = entry["text_preview"].replace("\n", " ").strip()
+        for target in metadata.get("target_ranges", [metadata]):
+            if (
+                target.get("tab_id")
+                or target.get("segment_id")
+                or len(metadata.get("target_ranges", [])) > 1
+            ):
                 parts.append(
-                    f"\n  [{entry['start_index']}-{entry['end_index']}] "
-                    f'{entry["named_style"] or "UNKNOWN"}{bullet}: "{preview}"'
+                    f"\nTarget tab: {target.get('tab_id') or 'first'}, "
+                    f"segment: {target.get('segment_id') or 'body'}. "
+                    f"Document length: {target.get('document_length')}."
                 )
-            parts.append("\n")
+            affected = target.get("affected_range")
+            if affected:
+                parts.append("\nAffected range after edit:")
+                for entry in affected:
+                    bullet = ", in list" if entry["in_list"] else ""
+                    preview = entry["text_preview"].replace("\n", " ").strip()
+                    parts.append(
+                        f"\n  [{entry['start_index']}-{entry['end_index']}] "
+                        f'{entry["named_style"] or "UNKNOWN"}{bullet}: "{preview}"'
+                    )
+                parts.append("\n")
 
         parts.append(
             f" To apply formatting, call inspect_doc_structure to get exact text positions. "
@@ -1429,7 +1442,7 @@ async def inspect_doc_structure(
     document_id: str,
     detailed: bool = False,
     tab_id: str = None,
-    preview_chars: int = 100,
+    preview_chars: Optional[int] = 100,
 ) -> str:
     """
     Essential tool for finding safe insertion points and understanding document structure.
@@ -1475,9 +1488,9 @@ async def inspect_doc_structure(
 
     SUB-PARAGRAPH FORMATTING:
     text_preview is truncated to 100 characters by default. To compute the index
-    of a token inside a longer paragraph, pass preview_chars=0 for untruncated
-    text, then add the token's offset within that text to the paragraph's
-    start_index.
+    of a token inside a longer paragraph, pass preview_chars=0 or None for untruncated
+    text, then add the token's UTF-16 offset within that text to the paragraph's
+    start_index (non-BMP characters such as emoji occupy two UTF-16 units).
 
     Args:
         user_google_email: User's Google email address
@@ -1485,7 +1498,7 @@ async def inspect_doc_structure(
         detailed: Whether to return detailed structure information
         tab_id: Optional ID of the tab to inspect. If not provided, inspects main document.
         preview_chars: Maximum characters of paragraph, header and footer text
-            preview. Pass 0 for the full text, needed to locate a token inside a
+            preview. Pass 0 or None for the full text, needed to locate a token inside a
             paragraph longer than the default 100 characters.
 
     Returns:

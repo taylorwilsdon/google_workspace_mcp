@@ -1162,7 +1162,7 @@ async def _modify_event_impl(
             "[modify_event] Timezone provided but start_time and end_time are missing. Timezone will not be applied unless start/end times are also provided."
         )
 
-    if attachments:
+    if attachments is not None:
         # patch replaces the array wholesale, so the list passed in is the final list.
         event_body["attachments"] = await _build_attachment_entries(
             service, attachments, "modify_event"

@@ -135,3 +135,15 @@ def test_tab_hierarchy_descends_into_child_tabs():
     assert "Child text\n" in text
     # Nested tabs are indented in their header to show the hierarchy.
     assert "--- TAB:     Child (ID: t.child) ---" in text
+
+
+def test_non_bmp_before_matched_text_maps_to_utf16_docs_range():
+    from gdocs.docs_helpers import utf16_length, create_format_text_request
+
+    text = extract_text_from_elements([_para(_run("😀 target\n"))])
+    assert text == "😀 target\n"
+    start = 1 + utf16_length(text[: text.index("target")])
+    request = create_format_text_request(
+        start, start + utf16_length("target"), bold=True
+    )
+    assert request["updateTextStyle"]["range"] == {"startIndex": 4, "endIndex": 10}

@@ -117,3 +117,25 @@ async def test_manage_event_update_extracts_file_id_from_drive_url():
 
     patch_kwargs = next(kw for name, kw in service.calls if name == "patch")
     assert patch_kwargs["body"]["attachments"][0]["fileUrl"].endswith(FILE_ID)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("attachments", [[], None])
+async def test_manage_event_update_distinguishes_empty_and_omitted_attachments(
+    attachments,
+):
+    service = _CalendarService()
+    await _unwrap(calendar_tools.manage_event)(
+        service=service,
+        user_google_email="user@example.com",
+        action="update",
+        event_id="evt1",
+        summary="new title",
+        attachments=attachments,
+    )
+    patch_kwargs = next(kw for name, kw in service.calls if name == "patch")
+    if attachments is None:
+        assert "attachments" not in patch_kwargs["body"]
+    else:
+        assert patch_kwargs["body"]["attachments"] == []
+        assert patch_kwargs["supportsAttachments"] is True

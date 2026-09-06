@@ -14,7 +14,10 @@ from google.oauth2 import service_account as google_service_account
 from googleapiclient.discovery import build
 from fastmcp.server.dependencies import get_access_token, get_context
 from auth.google_auth import get_authenticated_google_service, GoogleAuthenticationError
-from auth.gateway_identity import require_gateway_principal
+from auth.gateway_identity import (
+    require_gateway_principal,
+    get_verified_gateway_principal,
+)
 from auth.request_identity import get_request_identity
 from core.config import USER_GOOGLE_EMAIL as _ENV_USER_EMAIL
 from auth.oauth21_session_store import (
@@ -332,11 +335,20 @@ async def _authenticate_service(
             )
 
         config = get_oauth_config()
-        if user_google_email:
-            _validate_dwd_domain(user_google_email, config)
-            target_email = user_google_email
-        else:
-            target_email = canonical_email
+        target_email = user_google_email or canonical_email
+        _validate_dwd_domain(target_email, config)
+        if target_email.lower() != canonical_email.lower():
+            if not is_trust_gateway_identity():
+                raise GoogleAuthenticationError(
+                    "DWD subjects other than USER_GOOGLE_EMAIL require "
+                    "trusted-gateway authentication."
+                )
+            principal = await get_verified_gateway_principal()
+            if target_email.lower() != principal:
+                raise GoogleAuthenticationError(
+                    "Requested DWD subject does not match the verified gateway principal."
+                )
+            target_email = principal
 
         credentials = _get_service_account_credentials(
             _widen_drive_scope_for_dwd(resolved_scopes, tool_name), target_email

@@ -32,8 +32,8 @@ def _service(sheets):
 
 
 TWO_SHEETS = [
-    {"properties": {"sheetId": 0, "title": "January"}},
-    {"properties": {"sheetId": 7, "title": "February"}},
+    {"properties": {"sheetId": 0, "title": "January", "index": 0}},
+    {"properties": {"sheetId": 7, "title": "February", "index": 1}},
 ]
 
 
@@ -148,3 +148,36 @@ async def test_unknown_action_is_refused():
             sheet_name="January",
             action="archive",
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("new_index, api_index", [(1, 2), (0, 0)])
+async def test_reorder_january_uses_pre_move_api_index(new_index, api_index):
+    service = _service(TWO_SHEETS)
+    await _unwrap(sheets_tools.manage_sheet_tab)(
+        service=service,
+        user_google_email="user@example.com",
+        spreadsheet_id="sheet123",
+        sheet_name="January",
+        action="reorder",
+        new_index=new_index,
+    )
+    assert _sent_request(service)["updateSheetProperties"]["properties"] == {
+        "sheetId": 0,
+        "index": api_index,
+    }
+
+
+@pytest.mark.asyncio
+async def test_reorder_rejects_out_of_bounds_final_index():
+    service = _service(TWO_SHEETS)
+    with pytest.raises(UserInputError, match="less than the number of sheets"):
+        await _unwrap(sheets_tools.manage_sheet_tab)(
+            service=service,
+            user_google_email="user@example.com",
+            spreadsheet_id="sheet123",
+            sheet_name="January",
+            action="reorder",
+            new_index=2,
+        )
+    service.spreadsheets.return_value.batchUpdate.assert_not_called()

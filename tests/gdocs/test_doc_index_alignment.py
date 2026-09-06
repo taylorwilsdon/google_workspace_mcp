@@ -102,14 +102,17 @@ async def test_inspect_doc_structure_truncates_preview_by_default():
 
 
 @pytest.mark.asyncio
-async def test_inspect_doc_structure_preview_chars_zero_returns_full_text():
+@pytest.mark.parametrize("preview_chars", [0, None, -1])
+async def test_inspect_doc_structure_preview_chars_zero_returns_full_text(
+    preview_chars,
+):
     long_text = "x" * 250 + "\n"
     result = await _unwrap(docs_tools.inspect_doc_structure)(
         service=_docs_service({"body": {"content": [_paragraph(1, long_text)]}}),
         user_google_email="user@example.com",
         document_id="doc123",
         detailed=True,
-        preview_chars=0,
+        preview_chars=preview_chars,
     )
 
     structure = json.loads(result.split("\n\n", 1)[1].rsplit("\n\nLink:", 1)[0])
