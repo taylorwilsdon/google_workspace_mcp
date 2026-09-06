@@ -21,6 +21,7 @@ from core.utils import UserInputError, handle_http_errors, StringList
 from gcontacts.contacts_helpers import (
     _format_contact,
     _merge_emails,
+    _merge_name,
     _merge_nicknames,
     _merge_organizations,
     _merge_phones,
@@ -1002,6 +1003,14 @@ async def manage_contact(
                     new_body["relations"],
                     relations_mode,
                 )
+
+            # people.updateContact replaces `names` outright, so a body carrying
+            # only givenName drops the surname and any middle name or honorific.
+            if "names" in new_body:
+                existing_names = current.get("names") or [{}]
+                merged_body["names"] = [
+                    _merge_name(existing_names[0], new_body["names"][0])
+                ]
 
             merged_body["etag"] = etag
 

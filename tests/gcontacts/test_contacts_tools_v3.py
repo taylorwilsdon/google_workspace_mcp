@@ -34,6 +34,7 @@ from gcontacts.contacts_tools import (  # noqa: E402
 )
 from gcontacts.contacts_helpers import (  # noqa: E402
     _format_contact,
+    _merge_name,
     _merge_nicknames,
     _merge_relations,
     _merge_urls,
@@ -654,3 +655,51 @@ class TestNotesClearBugFix:
         """notes=None means no opinion, do not add the biographies key at all."""
         body = _build_person_body(given_name="Test")
         assert "biographies" not in body
+
+
+# =============================================================================
+# _merge_name
+# =============================================================================
+
+
+class TestMergeName:
+    """people.updateContact replaces `names`, so unspecified parts must survive."""
+
+    STORED = {
+        "givenName": "Bob",
+        "familyName": "Smith",
+        "middleName": "Q",
+        "honorificSuffix": "Jr.",
+        "displayName": "Bob Q Smith Jr.",
+        "displayNameLastFirst": "Smith, Bob Q",
+        "metadata": {"primary": True},
+    }
+
+    def test_changing_the_given_name_keeps_the_rest(self):
+        result = _merge_name(self.STORED, {"givenName": "Robert", "familyName": ""})
+        assert result["givenName"] == "Robert"
+        assert result["familyName"] == "Smith"
+        assert result["middleName"] == "Q"
+        assert result["honorificSuffix"] == "Jr."
+
+    def test_changing_the_family_name_keeps_the_rest(self):
+        result = _merge_name(self.STORED, {"givenName": "", "familyName": "Jones"})
+        assert result["givenName"] == "Bob"
+        assert result["familyName"] == "Jones"
+        assert result["middleName"] == "Q"
+
+    def test_both_names_given_replaces_both(self):
+        result = _merge_name(self.STORED, {"givenName": "Ann", "familyName": "Lee"})
+        assert result["givenName"] == "Ann"
+        assert result["familyName"] == "Lee"
+
+    def test_output_only_fields_are_dropped(self):
+        """displayName and displayNameLastFirst cannot be written back."""
+        result = _merge_name(self.STORED, {"givenName": "Robert", "familyName": ""})
+        assert "displayName" not in result
+        assert "displayNameLastFirst" not in result
+        assert "metadata" not in result
+
+    def test_a_contact_with_no_stored_name_takes_the_new_one(self):
+        result = _merge_name({}, {"givenName": "Ann", "familyName": "Lee"})
+        assert result == {"givenName": "Ann", "familyName": "Lee"}
