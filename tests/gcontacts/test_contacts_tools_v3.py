@@ -657,12 +657,13 @@ class TestNotesClearBugFix:
         assert "biographies" not in body
 
 
-# ---------------------------------------------------------------------------
+# =============================================================================
 # _merge_name
-# ---------------------------------------------------------------------------
+# =============================================================================
+
+
 class TestMergeName:
-    """people.updateContact replaces `names` outright, so a body carrying only
-    givenName used to drop the surname and every other name part."""
+    """people.updateContact replaces `names`, so unspecified parts must survive."""
 
     STORED = {
         "givenName": "Bob",
