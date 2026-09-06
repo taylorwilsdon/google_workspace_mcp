@@ -2167,6 +2167,128 @@ async def _resize_sheet_dimensions_impl(
 
 
 @server.tool(
+    title="Manage Sheet Tab",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("manage_sheet_tab", service_type="sheets")
+@require_google_service("sheets", "sheets_write")
+async def manage_sheet_tab(
+    service,
+    user_google_email: str,
+    spreadsheet_id: str,
+    sheet_name: str,
+    action: str,
+    new_name: Optional[str] = None,
+    new_index: Optional[int] = None,
+) -> str:
+    """
+    Manages the lifecycle of an existing sheet tab: rename, delete, hide, unhide or reorder.
+
+    Use create_sheet to add a tab, and resize_sheet_dimensions for row and column
+    level changes. This tool operates on the tab itself.
+
+    Args:
+        user_google_email: User's Google email address
+        spreadsheet_id: ID of the spreadsheet
+        sheet_name: Title of the existing tab to act on
+        action: One of "rename", "delete", "hide", "unhide", "reorder"
+        new_name: New title, required for action="rename"
+        new_index: New zero-based position, required for action="reorder"
+
+    Returns:
+        str: Confirmation of the change.
+    """
+    valid_actions = ("rename", "delete", "hide", "unhide", "reorder")
+    action_lower = action.strip().lower() if isinstance(action, str) else ""
+    if action_lower not in valid_actions:
+        raise UserInputError(
+            f"Invalid action '{action}'. Must be one of: {', '.join(valid_actions)}."
+        )
+
+    if action_lower == "rename":
+        if not new_name or not new_name.strip():
+            raise UserInputError("new_name is required for action='rename'.")
+        new_name = new_name.strip()
+    if action_lower == "reorder":
+        if (
+            new_index is None
+            or isinstance(new_index, bool)
+            or not isinstance(new_index, int)
+            or new_index < 0
+        ):
+            raise UserInputError(
+                "new_index must be a non-negative integer for action='reorder'."
+            )
+
+    logger.info(
+        f"[manage_sheet_tab] Email: '{user_google_email}', Spreadsheet: {spreadsheet_id}, "
+        f"Sheet: '{sheet_name}', Action: {action_lower}"
+    )
+
+    spreadsheet = await asyncio.to_thread(
+        service.spreadsheets()
+        .get(spreadsheetId=spreadsheet_id, fields="sheets.properties")
+        .execute
+    )
+    sheets = spreadsheet.get("sheets", [])
+    target_sheet = _select_sheet(sheets, sheet_name)
+    sheet_id = target_sheet["properties"]["sheetId"]
+
+    if action_lower == "delete":
+        if len(sheets) == 1:
+            raise UserInputError(
+                f"Cannot delete '{sheet_name}': a spreadsheet must keep at least one sheet."
+            )
+        request = {"deleteSheet": {"sheetId": sheet_id}}
+        summary = f"deleted sheet '{sheet_name}'"
+    else:
+        properties: dict = {"sheetId": sheet_id}
+        if action_lower == "rename":
+            properties["title"] = new_name
+            fields = "title"
+            summary = f"renamed sheet '{sheet_name}' to '{new_name}'"
+        elif action_lower in ("hide", "unhide"):
+            properties["hidden"] = action_lower == "hide"
+            fields = "hidden"
+            summary = f"{action_lower} sheet '{sheet_name}'"
+        else:
+            if new_index >= len(sheets):
+                raise UserInputError(
+                    f"new_index must be less than the number of sheets ({len(sheets)})."
+                )
+            current_index = target_sheet["properties"].get(
+                "index", sheets.index(target_sheet)
+            )
+            # Sheets interprets indices before removing the tab from its old position.
+            properties["index"] = (
+                new_index + 1 if new_index > current_index else new_index
+            )
+            fields = "index"
+            summary = f"moved sheet '{sheet_name}' to index {new_index}"
+        request = {
+            "updateSheetProperties": {"properties": properties, "fields": fields}
+        }
+
+    await asyncio.to_thread(
+        service.spreadsheets()
+        .batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": [request]})
+        .execute
+    )
+
+    text_output = (
+        f"Successfully {summary} (ID: {sheet_id}) in spreadsheet "
+        f"{spreadsheet_id} for {user_google_email}."
+    )
+    logger.info(text_output)
+    return text_output
+
+
+@server.tool(
     title="Resize Sheet Dimensions",
     annotations=ToolAnnotations(
         readOnlyHint=False,

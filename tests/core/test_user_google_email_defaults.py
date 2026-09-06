@@ -1,5 +1,6 @@
 import inspect
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -188,10 +189,16 @@ def test_get_service_account_credentials_raises_without_key_source(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_authenticate_service_account_uses_caller_email(monkeypatch):
+async def test_authenticate_service_account_uses_verified_gateway_email(monkeypatch):
     monkeypatch.setattr(service_decorator, "_ENV_USER_EMAIL", None)
     monkeypatch.setenv("USER_GOOGLE_EMAIL", "configured@example.com")
     monkeypatch.setattr(service_decorator, "is_service_account_enabled", lambda: True)
+    monkeypatch.setattr(service_decorator, "is_trust_gateway_identity", lambda: True)
+    monkeypatch.setattr(
+        service_decorator,
+        "get_verified_gateway_principal",
+        AsyncMock(return_value="caller@example.com"),
+    )
 
     captured = {}
     fake_service = object()
@@ -268,6 +275,7 @@ def _patch_service_account(monkeypatch, *, allowed_domains=""):
     """Common monkeypatching for DWD impersonation tests."""
     monkeypatch.setattr(service_decorator, "_ENV_USER_EMAIL", None)
     monkeypatch.setenv("USER_GOOGLE_EMAIL", "canonical@corp.com")
+    monkeypatch.setattr(service_decorator, "is_trust_gateway_identity", lambda: False)
     monkeypatch.setattr(service_decorator, "is_service_account_enabled", lambda: True)
 
     config = SimpleNamespace(
@@ -302,8 +310,14 @@ def _patch_service_account(monkeypatch, *, allowed_domains=""):
 
 
 @pytest.mark.asyncio
-async def test_dwd_request_impersonation_uses_caller_email(monkeypatch):
+async def test_dwd_request_impersonation_uses_verified_gateway_email(monkeypatch):
     captured, fake_service = _patch_service_account(monkeypatch)
+    monkeypatch.setattr(service_decorator, "is_trust_gateway_identity", lambda: True)
+    monkeypatch.setattr(
+        service_decorator,
+        "get_verified_gateway_principal",
+        AsyncMock(return_value="other@corp.com"),
+    )
 
     service, actual_user = await service_decorator._authenticate_service(
         use_oauth21=False,
@@ -345,6 +359,12 @@ async def test_dwd_request_impersonation_domain_allowlist_passes(monkeypatch):
     captured, _ = _patch_service_account(
         monkeypatch, allowed_domains="corp.com,partner.io"
     )
+    monkeypatch.setattr(service_decorator, "is_trust_gateway_identity", lambda: True)
+    monkeypatch.setattr(
+        service_decorator,
+        "get_verified_gateway_principal",
+        AsyncMock(return_value="alice@partner.io"),
+    )
 
     _, actual_user = await service_decorator._authenticate_service(
         use_oauth21=False,
@@ -379,3 +399,79 @@ async def test_dwd_request_impersonation_domain_allowlist_rejects(monkeypatch):
             mcp_session_id=None,
             authenticated_user=None,
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("authenticated_user", [None, "other@corp.com"])
+async def test_dwd_rejects_same_domain_subject_without_trusted_gateway(
+    monkeypatch, authenticated_user
+):
+    captured, _ = _patch_service_account(monkeypatch, allowed_domains="corp.com")
+    with pytest.raises(
+        service_decorator.GoogleAuthenticationError, match="trusted-gateway"
+    ):
+        await service_decorator._authenticate_service(
+            use_oauth21=False,
+            service_name="drive",
+            service_version="v3",
+            tool_name="copy_drive_file",
+            user_google_email="other@corp.com",
+            resolved_scopes=["https://www.googleapis.com/auth/drive.file"],
+            mcp_session_id=None,
+            authenticated_user=authenticated_user,
+        )
+    assert "subject" not in captured
+
+
+@pytest.mark.asyncio
+async def test_dwd_rejects_subject_mismatching_verified_gateway(monkeypatch):
+    captured, _ = _patch_service_account(monkeypatch, allowed_domains="corp.com")
+    monkeypatch.setattr(service_decorator, "is_trust_gateway_identity", lambda: True)
+    monkeypatch.setattr(
+        service_decorator,
+        "get_verified_gateway_principal",
+        AsyncMock(return_value="alice@corp.com"),
+    )
+    with pytest.raises(
+        service_decorator.GoogleAuthenticationError, match="does not match"
+    ):
+        await service_decorator._authenticate_service(
+            use_oauth21=False,
+            service_name="gmail",
+            service_version="v1",
+            tool_name="t",
+            user_google_email="other@corp.com",
+            resolved_scopes=["scope-a"],
+            mcp_session_id=None,
+            authenticated_user="other@corp.com",
+        )
+    assert "subject" not in captured
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "identity",
+    [None, SimpleNamespace(email="other@corp.com", via="mcp_session_binding")],
+)
+async def test_dwd_gateway_mode_rejects_missing_or_unverified_identity(
+    monkeypatch, identity
+):
+    from auth import gateway_identity
+
+    captured, _ = _patch_service_account(monkeypatch, allowed_domains="corp.com")
+    monkeypatch.setattr(service_decorator, "is_trust_gateway_identity", lambda: True)
+    monkeypatch.setattr(
+        gateway_identity, "get_request_identity", AsyncMock(return_value=identity)
+    )
+    with pytest.raises(gateway_identity.GatewayIdentityError):
+        await service_decorator._authenticate_service(
+            use_oauth21=False,
+            service_name="gmail",
+            service_version="v1",
+            tool_name="t",
+            user_google_email="other@corp.com",
+            resolved_scopes=["scope-a"],
+            mcp_session_id=None,
+            authenticated_user="other@corp.com",
+        )
+    assert "subject" not in captured
