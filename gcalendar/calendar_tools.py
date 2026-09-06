@@ -377,6 +377,7 @@ async def list_calendars(
 
     Returns:
         str: A formatted list of the user's calendars (summary, ID, primary status).
+            When more calendars remain, a "Next page token" line is appended.
     """
     logger.info(f"[list_calendars] Invoked. Email: '{user_google_email}'")
 
@@ -456,7 +457,7 @@ async def get_events(
         single_events (bool): Whether to expand recurring series into individual instances. Defaults to True for backwards compatibility. Set to False with detailed=True to retrieve recurring master events and their exact RFC5545 recurrence rules instead of inferring cadence from expanded instances.
 
     Returns:
-        str: A formatted list of events (summary, start and end times, link) within the specified range, or detailed information for a single event if event_id is provided.
+        str: A formatted list of events (summary, start and end times, link) within the specified range, or detailed information for a single event if event_id is provided. When more events remain beyond max_results, a "Next page token" line is appended.
     """
     logger.info(
         f"[get_events] Raw parameters - event_id: '{event_id}', time_min: '{time_min}', time_max: '{time_max}', query_len={len(query) if query else 0}, detailed: {detailed}, include_attachments: {include_attachments}, single_events: {single_events}"
@@ -728,6 +729,87 @@ def _resolve_conference_data(
     return resolved
 
 
+async def _build_attachment_entries(
+    service,
+    attachments: Union[str, List[str]],
+    log_prefix: str,
+) -> List[Dict[str, str]]:
+    """
+    Resolve Drive file IDs or URLs into Calendar attachment objects.
+
+    Falls back to a generic title and MIME type when Drive metadata cannot be
+    read, which happens when the calendar credentials carry no Drive scope.
+    """
+    if isinstance(attachments, str):
+        attachments = [a.strip() for a in attachments.split(",") if a.strip()]
+
+    entries: List[Dict[str, str]] = []
+    drive_service = None
+    try:
+        try:
+            drive_service = service._http and build("drive", "v3", http=service._http)
+        except Exception as e:
+            logger.warning(f"Could not build Drive service for MIME type lookup: {e}")
+
+        for att in attachments:
+            if att.startswith("https://"):
+                # Match /d/<id>, /file/d/<id>, ?id=<id>
+                match = re.search(r"(?:/d/|/file/d/|id=)([\w-]+)", att)
+                file_id = match.group(1) if match else None
+                logger.info(
+                    f"[{log_prefix}] Extracted file_id '{file_id}' from attachment URL"
+                )
+            else:
+                file_id = att
+                logger.info(
+                    f"[{log_prefix}] Using direct file_id '{file_id}' for attachment"
+                )
+            if not file_id:
+                continue
+
+            mime_type = "application/vnd.google-apps.drive-sdk"
+            title = "Drive Attachment"
+            # Try to get the actual MIME type and filename from Drive
+            if drive_service:
+                try:
+                    file_metadata = await asyncio.to_thread(
+                        lambda: (
+                            drive_service.files()
+                            .get(
+                                fileId=file_id,
+                                fields="mimeType,name",
+                                supportsAllDrives=True,
+                            )
+                            .execute()
+                        )
+                    )
+                    mime_type = file_metadata.get("mimeType", mime_type)
+                    filename = file_metadata.get("name")
+                    if filename:
+                        title = filename
+                        logger.info(
+                            f"[{log_prefix}] Using filename '{filename}' as attachment title"
+                        )
+                    else:
+                        logger.info(
+                            f"[{log_prefix}] No filename found, using generic title"
+                        )
+                except Exception as e:
+                    logger.warning(f"Could not fetch metadata for file {file_id}: {e}")
+
+            entries.append(
+                {
+                    "fileUrl": f"https://drive.google.com/open?id={file_id}",
+                    "title": title,
+                    "mimeType": mime_type,
+                }
+            )
+    finally:
+        if drive_service:
+            drive_service.close()
+    return entries
+
+
 async def _create_event_impl(
     service,
     user_google_email: str,
@@ -848,75 +930,9 @@ async def _create_event_impl(
     )
 
     if attachments:
-        # Accept both file URLs and file IDs. If a URL, extract the fileId.
-        event_body["attachments"] = []
-        drive_service = None
-        try:
-            try:
-                drive_service = service._http and build(
-                    "drive", "v3", http=service._http
-                )
-            except Exception as e:
-                logger.warning(
-                    f"Could not build Drive service for MIME type lookup: {e}"
-                )
-            for att in attachments:
-                file_id = None
-                if att.startswith("https://"):
-                    # Match /d/<id>, /file/d/<id>, ?id=<id>
-                    match = re.search(r"(?:/d/|/file/d/|id=)([\w-]+)", att)
-                    file_id = match.group(1) if match else None
-                    logger.info(
-                        f"[create_event] Extracted file_id '{file_id}' from attachment URL"
-                    )
-                else:
-                    file_id = att
-                    logger.info(
-                        f"[create_event] Using direct file_id '{file_id}' for attachment"
-                    )
-                if file_id:
-                    file_url = f"https://drive.google.com/open?id={file_id}"
-                    mime_type = "application/vnd.google-apps.drive-sdk"
-                    title = "Drive Attachment"
-                    # Try to get the actual MIME type and filename from Drive
-                    if drive_service:
-                        try:
-                            file_metadata = await asyncio.to_thread(
-                                lambda: (
-                                    drive_service.files()
-                                    .get(
-                                        fileId=file_id,
-                                        fields="mimeType,name",
-                                        supportsAllDrives=True,
-                                    )
-                                    .execute()
-                                )
-                            )
-                            mime_type = file_metadata.get("mimeType", mime_type)
-                            filename = file_metadata.get("name")
-                            if filename:
-                                title = filename
-                                logger.info(
-                                    f"[create_event] Using filename '{filename}' as attachment title"
-                                )
-                            else:
-                                logger.info(
-                                    "[create_event] No filename found, using generic title"
-                                )
-                        except Exception as e:
-                            logger.warning(
-                                f"Could not fetch metadata for file {file_id}: {e}"
-                            )
-                    event_body["attachments"].append(
-                        {
-                            "fileUrl": file_url,
-                            "title": title,
-                            "mimeType": mime_type,
-                        }
-                    )
-        finally:
-            if drive_service:
-                drive_service.close()
+        event_body["attachments"] = await _build_attachment_entries(
+            service, attachments, "create_event"
+        )
         created_event = await asyncio.to_thread(
             lambda: (
                 service.events()
@@ -1011,6 +1027,7 @@ async def _modify_event_impl(
     guests_can_modify: Optional[bool] = None,
     guests_can_invite_others: Optional[bool] = None,
     guests_can_see_other_guests: Optional[bool] = None,
+    attachments: Optional[Union[str, List[str]]] = None,
     send_updates: str = "all",
     *,
     start_timezone: Optional[str] = None,
@@ -1145,6 +1162,12 @@ async def _modify_event_impl(
             "[modify_event] Timezone provided but start_time and end_time are missing. Timezone will not be applied unless start/end times are also provided."
         )
 
+    if attachments is not None:
+        # patch replaces the array wholesale, so the list passed in is the final list.
+        event_body["attachments"] = await _build_attachment_entries(
+            service, attachments, "modify_event"
+        )
+
     if not event_body:
         message = "No fields provided to modify the event."
         logger.warning(f"[modify_event] {message}")
@@ -1205,6 +1228,7 @@ async def _modify_event_impl(
                 calendarId=calendar_id,
                 eventId=event_id,
                 body=event_body,
+                supportsAttachments=True,
                 conferenceDataVersion=1,
                 sendUpdates=send_updates,
             )
@@ -1424,6 +1448,8 @@ async def manage_event(
         end_timezone (Optional[str]): IANA timezone for the end boundary only,
             overriding timezone. See start_timezone.
         attachments (Optional[List[str]]): List of Google Drive file URLs or IDs to attach.
+            On action="update" this replaces the event's existing attachments rather than
+            appending to them, matching the Calendar API's patch semantics.
         add_google_meet (Optional[bool]): Whether to add/remove native Google Meet.
         conference_data (Optional[Dict[str, Any]]): Raw Google Calendar `conferenceData`
             payload to attach a third-party conference (Zoom/Webex/Teams add-on). Use this
@@ -1535,6 +1561,7 @@ async def manage_event(
             guests_can_modify=guests_can_modify,
             guests_can_invite_others=guests_can_invite_others,
             guests_can_see_other_guests=guests_can_see_other_guests,
+            attachments=attachments,
             send_updates=send_updates or "all",
         )
     elif action_lower == "delete":

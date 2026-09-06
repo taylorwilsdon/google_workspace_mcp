@@ -53,9 +53,9 @@ class SegmentTargetDocOperation(StrictDocOperation):
     )
 
 
-class InsertTextOperation(SegmentTargetDocOperation):
-    type: Literal["insert_text"]
-    text: str = Field(description="Text to insert.")
+class InsertionLocationOperation(StrictDocOperation):
+    """One explicit location or semantic anchor for an insertion."""
+
     index: Optional[int] = Field(
         default=None,
         description="Insertion index. Omit when end_of_segment=true.",
@@ -64,12 +64,51 @@ class InsertTextOperation(SegmentTargetDocOperation):
         default=False,
         description="Append to the end of the targeted body/segment instead of using index.",
     )
+    after_heading: Optional[str] = Field(
+        default=None,
+        description=(
+            "Insert immediately after the heading paragraph with this exact text, "
+            "resolved to an index at execution time. Errors when it matches zero or "
+            "more than one heading."
+        ),
+    )
+    before_heading: Optional[str] = Field(
+        default=None,
+        description=(
+            "Insert immediately before the heading paragraph with this exact text. "
+            "Errors when it matches zero or more than one heading."
+        ),
+    )
+    anchor_text: Optional[str] = Field(
+        default=None,
+        description=(
+            "Insert relative to this literal text, which must occur exactly once "
+            "within a single paragraph. Use anchor_position to pick which side."
+        ),
+    )
+    anchor_position: Literal["before", "after"] = Field(
+        default="after",
+        description="Which side of anchor_text to insert on. Defaults to 'after'.",
+    )
 
     @model_validator(mode="after")
-    def validate_location(self) -> "InsertTextOperation":
-        if self.end_of_segment == (self.index is not None):
-            raise ValueError("Provide exactly one of 'index' or 'end_of_segment=true'.")
+    def validate_location(self) -> "InsertionLocationOperation":
+        anchors = [self.after_heading, self.before_heading, self.anchor_text]
+        provided = sum(
+            [self.index is not None, self.end_of_segment]
+            + [anchor is not None for anchor in anchors]
+        )
+        if provided != 1:
+            raise ValueError(
+                "Provide exactly one of 'index', 'end_of_segment=true', "
+                "'after_heading', 'before_heading' or 'anchor_text'."
+            )
         return self
+
+
+class InsertTextOperation(InsertionLocationOperation, SegmentTargetDocOperation):
+    type: Literal["insert_text"]
+    text: str = Field(description="Text to insert.")
 
 
 class ReplaceTextOperation(SegmentTargetDocOperation):
@@ -157,24 +196,10 @@ class UpdateTableCellStyleOperation(StrictDocOperation):
     )
 
 
-class InsertTableOperation(SegmentTargetDocOperation):
+class InsertTableOperation(InsertionLocationOperation, SegmentTargetDocOperation):
     type: Literal["insert_table"]
     rows: int
     columns: int
-    index: Optional[int] = Field(
-        default=None,
-        description="Insertion index. Omit when end_of_segment=true.",
-    )
-    end_of_segment: bool = Field(
-        default=False,
-        description="Append to the end of the targeted body/segment instead of using index.",
-    )
-
-    @model_validator(mode="after")
-    def validate_location(self) -> "InsertTableOperation":
-        if self.end_of_segment == (self.index is not None):
-            raise ValueError("Provide exactly one of 'index' or 'end_of_segment=true'.")
-        return self
 
 
 class InsertTableRowOperation(StrictDocOperation):
@@ -253,41 +278,13 @@ class PinTableHeaderRowsOperation(StrictDocOperation):
     )
 
 
-class InsertPageBreakOperation(StrictDocOperation):
+class InsertPageBreakOperation(InsertionLocationOperation):
     type: Literal["insert_page_break"]
-    index: Optional[int] = Field(
-        default=None,
-        description="Insertion index. Omit when end_of_segment=true.",
-    )
-    end_of_segment: bool = Field(
-        default=False,
-        description="Append to the end of the body instead of using index.",
-    )
-
-    @model_validator(mode="after")
-    def validate_location(self) -> "InsertPageBreakOperation":
-        if self.end_of_segment == (self.index is not None):
-            raise ValueError("Provide exactly one of 'index' or 'end_of_segment=true'.")
-        return self
 
 
-class InsertSectionBreakOperation(StrictDocOperation):
+class InsertSectionBreakOperation(InsertionLocationOperation):
     type: Literal["insert_section_break"]
-    index: Optional[int] = Field(
-        default=None,
-        description="Insertion index. Omit when end_of_segment=true.",
-    )
-    end_of_segment: bool = Field(
-        default=False,
-        description="Append to the end of the body instead of using index.",
-    )
     section_type: Literal["CONTINUOUS", "NEXT_PAGE"] = "NEXT_PAGE"
-
-    @model_validator(mode="after")
-    def validate_location(self) -> "InsertSectionBreakOperation":
-        if self.end_of_segment == (self.index is not None):
-            raise ValueError("Provide exactly one of 'index' or 'end_of_segment=true'.")
-        return self
 
 
 class FindReplaceOperation(StrictDocOperation):
@@ -395,25 +392,11 @@ class CreateHeaderFooterOperation(StrictDocOperation):
     )
 
 
-class InsertImageOperation(SegmentTargetDocOperation):
+class InsertImageOperation(InsertionLocationOperation, SegmentTargetDocOperation):
     type: Literal["insert_image"]
     image_uri: str = Field(description="Image URL or resolvable image URI.")
-    index: Optional[int] = Field(
-        default=None,
-        description="Insertion index. Omit when end_of_segment=true.",
-    )
     width: Optional[int] = None
     height: Optional[int] = None
-    end_of_segment: bool = Field(
-        default=False,
-        description="Append to the end of the targeted body/segment instead of using index.",
-    )
-
-    @model_validator(mode="after")
-    def validate_location(self) -> "InsertImageOperation":
-        if self.end_of_segment == (self.index is not None):
-            raise ValueError("Provide exactly one of 'index' or 'end_of_segment=true'.")
-        return self
 
 
 class InsertDocTabOperation(BaseModel):
