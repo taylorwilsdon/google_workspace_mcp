@@ -93,12 +93,19 @@ async def test_get_events_empty_page_with_more_pages_is_not_stated_as_no_events(
     service = _events_service({"items": [], "nextPageToken": "tok789"})
 
     result = await _unwrap(calendar_tools.get_events)(
-        service=service, user_google_email="user@example.com", page_token="tok456"
+        service=service,
+        user_google_email="user@example.com",
+        page_token="tok456",
+        time_min="2026-09-06T00:00:00Z",
     )
 
-    assert "more pages are available" in result
+    assert "No events found" not in result
+    assert "more pages remain" in result
     assert "Next page token: tok789" in result
-    assert service.events.return_value.list.call_args.kwargs["pageToken"] == "tok456"
+    assert "Pagination time_min: 2026-09-06T00:00:00Z" in result
+    call_kwargs = service.events.return_value.list.call_args.kwargs
+    assert call_kwargs["pageToken"] == "tok456"
+    assert call_kwargs["timeMin"] == "2026-09-06T00:00:00Z"
 
 
 @pytest.mark.asyncio
