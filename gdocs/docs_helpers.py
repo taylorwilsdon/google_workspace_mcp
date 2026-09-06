@@ -1930,6 +1930,12 @@ def validate_operation(operation: Dict[str, Any]) -> tuple[bool, str]:
         "insert_image",
     }:
         end_of_segment = operation.get("end_of_segment", False)
+        # A semantic anchor stands in for index here; it is resolved into one
+        # against the live document just before the requests are built.
+        has_anchor = any(
+            operation.get(field) is not None
+            for field in ("after_heading", "before_heading", "anchor_text")
+        )
         if end_of_segment and "index" in operation:
             return (
                 False,
@@ -1937,6 +1943,7 @@ def validate_operation(operation: Dict[str, Any]) -> tuple[bool, str]:
             )
         if (
             not end_of_segment
+            and not has_anchor
             and "index" not in operation
             and op_type != "insert_image"
         ):
@@ -1947,6 +1954,7 @@ def validate_operation(operation: Dict[str, Any]) -> tuple[bool, str]:
         if (
             op_type == "insert_image"
             and not end_of_segment
+            and not has_anchor
             and "index" not in operation
         ):
             return (
@@ -1955,3 +1963,88 @@ def validate_operation(operation: Dict[str, Any]) -> tuple[bool, str]:
             )
 
     return True, ""
+
+
+# Unicode OBJECT REPLACEMENT CHARACTER. Stands in for a paragraph element that
+# occupies a document index but carries no text (inline object, page break,
+# horizontal rule, footnote reference, ...), so extracted text keeps the same
+# length as the document range it came from.
+OBJECT_PLACEHOLDER = "\ufffc"
+
+TAB_HEADER_FORMAT = "\n--- TAB: {tab_name} (ID: {tab_id}) ---\n"
+
+
+def _paragraph_element_text(element: Dict[str, Any]) -> str:
+    """Text a single paragraph element contributes to index-aligned output.
+
+    A textRun contributes its content verbatim. Every other element type is
+    matched by its own index span rather than by name: the Docs API can add
+    element types, and a type this code has not heard of still occupies indices,
+    so deriving the width from startIndex/endIndex keeps alignment correct
+    without a list to maintain.
+    """
+    text_run = element.get("textRun", {})
+    if text_run and "content" in text_run:
+        return text_run["content"]
+
+    span = element.get("endIndex", 0) - element.get("startIndex", 0)
+    return OBJECT_PLACEHOLDER * max(span, 0)
+
+
+def extract_text_from_elements(
+    elements: List[Dict[str, Any]],
+    tab_name: Optional[str] = None,
+    tab_id: Optional[str] = None,
+    depth: int = 0,
+) -> str:
+    """Extract text from Google Docs structural elements, keeping indices aligned.
+
+    Empty paragraphs are preserved: a paragraph whose only content is a newline
+    still occupies an index, so dropping it shifts every subsequent offset and
+    silently corrupts any index computed by searching the result.
+
+    Table cell text is included but is not index-aligned; the table, row and cell
+    structure itself occupies indices that are not represented here.
+    """
+    if depth > 5:
+        return ""
+
+    text_lines = []
+    if tab_name:
+        text_lines.append(TAB_HEADER_FORMAT.format(tab_name=tab_name, tab_id=tab_id))
+
+    for element in elements:
+        if "paragraph" in element:
+            para_elements = element.get("paragraph", {}).get("elements", [])
+            text_lines.append(
+                "".join(_paragraph_element_text(pe) for pe in para_elements)
+            )
+        elif "table" in element:
+            for row in element.get("table", {}).get("tableRows", []):
+                for cell in row.get("tableCells", []):
+                    text_lines.append(
+                        extract_text_from_elements(
+                            cell.get("content", []), depth=depth + 1
+                        )
+                    )
+
+    return "".join(text_lines)
+
+
+def process_tab_hierarchy(tab: Dict[str, Any], level: int = 0) -> str:
+    """Extract text from a tab and its nested child tabs, depth-first."""
+    tab_text = ""
+
+    if "documentTab" in tab:
+        props = tab.get("tabProperties", {})
+        tab_title = props.get("title", "Untitled Tab")
+        tab_id = props.get("tabId", "Unknown ID")
+        if level > 0:
+            tab_title = "    " * level + f"{tab_title}"
+        tab_body = tab.get("documentTab", {}).get("body", {}).get("content", [])
+        tab_text += extract_text_from_elements(tab_body, tab_title, tab_id)
+
+    for child_tab in tab.get("childTabs", []):
+        tab_text += process_tab_hierarchy(child_tab, level + 1)
+
+    return tab_text

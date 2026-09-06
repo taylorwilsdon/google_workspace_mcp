@@ -64,11 +64,45 @@ class InsertTextOperation(SegmentTargetDocOperation):
         default=False,
         description="Append to the end of the targeted body/segment instead of using index.",
     )
+    after_heading: Optional[str] = Field(
+        default=None,
+        description=(
+            "Insert immediately after the heading paragraph with this exact text, "
+            "resolved to an index at execution time. Errors when it matches zero or "
+            "more than one heading."
+        ),
+    )
+    before_heading: Optional[str] = Field(
+        default=None,
+        description=(
+            "Insert immediately before the heading paragraph with this exact text. "
+            "Errors when it matches zero or more than one heading."
+        ),
+    )
+    anchor_text: Optional[str] = Field(
+        default=None,
+        description=(
+            "Insert relative to this literal text, which must occur exactly once "
+            "within a single paragraph. Use anchor_position to pick which side."
+        ),
+    )
+    anchor_position: Literal["before", "after"] = Field(
+        default="after",
+        description="Which side of anchor_text to insert on. Defaults to 'after'.",
+    )
 
     @model_validator(mode="after")
     def validate_location(self) -> "InsertTextOperation":
-        if self.end_of_segment == (self.index is not None):
-            raise ValueError("Provide exactly one of 'index' or 'end_of_segment=true'.")
+        anchors = [self.after_heading, self.before_heading, self.anchor_text]
+        provided = sum(
+            [self.index is not None, self.end_of_segment]
+            + [anchor is not None for anchor in anchors]
+        )
+        if provided != 1:
+            raise ValueError(
+                "Provide exactly one of 'index', 'end_of_segment=true', "
+                "'after_heading', 'before_heading' or 'anchor_text'."
+            )
         return self
 
 

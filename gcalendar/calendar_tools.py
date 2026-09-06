@@ -350,6 +350,28 @@ def _build_time_boundary(time_value: str, timezone: Optional[str]) -> Dict[str, 
     return {"dateTime": _strip_utc_offset(time_value), "timeZone": timezone}
 
 
+def _next_page_suffix(next_page_token: Optional[str]) -> str:
+    """Render the trailing page-token line, so truncation is never silent."""
+    if not next_page_token:
+        return ""
+    return f"\n\nMore results are available. Next page token: {next_page_token}"
+
+
+def _no_results_message(message: str, next_page_token: Optional[str]) -> str:
+    """
+    Report an empty page without asserting that nothing exists.
+
+    The Calendar API can return an empty page alongside a nextPageToken, so an
+    unqualified "no events found" would be a false statement.
+    """
+    if next_page_token:
+        return (
+            f"{message.rstrip('.')} on this page, but more pages are available. "
+            f"Next page token: {next_page_token}"
+        )
+    return message
+
+
 @server.tool(
     title="List Calendars",
     annotations=ToolAnnotations(
@@ -361,24 +383,40 @@ def _build_time_boundary(time_value: str, timezone: Optional[str]) -> Dict[str, 
 )
 @handle_http_errors("list_calendars", is_read_only=True, service_type="calendar")
 @require_google_service("calendar", "calendar_read")
-async def list_calendars(service, user_google_email: str) -> str:
+async def list_calendars(
+    service,
+    user_google_email: str,
+    max_results: int = 100,
+    page_token: Optional[str] = None,
+) -> str:
     """
     Retrieves a list of calendars accessible to the authenticated user.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
+        max_results (int): Maximum calendars to return per page. Defaults to 100.
+        page_token (Optional[str]): Token from a previous call's "Next page token"
+            line, to fetch the following page.
 
     Returns:
         str: A formatted list of the user's calendars (summary, ID, primary status).
+            When more calendars remain, a "Next page token" line is appended.
     """
     logger.info(f"[list_calendars] Invoked. Email: '{user_google_email}'")
 
+    request_params: Dict[str, Any] = {"maxResults": max_results}
+    if page_token:
+        request_params["pageToken"] = page_token
+
     calendar_list_response = await asyncio.to_thread(
-        lambda: service.calendarList().list().execute()
+        lambda: service.calendarList().list(**request_params).execute()
     )
     items = calendar_list_response.get("items", [])
+    next_page_token = calendar_list_response.get("nextPageToken")
     if not items:
-        return f"No calendars found for {user_google_email}."
+        return _no_results_message(
+            f"No calendars found for {user_google_email}.", next_page_token
+        )
 
     calendars_summary_list = [
         f'- "{cal.get("summary", "No Summary")}"{" (Primary)" if cal.get("primary") else ""} (ID: {cal["id"]})'
@@ -388,6 +426,7 @@ async def list_calendars(service, user_google_email: str) -> str:
         f"Successfully listed {len(items)} calendars for {user_google_email}:\n"
         + "\n".join(calendars_summary_list)
     )
+    text_output += _next_page_suffix(next_page_token)
     logger.info(f"Successfully listed {len(items)} calendars for {user_google_email}.")
     return text_output
 
@@ -415,6 +454,7 @@ async def get_events(
     detailed: bool = False,
     include_attachments: bool = False,
     single_events: bool = True,
+    page_token: Optional[str] = None,
 ) -> str:
     """
     Retrieves events from a specified Google Calendar. Can retrieve a single event by ID or multiple events within a time range.
@@ -431,13 +471,16 @@ async def get_events(
         detailed (bool): Whether to return detailed event information including description, location, colour (colorId), attendees, and attendee details (response status, organizer, optional flags). Recurring instances also report the parent series ID needed to edit the whole series; recurring masters report their raw RFC5545 recurrence rules; and events that are not ordinary confirmed meetings report their event type (outOfOffice, workingLocation, focusTime) and status. Defaults to False.
         include_attachments (bool): Whether to include attachment information in detailed event output. When True, shows attachment details (fileId, fileUrl, mimeType, title) for events that have attachments. Only applies when detailed=True. Set this to True when you need to view or access files that have been attached to calendar events, such as meeting documents, presentations, or other shared files. Defaults to False.
         single_events (bool): Whether to expand recurring series into individual instances. Defaults to True for backwards compatibility. Set to False with detailed=True to retrieve recurring master events and their exact RFC5545 recurrence rules instead of inferring cadence from expanded instances.
+        page_token (Optional[str]): Token from a previous call's "Next page token" line, to fetch the following page. Ignored if event_id is provided.
 
     Returns:
-        str: A formatted list of events (summary, start and end times, link) within the specified range, or detailed information for a single event if event_id is provided.
+        str: A formatted list of events (summary, start and end times, link) within the specified range, or detailed information for a single event if event_id is provided. When more events remain beyond max_results, a "Next page token" line is appended.
     """
     logger.info(
         f"[get_events] Raw parameters - event_id: '{event_id}', time_min: '{time_min}', time_max: '{time_max}', query_len={len(query) if query else 0}, detailed: {detailed}, include_attachments: {include_attachments}, single_events: {single_events}"
     )
+
+    next_page_token = None
 
     # Handle single event retrieval
     if event_id:
@@ -503,15 +546,22 @@ async def get_events(
         if query:
             request_params["q"] = query
 
+        if page_token:
+            request_params["pageToken"] = page_token
+
         events_result = await asyncio.to_thread(
             lambda: service.events().list(**request_params).execute()
         )
         items = events_result.get("items", [])
+        next_page_token = events_result.get("nextPageToken")
     if not items:
         if event_id:
             return f"Event with ID '{event_id}' not found in calendar '{calendar_id}' for {user_google_email}."
         else:
-            return f"No events found in calendar '{calendar_id}' for {user_google_email} for the specified time range."
+            return _no_results_message(
+                f"No events found in calendar '{calendar_id}' for {user_google_email} for the specified time range.",
+                next_page_token,
+            )
 
     # Handle returning detailed output for a single event when requested
     if event_id and detailed:
@@ -578,6 +628,7 @@ async def get_events(
         text_output = (
             f"Successfully retrieved {len(items)} events from calendar '{calendar_id}' for {user_google_email}:\n"
             + "\n".join(event_details_list)
+            + _next_page_suffix(next_page_token)
         )
 
     logger.info(f"Successfully retrieved {len(items)} events for {user_google_email}.")
@@ -675,6 +726,87 @@ def _resolve_conference_data(
             "same event; choose one."
         )
     return resolved
+
+
+async def _build_attachment_entries(
+    service,
+    attachments: Union[str, List[str]],
+    log_prefix: str,
+) -> List[Dict[str, str]]:
+    """
+    Resolve Drive file IDs or URLs into Calendar attachment objects.
+
+    Falls back to a generic title and MIME type when Drive metadata cannot be
+    read, which happens when the calendar credentials carry no Drive scope.
+    """
+    if isinstance(attachments, str):
+        attachments = [a.strip() for a in attachments.split(",") if a.strip()]
+
+    entries: List[Dict[str, str]] = []
+    drive_service = None
+    try:
+        try:
+            drive_service = service._http and build("drive", "v3", http=service._http)
+        except Exception as e:
+            logger.warning(f"Could not build Drive service for MIME type lookup: {e}")
+
+        for att in attachments:
+            if att.startswith("https://"):
+                # Match /d/<id>, /file/d/<id>, ?id=<id>
+                match = re.search(r"(?:/d/|/file/d/|id=)([\w-]+)", att)
+                file_id = match.group(1) if match else None
+                logger.info(
+                    f"[{log_prefix}] Extracted file_id '{file_id}' from attachment URL"
+                )
+            else:
+                file_id = att
+                logger.info(
+                    f"[{log_prefix}] Using direct file_id '{file_id}' for attachment"
+                )
+            if not file_id:
+                continue
+
+            mime_type = "application/vnd.google-apps.drive-sdk"
+            title = "Drive Attachment"
+            # Try to get the actual MIME type and filename from Drive
+            if drive_service:
+                try:
+                    file_metadata = await asyncio.to_thread(
+                        lambda: (
+                            drive_service.files()
+                            .get(
+                                fileId=file_id,
+                                fields="mimeType,name",
+                                supportsAllDrives=True,
+                            )
+                            .execute()
+                        )
+                    )
+                    mime_type = file_metadata.get("mimeType", mime_type)
+                    filename = file_metadata.get("name")
+                    if filename:
+                        title = filename
+                        logger.info(
+                            f"[{log_prefix}] Using filename '{filename}' as attachment title"
+                        )
+                    else:
+                        logger.info(
+                            f"[{log_prefix}] No filename found, using generic title"
+                        )
+                except Exception as e:
+                    logger.warning(f"Could not fetch metadata for file {file_id}: {e}")
+
+            entries.append(
+                {
+                    "fileUrl": f"https://drive.google.com/open?id={file_id}",
+                    "title": title,
+                    "mimeType": mime_type,
+                }
+            )
+    finally:
+        if drive_service:
+            drive_service.close()
+    return entries
 
 
 async def _create_event_impl(
@@ -797,75 +929,9 @@ async def _create_event_impl(
     )
 
     if attachments:
-        # Accept both file URLs and file IDs. If a URL, extract the fileId.
-        event_body["attachments"] = []
-        drive_service = None
-        try:
-            try:
-                drive_service = service._http and build(
-                    "drive", "v3", http=service._http
-                )
-            except Exception as e:
-                logger.warning(
-                    f"Could not build Drive service for MIME type lookup: {e}"
-                )
-            for att in attachments:
-                file_id = None
-                if att.startswith("https://"):
-                    # Match /d/<id>, /file/d/<id>, ?id=<id>
-                    match = re.search(r"(?:/d/|/file/d/|id=)([\w-]+)", att)
-                    file_id = match.group(1) if match else None
-                    logger.info(
-                        f"[create_event] Extracted file_id '{file_id}' from attachment URL"
-                    )
-                else:
-                    file_id = att
-                    logger.info(
-                        f"[create_event] Using direct file_id '{file_id}' for attachment"
-                    )
-                if file_id:
-                    file_url = f"https://drive.google.com/open?id={file_id}"
-                    mime_type = "application/vnd.google-apps.drive-sdk"
-                    title = "Drive Attachment"
-                    # Try to get the actual MIME type and filename from Drive
-                    if drive_service:
-                        try:
-                            file_metadata = await asyncio.to_thread(
-                                lambda: (
-                                    drive_service.files()
-                                    .get(
-                                        fileId=file_id,
-                                        fields="mimeType,name",
-                                        supportsAllDrives=True,
-                                    )
-                                    .execute()
-                                )
-                            )
-                            mime_type = file_metadata.get("mimeType", mime_type)
-                            filename = file_metadata.get("name")
-                            if filename:
-                                title = filename
-                                logger.info(
-                                    f"[create_event] Using filename '{filename}' as attachment title"
-                                )
-                            else:
-                                logger.info(
-                                    "[create_event] No filename found, using generic title"
-                                )
-                        except Exception as e:
-                            logger.warning(
-                                f"Could not fetch metadata for file {file_id}: {e}"
-                            )
-                    event_body["attachments"].append(
-                        {
-                            "fileUrl": file_url,
-                            "title": title,
-                            "mimeType": mime_type,
-                        }
-                    )
-        finally:
-            if drive_service:
-                drive_service.close()
+        event_body["attachments"] = await _build_attachment_entries(
+            service, attachments, "create_event"
+        )
         created_event = await asyncio.to_thread(
             lambda: (
                 service.events()
@@ -960,6 +1026,7 @@ async def _modify_event_impl(
     guests_can_modify: Optional[bool] = None,
     guests_can_invite_others: Optional[bool] = None,
     guests_can_see_other_guests: Optional[bool] = None,
+    attachments: Optional[Union[str, List[str]]] = None,
     send_updates: str = "all",
     *,
     start_timezone: Optional[str] = None,
@@ -1094,6 +1161,12 @@ async def _modify_event_impl(
             "[modify_event] Timezone provided but start_time and end_time are missing. Timezone will not be applied unless start/end times are also provided."
         )
 
+    if attachments:
+        # patch replaces the array wholesale, so the list passed in is the final list.
+        event_body["attachments"] = await _build_attachment_entries(
+            service, attachments, "modify_event"
+        )
+
     if not event_body:
         message = "No fields provided to modify the event."
         logger.warning(f"[modify_event] {message}")
@@ -1154,6 +1227,7 @@ async def _modify_event_impl(
                 calendarId=calendar_id,
                 eventId=event_id,
                 body=event_body,
+                supportsAttachments=True,
                 conferenceDataVersion=1,
                 sendUpdates=send_updates,
             )
@@ -1373,6 +1447,8 @@ async def manage_event(
         end_timezone (Optional[str]): IANA timezone for the end boundary only,
             overriding timezone. See start_timezone.
         attachments (Optional[List[str]]): List of Google Drive file URLs or IDs to attach.
+            On action="update" this replaces the event's existing attachments rather than
+            appending to them, matching the Calendar API's patch semantics.
         add_google_meet (Optional[bool]): Whether to add/remove native Google Meet.
         conference_data (Optional[Dict[str, Any]]): Raw Google Calendar `conferenceData`
             payload to attach a third-party conference (Zoom/Webex/Teams add-on). Use this
@@ -1484,6 +1560,7 @@ async def manage_event(
             guests_can_modify=guests_can_modify,
             guests_can_invite_others=guests_can_invite_others,
             guests_can_see_other_guests=guests_can_see_other_guests,
+            attachments=attachments,
             send_updates=send_updates or "all",
         )
     elif action_lower == "delete":

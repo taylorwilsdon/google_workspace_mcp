@@ -9,6 +9,10 @@ import logging
 import asyncio
 from typing import Any, Union, Dict, List, Tuple
 
+from gdocs.docs_anchors import (
+    AnchorResolutionError,
+    resolve_operation_anchor,
+)
 from gdocs.docs_helpers import (
     create_insert_text_request,
     create_delete_range_request,
@@ -45,6 +49,28 @@ from gdocs.docs_helpers import (
 from gdocs.managers.validation_manager import ValidationManager
 
 logger = logging.getLogger(__name__)
+
+
+def _first_document_tab(tabs: list) -> dict | None:
+    """First documentTab anywhere in the tab tree."""
+    for tab in tabs:
+        if "documentTab" in tab:
+            return tab["documentTab"]
+        found = _first_document_tab(tab.get("childTabs", []))
+        if found:
+            return found
+    return None
+
+
+def _find_document_tab(tabs: list, target_tab_id: str) -> dict | None:
+    """documentTab for a given tab ID, anywhere in the tab tree."""
+    for tab in tabs:
+        if tab.get("tabProperties", {}).get("tabId") == target_tab_id:
+            return tab.get("documentTab")
+        found = _find_document_tab(tab.get("childTabs", []), target_tab_id)
+        if found:
+            return found
+    return None
 
 
 class BatchOperationManager:
@@ -93,6 +119,10 @@ class BatchOperationManager:
             )
 
         try:
+            anchor_error = await self._resolve_semantic_anchors(document_id, operations)
+            if anchor_error:
+                return False, anchor_error, {}
+
             preflight_error = await self._preflight_create_header_footer_operations(
                 document_id, operations
             )
@@ -107,6 +137,8 @@ class BatchOperationManager:
             if not requests:
                 return False, "No valid requests could be built from operations", {}
 
+            revision_before = await self._get_revision_id(document_id)
+
             # Execute the batch
             result = await self._execute_batch_requests(document_id, requests)
 
@@ -118,17 +150,34 @@ class BatchOperationManager:
                 "operation_summary": operation_descriptions[:5],  # First 5 operations
             }
 
-            # Fetch document length after batch for downstream chaining
+            metadata["revision_before"] = revision_before
+
+            # One post-batch read serves both the document length (for chaining)
+            # and the affected-range snapshot (so the caller can see what the
+            # write actually produced without a second verification call).
             try:
                 doc = await asyncio.to_thread(
                     self.service.documents()
-                    .get(documentId=document_id, fields="body/content(endIndex)")
+                    .get(
+                        documentId=document_id,
+                        fields=(
+                            "revisionId,body/content(startIndex,endIndex,"
+                            "paragraph(elements/textRun/content,"
+                            "paragraphStyle/namedStyleType,bullet))"
+                        ),
+                    )
                     .execute
                 )
                 body_content = doc.get("body", {}).get("content", [])
                 metadata["document_length"] = (
                     body_content[-1].get("endIndex", 0) if body_content else 1
                 )
+                metadata["revision_after"] = doc.get("revisionId")
+                affected = self._affected_range(operations)
+                if affected:
+                    metadata["affected_range"] = self._snapshot_range(
+                        body_content, *affected
+                    )
             except Exception:
                 metadata["document_length"] = None
 
@@ -151,6 +200,140 @@ class BatchOperationManager:
             error_msg = self._rewrite_execution_error(str(e), operations)
             logger.error(f"Failed to execute batch operations: {error_msg}")
             return False, error_msg, {}
+
+    ANCHOR_FIELDS = ("after_heading", "before_heading", "anchor_text")
+
+    async def _resolve_semantic_anchors(
+        self, document_id: str, operations: list[dict[str, Any]]
+    ) -> str | None:
+        """
+        Rewrite semantic anchors into concrete indices before requests are built.
+
+        Resolving here rather than in the caller means the index is computed from
+        the document as it is at execution time, which is what makes an anchor
+        safer than an index the caller computed earlier.
+        """
+        anchored = [
+            op
+            for op in operations
+            if any(op.get(field) is not None for field in self.ANCHOR_FIELDS)
+        ]
+        if not anchored:
+            return None
+
+        doc = await asyncio.to_thread(
+            self.service.documents()
+            .get(documentId=document_id, includeTabsContent=True)
+            .execute
+        )
+
+        for op in anchored:
+            body = self._anchor_body(doc, op.get("tab_id"))
+            if body is None:
+                return f"Tab '{op.get('tab_id')}' not found in document {document_id}."
+            try:
+                op["index"] = resolve_operation_anchor(
+                    body,
+                    after_heading=op.get("after_heading"),
+                    before_heading=op.get("before_heading"),
+                    anchor_text=op.get("anchor_text"),
+                    anchor_position=op.get("anchor_position", "after"),
+                )
+            except AnchorResolutionError as e:
+                return str(e)
+            op["end_of_segment"] = False
+            for field in self.ANCHOR_FIELDS:
+                op.pop(field, None)
+            op.pop("anchor_position", None)
+
+        return None
+
+    @staticmethod
+    def _anchor_body(doc: dict[str, Any], tab_id: str | None) -> dict[str, Any] | None:
+        """Body to resolve anchors against: the named tab, else the main body."""
+        if not tab_id:
+            body = doc.get("body")
+            if body:
+                return body
+            # Tab-aware responses leave body empty; fall back to the first tab,
+            # matching what inspect_doc_structure reports for an unnamed tab.
+            first = _first_document_tab(doc.get("tabs", []))
+            return first.get("body", {}) if first else {}
+
+        tab = _find_document_tab(doc.get("tabs", []), tab_id)
+        return tab.get("body", {}) if tab else None
+
+    async def _get_revision_id(self, document_id: str) -> str | None:
+        """Document revision before the batch, for correlating with version history."""
+        try:
+            doc = await asyncio.to_thread(
+                self.service.documents()
+                .get(documentId=document_id, fields="revisionId")
+                .execute
+            )
+            return doc.get("revisionId")
+        except Exception:
+            return None
+
+    @staticmethod
+    def _affected_range(
+        operations: list[dict[str, Any]],
+    ) -> tuple[int, int] | None:
+        """
+        Widest index range the operations targeted, or None when none is known.
+
+        Indices come from the request as submitted, so this brackets where the
+        edit was aimed; the snapshot then reports what is actually there now.
+        """
+        starts: list[int] = []
+        ends: list[int] = []
+        for op in operations:
+            start = op.get("start_index")
+            if start is None:
+                start = op.get("index")
+            if start is None:
+                continue
+            end = op.get("end_index")
+            if end is None:
+                end = start + len(op.get("text") or "")
+            starts.append(start)
+            ends.append(end)
+        if not starts:
+            return None
+        return min(starts), max(ends)
+
+    @staticmethod
+    def _snapshot_range(
+        body_content: list[dict[str, Any]], start: int, end: int
+    ) -> list[dict[str, Any]]:
+        """Per-paragraph style and list membership for paragraphs overlapping a range."""
+        snapshot = []
+        for element in body_content:
+            paragraph = element.get("paragraph")
+            if paragraph is None:
+                continue
+            elem_start = element.get("startIndex", 0)
+            elem_end = element.get("endIndex", 0)
+            if elem_end <= start or elem_start >= end:
+                continue
+            text = "".join(
+                pe.get("textRun", {}).get("content", "")
+                for pe in paragraph.get("elements", [])
+            )
+            snapshot.append(
+                {
+                    "start_index": elem_start,
+                    "end_index": elem_end,
+                    "named_style": paragraph.get("paragraphStyle", {}).get(
+                        "namedStyleType"
+                    ),
+                    "in_list": "bullet" in paragraph,
+                    "text_preview": text[:80],
+                }
+            )
+            if len(snapshot) >= 20:
+                break
+        return snapshot
 
     async def _preflight_create_header_footer_operations(
         self, document_id: str, operations: list[dict[str, Any]]

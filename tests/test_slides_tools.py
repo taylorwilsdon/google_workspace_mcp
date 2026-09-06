@@ -3,6 +3,7 @@ from unittest.mock import Mock
 import pytest
 
 from core.utils import UserInputError
+from gslides import slides_tools
 from gslides.slides_tools import (
     _describe_elements,
     _extract_shape_text,
@@ -615,3 +616,73 @@ async def test_batch_update_allows_insert_text_into_the_speaker_notes_shape():
 
     assert presentations.batchUpdate.call_args.kwargs["body"] == {"requests": requests}
     assert "Batch Update Completed" in result
+
+
+class TestGeometryReporting:
+    """Element placement is reported only when asked for (issue #1026)."""
+
+    ELEMENTS = [
+        {
+            "objectId": "el1",
+            "shape": {"shapeType": "TEXT_BOX"},
+            "transform": {
+                "translateX": 685800,
+                "translateY": 1143000,
+                "scaleX": 1,
+                "scaleY": 1,
+                "unit": "EMU",
+            },
+            "size": {
+                "width": {"magnitude": 7772400, "unit": "EMU"},
+                "height": {"magnitude": 1325563, "unit": "EMU"},
+            },
+        }
+    ]
+
+    def test_geometry_is_omitted_by_default(self):
+        lines = slides_tools._describe_elements(self.ELEMENTS)
+        assert not any("position:" in line for line in lines)
+
+    def test_geometry_reports_position_and_size_in_emu(self):
+        lines = slides_tools._describe_elements(self.ELEMENTS, include_geometry=True)
+        geometry = next(line for line in lines if "position:" in line)
+        assert "x=685800" in geometry
+        assert "y=1143000" in geometry
+        assert "7772400 x 1325563 EMU" in geometry
+        # Identity scale is noise, so it is left out.
+        assert "scale:" not in geometry
+
+    def test_non_identity_scale_is_reported(self):
+        element = {
+            **self.ELEMENTS[0],
+            "transform": {**self.ELEMENTS[0]["transform"], "scaleX": 0.5},
+        }
+        geometry = next(
+            line
+            for line in slides_tools._describe_elements(
+                [element], include_geometry=True
+            )
+            if "position:" in line
+        )
+        assert "scale: x=0.5 y=1" in geometry
+
+    def test_geometry_line_follows_its_own_element_inside_a_group(self):
+        group = [
+            {
+                "objectId": "grp",
+                "elementGroup": {"children": self.ELEMENTS},
+                "transform": {"translateX": 0, "translateY": 0, "unit": "EMU"},
+            }
+        ]
+        lines = slides_tools._describe_elements(group, include_geometry=True)
+        assert "Group: ID grp" in lines[0]
+        assert "position: x=0" in lines[1]
+        assert "Shape: ID el1" in lines[2]
+        assert "x=685800" in lines[3]
+
+    def test_element_without_geometry_yields_no_line(self):
+        lines = slides_tools._describe_elements(
+            [{"objectId": "el2", "shape": {"shapeType": "TEXT_BOX"}}],
+            include_geometry=True,
+        )
+        assert lines == ["  Shape: ID el2, Type: TEXT_BOX"]

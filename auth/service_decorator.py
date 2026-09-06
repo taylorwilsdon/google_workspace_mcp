@@ -285,6 +285,29 @@ def _validate_dwd_domain(email: str, config) -> None:
         )
 
 
+def _widen_drive_scope_for_dwd(scopes: List[str], tool_name: str) -> List[str]:
+    """
+    Substitute the full Drive scope for drive.file in service-account mode.
+
+    drive.file grants access only to files the app created or the user picked
+    through the Drive file picker. A domain-wide-delegation service account never
+    goes through a picker, so under drive.file every Drive write tool gets a bare
+    404 on any pre-existing file. The delegated token carries exactly the scopes
+    requested here, so SCOPE_HIERARCHY never applies, and the effective privilege
+    is governed by the Admin console's DWD scope allowlist regardless.
+    """
+    if DRIVE_FILE_SCOPE not in scopes:
+        return scopes
+
+    widened = [DRIVE_SCOPE if s == DRIVE_FILE_SCOPE else s for s in scopes]
+    logger.debug(
+        f"[{tool_name}] Service-account mode: requesting {DRIVE_SCOPE} in place of "
+        f"{DRIVE_FILE_SCOPE}, which cannot reach pre-existing files under "
+        "domain-wide delegation. Authorize it in the Admin console DWD scope list."
+    )
+    return widened
+
+
 async def _authenticate_service(
     use_oauth21: bool,
     service_name: str,
@@ -315,7 +338,9 @@ async def _authenticate_service(
         else:
             target_email = canonical_email
 
-        credentials = _get_service_account_credentials(resolved_scopes, target_email)
+        credentials = _get_service_account_credentials(
+            _widen_drive_scope_for_dwd(resolved_scopes, tool_name), target_email
+        )
         service = build(service_name, service_version, credentials=credentials)
         logger.info(
             f"[{tool_name}] Authenticated {service_name} for "

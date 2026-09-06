@@ -89,6 +89,7 @@ sheets:
     - list_sheet_tables
   complete:
     - create_sheet
+    - manage_sheet_tab
     - append_table_rows
     - resize_sheet_dimensions
     - move_sheet_rows

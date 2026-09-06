@@ -11,12 +11,21 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 
-def parse_document_structure(doc_data: dict[str, Any]) -> dict[str, Any]:
+def truncate_preview(text: str, preview_chars: int) -> str:
+    """Truncate preview text, treating a non-positive limit as no truncation."""
+    return text[:preview_chars] if preview_chars > 0 else text
+
+
+def parse_document_structure(
+    doc_data: dict[str, Any], preview_chars: int = 100
+) -> dict[str, Any]:
     """
     Parse the full document structure into a navigable format.
 
     Args:
         doc_data: Raw document data from Google Docs API
+        preview_chars: Maximum characters of header/footer text preview.
+            Zero or negative means no truncation.
 
     Returns:
         Dictionary containing parsed structure with elements and their positions
@@ -51,10 +60,10 @@ def parse_document_structure(doc_data: dict[str, Any]) -> dict[str, Any]:
 
     # Parse headers and footers
     for header_id, header_data in doc_data.get("headers", {}).items():
-        structure["headers"][header_id] = _parse_segment(header_data)
+        structure["headers"][header_id] = _parse_segment(header_data, preview_chars)
 
     for footer_id, footer_data in doc_data.get("footers", {}).items():
-        structure["footers"][footer_id] = _parse_segment(footer_data)
+        structure["footers"][footer_id] = _parse_segment(footer_data, preview_chars)
 
     for range_name, named_ranges in doc_data.get("namedRanges", {}).items():
         ranges = []
@@ -180,7 +189,9 @@ def _extract_cell_text(cell: dict[str, Any]) -> str:
     return "".join(text_parts)
 
 
-def _parse_segment(segment_data: dict[str, Any]) -> dict[str, Any]:
+def _parse_segment(
+    segment_data: dict[str, Any], preview_chars: int = 100
+) -> dict[str, Any]:
     """Parse a document segment (header/footer)."""
     content = segment_data.get("content", [])
     text_parts = []
@@ -192,7 +203,7 @@ def _parse_segment(segment_data: dict[str, Any]) -> dict[str, Any]:
         "content": content,
         "start_index": content[0].get("startIndex", 0) if content else 0,
         "end_index": content[-1].get("endIndex", 0) if content else 0,
-        "text_preview": "".join(text_parts)[:100],
+        "text_preview": truncate_preview("".join(text_parts), preview_chars),
         "element_count": len(content),
     }
 
