@@ -386,7 +386,9 @@ def _merge_organizations(
 
 
 # displayName and displayNameLastFirst are output-only on people.Name.
-_NAME_OUTPUT_ONLY_FIELDS = frozenset({"displayName", "displayNameLastFirst", "metadata"})
+_NAME_OUTPUT_ONLY_FIELDS = frozenset(
+    {"displayName", "displayNameLastFirst", "metadata"}
+)
 
 
 def _merge_name(
