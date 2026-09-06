@@ -144,3 +144,55 @@ async def test_segment_anchor_resolves_within_selected_tab_header():
         "segmentId": "h1",
         "index": 7,
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "location, expected_location",
+    [
+        ({"index": 2}, {"location": {"index": 2, "tabId": "child"}}),
+        (
+            {"end_of_segment": True},
+            {"endOfSegmentLocation": {"tabId": "child"}},
+        ),
+        (
+            {"before_heading": "Child"},
+            {"location": {"index": 1, "tabId": "child"}},
+        ),
+    ],
+)
+async def test_section_break_preserves_child_tab(location, expected_location):
+    service = _service()
+    success, message, _ = await BatchOperationManager(service).execute_batch_operations(
+        "doc123",
+        [{"type": "insert_section_break", "tab_id": "child", **location}],
+    )
+    assert success, message
+    requests = service.documents.return_value.batchUpdate.call_args.kwargs["body"][
+        "requests"
+    ]
+    assert requests == [
+        {"insertSectionBreak": {"sectionType": "NEXT_PAGE", **expected_location}}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_insert_snapshot_includes_paragraph_after_non_bmp_text():
+    service = _service()
+    first = _segment("😀😀\n")["content"][0]
+    first["endIndex"] = 6
+    second = _segment("X\n")["content"][0]
+    second.update(startIndex=6, endIndex=8)
+    service.documents.return_value.get.return_value.execute.return_value = {
+        "body": {"content": [first, second]}
+    }
+    success, message, metadata = await BatchOperationManager(
+        service
+    ).execute_batch_operations(
+        "doc123", [{"type": "insert_text", "index": 1, "text": "😀😀\nX"}]
+    )
+    assert success, message
+    assert [entry["text_preview"] for entry in metadata["affected_range"]] == [
+        "😀😀\n",
+        "X\n",
+    ]

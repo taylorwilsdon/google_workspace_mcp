@@ -1660,17 +1660,25 @@ async def inspect_doc_structure(
                 )
 
     if structure["headers"]:
-        result["headers"] = _build_segment_inspection_entries(doc, structure, "header")
+        result["headers"] = _build_segment_inspection_entries(
+            analysis_doc, structure, "header"
+        )
 
     else:
-        header_entries = _build_segment_inspection_entries(doc, structure, "header")
+        header_entries = _build_segment_inspection_entries(
+            analysis_doc, structure, "header"
+        )
         if header_entries:
             result["headers"] = header_entries
 
     if structure["footers"]:
-        result["footers"] = _build_segment_inspection_entries(doc, structure, "footer")
+        result["footers"] = _build_segment_inspection_entries(
+            analysis_doc, structure, "footer"
+        )
     else:
-        footer_entries = _build_segment_inspection_entries(doc, structure, "footer")
+        footer_entries = _build_segment_inspection_entries(
+            analysis_doc, structure, "footer"
+        )
         if footer_entries:
             result["footers"] = footer_entries
 

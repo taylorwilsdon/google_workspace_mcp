@@ -1467,6 +1467,7 @@ def create_insert_section_break_request(
     index: Optional[int] = None,
     section_type: str = "NEXT_PAGE",
     end_of_segment: bool = False,
+    tab_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Create an insertSectionBreak request."""
     section_type_upper = section_type.upper()
@@ -1476,7 +1477,7 @@ def create_insert_section_break_request(
         )
     request = {"insertSectionBreak": {"sectionType": section_type_upper}}
     request["insertSectionBreak"].update(
-        _build_location(index=index, end_of_segment=end_of_segment)
+        _build_location(index=index, tab_id=tab_id, end_of_segment=end_of_segment)
     )
     return request
 

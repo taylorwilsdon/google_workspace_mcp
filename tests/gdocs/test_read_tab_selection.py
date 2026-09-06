@@ -2,6 +2,7 @@
 
 import sys
 import os
+import json
 from unittest.mock import Mock
 
 import pytest
@@ -148,6 +149,68 @@ async def test_inspect_doc_structure_requests_a_field_mask():
     # The mask must still name everything the structure parser reads.
     for field in ("startIndex", "paragraph", "table", "sectionBreak", "tabs"):
         assert field in call_kwargs["fields"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("detailed", [False, True])
+@pytest.mark.parametrize("populated", [False, True])
+@pytest.mark.parametrize("tab_id", [None, "t.child"])
+async def test_inspection_scopes_segment_style_ids_to_tab(detailed, populated, tab_id):
+    def document_tab(prefix):
+        content = {
+            "documentStyle": {
+                "defaultHeaderId": f"{prefix}.header",
+                "defaultFooterId": f"{prefix}.footer",
+            },
+            "body": {
+                "content": [
+                    {
+                        "startIndex": 0,
+                        "endIndex": 1,
+                        "sectionBreak": {
+                            "sectionStyle": {
+                                "firstPageHeaderId": f"{prefix}.section_header",
+                                "firstPageFooterId": f"{prefix}.section_footer",
+                            }
+                        },
+                    }
+                ]
+            },
+        }
+        if populated:
+            for kind in ("header", "footer"):
+                content[f"{kind}s"] = {f"{prefix}.content_{kind}": {"content": []}}
+        return content
+
+    doc = {
+        **document_tab("legacy"),
+        "tabs": [
+            {
+                "tabProperties": {"tabId": "t.parent"},
+                "documentTab": document_tab("parent"),
+                "childTabs": [
+                    {
+                        "tabProperties": {"tabId": "t.child"},
+                        "documentTab": document_tab("child"),
+                    }
+                ],
+            }
+        ],
+    }
+    result = await _unwrap(docs_tools.inspect_doc_structure)(
+        service=_docs_service(doc),
+        user_google_email="user@example.com",
+        document_id="doc123",
+        tab_id=tab_id,
+        detailed=detailed,
+    )
+    data = json.loads(result.split("\n\n", 1)[1].rsplit("\n\nLink:", 1)[0])
+    prefix = "child" if tab_id else "parent"
+    for kind in ("header", "footer"):
+        expected_ids = {f"{prefix}.{kind}", f"{prefix}.section_{kind}"}
+        if populated:
+            expected_ids.add(f"{prefix}.content_{kind}")
+        assert {entry["segment_id"] for entry in data[f"{kind}s"]} == expected_ids
 
 
 @pytest.mark.asyncio

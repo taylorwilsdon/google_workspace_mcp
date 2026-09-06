@@ -14,6 +14,7 @@ from gdocs.docs_anchors import (
     resolve_operation_anchor,
 )
 from gdocs.docs_helpers import (
+    utf16_length,
     create_insert_text_request,
     create_delete_range_request,
     create_format_text_request,
@@ -351,7 +352,7 @@ class BatchOperationManager:
                 continue
             end = op.get("end_index")
             if end is None:
-                end = start + len(op.get("text") or "")
+                end = start + utf16_length(op.get("text") or "")
             starts.append(start)
             ends.append(end)
         if not starts:
@@ -818,6 +819,7 @@ class BatchOperationManager:
                 op.get("index"),
                 op.get("section_type", "NEXT_PAGE"),
                 end_of_segment=end_of_segment,
+                tab_id=tab_id,
             )
             description = (
                 f"insert {op.get('section_type', 'NEXT_PAGE')} section break at end of body"
