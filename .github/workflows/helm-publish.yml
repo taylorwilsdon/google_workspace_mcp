@@ -1,0 +1,122 @@
+name: Helm Chart Publish to GHCR
+
+on:
+  push:
+    tags:
+      - 'chart-v*'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'helm-chart/**'
+
+permissions: {}
+
+env:
+  REGISTRY: ghcr.io
+  CHART_DIR: helm-chart/workspace-mcp
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Helm
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
+
+      - name: Helm lint
+        # OAuth secrets are `required` by the chart; supply throwaway values so
+        # linting can render the templates without real credentials.
+        run: |
+          helm lint "${CHART_DIR}" \
+            --set secrets.googleOAuth.clientId=ci-render \
+            --set secrets.googleOAuth.clientSecret=ci-render
+
+      - name: Helm template (render)
+        # OAuth secrets are `required` by the chart; supply throwaway values so
+        # rendering validates the templates without real credentials.
+        run: |
+          helm template workspace-mcp "${CHART_DIR}" \
+            --set secrets.googleOAuth.clientId=ci-render \
+            --set secrets.googleOAuth.clientSecret=ci-render \
+            > /dev/null
+
+  publish:
+    # Lint runs on pull requests; publishing only happens off a chart-v* tag
+    # push, so the tag/Chart.yaml version check below always applies.
+    if: github.event_name == 'push'
+    needs: lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Helm
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
+
+      - name: Read chart metadata
+        id: chart
+        env:
+          REPO_OWNER: ${{ github.repository_owner }}
+        run: |
+          name=$(helm show chart "${CHART_DIR}" | awk '/^name:/ {print $2; exit}')
+          version=$(helm show chart "${CHART_DIR}" | awk '/^version:/ {print $2; exit}')
+          owner=$(echo "${REPO_OWNER}" | tr '[:upper:]' '[:lower:]')
+          {
+            echo "name=${name}"
+            echo "version=${version}"
+            echo "repo=oci://${REGISTRY}/${owner}/charts"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Verify tag matches chart version
+        # chart-v0.3.0 must match Chart.yaml's 0.3.0.
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          CHART_VERSION: ${{ steps.chart.outputs.version }}
+        run: |
+          tag_version="${REF_NAME#chart-v}"
+          if [ "${tag_version}" != "${CHART_VERSION}" ]; then
+            echo "::error::Tag ${REF_NAME} (version ${tag_version}) does not match Chart.yaml version ${CHART_VERSION}." \
+              "Bump ${CHART_DIR}/Chart.yaml or retag."
+            exit 1
+          fi
+
+      - name: Log in to GitHub Container Registry
+        env:
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "${GHCR_TOKEN}" \
+            | helm registry login "${REGISTRY}" \
+                --username "${GHCR_USER}" \
+                --password-stdin
+
+      - name: Package chart
+        run: helm package "${CHART_DIR}" --destination dist
+
+      - name: Push chart to GHCR
+        env:
+          CHART_NAME: ${{ steps.chart.outputs.name }}
+          CHART_VERSION: ${{ steps.chart.outputs.version }}
+          CHART_REPO: ${{ steps.chart.outputs.repo }}
+        run: |
+          chart="dist/${CHART_NAME}-${CHART_VERSION}.tgz"
+          helm push "${chart}" "${CHART_REPO}"
+          {
+            echo "Published \`${CHART_NAME}\` version \`${CHART_VERSION}\`"
+            echo ""
+            echo "    helm install workspace-mcp ${CHART_REPO}/${CHART_NAME} --version ${CHART_VERSION}"
+          } >> "$GITHUB_STEP_SUMMARY"
