@@ -81,6 +81,48 @@ def test_probe_tcp_bind_raises_when_port_held():
             main.probe_tcp_bind(host, port)
 
 
+def _leave_time_wait_on_port(host: str = "127.0.0.1") -> int:
+    """Return a port whose only occupant is a server-side TIME_WAIT socket.
+
+    The listener accepts one connection and closes it first, so the TIME_WAIT
+    state lands on the server side (local port = the listener's port). Peers
+    and listener are all closed before returning; only the lingering state is
+    left, which is exactly what a fast restart of the HTTP server sees.
+    """
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind((host, 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+    client = socket.create_connection((host, port))
+    server_side, _ = listener.accept()
+    server_side.close()  # active close on the server side -> TIME_WAIT there
+    assert client.recv(1) == b""  # client sees EOF, then closes its end
+    client.close()
+    listener.close()
+    return port
+
+
+def test_probe_tcp_bind_accepts_port_with_only_time_wait_sockets():
+    """Regression for #946: lingering TIME_WAIT must not read as a conflict.
+
+    A bare bind (the pre-fix probe) fails here with EADDRINUSE; uvicorn's
+    SO_REUSEADDR bind would succeed, so the probe must succeed too.
+    """
+    host = "127.0.0.1"
+    port = _leave_time_wait_on_port(host)
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as bare:
+        try:
+            bare.bind((host, port))
+        except OSError as exc:
+            assert exc.errno == errno.EADDRINUSE
+        else:
+            pytest.skip("platform does not block a bare bind on TIME_WAIT")
+
+    main.probe_tcp_bind(host, port)  # must not raise
+
+
 def test_report_preflight_bind_failure_logs_at_error(caplog):
     """Bind failure must be visible at ERROR when stderr is non-TTY (containers)."""
     error = OSError(errno.EADDRINUSE, "Address already in use")
