@@ -5,10 +5,13 @@ This module provides a standardized interface for credential storage and retriev
 supporting multiple backends configurable via environment variables.
 """
 
+import asyncio
 import json
 import logging
 import os
 import re
+import tempfile
+import threading
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import List, Optional
@@ -17,6 +20,30 @@ from urllib.parse import quote, unquote
 from google.oauth2.credentials import Credentials
 
 logger = logging.getLogger(__name__)
+
+
+# Per-account asyncio locks guarding the credential load -> validity check ->
+# refresh -> persist sequence. Keyed by account id (user email) so refreshes
+# for different accounts never block each other, while concurrent requests
+# for the *same* account are serialized. This matters most for the single
+# durable HTTP process deployment (see the OpenClaw preset), where many
+# concurrent tool calls would otherwise race to refresh the same on-disk
+# OAuth refresh token.
+_account_locks: dict[str, asyncio.Lock] = {}
+_account_locks_guard = threading.Lock()
+
+
+def get_account_lock(account_id: str) -> asyncio.Lock:
+    """Return the process-wide asyncio.Lock for one account's credential lifecycle."""
+    lock = _account_locks.get(account_id)
+    if lock is not None:
+        return lock
+    with _account_locks_guard:
+        lock = _account_locks.get(account_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            _account_locks[account_id] = lock
+        return lock
 
 
 class CredentialStore(ABC):
@@ -217,7 +244,14 @@ class LocalDirectoryCredentialStore(CredentialStore):
             return None
 
     def store_credential(self, user_email: str, credentials: Credentials) -> bool:
-        """Store credentials to local JSON file."""
+        """Store credentials to local JSON file using an atomic write.
+
+        Writes to a temp file in the same directory, fsyncs it, then
+        ``os.replace()``s it over the real path. This guarantees readers never
+        observe a partially-written or truncated credential file, even if the
+        process is interrupted mid-write or another process reads
+        concurrently.
+        """
         creds_path = self._get_credential_path(user_email)
 
         creds_data = {
@@ -230,10 +264,18 @@ class LocalDirectoryCredentialStore(CredentialStore):
             "expiry": credentials.expiry.isoformat() if credentials.expiry else None,
         }
 
+        directory = os.path.dirname(creds_path) or "."
+        tmp_path = None
         try:
-            fd = os.open(str(creds_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            fd, tmp_path = tempfile.mkstemp(
+                dir=directory, prefix=".tmp-creds-", suffix=self.FILE_EXTENSION
+            )
             with os.fdopen(fd, "w") as f:
                 json.dump(creds_data, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, creds_path)
+            tmp_path = None
             logger.info(f"Stored credentials for {user_email} to {creds_path}")
             return True
         except IOError as e:
@@ -241,6 +283,12 @@ class LocalDirectoryCredentialStore(CredentialStore):
                 f"Error storing credentials for {user_email} to {creds_path}: {e}"
             )
             return False
+        finally:
+            if tmp_path is not None:
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
 
     def delete_credential(self, user_email: str) -> bool:
         """Delete credential file for a user."""

@@ -21,7 +21,7 @@ import google_auth_httplib2
 from auth.scopes import SCOPES, get_current_scopes, has_required_scopes  # noqa
 from auth.client_secrets import get_client_secrets_path, load_client_secrets_file
 from auth.oauth21_session_store import get_oauth21_session_store
-from auth.credential_store import get_credential_store
+from auth.credential_store import get_credential_store, get_account_lock
 from auth.gateway_identity import normalize_principal_email
 from auth.oauth_config import (
     is_oauth21_enabled,
@@ -1248,6 +1248,44 @@ def get_credentials(
     return credentials
 
 
+async def get_credentials_async(
+    user_google_email: Optional[str],
+    required_scopes: List[str],
+    client_secrets_path: Optional[str] = None,
+    credentials_base_dir: str = DEFAULT_CREDENTIALS_DIR,
+    session_id: Optional[str] = None,
+) -> Optional[Credentials]:
+    """Async wrapper around get_credentials that serializes refreshes per account.
+
+    A single durable process (e.g. the OpenClaw HTTP preset) can receive many
+    concurrent tool calls for the same Google account. Without coordination,
+    concurrent access-token refreshes can race and rotate/overwrite the
+    refresh token. This acquires a per-account asyncio.Lock before running
+    get_credentials, so a request that waits behind another request's refresh
+    re-reads the already-refreshed credentials (get_credentials always loads
+    fresh state) instead of refreshing again.
+    """
+    if not user_google_email:
+        return await asyncio.to_thread(
+            get_credentials,
+            user_google_email=user_google_email,
+            required_scopes=required_scopes,
+            client_secrets_path=client_secrets_path,
+            credentials_base_dir=credentials_base_dir,
+            session_id=session_id,
+        )
+
+    async with get_account_lock(user_google_email):
+        return await asyncio.to_thread(
+            get_credentials,
+            user_google_email=user_google_email,
+            required_scopes=required_scopes,
+            client_secrets_path=client_secrets_path,
+            credentials_base_dir=credentials_base_dir,
+            session_id=session_id,
+        )
+
+
 def get_user_info(
     credentials: Credentials, *, skip_valid_check: bool = False
 ) -> Optional[Dict[str, Any]]:
@@ -1367,8 +1405,7 @@ async def get_authenticated_google_service(
         logger.info(f"[{tool_name}] {error_msg}")
         raise GoogleAuthenticationError(error_msg)
 
-    credentials = await asyncio.to_thread(
-        get_credentials,
+    credentials = await get_credentials_async(
         user_google_email=user_google_email,
         required_scopes=required_scopes,
         client_secrets_path=CONFIG_CLIENT_SECRETS_PATH,
