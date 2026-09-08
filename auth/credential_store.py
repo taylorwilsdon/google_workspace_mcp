@@ -247,10 +247,11 @@ class LocalDirectoryCredentialStore(CredentialStore):
         """Store credentials to local JSON file using an atomic write.
 
         Writes to a temp file in the same directory, fsyncs it, then
-        ``os.replace()``s it over the real path. This guarantees readers never
-        observe a partially-written or truncated credential file, even if the
-        process is interrupted mid-write or another process reads
-        concurrently.
+        ``os.replace()``s it over the real path, then fsyncs the containing
+        directory so the rename itself is durable. This guarantees readers
+        never observe a partially-written or truncated credential file, even
+        if the process is interrupted mid-write or another process reads
+        concurrently, and survives a crash immediately after the replace.
         """
         creds_path = self._get_credential_path(user_email)
 
@@ -276,6 +277,11 @@ class LocalDirectoryCredentialStore(CredentialStore):
                 os.fsync(f.fileno())
             os.replace(tmp_path, creds_path)
             tmp_path = None
+            dir_fd = os.open(directory, os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
             logger.info(f"Stored credentials for {user_email} to {creds_path}")
             return True
         except IOError as e:

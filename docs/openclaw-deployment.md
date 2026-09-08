@@ -77,8 +77,8 @@ User=youruser
 Environment=WORKSPACE_MCP_DEPLOYMENT_PRESET=openclaw
 Environment=WORKSPACE_MCP_PORT=8000
 Environment=GOOGLE_OAUTH_CLIENT_ID=your-client-id.apps.googleusercontent.com
-Environment=GOOGLE_OAUTH_CLIENT_SECRET=your-client-secret
 Environment=WORKSPACE_MCP_CREDENTIALS_DIR=/home/youruser/.google_workspace_mcp/credentials
+EnvironmentFile=/home/youruser/.google_workspace_mcp/oauth-client-secret.env
 ExecStart=/usr/local/bin/workspace-mcp
 Restart=on-failure
 RestartSec=2
@@ -88,6 +88,17 @@ ReadWritePaths=/home/youruser/.google_workspace_mcp
 
 [Install]
 WantedBy=default.target
+```
+
+`GOOGLE_OAUTH_CLIENT_SECRET` is deliberately kept out of the unit's `Environment=`
+lines — anything set there is world-readable via `systemctl show` and
+`/proc/<pid>/environ`. Put it in the referenced `EnvironmentFile` instead, as a
+plain `KEY=value` line, and lock that file down so only the service's user can
+read it:
+
+```bash
+echo "GOOGLE_OAUTH_CLIENT_SECRET=your-client-secret" > /home/youruser/.google_workspace_mcp/oauth-client-secret.env
+chmod 600 /home/youruser/.google_workspace_mcp/oauth-client-secret.env
 ```
 
 ```bash
