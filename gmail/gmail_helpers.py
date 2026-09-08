@@ -913,6 +913,7 @@ async def _get_send_as_signature_html_for_tool(
 
 
 async def _delete_gmail_draft(service, draft_id: Optional[str]) -> str:
+    """Permanently delete a draft by its draft ID, propagating Gmail API failures."""
     if not draft_id or not draft_id.strip():
         raise UserInputError(
             "draft_id is required for delete. Use the Draft ID returned by draft creation, "

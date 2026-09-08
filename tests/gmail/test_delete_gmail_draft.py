@@ -11,6 +11,7 @@ from gmail.gmail_tools import draft_gmail_message
 
 
 def _unwrap(tool):
+    """Unwrap FastMCP and auth decorators to exercise dispatch with a fake service."""
     fn = tool.fn if hasattr(tool, "fn") else tool
     while hasattr(fn, "__wrapped__"):
         fn = fn.__wrapped__
@@ -19,6 +20,7 @@ def _unwrap(tool):
 
 @pytest.mark.asyncio
 async def test_delete_uses_draft_id_without_creating_or_modifying_messages():
+    """Keep deletion confined to the draft endpoint, without creation side effects."""
     service = Mock()
     result = await _unwrap(draft_gmail_message)(
         service=service,
@@ -42,6 +44,7 @@ async def test_delete_uses_draft_id_without_creating_or_modifying_messages():
 @pytest.mark.asyncio
 @pytest.mark.parametrize("draft_id", [None, "", "   "])
 async def test_delete_requires_a_nonempty_draft_id(draft_id):
+    """Reject missing draft identifiers before making any Gmail API request."""
     service = Mock()
     with pytest.raises(UserInputError, match="draft_id is required"):
         await _unwrap(draft_gmail_message)(
@@ -56,6 +59,7 @@ async def test_delete_requires_a_nonempty_draft_id(draft_id):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status", [403, 404, 429, 500])
 async def test_delete_propagates_api_errors_without_claiming_success(status):
+    """Preserve API failures instead of claiming that an unconfirmed deletion succeeded."""
     service = Mock()
     error = HttpError(
         SimpleNamespace(status=status, reason="Request failed"),
@@ -85,6 +89,7 @@ async def test_delete_propagates_api_errors_without_claiming_success(status):
     ],
 )
 async def test_create_rejects_missing_content_or_ambiguous_draft_id(kwargs, message):
+    """Reject invalid create requests before they can create an unintended draft."""
     service = Mock()
     with pytest.raises(UserInputError, match=message):
         await _unwrap(draft_gmail_message)(
@@ -95,6 +100,7 @@ async def test_create_rejects_missing_content_or_ambiguous_draft_id(kwargs, mess
 
 @pytest.mark.asyncio
 async def test_deletion_is_discoverable_and_marked_destructive():
+    """Expose deletion in the existing tool schema with destructive operation metadata."""
     tools = {tool.name: tool for tool in await server.list_tools()}
     tool = tools["draft_gmail_message"]
     schema = tool.parameters
