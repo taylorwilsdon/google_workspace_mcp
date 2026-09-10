@@ -12,6 +12,20 @@ logger = logging.getLogger(__name__)
 # Global variable to store enabled tools (set by main.py)
 _ENABLED_TOOLS = None
 
+# Explicit OAuth scope override (set by main.py for --only-tools).
+# When not None, get_scopes_for_tools() returns exactly BASE_SCOPES + these
+# scopes, bypassing the service-granular TOOL_SCOPES_MAP entirely.
+_EXPLICIT_SCOPES = None
+
+
+def set_explicit_scopes(scopes):
+    """Set an explicit OAuth scope set, or None to clear."""
+    global _EXPLICIT_SCOPES
+    _EXPLICIT_SCOPES = set(scopes) if scopes is not None else None
+    if _EXPLICIT_SCOPES is not None:
+        logger.info("Explicit scope set active: %d scopes", len(_EXPLICIT_SCOPES))
+
+
 # Individual OAuth Scope Constants
 USERINFO_EMAIL_SCOPE = "https://www.googleapis.com/auth/userinfo.email"
 USERINFO_PROFILE_SCOPE = "https://www.googleapis.com/auth/userinfo.profile"
@@ -242,8 +256,11 @@ def set_enabled_tools(enabled_tools):
     """
     global _ENABLED_TOOLS
     _ENABLED_TOOLS = enabled_tools
+    # enabled_tools may be None (the default / "all services" state) — guard the
+    # count so clearing the override doesn't raise.
     # Debug level: the startup screen already reports the loaded service count.
-    logger.debug(f"Scope management active for {len(enabled_tools)} services")
+    count = len(enabled_tools) if enabled_tools is not None else 0
+    logger.debug(f"Scope management active for {count} services")
 
 
 # Global variable to store read-only mode (set by main.py)
@@ -302,6 +319,11 @@ def get_scopes_for_tools(enabled_tools=None):
     Returns:
         List of unique scopes for the enabled tools plus base scopes.
     """
+    # Explicit per-tool scope override (--only-tools): exact union of the
+    # selected tools' required scopes plus base identity scopes.
+    if _EXPLICIT_SCOPES is not None:
+        return list(set(BASE_SCOPES) | _EXPLICIT_SCOPES)
+
     # Granular permissions mode overrides both full and read-only scope maps.
     # Lazy import with guard to avoid circular dependency during module init
     # (SCOPES = get_scopes_for_tools() runs at import time before auth.permissions
