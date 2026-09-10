@@ -61,15 +61,16 @@ def test_h1_emits_insert_and_heading_style():
     assert inserts[0]["insertText"]["text"] == "My Title\n"
     assert inserts[1]["insertText"]["text"] == "\n"
     assert inserts[1]["insertText"]["location"]["index"] == 1 + len("My Title\n")
-    assert len(styles) == 1
-    assert (
-        styles[0]["updateParagraphStyle"]["paragraphStyle"]["namedStyleType"]
-        == "HEADING_1"
-    )
-    # Range should cover the heading text (not the spacer)
-    rng = styles[0]["updateParagraphStyle"]["range"]
-    assert rng["startIndex"] == 1
-    assert rng["endIndex"] == 1 + len("My Title\n")
+    # Two paragraphStyle requests: HEADING_1 for the heading text and a
+    # NORMAL_TEXT reset for the trailing spacer (so the next block doesn't
+    # inherit HEADING_1 when this converter targets a mid-document index).
+    assert len(styles) == 2
+    heading_style = styles[0]["updateParagraphStyle"]
+    assert heading_style["paragraphStyle"]["namedStyleType"] == "HEADING_1"
+    assert heading_style["range"]["startIndex"] == 1
+    assert heading_style["range"]["endIndex"] == 1 + len("My Title\n")
+    spacer_style = styles[1]["updateParagraphStyle"]
+    assert spacer_style["paragraphStyle"]["namedStyleType"] == "NORMAL_TEXT"
 
 
 def test_h2_h3_h4_h5_h6_all_emit_correct_named_style():
@@ -77,10 +78,21 @@ def test_h2_h3_h4_h5_h6_all_emit_correct_named_style():
         hashes = "#" * level
         md = f"{hashes} Heading L{level}"
         requests = markdown_to_docs_requests(md)
-        styles = [r for r in requests if "updateParagraphStyle" in r]
-        assert len(styles) == 1
+        # Filter to heading-style requests (the spacer NORMAL_TEXT reset is
+        # also emitted but is not under test here).
+        heading_styles = [
+            r
+            for r in requests
+            if "updateParagraphStyle" in r
+            and r["updateParagraphStyle"]["paragraphStyle"]
+            .get("namedStyleType", "")
+            .startswith("HEADING_")
+        ]
+        assert len(heading_styles) == 1
         assert (
-            styles[0]["updateParagraphStyle"]["paragraphStyle"]["namedStyleType"]
+            heading_styles[0]["updateParagraphStyle"]["paragraphStyle"][
+                "namedStyleType"
+            ]
             == f"HEADING_{level}"
         )
 
@@ -339,3 +351,47 @@ def test_paragraph_between_blocks_has_spacers_around_it():
     texts = [r["insertText"]["text"] for r in inserts]
     # Heading, spacer, paragraph, spacer
     assert texts == ["Title\n", "\n", "Body text\n", "\n"]
+
+
+def test_body_paragraph_emits_normal_text_reset():
+    """Section-edit tools target mid-document indices. When the converter
+    runs at a position that previously held a HEADING_N paragraph, the
+    inserted body paragraphs would inherit HEADING_N unless an explicit
+    NORMAL_TEXT style reset is emitted. Verify the reset is present.
+    """
+    requests = markdown_to_docs_requests("Plain body paragraph.")
+    normal_resets = [
+        r
+        for r in requests
+        if "updateParagraphStyle" in r
+        and r["updateParagraphStyle"]["paragraphStyle"].get("namedStyleType")
+        == "NORMAL_TEXT"
+    ]
+    # One reset for the body paragraph itself + one for the trailing spacer.
+    assert len(normal_resets) == 2
+    # The first reset covers the body text range; the second the spacer.
+    body_reset = normal_resets[0]["updateParagraphStyle"]["range"]
+    assert body_reset["startIndex"] == 1
+    assert body_reset["endIndex"] == 1 + len("Plain body paragraph.\n")
+
+
+def test_heading_followed_by_body_has_normal_reset_between():
+    """End-to-end: a heading followed by a body paragraph should produce a
+    NORMAL_TEXT reset on the spacer between them AND on the body paragraph
+    range. Together these guarantee the body paragraph keeps NORMAL_TEXT
+    even when inserted into a doc with surrounding HEADING_N style.
+    """
+    requests = markdown_to_docs_requests("# Heading\n\nBody paragraph.")
+    para_styles = [r for r in requests if "updateParagraphStyle" in r]
+    named_types = [
+        r["updateParagraphStyle"]["paragraphStyle"].get("namedStyleType")
+        for r in para_styles
+    ]
+    # Expected order: HEADING_1, NORMAL_TEXT (spacer after heading),
+    # NORMAL_TEXT (body paragraph), NORMAL_TEXT (spacer after body).
+    assert named_types == [
+        "HEADING_1",
+        "NORMAL_TEXT",
+        "NORMAL_TEXT",
+        "NORMAL_TEXT",
+    ]
