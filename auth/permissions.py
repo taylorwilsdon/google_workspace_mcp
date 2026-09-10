@@ -9,8 +9,14 @@ Usage:
     --permissions gmail:organize drive:readonly
 
 Gmail levels: readonly, organize, drafts, send, full
+Drive levels: readonly, file, metadata, full
 Tasks levels: readonly, manage, full
 Other services: readonly, full (extensible by adding entries to SERVICE_PERMISSION_LEVELS)
+
+The Drive "file" level grants the drive.file scope (per-file access limited to
+files this app creates) without the broader drive scope (full account write).
+This lets callers write files into specific folders without exposing the
+authenticated user's entire Drive to the application.
 """
 
 import logging
@@ -25,6 +31,7 @@ from auth.scopes import (
     GMAIL_SETTINGS_BASIC_SCOPE,
     DRIVE_READONLY_SCOPE,
     DRIVE_FILE_SCOPE,
+    DRIVE_METADATA_SCOPE,
     DRIVE_SCOPE,
     CALENDAR_READONLY_SCOPE,
     CALENDAR_EVENTS_SCOPE,
@@ -70,7 +77,13 @@ SERVICE_PERMISSION_LEVELS: Dict[str, List[Tuple[str, List[str]]]] = {
     ],
     "drive": [
         ("readonly", [DRIVE_READONLY_SCOPE]),
-        ("full", [DRIVE_SCOPE, DRIVE_FILE_SCOPE]),
+        ("file", [DRIVE_FILE_SCOPE]),
+        # "metadata" adds drive.metadata on top of "file": move / rename / reorganise
+        # ANY file the user can reach (including files this app did NOT create) without
+        # the broad drive scope — so still no content edit/delete of others' files.
+        # Cumulative, so this level grants drive.readonly + drive.file + drive.metadata.
+        ("metadata", [DRIVE_METADATA_SCOPE]),
+        ("full", [DRIVE_SCOPE]),
     ],
     "calendar": [
         ("readonly", [CALENDAR_READONLY_SCOPE]),
@@ -78,10 +91,16 @@ SERVICE_PERMISSION_LEVELS: Dict[str, List[Tuple[str, List[str]]]] = {
     ],
     "docs": [
         ("readonly", [DOCS_READONLY_SCOPE, DRIVE_READONLY_SCOPE]),
+        # "file" loads the Docs tools and grants only drive.file, so the edit tools
+        # work on docs the app created (pairs with docs_write -> drive.file in
+        # service_decorator.py). Broad editing remains under "full".
+        ("file", [DRIVE_FILE_SCOPE]),
         ("full", [DOCS_WRITE_SCOPE, DRIVE_READONLY_SCOPE, DRIVE_FILE_SCOPE]),
     ],
     "sheets": [
         ("readonly", [SHEETS_READONLY_SCOPE, DRIVE_READONLY_SCOPE]),
+        # "file" loads the Sheets tools with only drive.file (edit app-created sheets).
+        ("file", [DRIVE_FILE_SCOPE]),
         ("full", [SHEETS_WRITE_SCOPE, DRIVE_READONLY_SCOPE]),
     ],
     "chat": [
