@@ -140,10 +140,17 @@ class LocalDirectoryCredentialStore(CredentialStore):
     def _get_credential_path(self, user_email: str) -> str:
         """Get the file path for a user's credentials.
 
+        The address is lower-cased first, so that callers passing a differently
+        capitalized spelling of the same account (Google treats the local part
+        as case-insensitive) resolve to a single credential file rather than
+        missing it on a case-sensitive filesystem and reporting a spurious
+        "authentication needed".
+
         URL-encodes user_email to prevent path traversal while preserving a
         collision-free mapping from email address to filename. For backward
         compatibility, pre-existing legacy filenames from the older regex-based
-        sanitization scheme are still discovered if the URL-encoded file does
+        sanitization scheme, and pre-existing mixed-case filenames written
+        before normalization, are still discovered if the normalized file does
         not exist yet. The resolved path is validated to remain under base_dir.
         """
         if not user_email or not user_email.strip():
@@ -153,24 +160,54 @@ class LocalDirectoryCredentialStore(CredentialStore):
             os.makedirs(self.base_dir, mode=0o700, exist_ok=True)
             logger.info(f"Created credentials directory: {self.base_dir}")
 
-        safe_email = quote(user_email, safe="@._-")
+        normalized_email = user_email.strip().lower()
+
+        safe_email = quote(normalized_email, safe="@._-")
         creds_path = self._resolve_credential_path(f"{safe_email}{self.FILE_EXTENSION}")
 
         if os.path.exists(creds_path):
             return creds_path
 
-        legacy_safe_email = self._legacy_safe_email(user_email)
-        if legacy_safe_email != safe_email:
-            legacy_path = self._resolve_credential_path(
-                f"{legacy_safe_email}{self.FILE_EXTENSION}"
+        # Candidate fallbacks for credentials written by earlier versions:
+        # the legacy regex-sanitized form, and the caller's original casing.
+        fallback_names = [self._legacy_safe_email(normalized_email)]
+        if user_email.strip() != normalized_email:
+            fallback_names.append(quote(user_email.strip(), safe="@._-"))
+            fallback_names.append(self._legacy_safe_email(user_email.strip()))
+
+        for fallback_name in fallback_names:
+            if fallback_name == safe_email:
+                continue
+            fallback_path = self._resolve_credential_path(
+                f"{fallback_name}{self.FILE_EXTENSION}"
             )
-            if os.path.exists(legacy_path):
+            if os.path.exists(fallback_path):
                 logger.info(
                     "Using legacy credential filename for %s at %s",
                     user_email,
-                    legacy_path,
+                    fallback_path,
                 )
-                return legacy_path
+                return fallback_path
+
+        # Final fallback: a credential written before normalization may be
+        # stored under any casing. Match case-insensitively so those remain
+        # readable instead of appearing unauthenticated.
+        target_filename = f"{safe_email}{self.FILE_EXTENSION}".lower()
+        try:
+            existing_filenames = os.listdir(self.base_dir)
+        except OSError:
+            existing_filenames = []
+        for filename in sorted(existing_filenames):
+            if filename.lower() != target_filename:
+                continue
+            legacy_case_path = self._resolve_credential_path(filename)
+            if os.path.exists(legacy_case_path):
+                logger.info(
+                    "Using legacy mixed-case credential filename for %s at %s",
+                    user_email,
+                    legacy_case_path,
+                )
+                return legacy_case_path
 
         return creds_path
 
