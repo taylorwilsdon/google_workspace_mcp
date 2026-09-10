@@ -7,6 +7,7 @@ import socket
 import sys
 from functools import partial
 from importlib import metadata, import_module
+from urllib.parse import urlparse
 from dotenv import load_dotenv
 from core.startup_ui import StartupDisplay, collapse_home, wordmark_lines
 
@@ -127,6 +128,45 @@ install_noisy_log_filters()
 configure_file_logging()
 
 
+def _loopback_redirect_port(redirect_uri: str | None) -> int | None:
+    """
+    Return the port an explicit loopback GOOGLE_OAUTH_REDIRECT_URI targets.
+
+    OAuthConfig._get_redirect_uri() hands back an explicit GOOGLE_OAUTH_REDIRECT_URI
+    unchanged, so that URI -- not WORKSPACE_MCP_PORT -- decides where Google sends
+    the browser. The stdio callback listener therefore has to bind the URI's port.
+
+    Returns None -- leaving WORKSPACE_MCP_PORT in charge -- unless the URI is an
+    http:// loopback address carrying an explicit port. Each exclusion is load-bearing:
+
+      * Not loopback: a reverse proxy fronts the callback, and its public port says
+        nothing about which local port the listener should own.
+      * https:// even on loopback: MinimalOAuthServer builds its uvicorn.Config
+        without ssl_keyfile/ssl_certfile, so it can only ever serve plaintext. An
+        https loopback URI therefore means a local TLS terminator (Caddy, stunnel)
+        owns that port and forwards to the plaintext listener on a *different* one.
+        Binding the URI's port would collide with the terminator; WORKSPACE_MCP_PORT
+        is what names the backend port in that topology.
+      * No explicit port, malformed port, or no URI: nothing to pin.
+    """
+    if not redirect_uri:
+        return None
+    try:
+        parsed = urlparse(redirect_uri)
+        port = parsed.port
+    except ValueError:
+        # urlparse raises on a malformed port; fall back to the env-var default.
+        return None
+    if port is None:
+        return None
+    if (parsed.scheme or "").lower() != "http":
+        return None
+    hostname = (parsed.hostname or "").lower()
+    if hostname not in {"localhost", "127.0.0.1", "::1"}:
+        return None
+    return port
+
+
 def resolve_stdio_callback_port() -> None:
     """
     Late-bind the legacy stdio OAuth callback port.
@@ -134,14 +174,39 @@ def resolve_stdio_callback_port() -> None:
     Streamable HTTP/OAuth 2.1 owns its main HTTP port directly and must keep the
     normal PORT/WORKSPACE_MCP_PORT semantics. The fallback range only exists for
     the standalone stdio callback listener.
+
+    Three rules keep this correct and non-lethal:
+
+      * When GOOGLE_OAUTH_REDIRECT_URI points at a loopback address with an
+        explicit port, that port IS the callback port -- OAuthConfig returns the
+        explicit URI verbatim, so Google sends the browser there no matter what
+        WORKSPACE_MCP_PORT says. Bind it, or the listener and the redirect end
+        up on different ports and the auth flow hangs.
+      * When the redirect URI is set at all, never fall back to a neighbouring
+        port: the advertised URI cannot follow, so a fallback port guarantees a
+        redirect_uri mismatch. Probe the pinned port and nothing else.
+      * A busy port is never fatal. The callback listener starts lazily and a
+        host that already holds cached credentials may never need it -- and MCP
+        clients routinely launch more than one copy of a stdio server, so
+        exiting on a collision takes down a copy that would otherwise work.
     """
     from auth.port_resolver import resolve_port, NoAvailablePortError, PortConfigError
 
+    redirect_uri = os.getenv("GOOGLE_OAUTH_REDIRECT_URI")
+    pinned_port = _loopback_redirect_port(redirect_uri)
+
     try:
-        resolve_port()
-    except (NoAvailablePortError, PortConfigError) as exc:
+        resolve_port(preferred=pinned_port, allow_fallback=not redirect_uri)
+    except PortConfigError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
+    except NoAvailablePortError as exc:
+        logger.warning(
+            "%s Continuing without a reserved callback port -- OAuth re-authorization "
+            "will fail until the port frees up, but cached credentials keep working.",
+            exc,
+        )
+        os.environ.pop("WORKSPACE_MCP_RESOLVED_PORT", None)
     reload_oauth_config()
 
 

@@ -8,6 +8,7 @@ redirect URIs are composed from the actual bound port.
 
 from __future__ import annotations
 
+import errno
 import logging
 import os
 import socket
@@ -49,6 +50,10 @@ def _is_port_free(host: str, port: int) -> bool:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.settimeout(0.5)
             if s.connect_ex(("127.0.0.1", port)) == 0:
+                logger.debug(
+                    "Port resolver: port %d rejected -- existing listener on 127.0.0.1",
+                    port,
+                )
                 return False
     except OSError:
         pass
@@ -57,7 +62,16 @@ def _is_port_free(host: str, port: int) -> bool:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.bind((host, port))
         return True
-    except OSError:
+    except OSError as exc:
+        # Every bind failure used to collapse to a bare "busy", which made a
+        # misconfigured bind host indistinguishable from a real collision.
+        logger.debug(
+            "Port resolver: bind %s:%d failed -- %s (%s)",
+            host,
+            port,
+            errno.errorcode.get(exc.errno, exc.errno),
+            exc.strerror,
+        )
         return False
 
 
@@ -65,6 +79,7 @@ def resolve_port(
     preferred: Optional[int] = None,
     fallback_count: Optional[int] = None,
     host: Optional[str] = None,
+    allow_fallback: bool = True,
 ) -> int:
     """
     Resolve the first available port in [preferred, preferred+1, ..., preferred+fallback_count].
@@ -106,8 +121,16 @@ def resolve_port(
             ) from exc
     if host is None:
         host = os.getenv("WORKSPACE_MCP_HOST", "0.0.0.0")
+    if not allow_fallback:
+        fallback_count = 0
 
     candidates = _candidate_ports(preferred, fallback_count)
+    logger.debug(
+        "Port resolver: probing %s on host %s (fallback %s)",
+        candidates,
+        host,
+        "enabled" if allow_fallback else "disabled",
+    )
     for port in candidates:
         if _is_port_free(host, port):
             if port == preferred:

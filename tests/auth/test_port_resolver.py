@@ -142,3 +142,59 @@ def test_lazy_workspace_mcp_port_preserves_port_precedence_without_resolver(
     monkeypatch.delenv("WORKSPACE_MCP_RESOLVED_PORT", raising=False)
     cfg = _import_fresh("core.config")
     assert cfg.WORKSPACE_MCP_PORT == 8000
+
+
+def test_allow_fallback_false_probes_only_preferred():
+    """A pinned redirect URI means neighbouring ports are useless -- don't try them."""
+    pr = _import_fresh("auth.port_resolver")
+    p = _free_port()
+    with _hold_port(p), pytest.raises(pr.NoAvailablePortError):
+        pr.resolve_port(
+            preferred=p, fallback_count=4, host="127.0.0.1", allow_fallback=False
+        )
+
+
+def test_allow_fallback_false_still_binds_free_preferred():
+    pr = _import_fresh("auth.port_resolver")
+    p = _free_port()
+    bound = pr.resolve_port(
+        preferred=p, fallback_count=4, host="127.0.0.1", allow_fallback=False
+    )
+    assert bound == p
+
+
+def test_stdio_resolver_survives_exhausted_range(monkeypatch):
+    """A busy callback port must not take down the whole stdio server."""
+    import main as main_module
+
+    p = _free_port()
+    monkeypatch.setenv("WORKSPACE_MCP_PORT", str(p))
+    monkeypatch.setenv("WORKSPACE_MCP_PORT_FALLBACK_COUNT", "0")
+    monkeypatch.setenv("WORKSPACE_MCP_HOST", "127.0.0.1")
+    monkeypatch.delenv("GOOGLE_OAUTH_REDIRECT_URI", raising=False)
+
+    with _hold_port(p):
+        main_module.resolve_stdio_callback_port()
+
+    assert os.environ["WORKSPACE_MCP_PORT"] == str(p)
+    assert "WORKSPACE_MCP_RESOLVED_PORT" not in os.environ
+
+
+def test_stdio_resolver_pins_port_when_redirect_uri_is_explicit(monkeypatch):
+    """With GOOGLE_OAUTH_REDIRECT_URI set, the resolver must not wander off-port."""
+    import main as main_module
+
+    p = _free_port()
+    monkeypatch.setenv("WORKSPACE_MCP_PORT", str(p))
+    monkeypatch.setenv("WORKSPACE_MCP_PORT_FALLBACK_COUNT", "4")
+    monkeypatch.setenv("WORKSPACE_MCP_HOST", "127.0.0.1")
+    monkeypatch.setenv(
+        "GOOGLE_OAUTH_REDIRECT_URI", f"http://localhost:{p}/oauth2callback"
+    )
+
+    with _hold_port(p):
+        main_module.resolve_stdio_callback_port()
+
+    # Fallback would have picked p+1; pinned mode leaves the port untouched.
+    assert os.environ["WORKSPACE_MCP_PORT"] == str(p)
+    assert "WORKSPACE_MCP_RESOLVED_PORT" not in os.environ
