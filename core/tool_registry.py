@@ -18,6 +18,13 @@ logger = logging.getLogger(__name__)
 # Global registry of enabled tools
 _enabled_tools: Optional[Set[str]] = None
 
+# Tools registered regardless of tier or --tools selection. api_call is the
+# generic escape hatch: it belongs to no service and appears in no tier, and is
+# bounded by the scopes the user has already granted rather than by selection.
+# The explicit block list (--disabled-tools) still removes it: that is
+# subtractive and wins over every form of selection.
+ALWAYS_ENABLED_TOOLS: Set[str] = frozenset({"api_call"})
+
 # Tools explicitly blocked regardless of tier or permission selection
 _disabled_tools: Set[str] = set()
 
@@ -68,7 +75,7 @@ def is_tool_enabled(tool_name: str) -> bool:
     """Check if a specific tool is enabled."""
     if _enabled_tools is None:
         return True  # All tools enabled by default
-    return tool_name in _enabled_tools
+    return tool_name in _enabled_tools or tool_name in ALWAYS_ENABLED_TOOLS
 
 
 def conditional_tool(server, tool_name: str):
