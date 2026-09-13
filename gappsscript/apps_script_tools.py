@@ -851,10 +851,18 @@ async def _update_deployment_impl(
         f"[update_deployment] Email: {user_google_email}, Script: {script_id}, Deployment: {deployment_id}"
     )
 
-    deployment_config: Dict[str, Any] = {"scriptId": script_id}
+    current = await asyncio.to_thread(
+        service.projects()
+        .deployments()
+        .get(scriptId=script_id, deploymentId=deployment_id)
+        .execute
+    )
+    deployment_config: Dict[str, Any] = dict(current.get("deploymentConfig", {}) or {})
+    deployment_config["scriptId"] = script_id
+    deployment_config.setdefault("manifestFileName", "appsscript")
     if version_number is not None:
         deployment_config["versionNumber"] = version_number
-    if description:
+    if description is not None and description.strip() != "":
         deployment_config["description"] = description
 
     request_body = {"deploymentConfig": deployment_config}
