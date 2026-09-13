@@ -13,7 +13,7 @@ import os
 from typing import Dict, Optional, Any, Tuple, Callable, IO
 from threading import RLock
 from datetime import datetime, timedelta, timezone
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 try:
     import fcntl
@@ -108,7 +108,11 @@ class SessionContext:
 
     session_id: Optional[str] = None
     user_id: Optional[str] = None
-    auth_context: Optional[Any] = None
+    # Holds the request's AccessToken, whose own repr renders the bearer token.
+    # Excluded from this dataclass's repr for the same reason as
+    # auth.oauth_clients.OAuthClient.client_secret: a container's repr is how a
+    # credential reaches a log line or a traceback nobody meant to widen.
+    auth_context: Optional[Any] = field(default=None, repr=False)
     request: Optional[Any] = None
     metadata: Dict[str, Any] = None
     issuer: Optional[str] = None
@@ -267,6 +271,11 @@ class OAuth21SessionStore:
             "code_verifier": state_info.get("code_verifier"),
             "expected_user_email": state_info.get("expected_user_email"),
             "principal_source": state_info.get("principal_source"),
+            # Which registered OAuth client issued the authorization URL. The
+            # callback must exchange the code against that same client. Absent
+            # (None) on entries written before multi-client support, which the
+            # callback reads as "the default client".
+            "client_key": state_info.get("client_key"),
             # Retained for compatibility with state files written by the initial
             # trusted-gateway implementation.
             "user_email": state_info.get("user_email"),
@@ -472,12 +481,17 @@ class OAuth21SessionStore:
         expected_user_email: Optional[str] = None,
         enforce_user_email_match: bool = False,
         principal_source: Optional[str] = None,
+        client_key: Optional[str] = None,
     ) -> None:
         """Persist an OAuth state value for later validation.
 
         Enforced identity bindings are explicit so callback security does not depend on
         process-global configuration at callback time. ``user_email`` is retained only
         for compatibility with state entries created by older releases.
+
+        ``client_key`` records which registered OAuth client issued the
+        authorization URL, so the callback can exchange the code against that
+        same client instead of whichever one configuration currently defaults to.
         """
         if not state:
             raise ValueError("OAuth state must be provided")
@@ -497,6 +511,7 @@ class OAuth21SessionStore:
                 "expected_user_email": expected_user_email,
                 "enforce_user_email_match": enforce_user_email_match,
                 "principal_source": principal_source,
+                "client_key": client_key,
             }
             self._oauth_states[state] = state_info
             self._persist_oauth_state_to_shared_store(state, state_info)

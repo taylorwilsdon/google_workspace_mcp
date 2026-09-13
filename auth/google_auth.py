@@ -23,7 +23,14 @@ from auth.client_secrets import get_client_secrets_path, load_client_secrets_fil
 from auth.oauth21_session_store import get_oauth21_session_store
 from auth.credential_store import get_credential_store
 from auth.gateway_identity import normalize_principal_email
+from auth.oauth_clients import (
+    SOURCE_LEGACY_ENV,
+    OAuthClient,
+    OAuthClientResolutionError,
+    load_registry_from_env,
+)
 from auth.oauth_config import (
+    get_oauth_config,
     is_oauth21_enabled,
     is_stateless_mode,
     is_trust_gateway_identity,
@@ -200,21 +207,36 @@ def load_credentials_from_session(session_id: str) -> Optional[Credentials]:
     return credentials
 
 
-def load_client_secrets_from_env() -> Optional[Dict[str, Any]]:
+def load_client_secrets_from_env(
+    client: Optional["OAuthClient"] = None,
+) -> Optional[Dict[str, Any]]:
     """
-    Loads the client secrets from environment variables.
+    Loads the client secrets for one registered OAuth client.
 
     Environment variables used:
-        - GOOGLE_OAUTH_CLIENT_ID: OAuth client ID (required)
+        - GOOGLE_OAUTH_CLIENTS_FILE / GOOGLE_OAUTH_CLIENTS: multi-client registry
+        - GOOGLE_OAUTH_CLIENT_ID: OAuth client ID (single-client deployments)
         - GOOGLE_OAUTH_CLIENT_SECRET: OAuth client secret (optional for public clients)
         - GOOGLE_OAUTH_REDIRECT_URI: (optional) OAuth redirect URI
 
+    Args:
+        client: The client to build config for. When omitted, the registry's
+            default client is read from the environment at call time.
+
     Returns:
         Client secrets configuration dict compatible with Google OAuth library,
-        or None if required environment variables are not set.
+        or None if no OAuth client is configured.
     """
-    client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID")
-    client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET")
+    if client is None:
+        # Read the environment here rather than via the cached OAuthConfig
+        # singleton: this function's contract is to reflect the environment as
+        # it stands at call time, and the singleton is a snapshot taken at
+        # first access.
+        registry = load_registry_from_env()
+        client = registry.default if registry else None
+
+    client_id = client.client_id if client else None
+    client_secret = client.client_secret if client else None
     redirect_uri = os.getenv("GOOGLE_OAUTH_REDIRECT_URI")
 
     if client_id:
@@ -238,7 +260,10 @@ def load_client_secrets_from_env() -> Optional[Dict[str, Any]]:
         top_level_key = "web" if client_secret else "installed"
         config = {top_level_key: client_config}
 
-        logger.info("Loaded OAuth client credentials from environment variables")
+        logger.info(
+            "Loaded OAuth client credentials for client %s",
+            client.describe() if client else "<default>",
+        )
         return config
 
     logger.debug("OAuth client credentials not found in environment variables")
@@ -248,6 +273,14 @@ def load_client_secrets_from_env() -> Optional[Dict[str, Any]]:
 def load_client_secrets(client_secrets_path: str) -> Dict[str, Any]:
     """
     Loads the client secrets from environment variables (preferred) or from the client secrets file.
+
+    NOT ACCOUNT-AWARE, and currently unused by this package. It reads only the
+    registry's DEFAULT client and silently falls back to the file when there is
+    none, which for a multi-client registry without a default means authorizing
+    an account against whatever client_secret.json happens to be on disk. Use
+    ``create_oauth_flow`` (or ``resolve_oauth_client`` plus
+    ``load_client_secrets_from_env(client)``) for anything that authorizes a
+    specific account; those refuse instead of guessing.
 
     Priority order:
     1. Environment variables (GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET)
@@ -287,19 +320,139 @@ def load_client_secrets(client_secrets_path: str) -> Dict[str, Any]:
 
 def check_client_secrets() -> Optional[str]:
     """
-    Checks for the presence of OAuth client secrets, either as environment
-    variables or as a file.
+    Check that at least one OAuth client is available anywhere.
+
+    This gates ``start_google_auth`` and both OAuth callback handlers, and the
+    question it asks is deliberately PLURAL: is any OAuth client configured at
+    all. It must not ask for the *default* client. A multi-client registry may
+    legitimately have no default — an unmapped account is then refused rather
+    than silently authorized against an arbitrary Cloud project — and asking
+    ``load_client_secrets_from_env()`` with no account reads only that default,
+    so the whole deployment reported "credentials not found", including for
+    accounts the registry maps perfectly well.
+
+    Which client serves a given account is a separate, later decision made by
+    ``resolve_oauth_client``, which refuses rather than guessing.
 
     Returns:
-        An error message string if secrets are not found, otherwise None.
+        An error message string if no OAuth client is configured, otherwise None.
     """
-    env_config = load_client_secrets_from_env()
-    if not env_config and not os.path.exists(CONFIG_CLIENT_SECRETS_PATH):
-        logger.error(
-            f"OAuth client credentials not found. No environment variables set and no file at {CONFIG_CLIENT_SECRETS_PATH}"
+    # load_registry_from_env raises OAuthClientRegistryError for a configured
+    # but malformed registry. That stays fatal: a broken registry is not the
+    # same as an absent one, and treating it as absent would send the operator
+    # after credentials that are already there.
+    if load_registry_from_env() is not None:
+        return None
+
+    if os.path.exists(CONFIG_CLIENT_SECRETS_PATH):
+        return None
+
+    logger.error(
+        "No OAuth client is configured. No registry and no single-client "
+        "environment variables are set, and there is no file at %s",
+        CONFIG_CLIENT_SECRETS_PATH,
+    )
+    # Every source named here can actually take effect, because this branch is
+    # only reachable when none of them is set. Naming only
+    # GOOGLE_OAUTH_CLIENT_ID would have been advice that provably cannot work
+    # whenever a registry variable is present: load_registry_from_env returns
+    # at the first source that hits, and the registry sources are checked
+    # first, so the legacy variables would be ignored.
+    return (
+        "No OAuth client is configured. Set GOOGLE_OAUTH_CLIENTS_FILE (a path "
+        "to a JSON client registry) or GOOGLE_OAUTH_CLIENTS (that same "
+        "document inline) to register one or more OAuth clients; or, for a "
+        "single-client deployment, set GOOGLE_OAUTH_CLIENT_ID and "
+        "GOOGLE_OAUTH_CLIENT_SECRET; or provide a client secrets file at "
+        f"{CONFIG_CLIENT_SECRETS_PATH}."
+    )
+
+
+def resolve_oauth_client(
+    client_key: Optional[str] = None,
+    user_google_email: Optional[str] = None,
+) -> Optional[OAuthClient]:
+    """
+    Resolve which OAuth client to use for a flow.
+
+    ``client_key`` wins when given: the callback must complete the exchange with
+    the same client that issued the authorization URL, so it is looked up
+    exactly and a miss is an error rather than a fallback to the default.
+    Otherwise the account's email selects the client via the registry.
+
+    Returns:
+        The selected client, or None with exactly ONE meaning: no OAuth client
+        registry is configured at all, so the caller's client-secrets-file
+        fallback is the intended single-client path.
+
+        None used to mean two opposite things — "the caller specified nothing"
+        and "the registry refused this account" — and every caller read it as
+        the first, falling through to whatever ``client_secret.json`` was on
+        disk. Refusal is now an exception, which is fail-closed by omission
+        rather than depending on each caller remembering to check.
+
+    Raises:
+        OAuthClientResolutionError: if ``client_key`` names a client that is
+            not registered, or if a registry is configured but can select no
+            client for this request.
+    """
+    config = get_oauth_config()
+
+    if client_key:
+        client = config.get_client_by_key(client_key)
+        if client is None:
+            # Falling back here would exchange the code against a different
+            # Cloud project and fail at Google as 'invalid_client', pointing
+            # investigation at the token exchange rather than at the config
+            # change that actually caused it.
+            raise OAuthClientResolutionError(
+                f"OAuth client {client_key!r} is no longer registered. The "
+                "authorization was started with a client that has since been "
+                "removed or renamed; restart the authentication flow."
+            )
+        return client
+
+    registry = config.client_registry
+    if registry is None:
+        # Nothing configured at all. Not a refusal — the caller's file
+        # fallback is the supported single-client deployment.
+        return None
+
+    if registry.source == SOURCE_LEGACY_ENV:
+        # A registry synthesized from GOOGLE_OAUTH_CLIENT_ID/SECRET holds one
+        # client and no emails/domains map, so it can only ever select the same
+        # credentials the caller would resolve anyway — it carries no routing
+        # information, only a second copy of the answer.
+        #
+        # Returning None hands single-client deployments back to the existing
+        # environment-and-file resolution UNCHANGED. That is not merely tidier:
+        # get_oauth_config() is a process-lifetime singleton, so a client taken
+        # from it reflects the environment as it stood when the config was first
+        # built, whereas the path below reads os.environ at call time. Answering
+        # from the registry here silently converts a call-time read into a
+        # start-up read for deployments that never asked for multi-client at all.
+        return None
+
+    client = config.get_client_for_email(user_google_email)
+    if client is not None:
+        return client
+
+    registered = ", ".join(registry.keys)
+    if user_google_email:
+        raise OAuthClientResolutionError(
+            f"No OAuth client is registered for '{user_google_email}'. The "
+            f"registry defines {registered}, but maps neither that address "
+            "nor its domain to one and declares no default client. Add it to "
+            "'emails' or 'domains', or set 'default'. Refusing rather than "
+            "authorizing this account against an arbitrary Cloud project."
         )
-        return f"OAuth client credentials not found. Please set GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET environment variables or provide a client secrets file at {CONFIG_CLIENT_SECRETS_PATH}."
-    return None
+    raise OAuthClientResolutionError(
+        "No account was supplied and the OAuth client registry "
+        f"({registered}) declares no default client, so no client can be "
+        "selected. Set 'default' in the registry, or start the flow with an "
+        "account the registry maps. Refusing rather than authorizing against "
+        "an arbitrary Cloud project."
+    )
 
 
 def create_oauth_flow(
@@ -308,8 +461,25 @@ def create_oauth_flow(
     state: Optional[str] = None,
     code_verifier: Optional[str] = None,
     autogenerate_code_verifier: bool = True,
+    client_key: Optional[str] = None,
+    user_google_email: Optional[str] = None,
 ) -> Flow:
-    """Creates an OAuth flow using environment variables or client secrets file."""
+    """
+    Creates an OAuth flow using environment variables or client secrets file.
+
+    ``client_key`` / ``user_google_email`` select which registered OAuth client
+    the flow uses. Both may be omitted, which selects the default client and
+    reproduces the single-client behaviour.
+
+    Raises:
+        OAuthClientResolutionError: if a registry is configured but can select
+            no client for this request. The client secrets file is reached
+            only when no registry exists at all.
+        FileNotFoundError: if there is no registry and no client secrets file.
+    """
+    client = resolve_oauth_client(
+        client_key=client_key, user_google_email=user_google_email
+    )
     flow_kwargs = {
         "scopes": scopes,
         "redirect_uri": redirect_uri,
@@ -327,14 +497,29 @@ def create_oauth_flow(
         flow_kwargs["autogenerate_code_verifier"] = autogenerate_code_verifier
 
     # Try environment variables first
-    env_config = load_client_secrets_from_env()
+    env_config = load_client_secrets_from_env(client)
     if env_config:
         # Use client config directly
         flow = Flow.from_client_config(env_config, **flow_kwargs)
         logger.debug("Created OAuth flow from environment variables")
         return flow
 
-    # Fall back to file-based config
+    if client is not None:
+        # Second, independent layer. resolve_oauth_client has already refused
+        # every request it cannot serve, so a resolved client that yields no
+        # usable config is a bug — and still not a reason to authorize this
+        # account against whatever file happens to be on disk. The two checks
+        # are deliberately redundant: this one holds even if resolution is
+        # later relaxed.
+        raise OAuthClientResolutionError(
+            f"OAuth client {client.key!r} was resolved but produced no usable "
+            "client configuration. Refusing to fall back to "
+            f"{CONFIG_CLIENT_SECRETS_PATH}, which belongs to a different "
+            "Cloud project."
+        )
+
+    # No registry configured at all: the client secrets file is the intended
+    # single-client path.
     if not os.path.exists(CONFIG_CLIENT_SECRETS_PATH):
         raise FileNotFoundError(
             f"OAuth client secrets file not found at {CONFIG_CLIENT_SECRETS_PATH} and no environment variables set"
@@ -522,10 +707,28 @@ async def start_auth_flow(
         oauth_state = os.urandom(16).hex()
         current_scopes = get_current_scopes()
 
+        # Pick the OAuth client whose Cloud project may authorize this account,
+        # and remember it on the state so the callback exchanges the code
+        # against the same client.
+        oauth_client = resolve_oauth_client(user_google_email=user_google_email)
+        if oauth_client is None and get_oauth_config().has_multiple_clients():
+            # Second, independent layer: resolve_oauth_client now raises for
+            # this case, so reaching here means resolution returned None while
+            # a multi-client registry exists — a contradiction. Kept rather
+            # than deleted so the fail-closed property does not rest on a
+            # single check.
+            raise OAuthClientResolutionError(
+                f"No OAuth client is configured for '{user_google_email}'. Map its "
+                "address or domain in the OAuth client registry, or set a default "
+                "client."
+            )
+        oauth_client_key = oauth_client.key if oauth_client else None
+
         flow = create_oauth_flow(
             scopes=current_scopes,  # Use scopes for enabled tools only
             redirect_uri=redirect_uri,  # Use passed redirect_uri
             state=oauth_state,
+            client_key=oauth_client_key,
         )
 
         session_id = None
@@ -576,10 +779,12 @@ async def start_auth_flow(
             ),
             enforce_user_email_match=enforce_user_email_match,
             principal_source=principal_source,
+            client_key=oauth_client_key,
         )
 
         logger.info(
             f"Auth flow started for {user_display_name}. State: {oauth_state[:8]}... "
+            f"OAuth client: {oauth_client_key or '<default>'}. "
             f"Browser opened automatically: {browser_opened}"
         )
 
@@ -746,12 +951,25 @@ async def handle_auth_callback(
                     _session_id_log_fingerprint(originating_session_id),
                 )
 
+        # The token exchange must use the same OAuth client that issued the
+        # authorization URL. State entries written before multi-client support
+        # carry no client_key, so resolution falls back to the registry's
+        # default — correct for those, since a pre-upgrade state can only have
+        # been issued by a single-client deployment.
+        #
+        # It does NOT fall through to whatever client_secret.json is on disk.
+        # If the registry has since grown several clients and no default,
+        # create_oauth_flow raises OAuthClientResolutionError rather than
+        # exchanging the code against an arbitrary Cloud project. That is a
+        # legible failure ("restart the flow") instead of a credential issued
+        # by the wrong project.
         flow = create_oauth_flow(
             scopes=scopes,
             redirect_uri=redirect_uri,
             state=state,
             code_verifier=state_info.get("code_verifier"),
             autogenerate_code_verifier=False,
+            client_key=state_info.get("client_key"),
         )
 
         # Exchange the authorization code for credentials
