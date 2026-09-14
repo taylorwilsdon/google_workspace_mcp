@@ -293,7 +293,8 @@ def build_drive_list_params(
         include_items_from_all_drives: Whether to include items from all drives
         corpora: Optional corpus specification
         page_token: Optional page token for pagination (from a previous nextPageToken)
-        detailed: Whether to request size, modifiedTime, and webViewLink fields.
+        detailed: Whether to request size, modifiedTime, description and webViewLink
+                  fields.
                   Defaults to True to preserve existing behavior.
         include_permissions: Whether detailed results should include file ACL fields.
         order_by: Optional sort order. Comma-separated list of sort keys.
@@ -310,7 +311,7 @@ def build_drive_list_params(
             ", permissions(id, type, role)" if include_permissions else ""
         )
         fields = (
-            "nextPageToken, files(id, name, mimeType, webViewLink, iconLink,"
+            "nextPageToken, files(id, name, mimeType, description, webViewLink, iconLink,"
             " modifiedTime, createdTime, size, driveId,"
             " lastModifyingUser(displayName, emailAddress)"
             f"{permission_fields})"

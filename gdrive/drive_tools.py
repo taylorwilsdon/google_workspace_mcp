@@ -74,6 +74,11 @@ from gdrive.drive_helpers import (
 
 logger = logging.getLogger(__name__)
 
+# Cap for a rendered Drive file description. The field is free text set by
+# anyone who can edit the file, and Drive documents no maximum length, so an
+# uncapped value could dominate a page of up to 1000 results.
+DESCRIPTION_RENDER_LIMIT = 1000
+
 SHARED_DRIVE_ORGANIZER_CONCURRENCY_LIMIT = 10
 
 IMPORT_FORMATS_BY_GOOGLE_MIME_TYPE = {
@@ -207,7 +212,7 @@ async def search_drive_files(
                                    'presentation'/'slides', 'form', 'drawing', 'pdf', 'shortcut',
                                    'script', 'site', 'jam'/'jamboard') or any raw MIME type
                                    string (e.g. 'application/pdf'). Defaults to None (all types).
-        detailed (bool): Whether to include size, modified time, and link in results. Defaults to True.
+        detailed (bool): Whether to include size, modified time, description and link in results. Defaults to True.
         order_by (Optional[str]): Sort order. Comma-separated list of sort keys with optional 'desc' modifier.
                                   Valid keys: 'createdTime', 'folder', 'modifiedByMeTime', 'modifiedTime',
                                   'name', 'name_natural', 'quotaBytesUsed', 'recency', 'sharedWithMeTime',
@@ -218,7 +223,7 @@ async def search_drive_files(
                                 contains its own `trashed` clause (`=` or `!=`), which always wins.
 
     Returns:
-        str: A formatted list of found files/folders with their details (ID, name, type, and optionally size, modified time, link).
+        str: A formatted list of found files/folders with their details (ID, name, type, and optionally size, modified time, description, link).
              Includes a nextPageToken line when more results are available.
     """
     logger.info(
@@ -311,10 +316,26 @@ async def search_drive_files(
             # owns the file.  True creator attribution requires fetching revision 1
             # via files/{id}/revisions and reading its lastModifyingUser.  That adds
             # one API call per file and should be a separate follow-up.
+            _desc = (item.get("description") or "").strip()
+            if _desc:
+                # A description is untrusted text that any editor of the file
+                # can set, and it is rendered into a line-per-file listing.
+                # Newlines and tabs are flattened so it cannot forge an extra
+                # row, and the length is capped so one file cannot dominate a
+                # 100-file page. Drive documents no maximum for this field.
+                _desc = _desc.replace("\r", " ").replace("\n", " ").replace("\t", " ")
+                if len(_desc) > DESCRIPTION_RENDER_LIMIT:
+                    _desc = (
+                        _desc[:DESCRIPTION_RENDER_LIMIT]
+                        + f"... [truncated, {len(_desc)} chars total]"
+                    )
+                description_str = f", Description: {_desc}"
+            else:
+                description_str = ""
             formatted_files_text_parts.append(
                 f'- Name: "{item["name"]}" (ID: {item["id"]}, Type: {item["mimeType"]}{size_str}'
                 f"{created_str}, Modified: {item.get('modifiedTime', 'N/A')}"
-                f"{last_edited_by_str}{anyone_role_str})"
+                f"{last_edited_by_str}{anyone_role_str}{description_str})"
                 f" Link: {item.get('webViewLink', '#')}"
             )
         else:
@@ -699,7 +720,9 @@ async def list_drive_items(
                                    'presentation'/'slides', 'form', 'drawing', 'pdf', 'shortcut',
                                    'script', 'site', 'jam'/'jamboard') or any raw MIME type
                                    string (e.g. 'application/pdf'). Defaults to None (all types).
-        detailed (bool): Whether to include size, modified time, and link in results. Defaults to True.
+        detailed (bool): Whether to include size, modified time, description and link in results. Defaults to True.
+                         Descriptions are returned only when resource_type="items";
+                         shared drive listings do not carry them.
         order_by (Optional[str]): Sort order. Comma-separated list of sort keys with optional 'desc' modifier.
                                   Valid keys: 'createdTime', 'folder', 'modifiedByMeTime', 'modifiedTime',
                                   'name', 'name_natural', 'quotaBytesUsed', 'recency', 'sharedWithMeTime',
@@ -715,6 +738,8 @@ async def list_drive_items(
 
     Returns:
         str: A formatted list of files/folders in the specified folder or shared drives.
+             When resource_type="items", each entry also carries its description
+             if one is set.
              Includes a nextPageToken line when more results are available.
     """
     logger.info(
@@ -787,10 +812,26 @@ async def list_drive_items(
                     last_edited_by_str = ""
             else:
                 last_edited_by_str = ""
+            _desc = (item.get("description") or "").strip()
+            if _desc:
+                # A description is untrusted text that any editor of the file
+                # can set, and it is rendered into a line-per-file listing.
+                # Newlines and tabs are flattened so it cannot forge an extra
+                # row, and the length is capped so one file cannot dominate a
+                # 100-file page. Drive documents no maximum for this field.
+                _desc = _desc.replace("\r", " ").replace("\n", " ").replace("\t", " ")
+                if len(_desc) > DESCRIPTION_RENDER_LIMIT:
+                    _desc = (
+                        _desc[:DESCRIPTION_RENDER_LIMIT]
+                        + f"... [truncated, {len(_desc)} chars total]"
+                    )
+                description_str = f", Description: {_desc}"
+            else:
+                description_str = ""
             formatted_items_text_parts.append(
                 f'- Name: "{item["name"]}" (ID: {item["id"]}, Type: {item["mimeType"]}{size_str}'
                 f"{created_str}, Modified: {item.get('modifiedTime', 'N/A')}"
-                f"{last_edited_by_str}{drive_id_str})"
+                f"{last_edited_by_str}{drive_id_str}{description_str})"
                 f" Link: {item.get('webViewLink', '#')}"
             )
         else:
