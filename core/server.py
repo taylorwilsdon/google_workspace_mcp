@@ -311,12 +311,15 @@ class SecureFastMCP(FastMCP):
         return patched
 
     async def call_tool(self, name: str, arguments: Optional[dict], *args, **kwargs):
-        """Inject user_google_email before pydantic validates the call arguments.
+        """Resolve user_google_email before Pydantic validates call arguments.
 
         When USER_GOOGLE_EMAIL is configured and OAuth 2.1 is not active, callers
         (agents, adapters) are allowed to omit user_google_email.  FastMCP validates
         arguments against the function signature BEFORE calling the tool, so we must
-        inject the default BEFORE that validation step.
+        inject the default BEFORE that validation step. In explicit single-user
+        mode, the configured account is authoritative: ignore a stale or
+        misspelled caller-supplied value so every MCP session uses the same
+        stored credential.
         """
         arguments = arguments or {}
         if is_trust_gateway_identity():
@@ -329,12 +332,11 @@ class SecureFastMCP(FastMCP):
                 for key, value in arguments.items()
                 if key != "user_google_email"
             }
-        elif (
-            not is_oauth21_enabled()
-            and USER_GOOGLE_EMAIL
-            and "user_google_email" not in arguments
-        ):
-            arguments = {**arguments, "user_google_email": USER_GOOGLE_EMAIL}
+        elif not is_oauth21_enabled() and USER_GOOGLE_EMAIL:
+            if os.getenv("MCP_SINGLE_USER_MODE") == "1":
+                arguments = {**arguments, "user_google_email": USER_GOOGLE_EMAIL}
+            elif "user_google_email" not in arguments:
+                arguments = {**arguments, "user_google_email": USER_GOOGLE_EMAIL}
         return await super().call_tool(name, arguments, *args, **kwargs)
 
 
