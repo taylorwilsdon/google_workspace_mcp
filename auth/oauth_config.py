@@ -365,10 +365,18 @@ class OAuthConfig:
             )
 
         _set_if_absent("FASTMCP_SERVER_AUTH_GOOGLE_CLIENT_ID", self.client_id)
-        if self.client_secret:
-            _set_if_absent(
-                "FASTMCP_SERVER_AUTH_GOOGLE_CLIENT_SECRET", self.client_secret
-            )
+        # The client SECRET is deliberately not mirrored here. Nothing reads
+        # FASTMCP_SERVER_AUTH_GOOGLE_CLIENT_SECRET -- not this package, and not
+        # FastMCP, which resolves the Google provider from explicit keyword
+        # arguments in core/server.py rather than from the environment. Writing
+        # it only widened where the credential rests: os.environ is inherited by
+        # every child process, and this method runs from __init__, so importing
+        # a module that builds the config was enough to export it even in stdio
+        # mode with OAuth 2.1 off.
+        #
+        # Do not "restore for symmetry" with the client_id above. The id is
+        # published in every authorization URL; the secret is not, and the two
+        # do not belong in the same place merely because they arrive together.
         _set_if_absent("FASTMCP_SERVER_AUTH_GOOGLE_BASE_URL", self.get_oauth_base_url())
         _set_if_absent("FASTMCP_SERVER_AUTH_GOOGLE_REDIRECT_PATH", self.redirect_path)
 
