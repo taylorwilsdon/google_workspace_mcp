@@ -24,7 +24,10 @@ from auth.oauth_config import (
     get_oauth_config,
     is_trust_gateway_identity,
 )
-from auth.oauth_proxy_config import get_oauth_proxy_expiry_kwargs
+from auth.oauth_proxy_config import (
+    get_oauth_proxy_consent_kwargs,
+    get_oauth_proxy_expiry_kwargs,
+)
 from auth.oauth_responses import (
     create_error_response,
     create_success_response,
@@ -740,6 +743,7 @@ def configure_server_for_http():
                     jwt_signing_key=jwt_signing_key,
                     allowed_client_redirect_uris=allowed_client_redirect_uris,
                     **expiry_kwargs,
+                    **get_oauth_proxy_consent_kwargs(),
                 )
                 if provider.client_registration_options is not None:
                     # Keep protocol-level auth limited to base identity scopes, but
