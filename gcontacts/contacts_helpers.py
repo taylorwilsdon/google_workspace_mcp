@@ -260,6 +260,63 @@ def _format_contact(person: Dict[str, Any], detailed: bool = False) -> str:
     return "\n".join(lines)
 
 
+def _contact_sync_item(person: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the stable, structured subset used by contact synchronizers.
+
+    Unlike ``_format_contact`` this representation is intended for machines:
+    it keeps repeated values as arrays, preserves the Google resource name and
+    includes deletion tombstones returned by incremental People API syncs.
+    Empty entries are omitted from repeated fields to keep large pages compact.
+    """
+    resource_name = str(person.get("resourceName") or "")
+    names = [
+        str(item.get("displayName") or "")
+        for item in person.get("names", [])
+        if item.get("displayName")
+    ]
+    nicknames = [
+        str(item.get("value") or "")
+        for item in person.get("nicknames", [])
+        if item.get("value")
+    ]
+
+    def _values(items: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+        values: List[Dict[str, str]] = []
+        for item in items:
+            value = str(item.get("value") or "").strip()
+            if not value:
+                continue
+            entry = {"value": value}
+            label = str(item.get("type") or item.get("formattedType") or "").strip()
+            if label:
+                entry["type"] = label
+            values.append(entry)
+        return values
+
+    organizations: List[Dict[str, str]] = []
+    for item in person.get("organizations", []):
+        organization = {
+            key: str(item.get(key) or "").strip()
+            for key in ("name", "title", "department")
+            if str(item.get(key) or "").strip()
+        }
+        if organization:
+            organizations.append(organization)
+
+    metadata = person.get("metadata") or {}
+    return {
+        "resource_name": resource_name,
+        "contact_id": resource_name.removeprefix("people/"),
+        "etag": str(person.get("etag") or ""),
+        "deleted": bool(metadata.get("deleted")),
+        "names": names,
+        "nicknames": nicknames,
+        "emails": _values(person.get("emailAddresses", [])),
+        "phones": _values(person.get("phoneNumbers", [])),
+        "organizations": organizations,
+    }
+
+
 def _merge_phones(
     existing: List[Dict[str, Any]],
     new_phones: List[Dict[str, Any]],

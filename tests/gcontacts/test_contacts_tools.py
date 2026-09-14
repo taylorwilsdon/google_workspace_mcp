@@ -6,16 +6,167 @@ Tests helper functions and formatting utilities.
 
 import sys
 import os
+from unittest.mock import MagicMock, Mock
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 import pytest
+from googleapiclient.errors import HttpError
 
+from core.utils import UserInputError
 from gcontacts.contacts_tools import (
     _format_contact,
     _build_person_body,
+    sync_contacts,
 )
-from gcontacts.contacts_helpers import _parse_birthday
+from gcontacts.contacts_helpers import _contact_sync_item, _parse_birthday
+
+
+async def _call_sync_contacts(service, **overrides):
+    impl = sync_contacts.__wrapped__.__wrapped__
+    params = {
+        "service": service,
+        "user_google_email": "user@example.com",
+    }
+    params.update(overrides)
+    return await impl(**params)
+
+
+def _sync_service(*, response=None, error=None):
+    service = MagicMock()
+    execute = (
+        service.people.return_value.connections.return_value.list.return_value.execute
+    )
+    if error is not None:
+        execute.side_effect = error
+    else:
+        execute.return_value = response or {}
+    return service
+
+
+class TestContactSyncItem:
+    def test_structured_fields_and_tombstone(self):
+        person = {
+            "resourceName": "people/c123",
+            "etag": "etag-1",
+            "names": [{"displayName": "Mario Rossi"}],
+            "nicknames": [{"value": "M."}],
+            "emailAddresses": [{"value": "mario@example.com", "type": "work"}],
+            "phoneNumbers": [{"value": "+393331234567", "type": "mobile"}],
+            "organizations": [{"name": "ACME", "title": "CTO"}],
+            "metadata": {"deleted": True},
+        }
+
+        result = _contact_sync_item(person)
+
+        assert result == {
+            "resource_name": "people/c123",
+            "contact_id": "c123",
+            "etag": "etag-1",
+            "deleted": True,
+            "names": ["Mario Rossi"],
+            "nicknames": ["M."],
+            "emails": [{"value": "mario@example.com", "type": "work"}],
+            "phones": [{"value": "+393331234567", "type": "mobile"}],
+            "organizations": [{"name": "ACME", "title": "CTO"}],
+        }
+
+
+class TestSyncContacts:
+    @pytest.mark.asyncio
+    async def test_full_sync_returns_next_sync_token(self):
+        service = _sync_service(
+            response={
+                "connections": [
+                    {
+                        "resourceName": "people/c123",
+                        "names": [{"displayName": "Mario Rossi"}],
+                    }
+                ],
+                "nextSyncToken": "sync-next",
+            }
+        )
+
+        result = await _call_sync_contacts(service)
+
+        assert result["next_sync_token"] == "sync-next"
+        assert result["contacts"][0]["contact_id"] == "c123"
+        service.people.return_value.connections.return_value.list.assert_called_once_with(
+            resourceName="people/me",
+            personFields="names,nicknames,emailAddresses,phoneNumbers,organizations,metadata",
+            pageSize=1000,
+            requestSyncToken=True,
+        )
+
+    @pytest.mark.asyncio
+    async def test_full_sync_pagination_preserves_sync_request(self):
+        service = _sync_service(response={"nextPageToken": "page-3"})
+
+        result = await _call_sync_contacts(service, page_size=250, page_token="page-2")
+
+        assert result["next_page_token"] == "page-3"
+        assert result["page_size"] == 250
+        service.people.return_value.connections.return_value.list.assert_called_once_with(
+            resourceName="people/me",
+            personFields="names,nicknames,emailAddresses,phoneNumbers,organizations,metadata",
+            pageSize=250,
+            pageToken="page-2",
+            requestSyncToken=True,
+        )
+
+    @pytest.mark.asyncio
+    async def test_incremental_sync_returns_tombstone_and_new_token(self):
+        service = _sync_service(
+            response={
+                "connections": [
+                    {
+                        "resourceName": "people/deleted-1",
+                        "metadata": {"deleted": True},
+                    }
+                ],
+                "nextSyncToken": "sync-new",
+            }
+        )
+
+        result = await _call_sync_contacts(service, sync_token="sync-old")
+
+        assert result["contacts"][0]["deleted"] is True
+        assert result["next_sync_token"] == "sync-new"
+        service.people.return_value.connections.return_value.list.assert_called_once_with(
+            resourceName="people/me",
+            personFields="names,nicknames,emailAddresses,phoneNumbers,organizations,metadata",
+            pageSize=1000,
+            syncToken="sync-old",
+        )
+
+    @pytest.mark.asyncio
+    async def test_expired_sync_token_requires_reset(self):
+        response = Mock(status=410, reason="Gone")
+        error = HttpError(
+            response,
+            b'{"error":{"code":410,"message":"Sync token expired"}}',
+        )
+        service = _sync_service(error=error)
+
+        result = await _call_sync_contacts(service, sync_token="sync-expired")
+
+        assert result == {
+            "account": "user@example.com",
+            "contacts": [],
+            "page_size": 1000,
+            "next_page_token": None,
+            "next_sync_token": None,
+            "reset_required": True,
+        }
+
+    @pytest.mark.asyncio
+    async def test_rejects_invalid_page_size(self):
+        service = _sync_service()
+
+        with pytest.raises(UserInputError, match="page_size must be >= 1"):
+            await _call_sync_contacts(service, page_size=0)
+
+        service.people.return_value.connections.return_value.list.assert_not_called()
 
 
 class TestFormatContact:
