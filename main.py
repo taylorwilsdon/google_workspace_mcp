@@ -195,6 +195,50 @@ def resolve_bind_host_for_transport(transport: str) -> str:
     return "127.0.0.1"
 
 
+def resolve_deployment_preset(cli_preset: str | None) -> str | None:
+    """Resolve the opt-in deployment preset from the CLI flag or its env var.
+
+    The CLI flag takes precedence. Raises ValueError for an unrecognized
+    WORKSPACE_MCP_DEPLOYMENT_PRESET value so the caller can surface a
+    consistent CLI error and exit.
+    """
+    if cli_preset:
+        return cli_preset
+    env_preset = os.getenv("WORKSPACE_MCP_DEPLOYMENT_PRESET", "").strip().lower()
+    if not env_preset:
+        return None
+    if env_preset not in DEPLOYMENT_PRESETS:
+        raise ValueError(
+            f"invalid WORKSPACE_MCP_DEPLOYMENT_PRESET {env_preset!r}; expected "
+            f"one of: {', '.join(sorted(DEPLOYMENT_PRESETS))}."
+        )
+    return env_preset
+
+
+def apply_deployment_preset(preset: str | None, transport: str) -> str:
+    """Apply preset-forced transport/host overrides and return the resulting transport.
+
+    A preset never changes behavior unless explicitly selected. The 'openclaw'
+    preset requires Streamable HTTP (one durable local process instead of one
+    stdio process per agent session) bound to 127.0.0.1 by default, while
+    respecting an explicit WORKSPACE_MCP_HOST override.
+    """
+    if preset != "openclaw":
+        return transport
+
+    if transport != "streamable-http":
+        logger.info(
+            "Deployment preset 'openclaw' forces streamable-http transport (was '%s')",
+            transport,
+        )
+
+    if not os.getenv("WORKSPACE_MCP_HOST"):
+        os.environ["WORKSPACE_MCP_HOST"] = "127.0.0.1"
+        logger.info("Deployment preset 'openclaw' binding host to 127.0.0.1")
+
+    return "streamable-http"
+
+
 def validate_streamable_http_auth(transport: str) -> None:
     """Reject misconfigured OAuth 2.1 HTTP before starting."""
     if transport != "streamable-http":
@@ -228,6 +272,11 @@ SERVICE_MODULES = {
     "appscript": "gappsscript.apps_script_tools",
 }
 VALID_SERVICES = frozenset(SERVICE_MODULES)
+
+# Opt-in deployment presets that override transport/host defaults for a
+# specific hosting scenario. Presets never change behavior unless explicitly
+# selected via --preset or WORKSPACE_MCP_DEPLOYMENT_PRESET.
+DEPLOYMENT_PRESETS = frozenset({"openclaw"})
 
 # Every icon is a double-width emoji with no variation selector, so the startup
 # service grid stays aligned across terminals.
@@ -485,6 +534,18 @@ def main():
         help="Transport mode: stdio (default; overridable via WORKSPACE_MCP_TRANSPORT) or streamable-http",
     )
     parser.add_argument(
+        "--preset",
+        choices=sorted(DEPLOYMENT_PRESETS),
+        default=None,
+        help=(
+            "Opt-in deployment preset. 'openclaw' forces streamable-http transport "
+            "bound to 127.0.0.1, for running one durable local MCP service shared "
+            "across OpenClaw agent sessions instead of one stdio process per "
+            "session. Leaves default stdio behavior unchanged unless selected. "
+            "Env var: WORKSPACE_MCP_DEPLOYMENT_PRESET."
+        ),
+    )
+    parser.add_argument(
         "--read-only",
         action="store_true",
         help="Run in read-only mode - requests only read-only scopes and disables tools requiring write permissions",
@@ -597,6 +658,13 @@ def main():
         else:
             args.transport = "stdio"
 
+    try:
+        args.preset = resolve_deployment_preset(args.preset)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+    args.transport = apply_deployment_preset(args.preset, args.transport)
+
     _env_http_port = os.getenv("WORKSPACE_MCP_HTTP_PORT", "").strip()
     http_port = None
     if _env_http_port:
@@ -655,6 +723,8 @@ def main():
         flags.append("read-only")
     if args.permissions:
         flags.append("granular permissions")
+    if args.preset:
+        flags.append(f"preset:{args.preset}")
 
     ui = StartupDisplay(safe_print)
     ui.blank()

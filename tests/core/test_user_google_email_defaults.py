@@ -109,6 +109,50 @@ async def test_call_tool_injects_default_email_before_validation(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_single_user_mode_overrides_caller_supplied_email(monkeypatch):
+    """A shared self-hosted MCP must not re-authenticate for a typoed email."""
+    monkeypatch.setattr(server_module, "USER_GOOGLE_EMAIL", "configured@example.com")
+    monkeypatch.setenv("MCP_SINGLE_USER_MODE", "1")
+    monkeypatch.setattr(server_module, "is_oauth21_enabled", lambda: False)
+    monkeypatch.setattr(server_module, "is_trust_gateway_identity", lambda: False)
+
+    server = SecureFastMCP(name="test_server")
+
+    def echo_email(user_google_email: str) -> str:
+        return user_google_email
+
+    server.tool()(echo_email)
+
+    result = await server.call_tool(
+        "echo_email", {"user_google_email": "typoed@example.com"}
+    )
+
+    assert _result_text(result) == "configured@example.com"
+
+
+@pytest.mark.asyncio
+async def test_legacy_mode_preserves_caller_supplied_email(monkeypatch):
+    """Only explicit single-user mode makes the configured account authoritative."""
+    monkeypatch.setattr(server_module, "USER_GOOGLE_EMAIL", "configured@example.com")
+    monkeypatch.delenv("MCP_SINGLE_USER_MODE", raising=False)
+    monkeypatch.setattr(server_module, "is_oauth21_enabled", lambda: False)
+    monkeypatch.setattr(server_module, "is_trust_gateway_identity", lambda: False)
+
+    server = SecureFastMCP(name="test_server")
+
+    def echo_email(user_google_email: str) -> str:
+        return user_google_email
+
+    server.tool()(echo_email)
+
+    result = await server.call_tool(
+        "echo_email", {"user_google_email": "caller@example.com"}
+    )
+
+    assert _result_text(result) == "caller@example.com"
+
+
+@pytest.mark.asyncio
 async def test_gateway_mode_strips_email_and_ignores_configured_default(monkeypatch):
     """In gateway mode call_tool must drop caller-supplied user_google_email and
     never inject USER_GOOGLE_EMAIL — tool signatures no longer accept the param."""
