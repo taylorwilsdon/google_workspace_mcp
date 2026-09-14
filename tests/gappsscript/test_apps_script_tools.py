@@ -5,6 +5,7 @@ Tests all Apps Script tools with mocked API responses
 """
 
 import asyncio
+import json
 import os
 import sys
 import threading
@@ -38,6 +39,11 @@ from gappsscript.apps_script_tools import (
     _get_version_impl,
     _get_script_metrics_impl,
     _generate_trigger_code_impl,
+    _list_script_triggers_impl,
+    _delete_script_trigger_impl,
+    _ensure_trigger_admin_file,
+    _TRIGGER_ADMIN_FILE_NAME,
+    _TRIGGER_ADMIN_SOURCE,
     manage_deployment,
     run_script_function,
 )
@@ -984,3 +990,160 @@ def test_generate_trigger_code_invalid():
 
     assert "Unknown trigger type" in result
     assert "Valid types:" in result
+
+
+# ---------------------------------------------------------------------------
+# Trigger management (list_script_triggers / delete_script_trigger)
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_ensure_trigger_admin_file_injects_when_missing():
+    """The admin file is appended, existing files are left untouched."""
+    mock_service = Mock()
+    existing_files = [{"name": "Code", "type": "SERVER_JS", "source": "function foo(){}"}]
+    mock_service.projects().getContent().execute.return_value = {"files": existing_files}
+
+    await _ensure_trigger_admin_file(mock_service, "script123")
+
+    _, call_kwargs = mock_service.projects().updateContent.call_args
+    written_files = call_kwargs["body"]["files"]
+    names = {f["name"] for f in written_files}
+    assert names == {"Code", _TRIGGER_ADMIN_FILE_NAME}
+    # The original file's source must be untouched.
+    original = next(f for f in written_files if f["name"] == "Code")
+    assert original["source"] == "function foo(){}"
+    admin = next(f for f in written_files if f["name"] == _TRIGGER_ADMIN_FILE_NAME)
+    assert admin["source"] == _TRIGGER_ADMIN_SOURCE
+
+
+@pytest.mark.asyncio
+async def test_ensure_trigger_admin_file_noop_when_current():
+    """No write happens when the admin file already matches."""
+    mock_service = Mock()
+    mock_service.projects().getContent().execute.return_value = {
+        "files": [
+            {
+                "name": _TRIGGER_ADMIN_FILE_NAME,
+                "type": "SERVER_JS",
+                "source": _TRIGGER_ADMIN_SOURCE,
+            }
+        ]
+    }
+
+    await _ensure_trigger_admin_file(mock_service, "script123")
+
+    mock_service.projects().updateContent.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_list_script_triggers():
+    """Test listing triggers on a script project"""
+    mock_service = Mock()
+    mock_service.projects().getContent().execute.return_value = {"files": []}
+    mock_service.scripts().run().execute.return_value = {
+        "response": {
+            "result": json.dumps(
+                [
+                    {
+                        "uniqueId": "abc123",
+                        "handlerFunction": "sendDailyReport",
+                        "eventType": "CLOCK",
+                        "triggerSource": "CLOCK",
+                    }
+                ]
+            )
+        }
+    }
+
+    result = await _list_script_triggers_impl(
+        service=mock_service, user_google_email="test@example.com", script_id="script123"
+    )
+
+    assert "sendDailyReport" in result
+    assert "abc123" in result
+
+    # Must have provisioned the admin file before running it.
+    mock_service.projects().updateContent.assert_called_once()
+    _, run_kwargs = mock_service.scripts().run.call_args
+    assert run_kwargs["body"]["function"] == "__mcpListTriggers"
+
+
+@pytest.mark.asyncio
+async def test_list_script_triggers_none_found():
+    """Test listing triggers when none exist"""
+    mock_service = Mock()
+    mock_service.projects().getContent().execute.return_value = {"files": []}
+    mock_service.scripts().run().execute.return_value = {"response": {"result": "[]"}}
+
+    result = await _list_script_triggers_impl(
+        service=mock_service, user_google_email="test@example.com", script_id="script123"
+    )
+
+    assert "No triggers found" in result
+
+
+@pytest.mark.asyncio
+async def test_delete_script_trigger_requires_a_selector():
+    """Must supply trigger_id or handler_function."""
+    mock_service = Mock()
+    with pytest.raises(UserInputError):
+        await _delete_script_trigger_impl(
+            service=mock_service, user_google_email="test@example.com", script_id="script123"
+        )
+
+
+@pytest.mark.asyncio
+async def test_delete_script_trigger_by_id():
+    """Test deleting a trigger by unique ID"""
+    mock_service = Mock()
+    mock_service.projects().getContent().execute.return_value = {"files": []}
+    mock_service.scripts().run().execute.return_value = {
+        "response": {
+            "result": json.dumps(
+                [{"uniqueId": "abc123", "handlerFunction": "sendDailyReport"}]
+            )
+        }
+    }
+
+    result = await _delete_script_trigger_impl(
+        service=mock_service,
+        user_google_email="test@example.com",
+        script_id="script123",
+        trigger_id="abc123",
+    )
+
+    assert "Deleted 1 trigger" in result
+    assert "sendDailyReport" in result
+    _, run_kwargs = mock_service.scripts().run.call_args
+    assert run_kwargs["body"]["parameters"] == ["abc123", None]
+
+
+@pytest.mark.asyncio
+async def test_delete_script_trigger_no_match():
+    """Test deleting a trigger that doesn't exist"""
+    mock_service = Mock()
+    mock_service.projects().getContent().execute.return_value = {"files": []}
+    mock_service.scripts().run().execute.return_value = {"response": {"result": "[]"}}
+
+    result = await _delete_script_trigger_impl(
+        service=mock_service,
+        user_google_email="test@example.com",
+        script_id="script123",
+        trigger_id="nope",
+    )
+
+    assert "No matching trigger found" in result
+
+
+@pytest.mark.asyncio
+async def test_list_script_triggers_execution_error():
+    """Test that a scripts.run() error surfaces as an exception."""
+    mock_service = Mock()
+    mock_service.projects().getContent().execute.return_value = {"files": []}
+    mock_service.scripts().run().execute.return_value = {
+        "error": {"message": "Script function not found: __mcpListTriggers"}
+    }
+
+    with pytest.raises(RuntimeError, match="Script function not found"):
+        await _list_script_triggers_impl(
+            service=mock_service, user_google_email="test@example.com", script_id="script123"
+        )

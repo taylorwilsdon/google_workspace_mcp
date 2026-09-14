@@ -5,6 +5,7 @@ This module provides MCP tools for interacting with Google Apps Script API.
 """
 
 import asyncio
+import json
 import logging
 import weakref
 from typing import Any, Dict, List, Optional
@@ -1592,6 +1593,8 @@ async def generate_trigger_code(
 
     The Apps Script API cannot create triggers directly - they must be created
     from within Apps Script itself. This tool generates the code you need.
+    To list or remove existing triggers without opening the editor, use
+    `list_script_triggers` / `delete_script_trigger` instead.
 
     Args:
         trigger_type: Type of trigger. One of:
@@ -1617,3 +1620,270 @@ async def generate_trigger_code(
         str: Apps Script code to create the trigger
     """
     return _generate_trigger_code_impl(trigger_type, function_name, schedule)
+
+
+# ---------------------------------------------------------------------------
+# Trigger management (list / delete)
+#
+# The Apps Script REST API exposes no "triggers" resource at all — trigger
+# state only exists inside the Apps Script runtime (ScriptApp.getProjectTriggers()
+# / ScriptApp.deleteTrigger()). To manage triggers remotely we inject a small
+# admin file into the target project via the same merge/lock machinery
+# update_script_content uses (so it never clobbers the project's other files),
+# then invoke it through the Execution API, the same mechanism
+# `run_script_function` already uses. Calling `scripts.run` requires the
+# invoking OAuth token to carry the `script.scriptapp` scope in addition to
+# `script.projects`; if the current session lacks it, re-run start_google_auth
+# to pick up the extra scope.
+# ---------------------------------------------------------------------------
+
+_TRIGGER_ADMIN_FILE_NAME = "McpTriggerAdmin"
+_TRIGGER_ADMIN_SOURCE = """// Auto-provisioned by the Google Workspace MCP server's
+// list_script_triggers / delete_script_trigger tools. Safe to leave in place;
+// it is re-synced on every call and touches nothing else in this project.
+
+function __mcpListTriggers() {
+  var triggers = ScriptApp.getProjectTriggers();
+  var out = [];
+  for (var i = 0; i < triggers.length; i++) {
+    var t = triggers[i];
+    out.push({
+      uniqueId: t.getUniqueId(),
+      handlerFunction: t.getHandlerFunction(),
+      eventType: t.getEventType().toString(),
+      triggerSource: t.getTriggerSource().toString()
+    });
+  }
+  return JSON.stringify(out);
+}
+
+function __mcpDeleteTrigger(uniqueId, handlerFunction) {
+  var triggers = ScriptApp.getProjectTriggers();
+  var deleted = [];
+  for (var i = 0; i < triggers.length; i++) {
+    var t = triggers[i];
+    var matchesId = uniqueId && t.getUniqueId() === uniqueId;
+    var matchesHandler = handlerFunction && t.getHandlerFunction() === handlerFunction;
+    if (matchesId || matchesHandler) {
+      ScriptApp.deleteTrigger(t);
+      deleted.push({uniqueId: t.getUniqueId(), handlerFunction: t.getHandlerFunction()});
+    }
+  }
+  return JSON.stringify(deleted);
+}
+"""
+
+
+async def _ensure_trigger_admin_file(service: Any, script_id: str) -> None:
+    """Make sure the trigger-admin helper file exists (and is current) in the
+    project, without touching any other file. Reuses update_script_content's
+    per-script lock and merge helper so this can't race a concurrent
+    update_script_content call on the same project."""
+    admin_file = {
+        "name": _TRIGGER_ADMIN_FILE_NAME,
+        "type": "SERVER_JS",
+        "source": _TRIGGER_ADMIN_SOURCE,
+    }
+    async with _get_script_update_lock(script_id):
+        current_content = await asyncio.to_thread(
+            service.projects().getContent(scriptId=script_id).execute
+        )
+        existing_files = current_content.get("files", [])
+        current = next(
+            (f for f in existing_files if f.get("name") == _TRIGGER_ADMIN_FILE_NAME),
+            None,
+        )
+        if current is not None and current.get("source") == _TRIGGER_ADMIN_SOURCE:
+            return  # already up to date, nothing to write
+
+        merged_files = _merge_script_files(existing_files, [admin_file])
+        await asyncio.to_thread(
+            service.projects()
+            .updateContent(scriptId=script_id, body={"files": merged_files})
+            .execute
+        )
+
+
+def _run_trigger_admin_function(response: Dict[str, Any], function_name: str) -> List[Dict[str, Any]]:
+    """Parse a scripts.run() response from one of the trigger-admin functions,
+    raising a clear error if execution failed."""
+    if "error" in response:
+        error_details = response["error"]
+        message = error_details.get("message", "Unknown error")
+        raise RuntimeError(f"{function_name} execution failed: {message}")
+
+    result = response.get("response", {}).get("result")
+    if not result:
+        return []
+    return json.loads(result)
+
+
+async def _list_script_triggers_impl(
+    service: Any,
+    user_google_email: str,
+    script_id: str,
+    dev_mode: bool = True,
+) -> str:
+    """Internal implementation for list_script_triggers."""
+    logger.info(f"[list_script_triggers] Email: {user_google_email}, ID: {script_id}")
+
+    await _ensure_trigger_admin_file(service, script_id)
+
+    response = await asyncio.to_thread(
+        service.scripts()
+        .run(
+            scriptId=script_id,
+            body={"function": "__mcpListTriggers", "devMode": dev_mode},
+        )
+        .execute
+    )
+    triggers = _run_trigger_admin_function(response, "__mcpListTriggers")
+
+    if not triggers:
+        return f"No triggers found for script: {script_id}"
+
+    output = [f"Triggers for script {script_id}:", ""]
+    for i, trig in enumerate(triggers, 1):
+        output.append(f"{i}. {trig.get('handlerFunction', 'Unknown')}")
+        output.append(f"   Unique ID: {trig.get('uniqueId', 'Unknown')}")
+        output.append(f"   Event type: {trig.get('eventType', 'Unknown')}")
+        output.append(f"   Source: {trig.get('triggerSource', 'Unknown')}")
+        output.append("")
+
+    logger.info(f"[list_script_triggers] Found {len(triggers)} triggers")
+    return "\n".join(output)
+
+
+@server.tool(
+    title="List Script Triggers",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("list_script_triggers", service_type="script")
+@require_google_service("script", ["script_projects", "script_scriptapp"])
+async def list_script_triggers(
+    service: Any,
+    user_google_email: str,
+    script_id: str,
+    dev_mode: bool = True,
+) -> str:
+    """
+    Lists the installable triggers currently configured on a script project.
+
+    Provisions (or refreshes) a small helper file in the project and runs it
+    via the Execution API — the Apps Script REST API has no triggers resource,
+    so this is the only way to see trigger state without opening the editor.
+    Not read-only: it may write the helper file into the project on first use.
+
+    Args:
+        service: Injected Google API service client
+        user_google_email: User's email address
+        script_id: The script project ID
+        dev_mode: Run against the latest saved code (default) vs. the deployed
+            version
+
+    Returns:
+        str: Formatted list of triggers (handler function, unique ID, event
+             type, source)
+    """
+    return await _list_script_triggers_impl(service, user_google_email, script_id, dev_mode)
+
+
+async def _delete_script_trigger_impl(
+    service: Any,
+    user_google_email: str,
+    script_id: str,
+    trigger_id: Optional[str] = None,
+    handler_function: Optional[str] = None,
+    dev_mode: bool = True,
+) -> str:
+    """Internal implementation for delete_script_trigger."""
+    if not trigger_id and not handler_function:
+        raise UserInputError("Provide trigger_id or handler_function (or both).")
+
+    logger.info(
+        f"[delete_script_trigger] Email: {user_google_email}, ID: {script_id}, "
+        f"trigger_id: {trigger_id}, handler_function: {handler_function}"
+    )
+
+    await _ensure_trigger_admin_file(service, script_id)
+
+    response = await asyncio.to_thread(
+        service.scripts()
+        .run(
+            scriptId=script_id,
+            body={
+                "function": "__mcpDeleteTrigger",
+                "parameters": [trigger_id, handler_function],
+                "devMode": dev_mode,
+            },
+        )
+        .execute
+    )
+    deleted = _run_trigger_admin_function(response, "__mcpDeleteTrigger")
+
+    if not deleted:
+        return (
+            f"No matching trigger found for script {script_id} "
+            f"(trigger_id={trigger_id}, handler_function={handler_function})."
+        )
+
+    output = [f"Deleted {len(deleted)} trigger(s) from script {script_id}:"]
+    for trig in deleted:
+        output.append(
+            f"- {trig.get('handlerFunction', 'Unknown')} "
+            f"(unique ID: {trig.get('uniqueId', 'Unknown')})"
+        )
+
+    logger.info(f"[delete_script_trigger] Deleted {len(deleted)} trigger(s)")
+    return "\n".join(output)
+
+
+@server.tool(
+    title="Delete Script Trigger",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("delete_script_trigger", service_type="script")
+@require_google_service("script", ["script_projects", "script_scriptapp"])
+async def delete_script_trigger(
+    service: Any,
+    user_google_email: str,
+    script_id: str,
+    trigger_id: Optional[str] = None,
+    handler_function: Optional[str] = None,
+    dev_mode: bool = True,
+) -> str:
+    """
+    Deletes installable trigger(s) from a script project.
+
+    Provisions (or refreshes) the same helper file used by
+    list_script_triggers, then runs it to delete triggers matching
+    `trigger_id` (exact, unambiguous) and/or `handler_function` (deletes
+    EVERY trigger calling that function — use trigger_id if you only want one).
+    At least one of the two must be provided. Use list_script_triggers first
+    to find the unique ID of the trigger you want to remove.
+
+    Args:
+        service: Injected Google API service client
+        user_google_email: User's email address
+        script_id: The script project ID
+        trigger_id: Unique ID of a specific trigger to delete
+        handler_function: Delete all triggers calling this function name
+        dev_mode: Run against the latest saved code (default) vs. the deployed
+            version
+
+    Returns:
+        str: Formatted summary of the trigger(s) deleted
+    """
+    return await _delete_script_trigger_impl(
+        service, user_google_email, script_id, trigger_id, handler_function, dev_mode
+    )

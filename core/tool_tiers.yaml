@@ -180,4 +180,6 @@ appscript:
     - get_version
     - list_script_processes
     - get_script_metrics
+    - list_script_triggers
+    - delete_script_trigger
   complete: []
