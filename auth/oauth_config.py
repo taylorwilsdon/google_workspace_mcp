@@ -16,6 +16,13 @@ from urllib.parse import urlparse
 from typing import List, Optional, Dict, Any
 
 from auth.client_secrets import get_client_secrets_path, load_client_secrets_file
+from auth.oauth_clients import (
+    LEGACY_CLIENT_KEY,
+    SOURCE_LEGACY_ENV,
+    OAuthClient,
+    OAuthClientRegistry,
+    load_registry_from_env as load_oauth_client_registry,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -80,8 +87,21 @@ class OAuthConfig:
         # OAuth client configuration. Environment variables take precedence;
         # values missing from the environment fall back to the client secrets file
         # (resolved below, once the OAuth 2.1 flag is known).
-        self.client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID")
-        self.client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET")
+        #
+        # The registry holds one OAuth client per Cloud project, so accounts in
+        # different Google Workspace organizations can each authorize against the
+        # consent screen that actually permits them. It is loaded from
+        # GOOGLE_OAUTH_CLIENTS_FILE / GOOGLE_OAUTH_CLIENTS when either is set, and
+        # otherwise from GOOGLE_OAUTH_CLIENT_ID/SECRET — in which case it holds
+        # exactly one client and everything below behaves as it did before.
+        # When none of those are set it is None, and the client secrets file
+        # fallback further down resolves credentials exactly as before.
+        self.client_registry: Optional[OAuthClientRegistry] = (
+            load_oauth_client_registry()
+        )
+        default_client = self.client_registry.default if self.client_registry else None
+        self.client_id = default_client.client_id if default_client else None
+        self.client_secret = default_client.client_secret if default_client else None
         self.client_secrets_file: Optional[str] = None
 
         # Branding for the OAuth consent page. FastMCP's OAuth proxy renders the
@@ -120,6 +140,7 @@ class OAuthConfig:
         self._apply_client_secrets_file_fallback(
             required=self.oauth21_enabled and not self.external_oauth21_provider
         )
+        self._reconcile_registry_with_resolved_default()
 
         # Trusted-gateway identity (provider-agnostic).
         # An MCP-aware reverse proxy (e.g. Pomerium, oauth2-proxy, Cloudflare Access,
@@ -263,6 +284,51 @@ class OAuthConfig:
         # Ensure FastMCP's Google provider picks up our existing configuration
         self._apply_fastmcp_google_env()
 
+    def _reconcile_registry_with_resolved_default(self) -> None:
+        """Keep the registry's default client equal to the resolved credentials.
+
+        `_apply_client_secrets_file_fallback` can supply a client_id or a
+        client_secret that the registry never saw — most commonly when only
+        GOOGLE_OAUTH_CLIENT_ID is exported and the secret lives in
+        client_secret.json. Without this, `self.client_secret` and
+        `client_registry.default.client_secret` disagree, and which one a caller
+        gets depends on whether it reads the config or resolves a client. That
+        split is silent: both values are populated and each looks correct alone.
+
+        A registry loaded from a real registry document is left untouched — its
+        entries are declared per Cloud project and the single-client file
+        fallback has no authority over them.
+        """
+        if not self.client_id:
+            return
+
+        if self.client_registry is not None:
+            if self.client_registry.source != SOURCE_LEGACY_ENV:
+                return
+            default_client = self.client_registry.default
+            if (
+                default_client is not None
+                and default_client.client_id == self.client_id
+                and default_client.client_secret == self.client_secret
+            ):
+                return
+
+        # Either credentials came from client_secret.json with no registry at
+        # all, or the file completed the legacy single client. Rebuild rather
+        # than mutate: the registry validates its own invariants in __init__,
+        # and an in-place edit would bypass them.
+        self.client_registry = OAuthClientRegistry(
+            clients={
+                LEGACY_CLIENT_KEY: OAuthClient(
+                    key=LEGACY_CLIENT_KEY,
+                    client_id=self.client_id,
+                    client_secret=self.client_secret,
+                )
+            },
+            default_key=LEGACY_CLIENT_KEY,
+            source=SOURCE_LEGACY_ENV,
+        )
+
     def _apply_client_secrets_file_fallback(self, required: bool) -> None:
         """Fill missing client credentials from the client secrets file.
 
@@ -345,8 +411,58 @@ class OAuthConfig:
             path = uri if uri.startswith("/") else f"/{uri}"
         return path or "/oauth2callback"
 
+    def _warn_if_oauth21_cannot_serve_the_whole_registry(self) -> None:
+        """Warn when OAuth 2.1 cannot honour per-account client selection.
+
+        FastMCP's Google provider is configured through process-global
+        environment variables, so it can only ever be bound to one OAuth
+        client. Per-account selection therefore applies to the tool-level
+        (legacy OAuth 2.0) flow only.
+
+        This must run before ``_apply_fastmcp_google_env``'s ``client_id``
+        check, not after it: ``client_id`` is None exactly when a multi-client
+        registry has no default, which is both the worst case (no
+        protocol-level login can be served at all) and the case where this
+        warning is the only signal an operator gets.
+        """
+        registry = self.client_registry
+        if not self.oauth21_enabled or registry is None or len(registry) <= 1:
+            return
+
+        default = registry.default
+        if default is None:
+            logger.warning(
+                "%d OAuth clients are registered and none is marked 'default', "
+                "but OAuth 2.1 binds FastMCP's Google provider to a single "
+                "client. No protocol-level login can be served at all. Set "
+                "'default' in the OAuth client registry (%s), or run one "
+                "deployment per client. The tool-level start_google_auth flow "
+                "is disabled whenever MCP_ENABLE_OAUTH21=true, so it cannot "
+                "cover the remaining accounts.",
+                len(registry),
+                ", ".join(registry.keys),
+            )
+            return
+
+        others = [key for key in registry.keys if key != default.key]
+        logger.warning(
+            "%d OAuth clients are registered, but OAuth 2.1 binds FastMCP's "
+            "Google provider to a single client (%s). Every protocol-level "
+            "login uses that client; accounts that need %s cannot be "
+            "authorized by this deployment. The tool-level start_google_auth "
+            "flow is disabled whenever MCP_ENABLE_OAUTH21=true, so it is not "
+            "an alternative: run one deployment per OAuth client, or unset "
+            "MCP_ENABLE_OAUTH21 to use the tool-level flow, which does honour "
+            "per-account client selection.",
+            len(registry),
+            default.key,
+            ", ".join(others),
+        )
+
     def _apply_fastmcp_google_env(self) -> None:
         """Mirror legacy GOOGLE_* env vars into FastMCP Google provider settings."""
+        self._warn_if_oauth21_cannot_serve_the_whole_registry()
+
         if not self.client_id:
             return
 
@@ -364,6 +480,10 @@ class OAuthConfig:
                 else None,
             )
 
+        # The multi-client limitation these process-global variables impose is
+        # reported by _warn_if_oauth21_cannot_serve_the_whole_registry above,
+        # which runs before the client_id check so the no-default case is
+        # reachable.
         _set_if_absent("FASTMCP_SERVER_AUTH_GOOGLE_CLIENT_ID", self.client_id)
         if self.client_secret:
             _set_if_absent(
@@ -375,6 +495,34 @@ class OAuthConfig:
     def is_public_client(self) -> bool:
         """Return True when only a client_id is configured (no client_secret)."""
         return bool(self.client_id and not self.client_secret)
+
+    def has_multiple_clients(self) -> bool:
+        """True when more than one OAuth client is registered."""
+        registry = self.client_registry
+        return registry is not None and len(registry) > 1
+
+    def get_client_for_email(
+        self, user_google_email: Optional[str] = None
+    ) -> Optional["OAuthClient"]:
+        """
+        Resolve the OAuth client that may authorize the given account.
+
+        Falls back to the configured default, and returns None only when no
+        client is configured at all or when a multi-client registry has no
+        mapping and no default for this account. Callers must treat None as a
+        configuration error rather than substituting an arbitrary client — an
+        account authorized against the wrong Cloud project fails at Google with
+        ``org_internal`` or ``invalid_client``, well away from the real cause.
+        """
+        if not self.client_registry:
+            return None
+        return self.client_registry.resolve(user_google_email)
+
+    def get_client_by_key(self, client_key: Optional[str]) -> Optional["OAuthClient"]:
+        """Look up a registered client by key; None when absent or unregistered."""
+        if not self.client_registry or not client_key:
+            return None
+        return self.client_registry.get(client_key)
 
     def get_redirect_uris(self) -> List[str]:
         """
@@ -476,6 +624,10 @@ class OAuthConfig:
             "client_configured": bool(self.client_id),
             "client_secret_configured": bool(self.client_secret),
             "public_client": self.is_public_client(),
+            # Keys only — never the ids or secrets themselves.
+            "registered_client_keys": (
+                self.client_registry.keys if self.client_registry else []
+            ),
             "oauth21_enabled": self.oauth21_enabled,
             "external_oauth21_provider": self.external_oauth21_provider,
             "pkce_required": self.pkce_required,

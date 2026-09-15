@@ -5,7 +5,7 @@ This module provides structured types for OAuth-related parameters,
 improving code maintainability and type safety.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
 
 from fastmcp.server.auth import AccessToken
@@ -59,10 +59,15 @@ class OAuthVersionDetectionParams:
     """
 
     client_id: Optional[str] = None
-    client_secret: Optional[str] = None
+    # Same reason as auth.oauth_clients.OAuthClient.client_secret: this object
+    # is built straight from request parameters, so its generated repr renders
+    # a live client secret and a live PKCE verifier into any "%r" log line or
+    # traceback-with-locals. Version detection only ever needs to know whether
+    # each is present, which the remaining fields already make visible.
+    client_secret: Optional[str] = field(default=None, repr=False)
     code_challenge: Optional[str] = None
     code_challenge_method: Optional[str] = None
-    code_verifier: Optional[str] = None
+    code_verifier: Optional[str] = field(default=None, repr=False)
     authenticated_user: Optional[str] = None
     session_id: Optional[str] = None
 

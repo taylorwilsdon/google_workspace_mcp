@@ -75,6 +75,13 @@ def test_create_oauth_flow_preserves_callback_verifier():
 def test_create_oauth_flow_file_config_still_enables_pkce():
     expected_flow = object()
     with (
+        # State the premise instead of inheriting it from the ambient
+        # environment: the client secrets file is reached only when NO OAuth
+        # client registry is configured, which resolve_oauth_client signals by
+        # returning None. Without this, the test passed or failed depending on
+        # whether the developer's shell happened to export
+        # GOOGLE_OAUTH_CLIENT_ID -- and it does on at least one machine.
+        patch("auth.google_auth.resolve_oauth_client", return_value=None),
         patch("auth.google_auth.load_client_secrets_from_env", return_value=None),
         patch("auth.google_auth.os.path.exists", return_value=True),
         patch(
