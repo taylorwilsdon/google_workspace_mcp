@@ -1227,3 +1227,148 @@ async def _fetch_grid_metadata(
         )
 
     return hyperlink_section, notes_section
+
+
+# ---------------------------------------------------------------------------
+# Native Sheets tables (addTable / updateTable / deleteTable)
+# ---------------------------------------------------------------------------
+
+# Column types accepted by TableColumnProperties.columnType. Mirrors the
+# Sheets v4 ColumnType enum; COLUMN_TYPE_UNSPECIFIED is deliberately omitted
+# because it is the "do not use" default.
+TABLE_COLUMN_TYPES = {
+    "DOUBLE",
+    "CURRENCY",
+    "PERCENT",
+    "DATE",
+    "TIME",
+    "DATE_TIME",
+    "TEXT",
+    "BOOLEAN",
+    "DROPDOWN",
+    "FILES_CHIP",
+    "PEOPLE_CHIP",
+    "FINANCE_CHIP",
+    "PLACE_CHIP",
+    "RATINGS_CHIP",
+}
+
+TABLE_ROW_COLOR_FIELDS = {
+    "header_color": "headerColorStyle",
+    "footer_color": "footerColorStyle",
+    "first_band_color": "firstBandColorStyle",
+    "second_band_color": "secondBandColorStyle",
+}
+
+
+def _parse_table_column_properties(
+    column_properties: Optional[Union[str, List[dict]]],
+) -> Optional[List[dict]]:
+    """
+    Normalize table column definitions into Sheets TableColumnProperties.
+
+    Accepts a list of dicts or a JSON-encoded list. Each entry supports:
+      - columnName (str): the column header label.
+      - columnType (str): one of TABLE_COLUMN_TYPES.
+      - columnIndex (int, optional): table-relative index; defaults to position.
+      - values (list, optional): dropdown choices. Only valid for DROPDOWN,
+        where the API accepts a validation rule whose condition is ONE_OF_LIST.
+    """
+    if column_properties is None:
+        return None
+
+    parsed = column_properties
+    if isinstance(parsed, str):
+        try:
+            parsed = json.loads(parsed)
+        except json.JSONDecodeError as exc:
+            raise UserInputError(
+                "column_properties must be a list or a JSON-encoded list "
+                '(e.g., \'[{"columnName":"Status","columnType":"DROPDOWN",'
+                '"values":["Open","Closed"]}]\').'
+            ) from exc
+
+    if not isinstance(parsed, list):
+        raise UserInputError("column_properties must be a list of column objects.")
+
+    normalized: List[dict] = []
+    for idx, column in enumerate(parsed):
+        if not isinstance(column, dict):
+            raise UserInputError(
+                f"column_properties[{idx}] must be an object with columnName/columnType."
+            )
+
+        raw_index = column.get("columnIndex")
+        if raw_index is None:
+            column_index = idx
+        else:
+            try:
+                column_index = int(raw_index)
+            except (TypeError, ValueError) as exc:
+                raise UserInputError(
+                    f"column_properties[{idx}].columnIndex must be an integer, "
+                    f"got {raw_index!r}."
+                ) from exc
+            if column_index < 0:
+                raise UserInputError(
+                    f"column_properties[{idx}].columnIndex must be zero or greater."
+                )
+
+        entry: dict = {"columnIndex": column_index}
+
+        name = column.get("columnName")
+        if name is not None:
+            entry["columnName"] = str(name)
+
+        raw_type = column.get("columnType")
+        column_type = str(raw_type).upper() if raw_type is not None else None
+        if column_type is not None:
+            if column_type not in TABLE_COLUMN_TYPES:
+                raise UserInputError(
+                    f"column_properties[{idx}].columnType must be one of "
+                    f"{sorted(TABLE_COLUMN_TYPES)}."
+                )
+            entry["columnType"] = column_type
+
+        values = column.get("values")
+        if values is not None and column_type != "DROPDOWN":
+            raise UserInputError(
+                f"column_properties[{idx}].values is only supported on DROPDOWN "
+                "columns; the Sheets API rejects column validation elsewhere."
+            )
+        if column_type == "DROPDOWN":
+            if not values:
+                raise UserInputError(
+                    f"column_properties[{idx}] is a DROPDOWN column and needs a "
+                    "non-empty 'values' list of choices."
+                )
+            if not isinstance(values, list):
+                raise UserInputError(
+                    f"column_properties[{idx}].values must be a list of choices."
+                )
+            entry["dataValidationRule"] = {
+                "condition": {
+                    "type": "ONE_OF_LIST",
+                    "values": [{"userEnteredValue": str(v)} for v in values],
+                }
+            }
+
+        normalized.append(entry)
+
+    return normalized
+
+
+def _build_table_rows_properties(**colors: Optional[str]) -> Optional[dict]:
+    """
+    Build TableRowsProperties from hex colors.
+
+    Accepts the keyword names in TABLE_ROW_COLOR_FIELDS. Returns None when no
+    color was supplied so the caller can omit rowsProperties entirely.
+    """
+    rows_properties: dict = {}
+    for key, api_field in TABLE_ROW_COLOR_FIELDS.items():
+        parsed = _parse_hex_color(colors.get(key))
+        if parsed:
+            rows_properties[api_field] = {"rgbColor": parsed}
+
+    return rows_properties or None
