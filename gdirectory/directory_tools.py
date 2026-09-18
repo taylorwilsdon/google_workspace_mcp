@@ -69,7 +69,7 @@ def _format_directory_person(person: Dict[str, Any]) -> str:
     ),
 )
 @require_google_service("people", "directory_read")
-@handle_http_errors("search_directory_people", service_type="people")
+@handle_http_errors("search_directory_people", is_read_only=True, service_type="people")
 async def search_directory_people(
     service: Resource,
     user_google_email: str,
@@ -144,7 +144,7 @@ async def search_directory_people(
     ),
 )
 @require_google_service("people", "directory_read")
-@handle_http_errors("list_directory_people", service_type="people")
+@handle_http_errors("list_directory_people", is_read_only=True, service_type="people")
 async def list_directory_people(
     service: Resource,
     user_google_email: str,

@@ -89,7 +89,7 @@ def _format_other_contact(person: Dict[str, Any]) -> str:
     ),
 )
 @require_google_service("people", "other_contacts_read")
-@handle_http_errors("search_other_contacts", service_type="people")
+@handle_http_errors("search_other_contacts", is_read_only=True, service_type="people")
 async def search_other_contacts(
     service: Resource,
     user_google_email: str,
@@ -161,7 +161,7 @@ async def search_other_contacts(
     ),
 )
 @require_google_service("people", "other_contacts_read")
-@handle_http_errors("list_other_contacts", service_type="people")
+@handle_http_errors("list_other_contacts", is_read_only=True, service_type="people")
 async def list_other_contacts(
     service: Resource,
     user_google_email: str,
