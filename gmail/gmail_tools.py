@@ -2826,7 +2826,7 @@ async def send_gmail_message(
     # Send the message
     sent_message = await asyncio.to_thread(
         service.users().messages().send(userId="me", body=send_body).execute,
-        num_retries=GOOGLE_API_WRITE_RETRIES,
+        num_retries=0,
     )
     message_id = sent_message.get("id")
 
@@ -2973,7 +2973,7 @@ async def _forward_gmail_message_impl(
     # Send the message
     sent_message = await asyncio.to_thread(
         service.users().messages().send(userId="me", body=send_body).execute,
-        num_retries=GOOGLE_API_WRITE_RETRIES,
+        num_retries=0,
     )
     sent_message_id = sent_message.get("id")
 
