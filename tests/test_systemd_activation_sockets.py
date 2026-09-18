@@ -13,6 +13,7 @@ import main  # noqa: E402
 
 
 def _bind_loopback_socket() -> socket.socket:
+    """Bind and listen on an ephemeral loopback port, returning the socket."""
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind(("127.0.0.1", 0))
@@ -21,6 +22,7 @@ def _bind_loopback_socket() -> socket.socket:
 
 
 def test_systemd_activation_sockets_none_when_env_unset(monkeypatch):
+    """No activation env vars means no activation sockets."""
     monkeypatch.delenv("LISTEN_PID", raising=False)
     monkeypatch.delenv("LISTEN_FDS", raising=False)
 
@@ -28,8 +30,11 @@ def test_systemd_activation_sockets_none_when_env_unset(monkeypatch):
 
 
 def test_systemd_activation_sockets_none_on_pid_mismatch(monkeypatch):
-    # LISTEN_PID must match our own pid; a stale/foreign value (as if the
-    # env were inherited by an unrelated child process) must be ignored.
+    """A LISTEN_PID that isn't ours is ignored.
+
+    LISTEN_PID must match our own pid; a stale/foreign value (as if the
+    env were inherited by an unrelated child process) must be ignored.
+    """
     monkeypatch.setenv("LISTEN_PID", "1")
     monkeypatch.setenv("LISTEN_FDS", "1")
 
@@ -37,6 +42,7 @@ def test_systemd_activation_sockets_none_on_pid_mismatch(monkeypatch):
 
 
 def test_systemd_activation_sockets_none_on_malformed_listen_pid(monkeypatch):
+    """A non-numeric LISTEN_PID is ignored and the env vars are left intact."""
     monkeypatch.setenv("LISTEN_PID", "not-a-pid")
     monkeypatch.setenv("LISTEN_FDS", "1")
 
@@ -47,6 +53,7 @@ def test_systemd_activation_sockets_none_on_malformed_listen_pid(monkeypatch):
 
 
 def test_systemd_activation_sockets_none_on_malformed_listen_fds(monkeypatch):
+    """A non-numeric LISTEN_FDS is ignored and the env vars are left intact."""
     monkeypatch.setenv("LISTEN_PID", str(os.getpid()))
     monkeypatch.setenv("LISTEN_FDS", "not-a-number")
 
@@ -56,6 +63,7 @@ def test_systemd_activation_sockets_none_on_malformed_listen_fds(monkeypatch):
 
 
 def test_systemd_activation_sockets_none_on_zero_listen_fds(monkeypatch):
+    """A LISTEN_FDS of 0 means no sockets were handed off."""
     monkeypatch.setenv("LISTEN_PID", str(os.getpid()))
     monkeypatch.setenv("LISTEN_FDS", "0")
 
@@ -63,6 +71,7 @@ def test_systemd_activation_sockets_none_on_zero_listen_fds(monkeypatch):
 
 
 def test_systemd_activation_sockets_none_on_negative_listen_fds(monkeypatch):
+    """A negative LISTEN_FDS is treated as invalid, not underflowed."""
     monkeypatch.setenv("LISTEN_PID", str(os.getpid()))
     monkeypatch.setenv("LISTEN_FDS", "-1")
 
@@ -70,6 +79,7 @@ def test_systemd_activation_sockets_none_on_negative_listen_fds(monkeypatch):
 
 
 def test_systemd_activation_sockets_returns_inherited_sockets(monkeypatch):
+    """A matching PID and positive LISTEN_FDS returns the fd-3 socket and clears the env vars."""
     bound = _bind_loopback_socket()
     expected_port = bound.getsockname()[1]
 
