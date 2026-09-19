@@ -14,6 +14,7 @@ install_startup_warning_filters()
 
 from auth.auth_info_middleware import AuthInfoMiddleware
 from core.camel_case_middleware import CamelCaseArgumentsMiddleware
+from core.trustmodel_verify import register_trustmodel_verify
 from auth.google_auth import handle_auth_callback, start_auth_flow, check_client_secrets
 from auth.gateway_identity import get_verified_gateway_principal
 from auth.mcp_session_middleware import MCPSessionMiddleware
@@ -371,6 +372,9 @@ server.add_middleware(auth_info_middleware)
 # mirror the Google API field names, mapping them onto the snake_case tool
 # parameters. See https://github.com/taylorwilsdon/google_workspace_mcp/issues/918
 server.add_middleware(CamelCaseArgumentsMiddleware())
+
+# Optional TrustModel AgentCert verify-gate — no-op unless TRUSTMODEL_VERIFY=1.
+register_trustmodel_verify(server)
 
 
 def _parse_allowed_redirect_uris(value: Optional[str]) -> Optional[List[str]]:
