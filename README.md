@@ -258,6 +258,23 @@ Optional per-download payload ceiling for container deployments: set `WORKSPACE_
 
 Advanced OAuth 2.1 deployments affected by concurrent client token refreshes can tune FastMCP's early-refresh threshold and client-facing access-token lifetime. See [`.env.oauth21`](.env.oauth21) for the bounded settings, recommended values, and security tradeoffs. These settings reduce how often the race occurs; they do not add a grace period to FastMCP's one-time-use refresh-token rotation.
 
+## Optional: Agent verification (TrustModel AgentCert)
+
+Optionally verify a calling agent's **AgentCert + TrustScore** on each tool call. It is **off by default** and **never blocks** unless you opt in — an additional [FastMCP middleware](https://gofastmcp.com/servers/middleware) that reads request metadata only.
+
+```bash
+pip install "workspace-mcp[trustmodel]"     # optional extra
+TRUSTMODEL_VERIFY=1 uvx workspace-mcp        # shadow mode: logs verdicts, never blocks
+```
+
+| Env var | Meaning |
+|---|---|
+| `TRUSTMODEL_VERIFY=1` | enable the gate (nothing runs otherwise) |
+| `TRUSTMODEL_MODE=enforce` | reject unverified/revoked agents (default: `shadow`, log-only) |
+| `TRUSTMODEL_VERIFY_URL` | TAG verify endpoint |
+
+Powered by the dependency-free [`trustmodel-agentcert-tag`](https://pypi.org/project/trustmodel-agentcert-tag/) client (MIT). More at [trustmodel.ai/verify](https://trustmodel.ai/verify).
+
 ## Security Best Practices
 
 By default this server sends no data anywhere except Google's APIs, using your own OAuth client credentials - no usage reporting, analytics, license server, or SaaS dependency. MIT licensed with no CLA, no dual licensing, and no copyleft in the dependency chain. The full security posture - scope minimization, sensitive-path blocking, stateless mode - is documented at [workspacemcp.com](https://workspacemcp.com/privacy?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=security-privacy).

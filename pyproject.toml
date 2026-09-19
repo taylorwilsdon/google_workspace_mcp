@@ -68,6 +68,9 @@ workspace-cli = "core.cli:main"
 gcs = [
     "google-cloud-storage>=2.18.0",
 ]
+trustmodel = [
+    "trustmodel-agentcert-tag>=0.1.0",
+]
 disk = [
     "py-key-value-aio[filetree]>=0.3.0",
 ]
