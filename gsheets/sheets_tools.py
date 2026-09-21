@@ -24,6 +24,8 @@ from gsheets.sheets_helpers import (
     _column_to_index,
     _build_boolean_rule,
     _build_gradient_rule,
+    _build_table_rows_properties,
+    _parse_table_column_properties,
     _fetch_cell_formulas,
     _fetch_detailed_sheet_errors,
     _fetch_grid_metadata,
@@ -1576,6 +1578,252 @@ async def append_table_rows(
     )
 
     logger.info(f"[append_table_rows] Appended {num_rows} rows for {user_google_email}")
+    return text_output
+
+
+TABLE_ACTIONS = ("create", "update", "delete")
+
+
+async def _manage_sheet_table_impl(
+    service,
+    spreadsheet_id: str,
+    action: str,
+    table_id: Optional[str] = None,
+    table_name: Optional[str] = None,
+    range_name: Optional[str] = None,
+    column_properties: Optional[Union[str, List[dict]]] = None,
+    header_color: Optional[str] = None,
+    footer_color: Optional[str] = None,
+    first_band_color: Optional[str] = None,
+    second_band_color: Optional[str] = None,
+) -> dict:
+    """
+    Core implementation for manage_sheet_table, decoupled from the MCP
+    decorators so it can be unit tested with a mock service.
+    """
+    action_normalized = (action or "").strip().lower()
+    if action_normalized not in TABLE_ACTIONS:
+        raise UserInputError(f"action must be one of {list(TABLE_ACTIONS)}.")
+
+    if action_normalized in ("update", "delete") and not table_id:
+        raise UserInputError(
+            f"table_id is required for the '{action_normalized}' action. "
+            "Use list_sheet_tables to find it."
+        )
+
+    if action_normalized == "delete":
+        requests = [{"deleteTable": {"tableId": table_id}}]
+        await asyncio.to_thread(
+            service.spreadsheets()
+            .batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests})
+            .execute
+        )
+        return {
+            "spreadsheet_id": spreadsheet_id,
+            "action": action_normalized,
+            "table_id": table_id,
+            "summary": f"deleted table '{table_id}'",
+        }
+
+    if action_normalized == "create":
+        if not table_name:
+            raise UserInputError("table_name is required for the 'create' action.")
+        if not range_name:
+            raise UserInputError(
+                "range_name is required for the 'create' action, and must include "
+                "the header row (e.g., 'Sheet1!A1:D50')."
+            )
+
+    # create/update share range, column and color handling.
+    parsed_columns = _parse_table_column_properties(column_properties)
+    rows_properties = _build_table_rows_properties(
+        header_color=header_color,
+        footer_color=footer_color,
+        first_band_color=first_band_color,
+        second_band_color=second_band_color,
+    )
+
+    grid_range = None
+    if range_name:
+        spreadsheet = await asyncio.to_thread(
+            service.spreadsheets()
+            .get(
+                spreadsheetId=spreadsheet_id, fields="sheets(properties(sheetId,title))"
+            )
+            .execute
+        )
+        grid_range = _parse_a1_range(range_name, spreadsheet.get("sheets", []))
+
+    if action_normalized == "create":
+        table: dict = {"name": table_name, "range": grid_range}
+        # Truthiness is intentional here, and differs from the `is not None`
+        # check in the update branch below. On create there is no existing
+        # state, so None and [] both mean "no typed columns" and an empty
+        # columnProperties array would be sent for nothing. On update the two
+        # are distinct: None leaves columns untouched, [] clears them.
+        if parsed_columns:
+            table["columnProperties"] = parsed_columns
+        if rows_properties:
+            table["rowsProperties"] = rows_properties
+
+        response = await asyncio.to_thread(
+            service.spreadsheets()
+            .batchUpdate(
+                spreadsheetId=spreadsheet_id,
+                body={"requests": [{"addTable": {"table": table}}]},
+            )
+            .execute
+        )
+
+        # A dict default only applies when the key is absent, so an explicitly
+        # empty "replies" list would still make [0] raise. Read the first reply
+        # defensively and report a missing id rather than failing the call.
+        replies = response.get("replies") or [{}]
+        created_id = replies[0].get("addTable", {}).get("table", {}).get("tableId")
+        return {
+            "spreadsheet_id": spreadsheet_id,
+            "action": action_normalized,
+            "table_id": created_id,
+            "table_name": table_name,
+            "summary": (
+                f"created table '{table_name}' over {range_name}"
+                + (
+                    f" with {len(parsed_columns)} typed column(s)"
+                    if parsed_columns
+                    else ""
+                )
+            ),
+        }
+
+    # update
+    table = {"tableId": table_id}
+    fields: List[str] = []
+
+    if table_name:
+        table["name"] = table_name
+        fields.append("name")
+    if grid_range is not None:
+        table["range"] = grid_range
+        fields.append("range")
+    if parsed_columns is not None:
+        table["columnProperties"] = parsed_columns
+        fields.append("columnProperties")
+    if rows_properties is not None:
+        table["rowsProperties"] = rows_properties
+        fields.append("rowsProperties")
+
+    if not fields:
+        raise UserInputError(
+            "Provide at least one of table_name, range_name, column_properties or a "
+            "color argument to update."
+        )
+
+    await asyncio.to_thread(
+        service.spreadsheets()
+        .batchUpdate(
+            spreadsheetId=spreadsheet_id,
+            body={
+                "requests": [
+                    {"updateTable": {"table": table, "fields": ",".join(fields)}}
+                ]
+            },
+        )
+        .execute
+    )
+
+    return {
+        "spreadsheet_id": spreadsheet_id,
+        "action": action_normalized,
+        "table_id": table_id,
+        "summary": f"updated table '{table_id}' ({', '.join(fields)})",
+    }
+
+
+@server.tool(
+    title="Manage Sheet Table",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("manage_sheet_table", service_type="sheets")
+@require_google_service("sheets", "sheets_write")
+async def manage_sheet_table(
+    service,
+    user_google_email: str,
+    spreadsheet_id: str,
+    action: str,
+    table_id: Optional[str] = None,
+    table_name: Optional[str] = None,
+    range_name: Optional[str] = None,
+    column_properties: Optional[Union[str, List[dict]]] = None,
+    header_color: Optional[str] = None,
+    footer_color: Optional[str] = None,
+    first_band_color: Optional[str] = None,
+    second_band_color: Optional[str] = None,
+) -> str:
+    """
+    Creates, updates, or deletes a native structured table in a Google Sheet.
+
+    Native tables give a range a name, typed columns, banded formatting and
+    per-column dropdowns. Use list_sheet_tables to discover existing table IDs
+    and append_table_rows to add data once a table exists.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        spreadsheet_id (str): The ID of the spreadsheet. Required.
+        action (str): One of "create", "update", or "delete". Required.
+        table_id (Optional[str]): The table to change. Required for "update"
+            and "delete"; ignored for "create" (Sheets assigns the ID).
+        table_name (Optional[str]): Table name, unique within the spreadsheet.
+            Required for "create". Optional for "update" to rename.
+        range_name (Optional[str]): A1-style range the table covers, including
+            the header row (e.g., "Sheet1!A1:D50"). Required for "create".
+            Optional for "update" to resize. A range without a sheet prefix
+            resolves against the first sheet.
+        column_properties (Optional[Union[str, List[dict]]]): List (or JSON
+            list) of column definitions. Each entry accepts "columnName",
+            "columnType", an optional table-relative "columnIndex" (defaults to
+            position), and for DROPDOWN columns a "values" list of choices.
+            Valid columnType values: DOUBLE, CURRENCY, PERCENT, DATE, TIME,
+            DATE_TIME, TEXT, BOOLEAN, DROPDOWN, FILES_CHIP, PEOPLE_CHIP,
+            FINANCE_CHIP, PLACE_CHIP, RATINGS_CHIP.
+        header_color (Optional[str]): Hex color for the header row.
+        footer_color (Optional[str]): Hex color for the footer row.
+        first_band_color (Optional[str]): Hex color for odd banded rows.
+        second_band_color (Optional[str]): Hex color for even banded rows.
+
+    Returns:
+        str: Confirmation describing the table that was created or changed.
+    """
+    logger.info(
+        f"[manage_sheet_table] Invoked. Email: '{user_google_email}', "
+        f"Action: {action}, Spreadsheet: {spreadsheet_id}"
+    )
+
+    result = await _manage_sheet_table_impl(
+        service=service,
+        spreadsheet_id=spreadsheet_id,
+        action=action,
+        table_id=table_id,
+        table_name=table_name,
+        range_name=range_name,
+        column_properties=column_properties,
+        header_color=header_color,
+        footer_color=footer_color,
+        first_band_color=first_band_color,
+        second_band_color=second_band_color,
+    )
+
+    table_ref = result.get("table_id") or "(id unavailable)"
+    text_output = (
+        f"Successfully {result['summary']} in spreadsheet {spreadsheet_id} "
+        f"for {user_google_email}. Table ID: {table_ref}."
+    )
+
+    logger.info(f"[manage_sheet_table] {result['summary']} for {user_google_email}")
     return text_output
 
 
