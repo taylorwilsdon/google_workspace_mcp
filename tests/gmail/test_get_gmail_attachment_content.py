@@ -414,3 +414,63 @@ async def test_resolves_correct_filename_for_nested_smime_attachment(
     assert len(saved_files) == 1
     assert saved_files[0].suffix == ".pdf"
     assert saved_files[0].read_bytes() == payload
+
+
+def _named_part(name, aid, size, mime="application/pdf"):
+    return {
+        "filename": name,
+        "mimeType": mime,
+        "body": {"attachmentId": aid, "size": size},
+    }
+
+
+# Gmail rotates attachment IDs between messages.get calls, so a caller's ID goes
+# stale while the part it names does not. Everything below is one later fetch of
+# the same message, with "old-*" the IDs the caller is still holding.
+ROTATED_TWO = {
+    "payload": {
+        "parts": [
+            _named_part("a.pdf", "new-a", 100),
+            _named_part("b.pdf", "new-b", 900),
+        ]
+    }
+}
+ROTATED_ONE = {"payload": {"parts": [_named_part("solo.pdf", "new-solo", 100)]}}
+STILL_CURRENT = {"payload": {"parts": [_named_part("here.pdf", "att-1", 100)]}}
+UNNAMED_ONLY = {
+    "payload": {
+        "mimeType": "application/octet-stream",
+        "body": {"attachmentId": "new-x", "size": 100},
+    }
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "metadata, kwargs, expected",
+    [
+        (STILL_CURRENT, {}, ("here.pdf", "application/pdf", "att-1")),
+        (ROTATED_TWO, {"attachment_index": 1}, ("b.pdf", "application/pdf", "new-b")),
+        (ROTATED_TWO, {"size_bytes": 900}, ("b.pdf", "application/pdf", "new-b")),
+        (ROTATED_ONE, {}, ("solo.pdf", "application/pdf", "new-solo")),
+        # The only attachment part is unambiguous even without a name.
+        (UNNAMED_ONLY, {}, (None, "application/octet-stream", "new-x")),
+    ],
+    ids=["exact-id", "by-index", "by-size", "only-attachment", "unnamed-part"],
+)
+async def test_resolve_attachment_reports_the_id_of_the_part_it_selected(
+    metadata, kwargs, expected
+):
+    """Every fallback that picks out a part reports that part's *current* ID
+    beside its name, so a caller can download — or mint a link for — what Gmail
+    holds now rather than the ID it was handed. An unnamed part is absent from
+    the listing the fallbacks search, so nothing is resolved for it and the
+    caller keeps its own ID."""
+    from gmail.gmail_tools import _resolve_attachment
+
+    service = Mock()
+    service.users().messages().get().execute.return_value = metadata
+
+    resolved = await _resolve_attachment(service, "msg-1", "att-1", **kwargs)
+
+    assert (resolved.filename, resolved.mime_type, resolved.attachment_id) == expected

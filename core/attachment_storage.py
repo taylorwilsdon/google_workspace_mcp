@@ -401,8 +401,6 @@ def get_attachment_url(file_id: str) -> str:
     Returns:
         Full URL to access the attachment
     """
-    from core.config import WORKSPACE_MCP_PORT, WORKSPACE_MCP_BASE_URI
-
     # In stdio mode the attachment route is served by the lazily-started callback
     # server; bring it up now so the URL we hand out is actually reachable. The
     # import is local to avoid pulling the FastAPI/uvicorn auth stack into this
@@ -417,11 +415,15 @@ def get_attachment_url(file_id: str) -> str:
             error_msg,
         )
 
-    # Use external URL if set (for reverse proxy scenarios)
+    return f"{external_base_url()}/attachments/{file_id}"
+
+
+def external_base_url() -> str:
+    """Base URL clients reach this server at: ``WORKSPACE_EXTERNAL_URL`` when set
+    (reverse-proxy deployments), else the configured base URI and port."""
+    from core.config import WORKSPACE_MCP_PORT, WORKSPACE_MCP_BASE_URI
+
     external_url = os.getenv("WORKSPACE_EXTERNAL_URL")
     if external_url:
-        base_url = external_url.rstrip("/")
-    else:
-        base_url = f"{WORKSPACE_MCP_BASE_URI}:{WORKSPACE_MCP_PORT}"
-
-    return f"{base_url}/attachments/{file_id}"
+        return external_url.rstrip("/")
+    return f"{WORKSPACE_MCP_BASE_URI}:{WORKSPACE_MCP_PORT}"

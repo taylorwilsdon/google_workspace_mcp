@@ -1,3 +1,4 @@
+import logging
 import os
 import subprocess
 import sys
@@ -260,3 +261,289 @@ def test_main_skips_gcs_store_initialization_in_service_account_mode(monkeypatch
         main.main()
 
     assert exc.value.code == 0
+
+
+def test_main_logs_once_when_signed_download_urls_are_set_on_stdio(monkeypatch, caplog):
+    """The flag only takes effect over streamable-http; a stdio operator who sets
+    it gets exactly one startup line saying so instead of silence."""
+
+    def fake_run(*args, **kwargs):  # noqa: ARG001
+        raise SystemExit(0)
+
+    monkeypatch.setattr(main, "configure_safe_logging", lambda: None)
+    monkeypatch.setattr(main, "import_module", lambda name: object())  # noqa: ARG005
+    monkeypatch.setattr(main, "set_enabled_tool_names", lambda names: None)
+    monkeypatch.setattr(main, "wrap_server_tool_method", lambda server: None)
+    monkeypatch.setattr(main, "filter_server_tools", lambda server: None)
+    monkeypatch.setattr(main, "set_transport_mode", lambda transport: None)
+    monkeypatch.setattr(main, "get_selected_backend", lambda: "local_directory")
+    monkeypatch.setattr(main, "is_stateless_mode", lambda: False)
+    monkeypatch.setattr(main, "is_service_account_enabled", lambda: False)
+    monkeypatch.setattr(main, "get_credential_store", lambda: object())
+    monkeypatch.setattr(main, "check_credentials_directory_permissions", lambda: None)
+    monkeypatch.setattr(
+        main,
+        "get_oauth_config",
+        lambda: SimpleNamespace(
+            service_account_key_file=None,
+            service_account_key_json=None,
+            client_secret="secret",
+            client_secrets_file=None,
+            is_oauth21_enabled=lambda: False,
+            is_configured=lambda: True,
+        ),
+    )
+    monkeypatch.setattr(main.server, "run", fake_run)
+    monkeypatch.setattr(
+        sys, "argv", ["main.py", "--tools", "gmail", "--transport", "stdio"]
+    )
+    monkeypatch.setenv("USER_GOOGLE_EMAIL", "user@example.com")
+    monkeypatch.setenv("WORKSPACE_MCP_SIGNED_DOWNLOAD_URLS", "true")
+
+    main.STARTUP_NOTICES.clear()
+    with pytest.raises(SystemExit) as exc:
+        main.main()
+
+    assert exc.value.code == 0
+    # Queued for the startup screen with the other configuration advisories.
+    notes = [n for n in main.STARTUP_NOTICES if "ignored" in n]
+    assert len(notes) == 1 and "WORKSPACE_MCP_SIGNED_DOWNLOAD_URLS" in notes[0]
+
+
+# --- Startup validation for signed download URLs -----------------------------------
+
+_SIGNED_ENV_TO_CLEAN = (
+    "MCP_ENABLE_OAUTH21",
+    "EXTERNAL_OAUTH21_PROVIDER",
+    "WORKSPACE_MCP_STATELESS_MODE",
+    "MCP_SINGLE_USER_MODE",
+    "WORKSPACE_MCP_SIGNED_DOWNLOAD_URLS",
+    "WORKSPACE_MCP_MAX_FILE_BYTES",
+    "WORKSPACE_MCP_MAX_OFFICE_XML_BYTES",
+    "WORKSPACE_EXTERNAL_URL",
+    "GOOGLE_OAUTH_CLIENT_SECRET",
+    "FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY",
+    "WORKSPACE_MCP_TRANSPORT",
+    "WORKSPACE_MCP_TOOLS",
+    "WORKSPACE_MCP_PERMISSIONS",
+    "WORKSPACE_MCP_READ_ONLY",
+    "WORKSPACE_MCP_TOOL_TIER",
+    "WORKSPACE_MCP_HTTP_PORT",
+    "WORKSPACE_MCP_RESOLVED_PORT",
+    "WORKSPACE_MCP_HOST",
+)
+_SIGNED_FLAG = "WORKSPACE_MCP_SIGNED_DOWNLOAD_URLS"
+_BASE_URL_NOTE = "/attachments/signed/* must be publicly reachable"
+
+
+@pytest.fixture
+def signed_startup(monkeypatch):
+    """Run ``main.main()`` to the point of ``server.run`` (stubbed) with a clean
+    environment, so ambient settings cannot decide the outcome. Returns a runner
+    taking the transport and the env to set; it returns the exit code."""
+    from auth import oauth_config
+    from core import signed_downloads
+
+    for name in _SIGNED_ENV_TO_CLEAN:
+        monkeypatch.delenv(name, raising=False)
+    main.STARTUP_NOTICES.clear()
+    # No key material unless a test sets it: the client-secret fallback reads the
+    # OAuth config, which a developer's .env or client-secrets file could fill.
+    monkeypatch.setattr(
+        oauth_config,
+        "get_oauth_config",
+        lambda: SimpleNamespace(
+            client_secret=None,
+            is_service_account_enabled=lambda: False,
+            is_external_oauth21_provider=lambda: False,
+        ),
+    )
+    monkeypatch.setenv("PORT", "0")
+    monkeypatch.setenv("WORKSPACE_MCP_PORT", "0")
+    monkeypatch.setenv("USER_GOOGLE_EMAIL", "user@example.com")
+
+    def fake_run(*args, **kwargs):  # noqa: ARG001
+        raise SystemExit(0)
+
+    monkeypatch.setattr(main, "configure_safe_logging", lambda: None)
+    monkeypatch.setattr("core.telemetry.configure_telemetry", lambda: None)
+    monkeypatch.setattr(main, "import_module", lambda name: object())  # noqa: ARG005
+    monkeypatch.setattr(main, "set_enabled_tool_names", lambda names: None)
+    monkeypatch.setattr(main, "wrap_server_tool_method", lambda server: None)
+    monkeypatch.setattr(main, "filter_server_tools", lambda server: None)
+    monkeypatch.setattr(main, "set_transport_mode", lambda transport: None)
+    monkeypatch.setattr(main, "configure_server_for_http", lambda: None)
+    monkeypatch.setattr(main, "get_selected_backend", lambda: "local_directory")
+    monkeypatch.setattr(main, "is_stateless_mode", lambda: False)
+    monkeypatch.setattr(main, "is_service_account_enabled", lambda: False)
+    monkeypatch.setattr(main, "get_credential_store", lambda: object())
+    monkeypatch.setattr(main, "check_credentials_directory_permissions", lambda: None)
+    monkeypatch.setattr(
+        main,
+        "get_oauth_config",
+        lambda: SimpleNamespace(
+            service_account_key_file=None,
+            service_account_key_json=None,
+            client_secret="secret",
+            client_secrets_file=None,
+            is_oauth21_enabled=lambda: False,
+            is_configured=lambda: True,
+        ),
+    )
+    monkeypatch.setattr(main.server, "run", fake_run)
+
+    def run(transport, **env):
+        for name, value in env.items():
+            monkeypatch.setenv(name, value)
+        monkeypatch.setattr(
+            sys, "argv", ["main.py", "--tools", "gmail", "--transport", transport]
+        )
+        signed_downloads._signing_key.cache_clear()
+        try:
+            with pytest.raises(SystemExit) as exc:
+                main.main()
+        finally:
+            signed_downloads._signing_key.cache_clear()
+        return exc.value.code
+
+    return run
+
+
+def _base_url_notes(caplog):  # noqa: ARG001
+    """The base-URL line joins the startup screen's notices, not the log."""
+    return [n for n in main.STARTUP_NOTICES if _BASE_URL_NOTE in n]
+
+
+def test_signed_downloads_refuse_to_start_without_external_url(signed_startup, capsys):
+    code = signed_startup(
+        "streamable-http",
+        **{_SIGNED_FLAG: "true", "GOOGLE_OAUTH_CLIENT_SECRET": "secret"},
+    )
+    err = capsys.readouterr().err
+    assert code == 2
+    assert _SIGNED_FLAG in err and "WORKSPACE_EXTERNAL_URL" in err
+
+
+@pytest.mark.parametrize(
+    "external_url", ["", "   ", "mcp.example.com", "/mcp", "ftp://mcp.example.com"]
+)
+def test_signed_downloads_refuse_to_start_with_unusable_external_url(
+    signed_startup, capsys, external_url
+):
+    code = signed_startup(
+        "streamable-http",
+        **{
+            _SIGNED_FLAG: "true",
+            "GOOGLE_OAUTH_CLIENT_SECRET": "secret",
+            "WORKSPACE_EXTERNAL_URL": external_url,
+        },
+    )
+    err = capsys.readouterr().err
+    assert code == 2
+    assert _SIGNED_FLAG in err and "WORKSPACE_EXTERNAL_URL" in err
+
+
+def test_signed_downloads_refuse_to_start_without_key_material(signed_startup, capsys):
+    code = signed_startup(
+        "streamable-http",
+        **{_SIGNED_FLAG: "true", "WORKSPACE_EXTERNAL_URL": "https://mcp.example.com"},
+    )
+    err = capsys.readouterr().err
+    assert code == 2
+    assert _SIGNED_FLAG in err and "GOOGLE_OAUTH_CLIENT_SECRET" in err
+    assert "WORKSPACE_EXTERNAL_URL" not in err
+
+
+def test_signed_downloads_name_every_problem_at_once(signed_startup, capsys):
+    code = signed_startup("streamable-http", **{_SIGNED_FLAG: "true"})
+    err = capsys.readouterr().err
+    assert code == 2
+    assert "WORKSPACE_EXTERNAL_URL" in err and "GOOGLE_OAUTH_CLIENT_SECRET" in err
+
+
+@pytest.mark.parametrize(
+    "key_env",
+    ["GOOGLE_OAUTH_CLIENT_SECRET", "FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY"],
+)
+def test_signed_downloads_valid_config_starts_and_logs_the_base_url_once(
+    signed_startup, caplog, key_env
+):
+    with caplog.at_level(logging.INFO, logger="core.signed_downloads"):
+        code = signed_startup(
+            "streamable-http",
+            **{
+                _SIGNED_FLAG: "true",
+                "WORKSPACE_EXTERNAL_URL": "https://mcp.example.com/",
+                key_env: "material-with-enough-entropy",
+            },
+        )
+    assert code == 0
+    notes = _base_url_notes(caplog)
+    assert notes == [
+        f"{_SIGNED_FLAG} is on: signed download links will use base URL "
+        "https://mcp.example.com; /attachments/signed/* must be publicly "
+        "reachable there."
+    ]
+
+
+def test_signed_downloads_flag_off_starts_without_checks_or_log(signed_startup, caplog):
+    with caplog.at_level(logging.DEBUG, logger="core.signed_downloads"):
+        code = signed_startup("streamable-http")
+    assert code == 0
+    assert _base_url_notes(caplog) == []
+    assert [r for r in caplog.records if r.name == "core.signed_downloads"] == []
+
+
+def test_signed_downloads_flag_on_stdio_starts_and_only_notes_it_is_ignored(
+    signed_startup, caplog
+):
+    with caplog.at_level(logging.INFO, logger="core.signed_downloads"):
+        code = signed_startup("stdio", **{_SIGNED_FLAG: "true"})
+    assert code == 0
+    notes = [n for n in main.STARTUP_NOTICES if "ignored" in n]
+    assert len(notes) == 1 and _SIGNED_FLAG in notes[0]
+    assert _base_url_notes(caplog) == []
+
+
+def test_fastmcp_entrypoint_refuses_signed_downloads_without_external_url():
+    env = {k: v for k, v in os.environ.items() if k not in _SIGNED_ENV_TO_CLEAN}
+    env[_SIGNED_FLAG] = "true"
+    # Explicitly relative (not unset) so a local .env cannot supply a valid one.
+    env["WORKSPACE_EXTERNAL_URL"] = "mcp.example.com"
+    env["GOOGLE_OAUTH_CLIENT_SECRET"] = "secret"
+
+    result = subprocess.run(
+        [sys.executable, "-c", "import fastmcp_server"],
+        cwd=os.path.dirname(os.path.dirname(__file__)),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert _SIGNED_FLAG in result.stderr and "WORKSPACE_EXTERNAL_URL" in result.stderr
+
+
+def test_signed_downloads_loads_inside_the_stdout_capture():
+    """main.py captures stdout at import so stray output cannot corrupt the stdio
+    JSON-RPC stream; signed_downloads (Google and HTTP stacks) must load after
+    that capture, alongside the other deferred startup imports."""
+    import ast
+    import pathlib
+
+    tree = ast.parse(pathlib.Path(main.__file__).read_text())
+    top_level = [
+        node
+        for node in tree.body
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+        and any("signed_downloads" in alias.name for alias in node.names)
+    ]
+    assert top_level == []
+    loader = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_load_startup_dependencies"
+    )
+    assert "signed_downloads" in ast.unparse(loader)

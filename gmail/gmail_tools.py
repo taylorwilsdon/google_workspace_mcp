@@ -12,6 +12,7 @@ import json
 import re
 import mimetypes
 import html
+from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Annotated, Optional, List, Dict, Literal, Any, Union
@@ -30,6 +31,7 @@ from pydantic.json_schema import SkipJsonSchema
 
 from auth.oauth_config import is_stateless_mode
 from auth.service_decorator import require_google_service
+from core import signed_downloads
 from core.attachment_storage import (
     get_attachment_storage,
     get_attachment_url,
@@ -359,12 +361,83 @@ def _format_message_header_lines(
     return content_lines
 
 
+class EmptyExportError(ValueError):
+    """The message has nothing to export in the requested representation."""
+
+
+async def _render_message_export(
+    service, message_id: str, body_format: Literal["text", "html", "raw"]
+) -> tuple[bytes, str, str, List[str]]:
+    """Fetch a message and render it as ``(bytes, mime_type, extension, notes)``.
+
+    Raises ``ValueError`` with the user-facing reason when there is nothing to export.
+    """
+    notes: List[str] = []
+    if body_format == "raw":
+        message_raw = await asyncio.to_thread(
+            service.users()
+            .messages()
+            .get(userId="me", id=message_id, format="raw")
+            .execute
+        )
+        raw_data = message_raw.get("raw", "")
+        if not raw_data:
+            raise EmptyExportError("message has no raw content to export.")
+        padded_raw = raw_data + "=" * (-len(raw_data) % 4)
+        try:
+            return base64.urlsafe_b64decode(padded_raw), "message/rfc822", ".eml", notes
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError(f"failed to decode raw MIME content: {exc}") from exc
+
+    message_full = await asyncio.to_thread(
+        service.users()
+        .messages()
+        .get(userId="me", id=message_id, format="full")
+        .execute
+    )
+    bodies = _extract_message_bodies(message_full.get("payload", {}))
+    # Preserve the body exactly — the export must be complete — so use .strip()
+    # only to test for emptiness, never to trim the content that gets saved.
+    text_body = bodies.get("text", "")
+    html_body = bodies.get("html", "")
+
+    if body_format == "html":
+        if html_body.strip():
+            content_str = html_body
+            mime_type = "text/html"
+            extension = ".html"
+        elif text_body.strip():
+            # No HTML part; fall back to plaintext and label it honestly.
+            content_str = text_body
+            mime_type = "text/plain"
+            extension = ".txt"
+            notes.append("No HTML body present; exported the plaintext body instead.")
+        else:
+            content_str = ""
+            mime_type = "text/html"
+            extension = ".html"
+    else:  # text
+        if text_body.strip():
+            content_str = text_body
+        elif html_body.strip():
+            content_str = _html_to_text(html_body)
+        else:
+            content_str = ""
+        mime_type = "text/plain"
+        extension = ".txt"
+
+    if not content_str.strip():
+        raise EmptyExportError("message has no readable body content to export.")
+    return content_str.encode("utf-8"), mime_type, extension, notes
+
+
 async def _export_full_message(
     service,
     message_id: str,
     headers: Dict[str, str],
     body_format: Literal["text", "html", "raw"],
     declared_size: Optional[int] = None,
+    user_google_email: Optional[str] = None,
 ) -> str:
     """
     Return a message's complete, untruncated content: saved to local storage and
@@ -387,7 +460,6 @@ async def _export_full_message(
             stateless mode), or an "Error:" string.
     """
     subject = headers.get("Subject", "message") or "message"
-    notes: List[str] = []
 
     # Gmail's full/raw endpoints return their payload as one JSON response, so
     # use the metadata response's sizeEstimate to fail closed before asking the
@@ -402,66 +474,43 @@ async def _export_full_message(
     except FileTooLargeError as exc:
         return str(exc)
 
-    if body_format == "raw":
-        message_raw = await asyncio.to_thread(
-            service.users()
-            .messages()
-            .get(userId="me", id=message_id, format="raw")
-            .execute
+    # Signed URL: the route re-fetches the message from Gmail at download time, so
+    # nothing is fetched, written or inlined here. Works in stateless mode too.
+    # The token carries the name without an extension: the route adds the one
+    # matching what it rendered (an html export falls back to plain text when the
+    # message has no HTML part).
+    signed_wanted = bool(user_google_email) and signed_downloads.enabled()
+    offer = signed_downloads.Offer()
+    if signed_wanted:
+        offer = await signed_downloads.offer_url(
+            user_google_email,
+            source="gmail_message",
+            ref={"mid": message_id, "fmt": body_format},
+            filename=subject[:80],
         )
-        raw_data = message_raw.get("raw", "")
-        if not raw_data:
-            return "Error: message has no raw content to export."
-        padded_raw = raw_data + "=" * (-len(raw_data) % 4)
-        try:
-            content_bytes = base64.urlsafe_b64decode(padded_raw)
-        except (binascii.Error, ValueError) as exc:
-            return f"Error: failed to decode raw MIME content: {exc}"
-        mime_type = "message/rfc822"
-        extension = ".eml"
-    else:
-        message_full = await asyncio.to_thread(
-            service.users()
-            .messages()
-            .get(userId="me", id=message_id, format="full")
-            .execute
+    if offer:
+        result_lines = _format_message_header_lines(headers)
+        result_lines.append("\n--- FULL MESSAGE EXPORT (download link) ---")
+        result_lines.append(
+            "Format: html (served as plain text if the message has no HTML part)"
+            if body_format == "html"
+            else f"Format: {body_format}"
         )
-        bodies = _extract_message_bodies(message_full.get("payload", {}))
-        # Preserve the body exactly — the export must be complete — so use .strip()
-        # only to test for emptiness, never to trim the content that gets saved.
-        text_body = bodies.get("text", "")
-        html_body = bodies.get("html", "")
+        result_lines.extend(
+            signed_downloads.url_lines(offer.url, offer.ttl, "complete message")
+        )
+        result_lines.append("Content is NOT included in this response.")
+        logger.info(
+            "[get_gmail_message_content] Returning signed download URL (no export)"
+        )
+        return "\n".join(result_lines)
 
-        if body_format == "html":
-            if html_body.strip():
-                content_str = html_body
-                mime_type = "text/html"
-                extension = ".html"
-            elif text_body.strip():
-                # No HTML part; fall back to plaintext and label it honestly.
-                content_str = text_body
-                mime_type = "text/plain"
-                extension = ".txt"
-                notes.append(
-                    "No HTML body present; exported the plaintext body instead."
-                )
-            else:
-                content_str = ""
-                mime_type = "text/html"
-                extension = ".html"
-        else:  # text
-            if text_body.strip():
-                content_str = text_body
-            elif html_body.strip():
-                content_str = _html_to_text(html_body)
-            else:
-                content_str = ""
-            mime_type = "text/plain"
-            extension = ".txt"
-
-        if not content_str.strip():
-            return "Error: message has no readable body content to export."
-        content_bytes = content_str.encode("utf-8")
+    try:
+        content_bytes, mime_type, extension, notes = await _render_message_export(
+            service, message_id, body_format
+        )
+    except ValueError as exc:
+        return f"Error: {exc}"
 
     # sizeEstimate is intentionally approximate. Enforce the exact decoded
     # size too before producing another representation or saving the export.
@@ -496,6 +545,8 @@ async def _export_full_message(
             "\nStateless mode: no file storage available, so the complete message is "
             "included inline below instead of as a download URL. It is NOT truncated."
         )
+        if signed_wanted:
+            result_lines.append(signed_downloads.unavailable_note(offer))
         result_lines.append(
             "\n--- BODY (COMPLETE, NOT TRUNCATED) ---\n"
             f"{content_bytes.decode('utf-8', errors='replace')}"
@@ -540,6 +591,8 @@ async def _export_full_message(
             "\nFetch the full message from the URL above (content is NOT included "
             "in this response). The file will expire after 1 hour."
         )
+        if signed_wanted:
+            result_lines.append(signed_downloads.unavailable_note(offer))
 
     logger.info(
         f"[get_gmail_message_content] Exported {size_kb:.1f} KB "
@@ -914,6 +967,166 @@ def _render_attached_messages(
             f"{ATTACHED_MESSAGE_MAX_DEPTH} deep not shown ---"
         )
     return "".join(f"\n\n{block}" for block in blocks)
+
+
+@dataclass(frozen=True)
+class _ResolvedAttachment:
+    """What a metadata pass could establish about the part being downloaded.
+
+    ``attachment_id`` is the current ID of the part that was selected, ``size``
+    its declared size, and ``matched_by`` how it was selected: ``"id"`` (the
+    caller's ID is in the message), ``"index"`` (the caller's
+    ``attachment_index``), ``"size"`` or ``"only"``. All None when no part was
+    identified. ``named_count`` is how many named attachments the metadata
+    listed, when it could be read.
+    """
+
+    filename: Optional[str] = None
+    mime_type: Optional[str] = None
+    attachment_id: Optional[str] = None
+    matched_by: Optional[str] = None
+    size: Optional[int] = None
+    named_count: Optional[int] = None
+
+
+_ATTACHMENT_MASK_DEPTH = 6
+
+
+def _attachment_parts(payload: dict) -> List[dict]:
+    """Every part carrying an attachment ID, named or not (``_extract_attachments``
+    lists only the named ones)."""
+    parts: List[dict] = []
+    pending = [payload]
+    while pending:
+        part = pending.pop()
+        if (part.get("body") or {}).get("attachmentId"):
+            parts.append(part)
+        pending.extend(reversed(part.get("parts") or []))
+    return parts
+
+
+def _mask_may_hide_parts(payload: dict) -> bool:
+    """True when a container node (multipart or a wrapped message) sits at the
+    fields mask's depth limit, so parts below it — and their places in the
+    attachment order — were not returned."""
+    pending = [(payload, 0)]
+    while pending:
+        part, depth = pending.pop()
+        children = part.get("parts") or []
+        mime = (part.get("mimeType") or "").lower()
+        # A wrapped message (message/rfc822) nests its parts too.
+        if depth >= _ATTACHMENT_MASK_DEPTH and (
+            mime.startswith("multipart/") or mime == "message/rfc822"
+        ):
+            return True
+        pending.extend((child, depth + 1) for child in children)
+    return False
+
+
+def _resolved(part: dict, matched_by: str, named_count: int) -> _ResolvedAttachment:
+    """``part`` is a raw MIME part or an ``_extract_attachments`` entry, which
+    carries the ID and size at the top level instead of under ``body``."""
+    body = part.get("body") or {}
+    return _ResolvedAttachment(
+        part.get("filename") or None,
+        part.get("mimeType"),
+        part.get("attachmentId") or body.get("attachmentId"),
+        matched_by,
+        part.get("size", body.get("size")),
+        named_count,
+    )
+
+
+async def _resolve_attachment(
+    service,
+    message_id: str,
+    attachment_id: str,
+    size_bytes: Optional[int] = None,
+    attachment_index: Optional[int] = None,
+) -> _ResolvedAttachment:
+    """Best-effort name, MIME type, size and *current* ID for an attachment.
+
+    The caller's ID wins whenever it is in the message, named part or not. Only
+    when it is absent (Gmail rotates IDs between fetches) does a fallback select
+    a part: the named attachment at ``attachment_index`` (the ordinal the listing
+    emitted next to the ID, stable across rotation), then the one attachment part
+    of ``size_bytes`` when that size is known, then the message's only attachment
+    part. No fallback is tried when the metadata mask may have cut off parts, since
+    those would shift the order and could be the part meant. A fallback never
+    picks a named part while an unnamed one could be the one meant, so it cannot
+    swap one part's bytes for another's.
+    """
+    try:
+        message_full = await asyncio.to_thread(
+            service.users()
+            .messages()
+            .get(
+                userId="me",
+                id=message_id,
+                format="full",
+                fields=_ATTACHMENT_METADATA_FIELDS,
+            )
+            .execute
+        )
+    except Exception:
+        logger.debug(
+            f"Could not fetch attachment metadata for {attachment_id}, using defaults"
+        )
+        return _ResolvedAttachment()
+    payload = message_full.get("payload", {})
+    named = _extract_attachments(payload)
+
+    exact = _find_attachment_metadata(payload, attachment_id)
+    if exact is not None:
+        return _ResolvedAttachment(
+            exact.get("filename"),
+            exact.get("mimeType"),
+            attachment_id,
+            "id",
+            exact.get("size"),
+            len(named),
+        )
+
+    if _mask_may_hide_parts(payload):
+        # Parts below the mask are invisible here, so neither an ordinal nor
+        # "the only attachment" can be trusted to mean the part the caller meant.
+        return _ResolvedAttachment(named_count=None)
+
+    index_in_range = attachment_index is not None and 0 <= attachment_index < len(named)
+    if attachment_index is not None and not index_in_range:
+        # An ordinal that points past the listing names no part; falling back
+        # to "the only attachment" would contradict it.
+        return _ResolvedAttachment(named_count=len(named))
+    if index_in_range:
+        matched = named[attachment_index]
+        logger.info(
+            f"Attachment {attachment_id} not in current metadata (IDs rotate); "
+            f"selected by attachment_index={attachment_index} as "
+            f"'{matched.get('filename')}'"
+        )
+        return _resolved(matched, "index", len(named))
+
+    # Every part with an attachment ID counts, named or not.
+    parts = _attachment_parts(payload)
+
+    def size_of(part):
+        return part.get("size", (part.get("body") or {}).get("size"))
+
+    if size_bytes is not None:
+        same_size = [
+            part
+            for part in parts
+            if size_of(part) and abs(size_of(part) - size_bytes) < 100
+        ]
+        if len(same_size) == 1 and same_size[0].get("filename"):
+            logger.warning(
+                f"Attachment {attachment_id} matched by size fallback as "
+                f"'{same_size[0].get('filename')}'"
+            )
+            return _resolved(same_size[0], "size", len(named))
+    if len(parts) == 1:
+        return _resolved(parts[0], "only", len(named))
+    return _ResolvedAttachment(named_count=len(named))
 
 
 def _find_attachment_metadata(payload: dict, attachment_id: str) -> Optional[dict]:
@@ -1856,10 +2069,11 @@ async def get_gmail_message_content(
         bool,
         Field(
             description=(
-                "When True, return the COMPLETE untruncated message: saved to local "
-                "storage and referenced by download URL/file path instead of the body "
-                "text, or inlined in the response when the server has no file storage "
-                "(stateless mode). Use for messages large enough to hit the truncation "
+                "When True, return the COMPLETE untruncated message: referenced by a "
+                "download URL (a short-lived encrypted link when the server enables signed "
+                "URLs, else a stored file) or file path instead of the body text, or "
+                "inlined in the response when the server has no file storage (stateless "
+                "mode). Use for messages large enough to hit the truncation "
                 "limit, or when byte-exact fidelity is needed (pair with "
                 "body_format='raw' for a .eml export)."
             ),
@@ -1927,6 +2141,7 @@ async def get_gmail_message_content(
             headers,
             body_format,
             declared_size=message_metadata.get("sizeEstimate"),
+            user_google_email=user_google_email,
         )
 
     # Handle raw format separately - fetch with format="raw" and return decoded MIME
@@ -2204,7 +2419,7 @@ def _attachment_metadata_fields(depth: int) -> str:
     return f"payload({node})"
 
 
-_ATTACHMENT_METADATA_FIELDS = _attachment_metadata_fields(6)
+_ATTACHMENT_METADATA_FIELDS = _attachment_metadata_fields(_ATTACHMENT_MASK_DEPTH)
 
 
 @server.tool(
@@ -2232,7 +2447,9 @@ async def get_gmail_attachment_content(
     Downloads an email attachment and saves it to local disk.
 
     In stdio mode, returns the local file path for direct access.
-    In HTTP mode, returns a temporary download URL (valid for 1 hour).
+    In HTTP mode, returns a download URL: with signed download URLs enabled on the
+    server, a link that streams from Gmail on demand and expires within ~15 minutes
+    (fetch it promptly); otherwise a server-stored copy valid for 1 hour.
     May re-fetch message metadata to resolve filename and MIME type.
 
     Args:
@@ -2249,9 +2466,10 @@ async def get_gmail_attachment_content(
             standard (not URL-safe) base64. Default False preserves the
             existing behavior and response size.
         attachment_index (Optional[int]): Zero-based attachment position from
-            the message-content response. When the cap is enabled, this lets
-            the server safely resolve Gmail's refreshed attachment IDs against
-            current metadata before downloading.
+            the message-content response. Pass it whenever you have it: Gmail
+            refreshes attachment IDs between fetches, and the index lets the
+            server select the same attachment in current metadata (for the
+            file-size check and for signed download links).
 
     Returns:
         str: Attachment metadata with either a local file path or download URL,
@@ -2269,6 +2487,9 @@ async def get_gmail_attachment_content(
     mime_type = None
     declared_size = None
     download_attachment_id = attachment_id
+    # Set once a metadata pass has picked out a part of the message as Gmail
+    # returns it now, so download_attachment_id is that part's current ID.
+    attachment_id_is_current = False
     max_file_bytes = get_max_file_bytes()
     if max_file_bytes is not None:
         try:
@@ -2286,6 +2507,7 @@ async def get_gmail_attachment_content(
             payload = message_full.get("payload", {})
             attachments = _extract_attachments(payload)
             matched = _find_attachment_metadata(payload, attachment_id)
+            matched_by_id = matched is not None
 
             if matched is None and attachment_index is not None:
                 if attachment_index < 0 or attachment_index >= len(attachments):
@@ -2307,6 +2529,10 @@ async def get_gmail_attachment_content(
                 mime_type = matched.get("mimeType")
                 declared_size = matched.get("size")
                 download_attachment_id = matched.get("attachmentId", attachment_id)
+                # Only an ID match settles which part is meant for a signed
+                # link; the ordinal and single-attachment picks are re-checked
+                # there against the stricter rules (see _resolve_attachment).
+                attachment_id_is_current = matched_by_id
         except Exception:
             logger.debug(
                 f"Could not fetch attachment metadata for {attachment_id} before download"
@@ -2334,6 +2560,58 @@ async def get_gmail_attachment_content(
         )
     except FileTooLargeError as e:
         return str(e)
+
+    # Signed URL: the route fetches the bytes from Gmail at download time, so the
+    # attachment is not downloaded here. return_base64 asks for the bytes inline.
+    signed_wanted = not return_base64 and signed_downloads.enabled()
+    offer = signed_downloads.Offer()
+    if signed_wanted:
+        # A link is minted only for a part identified in current metadata: the
+        # route hands the token's "aid" straight to Gmail minutes later, so it
+        # must name the part meant, by an ID Gmail still accepts.
+        identified = attachment_id_is_current
+        if not identified:
+            resolved = await _resolve_attachment(
+                service, message_id, attachment_id, attachment_index=attachment_index
+            )
+            if resolved.matched_by:
+                identified = True
+                download_attachment_id = resolved.attachment_id
+                filename = resolved.filename or filename
+                mime_type = resolved.mime_type or mime_type
+        if identified:
+            offer = await signed_downloads.offer_url(
+                user_google_email,
+                source="gmail",
+                ref={"mid": message_id, "aid": download_attachment_id},
+                filename=filename,
+                mime_type=mime_type,
+            )
+        else:
+            offer = signed_downloads.Offer(
+                reason="this attachment ID is not in the message's current "
+                "metadata; fetch the message again and pass its current "
+                "attachment ID and attachment_index"
+            )
+        if offer:
+            logger.info(
+                "[get_gmail_attachment_content] Returning signed download URL (no download)"
+            )
+            return "\n".join(
+                [
+                    "Attachment ready — streamed on demand (no base64, nothing stored).",
+                    f"Message ID: {message_id}",
+                    # The route serves a nameless part as "attachment": say so
+                    # here rather than printing a placeholder.
+                    f"Filename: {filename}"
+                    if filename
+                    else "Filename: attachment (Gmail gave this part no name; "
+                    "the download is served under that name)",
+                    *signed_downloads.url_lines(offer.url, offer.ttl, "attachment"),
+                    "\nNote: Attachment IDs are ephemeral. Always use IDs from the most "
+                    "recent message fetch.",
+                ]
+            )
 
     try:
         attachment = await asyncio.to_thread(
@@ -2379,10 +2657,13 @@ async def get_gmail_attachment_content(
 
     if is_stateless_mode():
         result_lines = [
-            "Attachment downloaded successfully!",
+            "Attachment fetched, but NO download URL could be issued."
+            if signed_wanted
+            else "Attachment downloaded successfully!",
             f"Message ID: {message_id}",
             f"Size: {size_kb:.1f} KB ({size_bytes} bytes)",
             "\n⚠️ Stateless mode: File storage disabled.",
+            *([signed_downloads.unavailable_note(offer)] if signed_wanted else []),
             "\nBase64-encoded content (first 100 characters shown):",
             f"{base64_data[:100]}...",
             "\nNote: Attachment IDs are ephemeral. Always use IDs from the most recent message fetch.",
@@ -2469,6 +2750,8 @@ async def get_gmail_attachment_content(
             download_url = get_attachment_url(result.file_id)
             result_lines.append(f"\n📎 Download URL: {download_url}")
             result_lines.append("\nThe file will expire after 1 hour.")
+            if signed_wanted:
+                result_lines.append(signed_downloads.unavailable_note(offer))
 
         result_lines.append(
             "\nNote: Attachment IDs are ephemeral. Always use IDs from the most recent message fetch."

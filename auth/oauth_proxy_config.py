@@ -20,18 +20,22 @@ MAX_OAUTH_REFRESH_TOKEN_EXPIRY_SECONDS = 365 * 24 * 60 * 60
 
 
 def _parse_expiry_seconds_env(
-    name: str, *, minimum: int, maximum: int
+    name: str, *, minimum: int, maximum: int, warn: bool = True
 ) -> Optional[int]:
-    """Read a bounded integer of seconds from the environment."""
+    """Read a bounded integer of seconds from the environment; ``warn=False``
+    for repeat readers, since startup already reported an invalid value."""
     raw = os.getenv(name, "").strip()
     if not raw:
         return None
     try:
         seconds = int(raw)
     except ValueError:
-        logger.warning("Ignoring %s: %r is not an integer", name, raw)
+        if warn:
+            logger.warning("Ignoring %s: %r is not an integer", name, raw)
         return None
     if not minimum <= seconds <= maximum:
+        if not warn:
+            return None
         logger.warning(
             "Ignoring %s: %d is outside the supported range %d-%d seconds",
             name,
