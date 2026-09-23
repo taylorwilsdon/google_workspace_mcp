@@ -8,7 +8,8 @@ import logging
 import asyncio
 import json
 import copy
-from typing import List, Optional, Union
+import re
+from typing import Any, Dict, List, Optional, Union
 
 from mcp.types import ToolAnnotations
 
@@ -2868,6 +2869,298 @@ async def manage_named_range(
         new_name=new_name,
         new_range=new_range,
     )
+
+
+@server.tool(
+    title="Audit Spreadsheet Errors",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors(
+    "audit_spreadsheet_errors", is_read_only=True, service_type="sheets"
+)
+@require_google_service("sheets", "sheets_read")
+async def audit_spreadsheet_errors(
+    service,
+    user_google_email: str,
+    spreadsheet_id: str,
+    sheet: Optional[str] = None,
+    max_details: int = 50,
+) -> str:
+    """
+    Scans a spreadsheet for formula error cells (#REF!, #DIV/0!, #N/A, #VALUE!,
+    #NAME?, #NUM!, #ERROR!, #NULL!) and reports per-sheet counts and sample cells.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        spreadsheet_id (str): The ID of the spreadsheet. Required.
+        sheet (str): Optional single sheet/tab name to scan. Defaults to all sheets.
+        max_details (int): Max number of example cell addresses to include. Defaults to 50.
+
+    Returns:
+        str: A summary of formula error cells found.
+    """
+    logger.info(
+        f"[audit_spreadsheet_errors] Invoked. Spreadsheet: {spreadsheet_id}, Email: '{user_google_email}'"
+    )
+
+    info = await asyncio.to_thread(
+        service.spreadsheets()
+        .get(spreadsheetId=spreadsheet_id, fields="sheets(properties(title))")
+        .execute
+    )
+    titles = [s["properties"]["title"] for s in info.get("sheets", [])]
+    if sheet:
+        titles = [t for t in titles if t == sheet]
+        if not titles:
+            return f"Sheet '{sheet}' not found in spreadsheet {spreadsheet_id}."
+
+    total = 0
+    per_sheet_lines: List[str] = []
+    sample_lines: List[str] = []
+    for title in titles:
+        quoted = "'" + title.replace("'", "''") + "'"
+        errors = await _fetch_detailed_sheet_errors(service, spreadsheet_id, quoted)
+        if not errors:
+            continue
+        total += len(errors)
+        per_sheet_lines.append(f"- {title}: {len(errors)} error cell(s)")
+        for item in errors:
+            if len(sample_lines) >= max_details:
+                break
+            cell = item.get("cell") or "?"
+            if "!" not in str(cell):
+                cell = f"{title}!{cell}"
+            etype = item.get("type") or "(error)"
+            sample_lines.append(f"    {cell}: {etype}")
+
+    if total == 0:
+        return (
+            f"No formula error cells found in spreadsheet {spreadsheet_id} "
+            f"({len(titles)} sheet(s) scanned)."
+        )
+
+    out = [f"Found {total} formula error cell(s) in spreadsheet {spreadsheet_id}:"]
+    out.extend(per_sheet_lines)
+    if sample_lines:
+        out.append("\nExamples:")
+        out.extend(sample_lines)
+        if total > len(sample_lines):
+            out.append(f"    ... and {total - len(sample_lines)} more")
+    logger.info(
+        f"[audit_spreadsheet_errors] {total} error cells for {user_google_email}"
+    )
+    return "\n".join(out)
+
+
+_A1_CELL_RE = re.compile(r"^\$?([A-Za-z]*)\$?([0-9]*)$")
+
+
+def _column_letters(col_idx: int) -> str:
+    """Convert a 0-based column index to spreadsheet letters (0 -> A, 26 -> AA)."""
+    letters = ""
+    n = col_idx + 1
+    while n > 0:
+        n, rem = divmod(n - 1, 26)
+        letters = chr(65 + rem) + letters
+    return letters
+
+
+def _a1_address(row_idx: int, col_idx: int) -> str:
+    """Build an A1 address from 0-based absolute sheet coordinates."""
+    return f"{_column_letters(col_idx)}{row_idx + 1}"
+
+
+def _parse_a1_range_origin(range_str: str) -> tuple:
+    """Return the 0-based (row, col) of the top-left cell of an A1 range.
+
+    ``spreadsheets.values.get`` echoes back the range it actually read, e.g.
+    ``'My Sheet'!B2:D7``. That origin is required to map the returned value
+    arrays onto absolute sheet coordinates: the API trims the response to the
+    populated bounding box, so index [0][0] is not necessarily cell A1.
+    Unbounded or unparseable references fall back to A1.
+    """
+    if not range_str:
+        return (0, 0)
+    if "!" in range_str:
+        # A quoted sheet name may itself contain '!', so split on the last one.
+        reference = range_str.rsplit("!", 1)[-1]
+    elif ":" in range_str:
+        # A bare range such as "B2:D7"; a sheet name would have been quoted.
+        reference = range_str
+    else:
+        # A bare sheet name is indistinguishable from a single-cell reference
+        # ("Sheet1" parses as column SHEET, row 1), so do not guess.
+        return (0, 0)
+    start = reference.split(":", 1)[0].strip()
+    match = _A1_CELL_RE.match(start)
+    if not match:
+        return (0, 0)
+    letters, digits = match.group(1), match.group(2)
+    col = 0
+    for char in letters:
+        col = col * 26 + (ord(char.upper()) - 64)
+    row = int(digits) - 1 if digits else 0
+    return (max(row, 0), max(col - 1, 0))
+
+
+def _cells_by_absolute_coordinate(values: List[List], origin: tuple) -> dict:
+    """Map a values array to {(row, col): value} in absolute sheet coordinates.
+
+    Empty cells are omitted so that "present in A but not in B" is a set
+    difference rather than a positional comparison.
+    """
+    origin_row, origin_col = origin
+    cells = {}
+    for row_offset, row in enumerate(values or []):
+        for col_offset, value in enumerate(row or []):
+            if value is None or value == "":
+                continue
+            cells[(origin_row + row_offset, origin_col + col_offset)] = value
+    return cells
+
+
+@server.tool(
+    title="Diff Spreadsheets",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("diff_spreadsheets", is_read_only=True, service_type="sheets")
+@require_google_service("sheets", "sheets_read")
+async def diff_spreadsheets(
+    service,
+    user_google_email: str,
+    spreadsheet_id_a: str,
+    spreadsheet_id_b: str,
+    sheet: str,
+    range_name: Optional[str] = None,
+    max_examples: int = 6,
+) -> str:
+    """
+    Compares the same sheet between two spreadsheets on the formula level. Reports:
+    frozen (a formula in A became a static value in B), thawed (a static value
+    became a formula in B), changed formulas, changed literal values, cells
+    cleared in B, and cells added in B. Useful to verify or reverse-engineer a
+    transformation between a master spreadsheet and a derived copy.
+
+    Cells are matched by their absolute sheet coordinates, so an offset range or
+    differing leading empty rows/columns in the two spreadsheets do not shift the
+    comparison.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        spreadsheet_id_a (str): First spreadsheet ID (baseline, e.g. master). Required.
+        spreadsheet_id_b (str): Second spreadsheet ID (comparison, e.g. export). Required.
+        sheet (str): Sheet/tab name to compare (must exist in both). Required.
+        range_name (str): Optional A1 range to limit the comparison. Defaults to whole sheet.
+        max_examples (int): Max examples per category. Defaults to 6.
+
+    Returns:
+        str: A summary of the differences with examples.
+    """
+    logger.info(
+        f"[diff_spreadsheets] Invoked. A: {spreadsheet_id_a}, B: {spreadsheet_id_b}, Sheet: '{sheet}'"
+    )
+
+    quoted = "'" + sheet.replace("'", "''") + "'"
+    full_range = f"{quoted}!{range_name}" if range_name else quoted
+
+    async def grab(sid: str) -> Dict[tuple, Any]:
+        result = await asyncio.to_thread(
+            service.spreadsheets()
+            .values()
+            .get(spreadsheetId=sid, range=full_range, valueRenderOption="FORMULA")
+            .execute
+        )
+        # values.get trims the response to the populated bounding box, so the
+        # array origin is only meaningful together with the returned range.
+        return _cells_by_absolute_coordinate(
+            result.get("values", []),
+            _parse_a1_range_origin(result.get("range", "")),
+        )
+
+    cells_a = await grab(spreadsheet_id_a)
+    cells_b = await grab(spreadsheet_id_b)
+
+    frozen = thawed = changed = cleared = added = 0
+    same_formula = same_literal = changed_literal = 0
+    examples: Dict[str, List[str]] = {
+        "frozen": [],
+        "thawed": [],
+        "changed": [],
+        "changed literal": [],
+        "cleared": [],
+        "added": [],
+    }
+
+    def add_example(label: str, text: str) -> None:
+        if len(examples[label]) < max_examples:
+            examples[label].append(f"    {text}")
+
+    for coord in sorted(set(cells_a) | set(cells_b)):
+        av = cells_a.get(coord, "")
+        bv = cells_b.get(coord, "")
+        a_has = coord in cells_a
+        b_has = coord in cells_b
+        a_form = isinstance(av, str) and av.startswith("=")
+        b_form = isinstance(bv, str) and bv.startswith("=")
+        addr = _a1_address(*coord)
+
+        if a_form and b_has and not b_form:
+            frozen += 1
+            add_example("frozen", f"{addr}: {str(av)[:40]} -> {str(bv)[:30]}")
+        elif b_form and a_has and not a_form:
+            # The reverse of frozen: a static value became a formula in B.
+            thawed += 1
+            add_example("thawed", f"{addr}: {str(av)[:30]} -> {str(bv)[:40]}")
+        elif a_form and b_form:
+            if av == bv:
+                same_formula += 1
+            else:
+                changed += 1
+                add_example("changed", f"{addr}: {str(av)[:34]} -> {str(bv)[:34]}")
+        elif a_has and not b_has:
+            cleared += 1
+            add_example("cleared", f"{addr}: {str(av)[:40]}")
+        elif b_has and not a_has:
+            added += 1
+            add_example("added", f"{addr}: {str(bv)[:40]}")
+        elif av == bv:
+            same_literal += 1
+        else:
+            changed_literal += 1
+            add_example("changed literal", f"{addr}: {str(av)[:34]} -> {str(bv)[:34]}")
+
+    out = [
+        f"Diff of sheet '{sheet}' ({'range ' + range_name if range_name else 'whole sheet'}):",
+        f"- frozen (formula -> value in B): {frozen}",
+        f"- thawed (value -> formula in B): {thawed}",
+        f"- changed formulas: {changed}",
+        f"- changed literals: {changed_literal}",
+        f"- cleared in B: {cleared}",
+        f"- added in B: {added}",
+        f"- unchanged formulas: {same_formula} | unchanged literals: {same_literal}",
+    ]
+    for label in (
+        "frozen",
+        "thawed",
+        "changed",
+        "changed literal",
+        "cleared",
+        "added",
+    ):
+        if examples[label]:
+            out.append(f"\n{label} examples:")
+            out.extend(examples[label])
+    return "\n".join(out)
 
 
 # Create comment management tools for sheets
