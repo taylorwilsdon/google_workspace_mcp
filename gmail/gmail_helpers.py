@@ -16,6 +16,8 @@ from typing import Any, Callable, Dict, Iterable, List, Literal, Mapping, Option
 from fastmcp.exceptions import ToolError as ToolExecutionError
 from googleapiclient.errors import HttpError
 
+from core.utils import GOOGLE_API_WRITE_RETRIES, UserInputError
+
 logger = logging.getLogger(__name__)
 
 RAW_BODY_TRUNCATE_LIMIT = 20000
@@ -1041,3 +1043,17 @@ async def _get_send_as_signature_html_for_tool(
 ) -> str:
     """Fetch signature HTML and convert non-benign failures to tool errors."""
     return await _get_send_as_signature_html(service, from_email=from_email)
+
+
+async def _delete_gmail_draft(service, draft_id: Optional[str]) -> str:
+    """Permanently delete a draft by its draft ID, propagating Gmail API failures."""
+    if not draft_id or not draft_id.strip():
+        raise UserInputError(
+            "draft_id is required for delete. Use the Draft ID returned by draft creation, "
+            "not a message or thread ID."
+        )
+    await asyncio.to_thread(
+        service.users().drafts().delete(userId="me", id=draft_id).execute,
+        num_retries=GOOGLE_API_WRITE_RETRIES,
+    )
+    return f"Draft permanently deleted. Draft ID: {draft_id}"

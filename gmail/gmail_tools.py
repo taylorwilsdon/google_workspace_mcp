@@ -64,6 +64,7 @@ from auth.scopes import (
     GMAIL_LABELS_SCOPE,
 )
 from gmail.gmail_helpers import (
+    _delete_gmail_draft,
     GMAIL_METADATA_HEADERS,
     RAW_BODY_TRUNCATE_LIMIT,
     _analyze_thread_ownership_impl,
@@ -3089,7 +3090,7 @@ async def _forward_gmail_message_impl(
     title="Draft Gmail Message",
     annotations=ToolAnnotations(
         readOnlyHint=False,
-        destructiveHint=False,
+        destructiveHint=True,
         idempotentHint=False,
         openWorldHint=True,
     ),
@@ -3099,8 +3100,14 @@ async def _forward_gmail_message_impl(
 async def draft_gmail_message(
     service,
     user_google_email: str,
-    subject: Annotated[str, Field(description="Email subject.")],
-    body: Annotated[str, Field(description="Email body (plain text).")],
+    subject: Annotated[
+        Optional[str],
+        Field(description="Email subject. Required for create; omit for delete."),
+    ] = None,
+    body: Annotated[
+        Optional[str],
+        Field(description="Email body. Required for create; omit for delete."),
+    ] = None,
     body_format: Annotated[
         Literal["plain", "html"],
         Field(
@@ -3167,9 +3174,25 @@ async def draft_gmail_message(
             description="Whether to include the original message as a quoted reply. Only has an effect when thread_id is provided. Defaults to false.",
         ),
     ] = False,
+    action: Annotated[
+        Literal["create", "delete"],
+        Field(
+            description="Create a draft (default), or permanently delete an existing draft. Delete requires draft_id; subject and body can be omitted."
+        ),
+    ] = "create",
+    draft_id: Annotated[
+        Optional[str],
+        Field(
+            description="Draft ID returned when the draft was created, not its message or thread ID. Required only for delete."
+        ),
+    ] = None,
 ) -> str:
     """
-    Creates a draft email in the user's Gmail account. Supports both new drafts and reply drafts with optional attachments.
+    Creates or permanently deletes a draft email in the user's Gmail account.
+    Creation supports new drafts and reply drafts with optional attachments.
+    To delete, pass action="delete" and the draft_id returned by creation; omit
+    subject and body. Deletion is permanent, not a move to Trash. Gmail message
+    label tools cannot delete drafts.
     Supports Gmail's "Send As" feature to draft from configured alias addresses.
 
     SCHEDULED SEND IS NOT AVAILABLE. Gmail's REST API exposes no send-time
@@ -3183,8 +3206,10 @@ async def draft_gmail_message(
 
     Args:
         user_google_email (str): The user's Google email address. Required for authentication.
-        subject (str): Email subject.
-        body (str): Email body (plain text).
+        subject (Optional[str]): Email subject. Required for create; omit for delete.
+        body (Optional[str]): Email body. Required for create; omit for delete.
+        action (Literal['create', 'delete']): Operation. Defaults to create.
+        draft_id (Optional[str]): Draft ID required for delete; not a message or thread ID.
         body_format (Literal['plain', 'html']): Email body format. Defaults to 'plain'.
         to (Optional[str]): Optional recipient email address. Can be left empty for drafts.
         cc (Optional[str]): Optional CC email address.
@@ -3222,9 +3247,12 @@ async def draft_gmail_message(
             original message and appends it below the signature. Defaults to False.
 
     Returns:
-        str: Confirmation message with the created draft's ID.
+        str: Confirmation message with the created or deleted draft's ID.
 
     Examples:
+        # Permanently delete a draft using the Draft ID returned by creation
+        draft_gmail_message(action="delete", draft_id="r123456789")
+
         # Create a new draft
         draft_gmail_message(subject="Hello", body="Hi there!", to="user@example.com")
 
@@ -3272,6 +3300,15 @@ async def draft_gmail_message(
             thread_id="thread_123"
         )
     """
+    if action == "delete":
+        return await _delete_gmail_draft(service, draft_id)
+    if action != "create":
+        raise UserInputError("action must be 'create' or 'delete'.")
+    if draft_id is not None:
+        raise UserInputError("draft_id is only supported with action='delete'.")
+    if subject is None or body is None:
+        raise UserInputError("subject and body are required when action='create'.")
+
     logger.info(
         f"[draft_gmail_message] Invoked. Email: '{user_google_email}', subject_len={len(subject) if subject else 0}"
     )
