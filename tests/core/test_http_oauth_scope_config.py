@@ -143,6 +143,77 @@ def test_configure_server_for_http_uses_protocol_auth_required_scopes(monkeypatc
     )
 
 
+def test_configure_server_for_http_requires_full_scopes_when_opted_in(monkeypatch):
+    """WORKSPACE_MCP_REQUIRE_FULL_SCOPES=true widens required_scopes to match valid_scopes.
+
+    Some MCP clients (e.g. claude.ai) copy the `scope` list straight out of the
+    401 WWW-Authenticate header when requesting consent, instead of asking for
+    every scope the server advertises as valid. Left at the protocol minimum
+    (userinfo.email + openid), those clients end up with tokens that pass
+    verification but carry none of the actual Google API scopes, so every
+    Gmail/Drive/Calendar/... call then fails at the API layer instead of at
+    auth. This opt-in makes the token verification itself require the full
+    configured scope set, so a client with a narrow token gets a 401 (and
+    reauthenticates) instead of a confusing per-tool failure.
+    """
+    captured = {}
+
+    class FakeGoogleProvider:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+            self.client_registration_options = SimpleNamespace(
+                valid_scopes=kwargs.get("valid_scopes"),
+                default_scopes=None,
+            )
+            default_scope = " ".join(kwargs.get("required_scopes", []))
+            self._default_scope_str = default_scope
+            self._cimd_manager = SimpleNamespace(default_scope=default_scope)
+
+    monkeypatch.setenv("WORKSPACE_MCP_REQUIRE_FULL_SCOPES", "true")
+    monkeypatch.setattr(server_module, "get_transport_mode", lambda: "streamable-http")
+    monkeypatch.setattr(server_module, "GoogleProvider", FakeGoogleProvider)
+    monkeypatch.setattr(
+        server_module,
+        "get_current_scopes",
+        lambda: [
+            "https://www.googleapis.com/auth/drive.file",
+            "https://www.googleapis.com/auth/userinfo.profile",
+            "https://www.googleapis.com/auth/userinfo.email",
+            "openid",
+        ],
+    )
+    monkeypatch.setattr(server_module, "set_auth_provider", lambda provider: None)
+    monkeypatch.setattr(
+        server_module,
+        "get_oauth_proxy_expiry_kwargs",
+        lambda: {
+            "token_expiry_threshold_seconds": 120,
+            "fastmcp_access_token_expiry_seconds": 86400,
+            "fallback_refresh_token_expiry_seconds": 2592000,
+        },
+    )
+    monkeypatch.setattr(server_module, "_auth_provider", server_module._auth_provider)
+    monkeypatch.setattr(server_module.server, "auth", server_module.server.auth)
+    monkeypatch.setattr(
+        "auth.oauth_config.get_oauth_config",
+        lambda: SimpleNamespace(
+            is_oauth21_enabled=lambda: True,
+            is_configured=lambda: True,
+            is_public_client=lambda: False,
+            is_external_oauth21_provider=lambda: False,
+            client_id="client-id",
+            client_secret="client-secret",
+            get_oauth_base_url=lambda: "https://workspace-mcp.example.test",
+            redirect_path="/oauth2callback",
+        ),
+    )
+
+    server_module.configure_server_for_http()
+
+    assert captured["required_scopes"] == sorted(server_module.get_current_scopes())
+    assert captured["required_scopes"] != sorted(server_module.PROTOCOL_AUTH_SCOPES)
+
+
 def test_configure_server_for_http_rejects_google_provider_without_client_secret(
     monkeypatch,
 ):

@@ -485,7 +485,22 @@ def configure_server_for_http():
             from fastmcp.server.auth.jwt_issuer import derive_jwt_key
 
             provider_valid_scopes: List[str] = sorted(get_current_scopes())
-            provider_required_scopes: List[str] = sorted(PROTOCOL_AUTH_SCOPES)
+
+            # By default, only the minimal protocol-level scopes are required to pass
+            # token verification (userinfo.email + openid). Some MCP clients copy the
+            # scope list straight out of the 401 WWW-Authenticate header when they
+            # request consent, so if a deployment needs Google API scopes (Gmail,
+            # Drive, Calendar, ...) to actually be present on every token -- not just
+            # requestable -- set WORKSPACE_MCP_REQUIRE_FULL_SCOPES=true to require the
+            # full configured scope set instead of just the protocol minimum.
+            require_full_scopes = os.getenv(
+                "WORKSPACE_MCP_REQUIRE_FULL_SCOPES", ""
+            ).strip().lower() in ("1", "true", "yes")
+            provider_required_scopes: List[str] = (
+                provider_valid_scopes
+                if require_full_scopes
+                else sorted(PROTOCOL_AUTH_SCOPES)
+            )
 
             client_storage = None
             jwt_signing_key_override = (
