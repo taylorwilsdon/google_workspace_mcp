@@ -1041,3 +1041,92 @@ async def _get_send_as_signature_html_for_tool(
 ) -> str:
     """Fetch signature HTML and convert non-benign failures to tool errors."""
     return await _get_send_as_signature_html(service, from_email=from_email)
+
+
+# ---------------------------------------------------------------------------
+# Thread-level label changes
+# ---------------------------------------------------------------------------
+
+
+async def modify_gmail_thread_labels(
+    service,
+    thread_ids: Iterable[str],
+    add_label_ids: Optional[List[str]] = None,
+    remove_label_ids: Optional[List[str]] = None,
+) -> Dict[str, str]:
+    """Apply label changes to whole conversations with users.threads.modify.
+
+    Unlike messages.batchModify, threads.modify answers per thread, so each
+    thread's outcome is known without a read-back. Rate-limit and 5xx errors
+    are retried with backoff; a thread that still fails does not stop the
+    others. Returns
+    ``{thread_id: "applied" | "not_found" | "failed: <reason>"}``.
+    """
+    body: Dict[str, Any] = {}
+    if add_label_ids:
+        body["addLabelIds"] = list(add_label_ids)
+    if remove_label_ids:
+        body["removeLabelIds"] = list(remove_label_ids)
+    outcomes: Dict[str, str] = {}
+    for thread_id in thread_ids:
+        # Setting the same labels twice gives the same result, so rate-limit and
+        # 5xx responses are safe to retry. Any other error, transport errors
+        # included, is recorded for that thread and the loop moves on.
+        _, _, error = await _fetch_with_retry(
+            lambda tid=thread_id: (
+                service.users().threads().modify(userId="me", id=tid, body=body)
+            ),
+            thread_id,
+            "thread",
+            "modify_gmail_thread_labels",
+        )
+        if error is None:
+            outcomes[thread_id] = "applied"
+        elif isinstance(error, HttpError) and _http_error_status(error) == 404:
+            outcomes[thread_id] = "not_found"
+        elif isinstance(error, HttpError):
+            outcomes[thread_id] = f"failed: HTTP {_http_error_status(error)}"
+        else:
+            outcomes[thread_id] = f"failed: {type(error).__name__}"
+    return outcomes
+
+
+def _format_ids(ids: List[str], limit: int = 10) -> str:
+    """Join IDs for a result message, truncating very long lists."""
+    shown = ", ".join(ids[:limit])
+    if len(ids) > limit:
+        shown += f", … (+{len(ids) - limit} more)"
+    return shown
+
+
+def format_thread_label_outcomes(
+    thread_ids: List[str],
+    outcomes: Dict[str, str],
+    add_label_ids: Optional[List[str]],
+    remove_label_ids: Optional[List[str]],
+) -> str:
+    """Summarise per-thread results of a thread-level label change."""
+    actions = []
+    if add_label_ids:
+        actions.append(f"Added labels: {', '.join(add_label_ids)}")
+    if remove_label_ids:
+        actions.append(f"Removed labels: {', '.join(remove_label_ids)}")
+    applied = [t for t in thread_ids if outcomes.get(t) == "applied"]
+    missing = [t for t in thread_ids if outcomes.get(t) == "not_found"]
+    failed = [
+        f"{t} ({outcomes[t]})"
+        for t in thread_ids
+        if outcomes.get(t, "").startswith("failed")
+    ]
+    lines = [
+        f"Label changes for {len(thread_ids)} thread ID(s): {'; '.join(actions)}",
+        f"Applied: {len(applied)}/{len(thread_ids)}",
+    ]
+    if missing:
+        lines.append(
+            f"No such thread ({len(missing)}): {_format_ids(missing)}\n"
+            "  One possible cause is passing a MESSAGE id where a THREAD id is required."
+        )
+    if failed:
+        lines.append(f"Failed ({len(failed)}): {_format_ids(failed)}")
+    return "\n".join(lines)
