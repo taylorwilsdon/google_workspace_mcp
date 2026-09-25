@@ -661,7 +661,7 @@ async def _format_sheet_range_impl(
     bold: Optional[bool] = None,
     italic: Optional[bool] = None,
     font_size: Optional[int] = None,
-) -> str:
+) -> dict[str, str]:
     """Internal implementation for format_sheet_range.
 
     Applies formatting to a Google Sheets range including colors, number formats,
@@ -1094,6 +1094,10 @@ async def manage_conditional_formatting(
             values_desc = ""
             applied_parts = [f"gradient points {len(gradient_points_list)}"]
         else:
+            if not condition_type:
+                raise UserInputError(
+                    "condition_type is required for boolean conditional format rules."
+                )
             rule, cond_type_normalized = _build_boolean_rule(
                 [grid_range],
                 condition_type,
@@ -1115,7 +1119,7 @@ async def manage_conditional_formatting(
         new_rules_state = copy.deepcopy(current_rules)
         new_rules_state.insert(insert_at, new_rule)
 
-        add_rule_request = {"rule": new_rule}
+        add_rule_request: dict[str, Union[dict, int]] = {"rule": new_rule}
         if rule_index is not None:
             add_rule_request["index"] = rule_index
 
@@ -1189,7 +1193,7 @@ async def manage_conditional_formatting(
 
         existing_rule = rules[rule_index]
         ranges_to_use = existing_rule.get("ranges", [])
-        if range_name:
+        if range_name and grid_range is not None:
             ranges_to_use = [grid_range]
         if not ranges_to_use:
             ranges_to_use = [{"sheetId": sheet_id}]
@@ -1415,7 +1419,7 @@ async def create_spreadsheet(
         f"title_len={len(title)}, folder_id='{folder_id}'"
     )
 
-    spreadsheet_body = {"properties": {"title": title}}
+    spreadsheet_body: dict[str, Union[dict, list]] = {"properties": {"title": title}}
 
     if sheet_names:
         spreadsheet_body["sheets"] = [
@@ -2448,7 +2452,7 @@ async def manage_sheet_tab(
             fields = "hidden"
             summary = f"{action_lower} sheet '{sheet_name}'"
         else:
-            if new_index >= len(sheets):
+            if new_index is None or new_index >= len(sheets):
                 raise UserInputError(
                     f"new_index must be less than the number of sheets ({len(sheets)})."
                 )
