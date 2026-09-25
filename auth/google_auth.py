@@ -460,6 +460,25 @@ async def _determine_oauth_prompt(
 # --- Core OAuth Logic ---
 
 
+def _should_auto_open_browser() -> bool:
+    """Whether to hand the OAuth consent URL to the local default browser.
+
+    Only legacy stdio mode runs on the user's own workstation, so only there is
+    auto-opening useful. WORKSPACE_MCP_NO_BROWSER=true turns it off for setups
+    where the default browser is the wrong place: a server driven over SSH or a
+    remote desktop, a headless box, or a machine where the consent is completed
+    in a different browser profile. The URL is still returned in the tool result,
+    so the flow is unchanged apart from the automatic open.
+    """
+    if os.getenv("WORKSPACE_MCP_NO_BROWSER", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }:
+        return False
+    return get_transport_mode() == "stdio" and not is_oauth21_enabled()
+
+
 async def start_auth_flow(
     user_google_email: Optional[str],
     service_name: str,  # e.g., "Google Calendar", "Gmail" for user messages
@@ -548,9 +567,7 @@ async def start_auth_flow(
         auth_url, _ = flow.authorization_url(**auth_kwargs)
 
         browser_opened = False
-        should_open_browser = (
-            get_transport_mode() == "stdio" and not is_oauth21_enabled()
-        )
+        should_open_browser = _should_auto_open_browser()
         if should_open_browser:
             # Only legacy stdio runs on the user's workstation. HTTP/OAuth 2.1
             # deployments may be remote, so opening a server-side browser is wrong.
