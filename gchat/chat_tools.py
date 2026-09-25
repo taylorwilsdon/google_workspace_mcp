@@ -441,7 +441,11 @@ async def search_messages(
 
     # If specific space provided, search within that space
     if space_id:
-        list_params = {"parent": space_id, "pageSize": page_size}
+        list_params = {
+            "parent": space_id,
+            "pageSize": page_size,
+            "orderBy": "createTime desc",
+        }
         if filter_str:
             list_params["filter"] = filter_str
         response = await _execute_chat_request(
@@ -473,7 +477,11 @@ async def search_messages(
 
         async def fetch_space_messages(space: dict) -> tuple[List[dict], bool]:
             try:
-                list_params = {"parent": space.get("name"), "pageSize": page_size}
+                list_params = {
+                    "parent": space.get("name"),
+                    "pageSize": page_size,
+                    "orderBy": "createTime desc",
+                }
                 if filter_str:
                     list_params["filter"] = filter_str
                 response = await _execute_chat_request(

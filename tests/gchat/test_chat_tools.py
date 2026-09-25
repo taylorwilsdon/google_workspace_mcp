@@ -290,6 +290,36 @@ async def test_search_messages_combines_filters_and_uses_page_size(mock_resolve)
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("space_id", [None, "spaces/S"])
+@patch("gchat.chat_tools._resolve_sender", new_callable=AsyncMock)
+async def test_search_messages_fetches_newest_messages_first(mock_resolve, space_id):
+    """search_messages should fetch the newest messages, like get_messages does."""
+    mock_resolve.return_value = "Test User"
+
+    chat_service = Mock()
+    space = {"name": "spaces/S", "displayName": "General"}
+    chat_service.spaces().list().execute.return_value = {"spaces": [space]}
+    chat_service.spaces().get().execute.return_value = space
+    chat_service.spaces().messages().list().execute.return_value = {
+        "messages": [_make_message(text="Deploy finished")]
+    }
+    people_service = Mock()
+
+    from gchat.chat_tools import search_messages
+
+    await _unwrap(search_messages)(
+        chat_service=chat_service,
+        people_service=people_service,
+        user_google_email="test@example.com",
+        query="deploy",
+        space_id=space_id,
+    )
+
+    list_kwargs = chat_service.spaces().messages().list.call_args.kwargs
+    assert list_kwargs["orderBy"] == "createTime desc"
+
+
+@pytest.mark.asyncio
 @patch("gchat.chat_tools._resolve_sender", new_callable=AsyncMock)
 async def test_search_messages_query_only_filters_client_side_without_api_filter(
     mock_resolve,
