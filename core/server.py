@@ -51,6 +51,24 @@ from starlette.types import ASGIApp, Scope, Receive, Send
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+class WorkspaceGoogleProvider(GoogleProvider):
+    """GoogleProvider whose 401 challenge advertises every tool scope.
+
+    Protocol-level validation requires only the identity scopes (#733), but
+    fastmcp >= 4 copies the validated scopes into the ``WWW-Authenticate``
+    challenge, so a client honouring it would obtain a token no tool can use
+    (#1116). Challenge with the scopes clients may request instead.
+    """
+
+    def get_challenge_scopes(
+        self, required_scopes: Optional[List[str]] = None
+    ) -> List[str]:
+        if required_scopes is None:
+            return self.client_registration_options.valid_scopes
+        return required_scopes
+
+
 _auth_provider: Optional[GoogleProvider] = None
 _legacy_callback_registered = False
 
@@ -735,7 +753,7 @@ def configure_server_for_http():
                         "OAuth 2.1: restricting DCR client redirect URIs to allowlist: %s",
                         allowed_client_redirect_uris,
                     )
-                provider = GoogleProvider(
+                provider = WorkspaceGoogleProvider(
                     client_id=config.client_id,
                     client_secret=config.client_secret,
                     base_url=config.get_oauth_base_url(),
