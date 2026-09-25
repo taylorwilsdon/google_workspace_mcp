@@ -261,6 +261,11 @@ def set_enabled_tools(enabled_tools):
     logger.debug(f"Scope management active for {len(enabled_tools)} services")
 
 
+def get_enabled_tools() -> list[str] | None:
+    """Return the globally enabled tools/services list, or None if unset (all enabled)."""
+    return _ENABLED_TOOLS
+
+
 # Global variable to store read-only mode (set by main.py)
 _READ_ONLY_MODE = False
 

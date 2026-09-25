@@ -312,12 +312,15 @@ class SecureFastMCP(FastMCP):
         return patched
 
     async def call_tool(self, name: str, arguments: Optional[dict], *args, **kwargs):
-        """Inject user_google_email before pydantic validates the call arguments.
+        """Resolve user_google_email before Pydantic validates call arguments.
 
         When USER_GOOGLE_EMAIL is configured and OAuth 2.1 is not active, callers
         (agents, adapters) are allowed to omit user_google_email.  FastMCP validates
         arguments against the function signature BEFORE calling the tool, so we must
-        inject the default BEFORE that validation step.
+        inject the default BEFORE that validation step. In explicit single-user
+        mode, the configured account is authoritative: ignore a stale or
+        misspelled caller-supplied value so every MCP session uses the same
+        stored credential.
         """
         arguments = arguments or {}
         if is_trust_gateway_identity():
@@ -330,12 +333,11 @@ class SecureFastMCP(FastMCP):
                 for key, value in arguments.items()
                 if key != "user_google_email"
             }
-        elif (
-            not is_oauth21_enabled()
-            and USER_GOOGLE_EMAIL
-            and "user_google_email" not in arguments
-        ):
-            arguments = {**arguments, "user_google_email": USER_GOOGLE_EMAIL}
+        elif not is_oauth21_enabled() and USER_GOOGLE_EMAIL:
+            if os.getenv("MCP_SINGLE_USER_MODE") == "1":
+                arguments = {**arguments, "user_google_email": USER_GOOGLE_EMAIL}
+            elif "user_google_email" not in arguments:
+                arguments = {**arguments, "user_google_email": USER_GOOGLE_EMAIL}
         return await super().call_tool(name, arguments, *args, **kwargs)
 
 
@@ -823,6 +825,48 @@ async def health_check(request: Request):
             "service": "workspace-mcp",
             "version": version,
             "transport": get_transport_mode(),
+        }
+    )
+
+
+@server.custom_route("/status", methods=["GET"])
+async def deployment_status(request: Request):
+    """Report non-secret deployment status: never include token material.
+
+    Useful for the opt-in OpenClaw HTTP preset (a single durable local
+    process) to confirm the service is up, an account is authorized, refresh
+    is possible, and which Google services/scopes are active — without
+    exposing any credential content.
+    """
+    from auth.credential_store import get_credential_store
+    from auth.oauth_config import is_stateless_mode, is_service_account_enabled
+    from auth.scopes import get_current_scopes, get_enabled_tools
+
+    account_authorized = False
+    refresh_capable = False
+    try:
+        if not is_stateless_mode() and not is_service_account_enabled():
+            store = get_credential_store()
+            users = store.list_users()
+            if users:
+                credentials = store.get_credential(users[0])
+                if credentials:
+                    account_authorized = True
+                    refresh_capable = bool(credentials.refresh_token)
+    except Exception:
+        logger.debug("Status check could not read credential store", exc_info=True)
+
+    enabled_tools = get_enabled_tools()
+    enabled_services = sorted(enabled_tools) if enabled_tools is not None else "all"
+
+    return JSONResponse(
+        {
+            "status": "running",
+            "transport": get_transport_mode(),
+            "account_authorized": account_authorized,
+            "refresh_capable": refresh_capable,
+            "enabled_services": enabled_services,
+            "enabled_scopes": sorted(get_current_scopes()),
         }
     )
 
