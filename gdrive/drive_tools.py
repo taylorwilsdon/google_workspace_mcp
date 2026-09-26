@@ -71,6 +71,7 @@ from gdrive.drive_helpers import (
     _use_resumable_upload,
     build_drive_list_params,
     check_public_link_permission,
+    flag_incomplete_search,
     list_all_permissions,
     derive_shared_state,
     format_permission_info,
@@ -205,7 +206,7 @@ async def search_drive_files(
     results = await asyncio.to_thread(service.files().list(**list_params).execute)
     files = results.get("files", [])
     if not files:
-        return f"No files found for '{query}'."
+        return flag_incomplete_search(f"No files found for '{query}'.", results)
 
     next_token = results.get("nextPageToken")
     header = f"Found {len(files)} files for {user_google_email} matching '{query}':"
@@ -256,8 +257,7 @@ async def search_drive_files(
             )
     if next_token:
         formatted_files_text_parts.append(f"nextPageToken: {next_token}")
-    text_output = "\n".join(formatted_files_text_parts)
-    return text_output
+    return flag_incomplete_search("\n".join(formatted_files_text_parts), results)
 
 
 @server.tool(
@@ -693,7 +693,9 @@ async def list_drive_items(
     results = await asyncio.to_thread(service.files().list(**list_params).execute)
     files = results.get("files", [])
     if not files:
-        return f"No items found in folder '{folder_id}'."
+        return flag_incomplete_search(
+            f"No items found in folder '{folder_id}'.", results
+        )
 
     next_token = results.get("nextPageToken")
     header = (
@@ -735,8 +737,7 @@ async def list_drive_items(
             )
     if next_token:
         formatted_items_text_parts.append(f"nextPageToken: {next_token}")
-    text_output = "\n".join(formatted_items_text_parts)
-    return text_output
+    return flag_incomplete_search("\n".join(formatted_items_text_parts), results)
 
 
 @server.tool(

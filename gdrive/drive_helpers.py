@@ -321,13 +321,13 @@ def build_drive_list_params(
             ", permissions(id, type, role)" if include_permissions else ""
         )
         fields = (
-            "nextPageToken, files(id, name, mimeType, webViewLink, iconLink,"
+            "nextPageToken, incompleteSearch, files(id, name, mimeType, webViewLink, iconLink,"
             " modifiedTime, createdTime, size, driveId,"
             " lastModifyingUser(displayName, emailAddress)"
             f"{permission_fields})"
         )
     else:
-        fields = "nextPageToken, files(id, name, mimeType)"
+        fields = "nextPageToken, incompleteSearch, files(id, name, mimeType)"
     list_params = {
         "q": query,
         "pageSize": page_size,
@@ -355,6 +355,24 @@ def build_drive_list_params(
         list_params["corpora"] = "allDrives"
 
     return list_params
+
+
+INCOMPLETE_SEARCH_WARNING = (
+    "WARNING: Google Drive did not search every corpus (incompleteSearch), so these "
+    "results may be incomplete. Narrow the search (e.g. a specific shared drive or "
+    "the 'user' corpus) to find the rest."
+)
+
+
+def flag_incomplete_search(text: str, response: Dict[str, Any]) -> str:
+    """Append a warning when a files.list response reports incompleteSearch.
+
+    Searching the 'allDrives' corpus can skip some shared drives; without this the
+    caller would present a partial result set as complete.
+    """
+    if response.get("incompleteSearch"):
+        return f"{text}\n{INCOMPLETE_SEARCH_WARNING}"
+    return text
 
 
 GOOGLE_APPS_MIME_PREFIX = "application/vnd.google-apps."
