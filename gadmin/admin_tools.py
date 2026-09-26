@@ -301,11 +301,16 @@ async def _offboarding_clients(
     )
     assert_admin_permission(transfer_op)
     assert_admin_permission(license_op)
-    contact_op = "admin.contacts.v1.users.delegates." + (
-        "delete"
-        if write and admin_writes_allowed("admin-contact-delegation")
-        else "list"
-    )
+    contact_op = "admin.contacts.v1.users.delegates.list"
+    if write:
+        # Without delete permission the list client keeps the earlier steps usable;
+        # the delete step itself then stops for manual action.
+        delete_op = "admin.contacts.v1.users.delegates.delete"
+        try:
+            assert_admin_permission(get_operation(delete_op))
+            contact_op = delete_op
+        except AdminPermissionError:
+            pass
     clients = AdminClients(
         directory,
         await get_admin_service(user_google_email, transfer_op, identity),

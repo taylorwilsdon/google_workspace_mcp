@@ -32,6 +32,14 @@ class WorkflowStore:
         self.directory.mkdir(parents=True, mode=0o700, exist_ok=True)
         os.chmod(self.directory, 0o700)
 
+    def _sync_directory(self) -> None:
+        """Make a created or replaced entry durable before the caller relies on it."""
+        fd = os.open(self.directory, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
     def load(self, workflow_id: str) -> dict:
         try:
             record = json.loads(self._path(workflow_id).read_text(encoding="utf-8"))
@@ -55,6 +63,7 @@ class WorkflowStore:
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(name, path)
+            self._sync_directory()
         except BaseException:
             Path(name).unlink(missing_ok=True)
             raise
@@ -69,6 +78,7 @@ class WorkflowStore:
                 json.dump(workflow, handle, sort_keys=True)
                 handle.flush()
                 os.fsync(handle.fileno())
+            self._sync_directory()
         except BaseException:
             path.unlink(missing_ok=True)
             raise

@@ -284,6 +284,12 @@ def _admin_tools_at_launch(*args: str) -> set[str]:
             "MCP_SINGLE_USER_MODE",
             "TOOLS",
             "TOOL_TIER",
+            # Launch settings main.py reads when the matching flag is absent.
+            "WORKSPACE_MCP_TOOLS",
+            "WORKSPACE_MCP_TOOL_TIER",
+            "WORKSPACE_MCP_READ_ONLY",
+            "WORKSPACE_MCP_PERMISSIONS",
+            "WORKSPACE_MCP_DISABLED_TOOLS",
             "GOOGLE_SERVICE_ACCOUNT_KEY_FILE",
         )
     }
@@ -349,6 +355,39 @@ def test_existing_launches_expose_no_admin_tools(args):
 )
 def test_selecting_admin_directory_exposes_read_tools(args, expected):
     # Confirmation is hidden when no selected admin service may write.
+    assert _admin_tools_at_launch(*args) == expected
+
+
+@pytest.mark.parametrize(
+    ("name", "value", "args", "expected"),
+    [
+        ("WORKSPACE_MCP_TOOLS", "admin-directory", (), set()),
+        ("WORKSPACE_MCP_PERMISSIONS", "admin-directory:readonly", (), set()),
+        (
+            "WORKSPACE_MCP_TOOL_TIER",
+            "core",
+            ("--tools", "admin-directory"),
+            ADMIN_TOOLS | CONFIRM,
+        ),
+        (
+            "WORKSPACE_MCP_READ_ONLY",
+            "true",
+            ("--tools", "admin-directory"),
+            ADMIN_TOOLS | CONFIRM,
+        ),
+        (
+            "WORKSPACE_MCP_DISABLED_TOOLS",
+            "get_admin_user",
+            ("--tools", "admin-directory"),
+            ADMIN_TOOLS | CONFIRM,
+        ),
+    ],
+)
+def test_launch_settings_from_the_test_environment_do_not_leak(
+    monkeypatch, name, value, args, expected
+):
+    # Each variable would change this launch's tools if it reached the subprocess.
+    monkeypatch.setenv(name, value)
     assert _admin_tools_at_launch(*args) == expected
 
 

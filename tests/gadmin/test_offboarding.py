@@ -3,6 +3,7 @@ time from persisted step states. Transfer finishes before licenses or the accoun
 go, every destructive step needs its own fresh confirmation, and a retry reads
 Google's state instead of repeating a write it cannot see."""
 
+import json
 import os
 import stat
 
@@ -45,12 +46,14 @@ CALENDAR = {
 
 
 class Workspace:
-    """Directory, Data Transfer, and Licensing fakes sharing one customer."""
+    """Directory, Data Transfer, Licensing, and Vault fakes sharing one customer.
+
+    Vault has no open matters, so its hold check before deletion finds none."""
 
     def __init__(self):
         self.directory = FakeDirectory(customer_id="C01", page_size=10)
         self.directory.add_user(ADMIN, "U_ADMIN", super_admin=True)
-        self.directory.add_user(LEAVER, "U_LEAVER")
+        self.directory.add_user(LEAVER, "U_LEAVER", orgUnitPath="/")
         self.directory.add_user(MANAGER, "U_MANAGER")
         self.directory.add_group("G1", "sales@op.example", ["U_LEAVER", "U_MANAGER"])
         self.directory.add_group("G2", "all@op.example", ["U_LEAVER"])
@@ -83,10 +86,14 @@ class Workspace:
                 "licensing.licenseAssignments.delete": self._delete_license,
             },
         )
+        self.vault_api = FakeGoogleApi(
+            "vault", {"vault.matters.list": lambda **_: {"matters": []}}
+        )
         self.clients = AdminClients(
             directory=self.directory,
             transfer=self.transfer_api,
             licensing=self.licensing_api,
+            vault=self.vault_api,
         )
 
     # --- Data Transfer -----------------------------------------------------------
@@ -169,7 +176,7 @@ def _all_admin_services(monkeypatch):
     monkeypatch.setattr(
         scopes,
         "_ENABLED_TOOLS",
-        ["admin-directory", "admin-datatransfer", "admin-licensing"],
+        ["admin-directory", "admin-datatransfer", "admin-licensing", "admin-vault"],
     )
     monkeypatch.setattr(scopes, "_READ_ONLY_MODE", False)
     monkeypatch.setattr(permissions, "_PERMISSIONS", None)
@@ -406,6 +413,78 @@ def test_audit_records_each_write_with_the_workflow(workspace, plan, stores):
     assert plan.workflow_id in text
     assert "directory.users.update" in text
     assert state.confirmation.split(":", 1)[1] not in text
+
+
+def _suspended(workspace, plan, stores):
+    state = advance(workspace, stores, plan.workflow_id)
+    advance(workspace, stores, plan.workflow_id, state.confirmation)
+    return stores["audit"].path.read_text().count("\n")
+
+
+def _audited(stores, after: int) -> list[dict]:
+    return [json.loads(line) for line in stores["audit"].path.read_text().splitlines()][
+        after:
+    ]
+
+
+@pytest.mark.parametrize(
+    ("status", "outcome"),
+    [
+        (400, "failed"),
+        (403, "failed"),
+        (404, "failed"),
+        (408, "unknown"),
+        (429, "unknown"),
+        (500, "unknown"),
+        (503, "unknown"),
+    ],
+)
+def test_audit_marks_a_refused_write_failed_and_an_uncertain_one_unknown(
+    workspace, plan, stores, status, outcome
+):
+    before = _suspended(workspace, plan, stores)
+    workspace.directory.failures["directory.users.signOut"] = http_error(status, "x")
+
+    advance(workspace, stores, plan.workflow_id)
+
+    [event] = _audited(stores, before)
+    assert (event["operation_id"], event["outcome"]) == (
+        "directory.users.signOut",
+        outcome,
+    )
+    assert event["status"] == status
+    assert event["workflow_id"] == plan.workflow_id
+    assert event["param_names"] == ["userKey"]
+
+
+def test_transport_failure_is_audited_unknown_and_reconciled_not_repeated(
+    workspace, plan, stores
+):
+    before = _suspended(workspace, plan, stores)
+    workspace.directory.failures["directory.users.signOut"] = TimeoutError(
+        "timed out calling https://admin.googleapis.com/secret-path"
+    )
+
+    with pytest.raises(TimeoutError):
+        advance(workspace, stores, plan.workflow_id)
+
+    [event] = _audited(stores, before)
+    assert (event["operation_id"], event["outcome"]) == (
+        "directory.users.signOut",
+        "unknown",
+    )
+    assert "secret-path" not in stores["audit"].path.read_text()
+    persisted = get_offboarding_status(CONTEXT, plan.workflow_id, store=stores["store"])
+    assert step(persisted, "sign_out").status == "in_progress"
+
+    del workspace.directory.failures["directory.users.signOut"]
+    state = advance(workspace, stores, plan.workflow_id)
+
+    assert state.status == "manual_action_required"
+    assert "cannot be reconciled" in step(state, "sign_out").message
+    assert [
+        op for op, _ in workspace.directory.write_calls if op.endswith("signOut")
+    ] == ["directory.users.signOut"]
 
 
 # --- Transfer gates deletion -----------------------------------------------------------
@@ -902,6 +981,93 @@ def test_workflow_state_is_private_and_holds_no_token(workspace, plan, stores):
     assert [f.stem for f in files] == [plan.workflow_id]
     assert stat.S_IMODE(os.stat(files[0]).st_mode) == 0o600
     assert token not in files[0].read_text()
+
+
+class _SyncRecorder:
+    """Record the store's fsync and replace order and the directory fds it opens;
+    fail each directory fsync while ``fail_directory`` is set."""
+
+    def __init__(self, monkeypatch):
+        self.events: list[str] = []
+        self.open_directories: set[int] = set()
+        self.fail_directory = False
+        real = {
+            name: getattr(os, name) for name in ("open", "close", "fsync", "replace")
+        }
+
+        def fake_open(path, flags, *args):
+            fd = real["open"](path, flags, *args)
+            if os.path.isdir(path):
+                self.open_directories.add(fd)
+            return fd
+
+        def fake_close(fd):
+            self.open_directories.discard(fd)
+            real["close"](fd)
+
+        def fake_fsync(fd):
+            kind = "directory" if stat.S_ISDIR(os.fstat(fd).st_mode) else "file"
+            self.events.append(f"fsync {kind}")
+            if kind == "directory" and self.fail_directory:
+                raise OSError("I/O error")
+            real["fsync"](fd)
+
+        def fake_replace(source, destination):
+            self.events.append("replace")
+            real["replace"](source, destination)
+
+        for name, fake in (
+            ("open", fake_open),
+            ("close", fake_close),
+            ("fsync", fake_fsync),
+            ("replace", fake_replace),
+        ):
+            monkeypatch.setattr(workflow_storage.os, name, fake)
+
+
+def test_create_and_save_sync_the_directory_after_the_entry_changes(
+    monkeypatch, tmp_path
+):
+    store = WorkflowStore(tmp_path / "workflows")
+    record = {"workflow_id": "w" * 24, "steps": []}
+    syncs = _SyncRecorder(monkeypatch)
+
+    store.create(record)
+    assert syncs.events == ["fsync file", "fsync directory"]
+
+    syncs.events.clear()
+    store.save({**record, "steps": [{"id": "suspend_user"}]})
+    assert syncs.events == ["fsync file", "replace", "fsync directory"]
+    assert syncs.open_directories == set()
+    assert store.load(record["workflow_id"])["steps"] == [{"id": "suspend_user"}]
+
+
+def test_directory_sync_failure_stops_before_any_google_write(
+    workspace, stores, monkeypatch
+):
+    syncs = _SyncRecorder(monkeypatch)
+    syncs.fail_directory = True
+
+    with pytest.raises(OSError, match="I/O error"):
+        plan_user_offboarding(
+            CONTEXT, workspace.clients, LEAVER, MANAGER, store=stores["store"]
+        )
+    assert list(stores["store"].directory.glob("*.json")) == []
+
+    syncs.fail_directory = False
+    plan = plan_user_offboarding(
+        CONTEXT, workspace.clients, LEAVER, MANAGER, store=stores["store"]
+    )
+    state = advance(workspace, stores, plan.workflow_id)
+    advance(workspace, stores, plan.workflow_id, state.confirmation)
+    writes = list(workspace.directory.write_calls)
+    syncs.fail_directory = True
+
+    # The save recording the sign-out attempt is not durable, so it never runs.
+    with pytest.raises(OSError, match="I/O error"):
+        advance(workspace, stores, plan.workflow_id)
+    assert workspace.directory.write_calls == writes
+    assert syncs.open_directories == set()
 
 
 def test_status_reports_persisted_state_without_a_confirmation(workspace, plan, stores):

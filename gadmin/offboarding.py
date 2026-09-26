@@ -6,9 +6,10 @@ review; they are never optimistically marked complete or blindly repeated.
 
 Optional clients add checks. Contact Delegation adds a step that removes the
 user's contact delegates one confirmed write at a time. Gmail mail delegates are
-listed for manual review, never removed. Vault holds covering the user, or a hold
-check that could not finish, block the final deletion; ``none_found`` never
-certifies that nothing is preserved.
+listed for manual review, never removed. Final deletion always needs a fresh
+Vault hold check that finds no covering hold: without a Vault client, with a
+check that could not finish, or with a covering hold it is blocked. Earlier steps
+run without Vault, and ``none_found`` never certifies that nothing is preserved.
 """
 
 import re
@@ -498,7 +499,6 @@ def plan_user_offboarding(
         "unsupported": list(unsupported),
         "previous_transfer_ids": [t["id"] for t in previous if t.get("id")],
         "transfer_id": None,
-        "vault_required": clients.vault is not None,
         "steps": [
             {
                 "id": name,
@@ -510,27 +510,24 @@ def plan_user_offboarding(
             for name in steps
         ],
     }
+    gaps = (
+        "Vault retention rules have not been checked; review them in the Admin console before deletion.",
+        "Vault matters this admin cannot see were not checked; their holds still apply.",
+    )
     if clients.vault is None:
-        gaps = (
-            "Vault holds and retention have not been verified; inspect in Admin console before deletion.",
+        gaps += (
+            "Vault holds were not checked: final deletion is blocked until a fresh check with the admin-vault service finds no covering hold.",
         )
-    else:
-        gaps = (
-            "Vault retention rules have not been checked; review them in the Admin console before deletion.",
-            "Vault matters this admin cannot see were not checked; their holds still apply.",
+    elif vault_status == "held":
+        gaps += (
+            "Vault holds cover this user and block deletion: "
+            + ", ".join(f"{h.matter_id}/{h.hold_id} ({h.corpus})" for h in vault_holds)
+            + ".",
         )
-        if vault_status == "held":
-            gaps += (
-                "Vault holds cover this user and block deletion: "
-                + ", ".join(
-                    f"{h.matter_id}/{h.hold_id} ({h.corpus})" for h in vault_holds
-                )
-                + ".",
-            )
-        elif vault_status == "unknown":
-            gaps += (
-                "Vault holds could not be fully checked; deletion is blocked until they can be.",
-            )
+    elif vault_status == "unknown":
+        gaps += (
+            "Vault holds could not be fully checked; deletion is blocked until they can be.",
+        )
     if contacts is None:
         gaps += (
             "Contact delegates were not checked: this needs admin-contact-delegation. Review them manually.",
@@ -668,36 +665,34 @@ def _write(
         service = clients.contacts
     else:
         service = clients.directory
+    event = {
+        "operation_id": operation,
+        "method": spec.method,
+        "actor": context.actor_email,
+        "customer": context.customer_id,
+        "target": record["target_email"],
+        "workflow_id": record["workflow_id"],
+        "params": params,
+        "body": body,
+    }
     try:
         result = execute_operation(service, spec, params, body)
     except AdminApiError as exc:
+        uncertain = exc.status in (408, 429) or exc.status >= 500
         audit.record(
             {
-                "operation_id": operation,
-                "method": spec.method,
-                "actor": context.actor_email,
-                "customer": context.customer_id,
-                "target": record["target_email"],
-                "outcome": "error",
+                **event,
+                "outcome": "unknown" if uncertain else "failed",
                 "status": exc.status,
                 "category": exc.category,
-                "workflow_id": record["workflow_id"],
             }
         )
         raise
-    audit.record(
-        {
-            "operation_id": operation,
-            "method": spec.method,
-            "actor": context.actor_email,
-            "customer": context.customer_id,
-            "target": record["target_email"],
-            "outcome": "accepted",
-            "workflow_id": record["workflow_id"],
-            "params": params,
-            "body": body,
-        }
-    )
+    except Exception:
+        # A transport failure: Google may or may not have applied the write.
+        audit.record({**event, "outcome": "unknown"})
+        raise
+    audit.record({**event, "outcome": "accepted"})
     if operation == "datatransfer.transfers.insert":
         transfer_id = result.get("id")
         if not transfer_id:
@@ -1276,24 +1271,24 @@ def _perform_step(
             clients, record["target_email"]
         ):
             raise AdminBoundaryError("A contact delegate remains; deletion is blocked.")
-        if record.get("vault_required") and clients.vault is None:
+        # Checked before every proposal and again at confirmation, with no override.
+        if clients.vault is None:
             raise AdminPermissionError(
-                "Vault holds must be rechecked with the admin-vault service before deletion."
+                "Vault holds must be checked with the admin-vault service before deletion."
             )
-        if clients.vault is not None:
-            status, holds = _vault_holds(
-                clients, record["customer_id"], record["target_id"]
+        status, holds = _vault_holds(
+            clients, record["customer_id"], record["target_id"]
+        )
+        if status == "held":
+            raise AdminBoundaryError(
+                "A Vault hold covers this user; deletion is blocked: "
+                + ", ".join(f"{h.matter_id}/{h.hold_id}" for h in holds)
+                + "."
             )
-            if status == "held":
-                raise AdminBoundaryError(
-                    "A Vault hold covers this user; deletion is blocked: "
-                    + ", ".join(f"{h.matter_id}/{h.hold_id}" for h in holds)
-                    + "."
-                )
-            if status != "none_found":
-                raise AdminBoundaryError(
-                    "Vault holds could not be fully checked; deletion is blocked."
-                )
+        if status != "none_found":
+            raise AdminBoundaryError(
+                "Vault holds could not be fully checked; deletion is blocked."
+            )
         _guard_users(actor, clients, record, "directory.users.delete")
         params = {"userKey": record["target_id"]}
         if not _confirmation(

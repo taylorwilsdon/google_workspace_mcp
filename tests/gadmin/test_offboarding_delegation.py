@@ -1,8 +1,8 @@
 """Offboarding with the optional Contact Delegation, Gmail delegate, and Vault
 clients. Contact delegates are removed one confirmed write at a time, Gmail
-delegates are reported for manual review, and a Vault hold that covers the user,
-or a hold check that could not finish, blocks the final deletion. A plan made
-without these clients keeps the earlier steps."""
+delegates are reported for manual review, and the final deletion needs a fresh
+Vault hold check that finds no covering hold. A plan made without these clients
+keeps the earlier steps."""
 
 import json
 from dataclasses import asdict, replace
@@ -54,9 +54,9 @@ CONTACT_STEPS = (
 )
 # Private values Google may return next to the fields offboarding needs.
 PRIVATE = ("Private Name", "Quarterly numbers attached", "Litigation X", "Lee")
-LEGACY_VAULT_GAP = (
-    "Vault holds and retention have not been verified; "
-    "inspect in Admin console before deletion."
+VAULT_UNCHECKED_GAP = (
+    "Vault holds were not checked: final deletion is blocked until a fresh check "
+    "with the admin-vault service finds no covering hold."
 )
 
 
@@ -198,7 +198,9 @@ def test_plan_without_new_clients_keeps_the_earlier_steps(ws, stores):
 
     assert plan.steps == STEPS
     assert plan.confirmed_steps == ("suspend_user", "remove_licenses", "delete_user")
-    assert LEGACY_VAULT_GAP in plan.not_checked
+    assert VAULT_UNCHECKED_GAP in plan.not_checked
+    assert any("retention" in gap.casefold() for gap in plan.not_checked)
+    assert any("cannot see" in gap for gap in plan.not_checked)
     assert plan.contact_delegates == () and plan.gmail_delegates == ()
     assert plan.vault_status == "" and plan.vault_holds == ()
     assert any(
@@ -415,7 +417,7 @@ def test_no_covering_hold_is_none_found_and_never_certified(ws, stores):
     plan = _plan(ws, stores)
 
     assert plan.vault_status == "none_found" and plan.vault_holds == ()
-    assert LEGACY_VAULT_GAP not in plan.not_checked
+    assert VAULT_UNCHECKED_GAP not in plan.not_checked
     assert any("retention" in gap.casefold() for gap in plan.not_checked)
     assert any("cannot see" in gap for gap in plan.not_checked)
     assert (
@@ -551,27 +553,68 @@ def test_unknown_result_blocks_deletion(ws, stores):
     assert LEAVER in ws.directory.users_by_key
 
 
-def test_missing_vault_client_blocks_deletion_when_the_plan_used_it(ws, stores):
-    wid = _plan(ws, stores).workflow_id
+def test_plan_without_vault_runs_earlier_steps_but_never_proposes_deletion(ws, stores):
     ws.clients = replace(ws.clients, vault=None)
+    wid = _plan(ws, stores).workflow_id
 
     state = _to_deletion(ws, stores, wid)
 
+    assert tuple(s.id for s in state.steps if s.status == "done") == CONTACT_STEPS[:-1]
     assert state.status == "manual_action_required"
+    assert state.confirmation is None
     assert "admin-vault" in step(state, "delete_user").message
     assert LEAVER in ws.directory.users_by_key
+    assert ws.vault_api.calls == []
+
+    # A fresh check that finds no covering hold is what allows the proposal.
+    ws.clients = replace(ws.clients, vault=ws.vault_api)
+    state = advance(ws, stores, wid)
+    assert state.status == "awaiting_confirmation"
+    assert state.current_step == "delete_user"
+
+
+def _remove_vault(ws):
+    ws.clients = replace(ws.clients, vault=None)
+
+
+def _fail_vault(ws):
+    ws.vault_api.handlers["vault.matters.list"] = http_error(503)
+
+
+def _deselect_vault(ws):
+    scopes._ENABLED_TOOLS.remove("admin-vault")
+
+
+@pytest.mark.parametrize("planned_with_vault", [True, False])
+@pytest.mark.parametrize(
+    "change", [_remove_vault, _fail_vault, _deselect_vault], ids=lambda f: f.__name__
+)
+def test_vault_check_that_cannot_run_blocks_the_confirmed_deletion(
+    ws, stores, change, planned_with_vault
+):
+    if not planned_with_vault:
+        ws.clients = replace(ws.clients, vault=None)
+    wid = _plan(ws, stores).workflow_id
+    ws.clients = replace(ws.clients, vault=ws.vault_api)
+    state = _to_deletion(ws, stores, wid)
+    assert state.status == "awaiting_confirmation"
+    change(ws)
+
+    state = advance(ws, stores, wid, state.confirmation)
+
+    assert state.status == "manual_action_required"
+    assert "Vault" in step(state, "delete_user").message
+    assert LEAVER in ws.directory.users_by_key
+    assert not any(op == "directory.users.delete" for op, _ in ws.directory.calls)
 
 
 # --- Offboarding tools ---------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_tools_build_the_selected_clients_and_close_them(
-    ws, monkeypatch, tmp_path
-):
+def _fake_tool_clients(ws, monkeypatch, tmp_path):
+    """Serve the tools' Google clients from ``ws``; return (clients, built)."""
     import gadmin.admin_tools as tools
     import gadmin.auth as auth
-    from tests.gadmin.test_offboarding_tools import call
 
     clients = {
         "datatransfer": ws.transfer_api,
@@ -600,6 +643,16 @@ async def test_tools_build_the_selected_clients_and_close_them(
     monkeypatch.setattr(
         tools, "_audit_sink", lambda: tools.AuditSink(tmp_path / "audit.jsonl")
     )
+    return clients, built
+
+
+@pytest.mark.asyncio
+async def test_tools_build_the_selected_clients_and_close_them(
+    ws, monkeypatch, tmp_path
+):
+    from tests.gadmin.test_offboarding_tools import call
+
+    clients, built = _fake_tool_clients(ws, monkeypatch, tmp_path)
 
     result, text = await call(
         "plan_user_offboarding",
@@ -635,6 +688,55 @@ async def test_tools_build_the_selected_clients_and_close_them(
     )
     assert not result.is_error, text
     assert "admin.contacts.v1.users.delegates.delete" in [b[0] for b in built]
+
+
+@pytest.mark.asyncio
+async def test_contact_manage_level_keeps_earlier_steps_and_stops_the_removal(
+    ws, monkeypatch, tmp_path
+):
+    from tests.gadmin.test_offboarding_tools import call
+
+    # manage may list contact delegates but not delete them (a destructive write).
+    monkeypatch.setattr(
+        permissions, "_PERMISSIONS", {"admin-contact-delegation": "manage"}
+    )
+    _, built = _fake_tool_clients(ws, monkeypatch, tmp_path)
+    result, text = await call(
+        "plan_user_offboarding",
+        user_google_email=CONTEXT.actor_email,
+        target_email=LEAVER,
+        transfer_recipient=MANAGER,
+    )
+    assert not result.is_error, text
+    arguments = {
+        "user_google_email": CONTEXT.actor_email,
+        "workflow_id": json.loads(text)["workflow_id"],
+    }
+
+    state = {}
+    for _ in range(8):
+        result, text = await call(
+            "advance_user_offboarding",
+            **arguments,
+            **(
+                {"confirmation": state["confirmation"]}
+                if state.get("confirmation")
+                else {}
+            ),
+        )
+        assert not result.is_error, text
+        state = json.loads(text)
+        if state["current_step"] == "remove_contact_delegates":
+            break
+
+    assert ws.directory.users_by_key[LEAVER]["suspended"] is True
+    assert ws.directory.user_tokens["U_LEAVER"] == []
+    assert state["status"] == "manual_action_required"
+    contact = next(s for s in state["steps"] if s["id"] == "remove_contact_delegates")
+    assert "destructive" in contact["message"]
+    assert ws.contact_deletes() == []
+    contact_clients = {b[0] for b in built if b[0].startswith("admin.contacts.")}
+    assert contact_clients == {"admin.contacts.v1.users.delegates.list"}
 
 
 def stores_at(path):
