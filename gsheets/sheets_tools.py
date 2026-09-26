@@ -18,7 +18,7 @@ from auth.service_decorator import require_google_service
 from core.server import server
 from core.utils import handle_http_errors, UserInputError, StringList
 from core.comments import create_comment_tools
-from gdrive.drive_helpers import move_new_file_to_folder
+from gdrive.drive_helpers import flag_incomplete_search, move_new_file_to_folder
 from gsheets.sheets_helpers import (
     CONDITION_TYPES,
     MAX_READ_SHEET_ROWS,
@@ -81,17 +81,20 @@ async def list_spreadsheets(
         .list(
             q="mimeType='application/vnd.google-apps.spreadsheet'",
             pageSize=max_results,
-            fields="files(id,name,modifiedTime,webViewLink)",
+            fields="incompleteSearch, files(id,name,modifiedTime,webViewLink)",
             orderBy="modifiedTime desc",
             supportsAllDrives=True,
             includeItemsFromAllDrives=True,
+            corpora="allDrives",
         )
         .execute
     )
 
     files = files_response.get("files", [])
     if not files:
-        return f"No spreadsheets found for {user_google_email}."
+        return flag_incomplete_search(
+            f"No spreadsheets found for {user_google_email}.", files_response
+        )
 
     spreadsheets_list = [
         f'- "{file["name"]}" (ID: {file["id"]}) | Modified: {file.get("modifiedTime", "Unknown")} | Link: {file.get("webViewLink", "No link")}'
@@ -106,7 +109,7 @@ async def list_spreadsheets(
     logger.info(
         f"Successfully listed {len(files)} spreadsheets for {user_google_email}."
     )
-    return text_output
+    return flag_incomplete_search(text_output, files_response)
 
 
 @server.tool(

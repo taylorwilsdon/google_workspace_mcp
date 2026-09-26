@@ -19,6 +19,7 @@ import zipfile
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from gdrive.drive_helpers import (
+    INCOMPLETE_SEARCH_WARNING,
     SHARED_DRIVE_ORGANIZER_CONCURRENCY_LIMIT,
     _create_drive_folder_impl,
     build_drive_list_params,
@@ -935,6 +936,75 @@ def test_build_params_order_by_omits_whitespace_only_values():
     """Whitespace-only order_by values are omitted to avoid invalid API requests."""
     params = build_drive_list_params(query="q", page_size=5, order_by="   ")
     assert "orderBy" not in params
+
+
+@pytest.mark.parametrize(
+    "kwargs, expected",
+    [
+        ({}, "allDrives"),
+        ({"corpora": "user"}, "user"),
+        ({"drive_id": "d1"}, "drive"),
+        ({"drive_id": "d1", "corpora": "allDrives"}, "allDrives"),
+    ],
+)
+def test_build_params_corpora_defaults(kwargs, expected):
+    """Shared drives are searched by default instead of the API's 'user' corpus."""
+    params = build_drive_list_params(query="q", page_size=5, **kwargs)
+    assert params["corpora"] == expected
+
+
+def test_build_params_omits_corpora_when_excluding_shared_drives():
+    """'allDrives' requires includeItemsFromAllDrives, so it is not defaulted without it."""
+    params = build_drive_list_params(
+        query="q", page_size=5, include_items_from_all_drives=False
+    )
+    assert "corpora" not in params
+
+
+@pytest.mark.parametrize("detailed", [True, False])
+def test_build_params_requests_incomplete_search(detailed):
+    """incompleteSearch is requested so partial allDrives results can be flagged."""
+    params = build_drive_list_params(query="q", page_size=5, detailed=detailed)
+    assert "incompleteSearch" in params["fields"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("files", [[], [{"id": "f1", "name": "A", "mimeType": "x"}]])
+@patch("gdrive.drive_tools.resolve_folder_id", new_callable=AsyncMock)
+async def test_drive_listings_warn_on_incomplete_search(mock_resolve_folder, files):
+    """Both listing tools flag incompleteSearch, including when nothing matched."""
+    mock_resolve_folder.return_value = "root"
+    mock_service = Mock()
+    mock_service.files().list().execute.return_value = {
+        "files": files,
+        "incompleteSearch": True,
+    }
+
+    search_result = await _unwrap(search_drive_files)(
+        service=mock_service, user_google_email="user@example.com", query="a"
+    )
+    list_result = await _unwrap(list_drive_items)(
+        service=mock_service, user_google_email="user@example.com"
+    )
+
+    assert search_result.endswith(INCOMPLETE_SEARCH_WARNING)
+    assert list_result.endswith(INCOMPLETE_SEARCH_WARNING)
+
+
+@pytest.mark.asyncio
+async def test_search_drive_files_no_warning_when_search_complete():
+    """No incompleteSearch warning is added when Drive searched every corpus."""
+    mock_service = Mock()
+    mock_service.files().list().execute.return_value = {
+        "files": [{"id": "f1", "name": "A", "mimeType": "x"}],
+        "incompleteSearch": False,
+    }
+
+    result = await _unwrap(search_drive_files)(
+        service=mock_service, user_google_email="user@example.com", query="a"
+    )
+
+    assert INCOMPLETE_SEARCH_WARNING not in result
 
 
 # ---------------------------------------------------------------------------

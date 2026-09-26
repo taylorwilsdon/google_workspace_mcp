@@ -71,6 +71,7 @@ from gdrive.drive_helpers import (
     _use_resumable_upload,
     build_drive_list_params,
     check_public_link_permission,
+    flag_incomplete_search,
     list_all_permissions,
     derive_shared_state,
     format_permission_info,
@@ -133,7 +134,8 @@ async def search_drive_files(
         include_items_from_all_drives (bool): Whether shared drive items should be included in results. Defaults to True. This is effective when not specifying a `drive_id`.
         corpora (Optional[str]): Bodies of items to query (e.g., 'user', 'domain', 'drive', 'allDrives').
                                  If 'drive_id' is specified and 'corpora' is None, it defaults to 'drive'.
-                                 Otherwise, Drive API default behavior applies. Prefer 'user' or 'drive' over 'allDrives' for efficiency.
+                                 Otherwise it defaults to 'allDrives' when `include_items_from_all_drives` is True.
+                                 Pass 'user' to search only My Drive and files shared with the user.
         file_type (Optional[str]): Restrict results to a specific file type. Accepts a friendly
                                    name ('folder', 'document'/'doc', 'spreadsheet'/'sheet',
                                    'presentation'/'slides', 'form', 'drawing', 'pdf', 'shortcut',
@@ -204,7 +206,7 @@ async def search_drive_files(
     results = await asyncio.to_thread(service.files().list(**list_params).execute)
     files = results.get("files", [])
     if not files:
-        return f"No files found for '{query}'."
+        return flag_incomplete_search(f"No files found for '{query}'.", results)
 
     next_token = results.get("nextPageToken")
     header = f"Found {len(files)} files for {user_google_email} matching '{query}':"
@@ -255,8 +257,7 @@ async def search_drive_files(
             )
     if next_token:
         formatted_files_text_parts.append(f"nextPageToken: {next_token}")
-    text_output = "\n".join(formatted_files_text_parts)
-    return text_output
+    return flag_incomplete_search("\n".join(formatted_files_text_parts), results)
 
 
 @server.tool(
@@ -628,7 +629,7 @@ async def list_drive_items(
         page_token (Optional[str]): Page token from a previous response's nextPageToken to retrieve the next page of results.
         drive_id (Optional[str]): ID of the shared drive. If provided, the listing is scoped to this drive.
         include_items_from_all_drives (bool): Whether items from all accessible shared drives should be included if `drive_id` is not set. Defaults to True.
-        corpora (Optional[str]): Corpus to query ('user', 'drive', 'allDrives'). If `drive_id` is set and `corpora` is None, 'drive' is used. If None and no `drive_id`, API defaults apply.
+        corpora (Optional[str]): Corpus to query ('user', 'drive', 'allDrives'). If `drive_id` is set and `corpora` is None, 'drive' is used. If None and no `drive_id`, 'allDrives' is used when `include_items_from_all_drives` is True.
         file_type (Optional[str]): Restrict results to a specific file type. Accepts a friendly
                                    name ('folder', 'document'/'doc', 'spreadsheet'/'sheet',
                                    'presentation'/'slides', 'form', 'drawing', 'pdf', 'shortcut',
@@ -692,7 +693,9 @@ async def list_drive_items(
     results = await asyncio.to_thread(service.files().list(**list_params).execute)
     files = results.get("files", [])
     if not files:
-        return f"No items found in folder '{folder_id}'."
+        return flag_incomplete_search(
+            f"No items found in folder '{folder_id}'.", results
+        )
 
     next_token = results.get("nextPageToken")
     header = (
@@ -734,8 +737,7 @@ async def list_drive_items(
             )
     if next_token:
         formatted_items_text_parts.append(f"nextPageToken: {next_token}")
-    text_output = "\n".join(formatted_items_text_parts)
-    return text_output
+    return flag_incomplete_search("\n".join(formatted_items_text_parts), results)
 
 
 @server.tool(
