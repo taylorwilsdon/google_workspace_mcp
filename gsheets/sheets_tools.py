@@ -661,11 +661,13 @@ async def _format_sheet_range_impl(
     bold: Optional[bool] = None,
     italic: Optional[bool] = None,
     font_size: Optional[int] = None,
-) -> str:
+    merge_cells: Optional[bool] = None,
+    merge_type: Optional[str] = None,
+) -> dict:
     """Internal implementation for format_sheet_range.
 
     Applies formatting to a Google Sheets range including colors, number formats,
-    text wrapping, alignment, and text styling.
+    text wrapping, alignment, text styling, and cell merging/unmerging.
 
     Args:
         service: Google Sheets API service client.
@@ -681,11 +683,15 @@ async def _format_sheet_range_impl(
         bold: Whether to apply bold formatting.
         italic: Whether to apply italic formatting.
         font_size: Font size in points.
+        merge_cells: Whether to merge (True) or unmerge (False) cells in the range.
+            Defaults to None (no merge action).
+        merge_type: Type of merge when merge_cells is True or when merge_type is specified.
+            Must be one of "MERGE_ALL", "MERGE_COLUMNS", or "MERGE_ROWS". Defaults to "MERGE_ALL".
 
     Returns:
         Dictionary with keys: range_name, spreadsheet_id, summary.
     """
-    # Validate at least one formatting option is provided
+    # Validate at least one formatting or merge option is provided
     has_any_format = any(
         [
             background_color,
@@ -697,14 +703,33 @@ async def _format_sheet_range_impl(
             bold is not None,
             italic is not None,
             font_size is not None,
+            merge_cells is not None,
+            merge_type is not None,
         ]
     )
     if not has_any_format:
         raise UserInputError(
-            "Provide at least one formatting option (background_color, text_color, "
+            "Provide at least one formatting or merge option (background_color, text_color, "
             "number_format_type, wrap_strategy, horizontal_alignment, vertical_alignment, "
-            "bold, italic, or font_size)."
+            "bold, italic, font_size, merge_cells, or merge_type)."
         )
+
+    # Validate and normalize merge options
+    normalized_merge_type = None
+    if merge_cells is False and merge_type is not None:
+        raise UserInputError(
+            "Cannot specify merge_type when merge_cells is False (unmerging)."
+        )
+
+    if merge_type is not None:
+        allowed_merge_types = {"MERGE_ALL", "MERGE_COLUMNS", "MERGE_ROWS"}
+        normalized_merge_type = merge_type.strip().upper()
+        if normalized_merge_type not in allowed_merge_types:
+            raise UserInputError(
+                f"merge_type must be one of {sorted(allowed_merge_types)}."
+            )
+    elif merge_cells is True:
+        normalized_merge_type = "MERGE_ALL"
 
     # Parse colors
     bg_color_parsed = _parse_hex_color(background_color)
@@ -775,6 +800,25 @@ async def _format_sheet_range_impl(
     sheets = metadata.get("sheets", [])
     grid_range = _parse_a1_range(range_name, sheets)
 
+    # Check for single-cell merge error
+    if merge_cells is True or (
+        merge_cells is None and normalized_merge_type is not None
+    ):
+        start_row = grid_range.get("startRowIndex")
+        end_row = grid_range.get("endRowIndex")
+        start_col = grid_range.get("startColumnIndex")
+        end_col = grid_range.get("endColumnIndex")
+        if (
+            start_row is not None
+            and end_row is not None
+            and start_col is not None
+            and end_col is not None
+        ):
+            if (end_row - start_row <= 1) and (end_col - start_col <= 1):
+                raise UserInputError(
+                    f"Cannot merge single cell '{range_name}'. Merging requires a range spanning at least 2 cells."
+                )
+
     # Build userEnteredFormat and fields list
     user_entered_format = {}
     fields = []
@@ -828,14 +872,11 @@ async def _format_sheet_range_impl(
         user_entered_format["verticalAlignment"] = v_align_normalized
         fields.append("userEnteredFormat.verticalAlignment")
 
-    if not user_entered_format:
-        raise UserInputError(
-            "No formatting applied. Verify provided formatting options."
-        )
+    # Build requests
+    requests = []
 
-    # Build and execute request
-    request_body = {
-        "requests": [
+    if user_entered_format:
+        requests.append(
             {
                 "repeatCell": {
                     "range": grid_range,
@@ -843,8 +884,35 @@ async def _format_sheet_range_impl(
                     "fields": ",".join(fields),
                 }
             }
-        ]
-    }
+        )
+
+    if merge_cells is True or (
+        merge_cells is None and normalized_merge_type is not None
+    ):
+        requests.append(
+            {
+                "mergeCells": {
+                    "range": grid_range,
+                    "mergeType": normalized_merge_type,
+                }
+            }
+        )
+    elif merge_cells is False:
+        requests.append(
+            {
+                "unmergeCells": {
+                    "range": grid_range,
+                }
+            }
+        )
+
+    if not requests:
+        raise UserInputError(
+            "No formatting or merge action applied. Verify provided options."
+        )
+
+    # Build and execute request
+    request_body = {"requests": requests}
 
     await asyncio.to_thread(
         service.spreadsheets()
@@ -875,6 +943,12 @@ async def _format_sheet_range_impl(
         applied_parts.append("italic" if italic else "not italic")
     if font_size is not None:
         applied_parts.append(f"font size {font_size}")
+    if merge_cells is True or (
+        merge_cells is None and normalized_merge_type is not None
+    ):
+        applied_parts.append(f"merged cells ({normalized_merge_type})")
+    elif merge_cells is False:
+        applied_parts.append("unmerged cells")
 
     summary = ", ".join(applied_parts)
 
@@ -912,10 +986,12 @@ async def format_sheet_range(
     bold: Optional[bool] = None,
     italic: Optional[bool] = None,
     font_size: Optional[int] = None,
+    merge_cells: Optional[bool] = None,
+    merge_type: Optional[str] = None,
 ) -> str:
     """
     Applies formatting to a range: colors, number formats, text wrapping,
-    alignment, and text styling.
+    alignment, text styling, and cell merging/unmerging.
 
     Colors accept hex strings (#RRGGBB). Number formats follow Sheets types
     (e.g., NUMBER, CURRENCY, DATE, PERCENT). If no sheet name is provided,
@@ -939,6 +1015,10 @@ async def format_sheet_range(
         bold (Optional[bool]): Whether to apply bold formatting.
         italic (Optional[bool]): Whether to apply italic formatting.
         font_size (Optional[int]): Font size in points.
+        merge_cells (Optional[bool]): Whether to merge (True) or unmerge (False) cells in the range.
+            Defaults to None (no merge action).
+        merge_type (Optional[str]): Type of merge when merge_cells is True or when merge_type is specified.
+            Must be one of "MERGE_ALL", "MERGE_COLUMNS", or "MERGE_ROWS". Defaults to "MERGE_ALL".
 
     Returns:
         str: Confirmation of the applied formatting.
@@ -964,6 +1044,8 @@ async def format_sheet_range(
         bold=bold,
         italic=italic,
         font_size=font_size,
+        merge_cells=merge_cells,
+        merge_type=merge_type,
     )
 
     # Build confirmation message with user email

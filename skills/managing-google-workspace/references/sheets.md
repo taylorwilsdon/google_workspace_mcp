@@ -135,6 +135,8 @@ Apply visual formatting to a range: colors, number formats, text wrapping, align
 | bold | boolean | no | | |
 | italic | boolean | no | | |
 | font_size | integer | no | | Size in points |
+| merge_cells | boolean | no | | `true` to merge, `false` to unmerge |
+| merge_type | string | no | `MERGE_ALL` | `MERGE_ALL`, `MERGE_COLUMNS`, or `MERGE_ROWS` |
 
 ### manage_conditional_formatting
 Add, update, or delete conditional formatting rules.
