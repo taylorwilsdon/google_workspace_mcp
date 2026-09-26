@@ -960,6 +960,22 @@ def _extract_headers(payload: dict, header_names: List[str]) -> Dict[str, str]:
     return headers
 
 
+EMAIL_REACTION_MIME_TYPE = "text/vnd.google.email-reaction+json"
+# Headers plus MIME types without bodies: a reaction is identifiable only by
+# its MIME part, which format=metadata omits.
+_THREAD_REPLY_CONTEXT_FIELDS = (
+    "messages(labelIds,payload(headers,parts(mimeType,parts(mimeType))))"
+)
+
+
+def _is_email_reaction(payload: dict) -> bool:
+    """Return True if a message payload is a Gmail emoji reaction."""
+    return any(
+        part.get("mimeType") == EMAIL_REACTION_MIME_TYPE or _is_email_reaction(part)
+        for part in payload.get("parts") or []
+    )
+
+
 async def _fetch_thread_reply_context(
     service,
     thread_id: str,
@@ -980,13 +996,9 @@ async def _fetch_thread_reply_context(
     ]
 
     try:
-        request_kwargs = {
-            "userId": "me",
-            "id": thread_id,
-            "format": "full" if include_bodies else "metadata",
-        }
+        request_kwargs = {"userId": "me", "id": thread_id, "format": "full"}
         if not include_bodies:
-            request_kwargs["metadataHeaders"] = header_names
+            request_kwargs["fields"] = _THREAD_REPLY_CONTEXT_FIELDS
 
         request = service.users().threads().get(**request_kwargs)
         thread = await asyncio.to_thread(request.execute)
@@ -1032,9 +1044,16 @@ async def _fetch_thread_reply_context(
             context["html_body"] = bodies.get("html", "")
         message_contexts.append(context)
         # Automatic selection only considers actual sent or received messages.
-        # Keep every context above so an explicit In-Reply-To can still resolve
-        # to the exact message the caller selected.
-        if context["message_id"] and "DRAFT" not in labels and "TRASH" not in labels:
+        # Gmail web renders a reaction as a chip on its parent, so a reply
+        # parented on one is hidden from the conversation view. Keep every
+        # context above so an explicit In-Reply-To can still resolve to the
+        # exact message the caller selected.
+        if (
+            context["message_id"]
+            and "DRAFT" not in labels
+            and "TRASH" not in labels
+            and not _is_email_reaction(payload)
+        ):
             eligible_contexts.append(context)
 
     target = None
