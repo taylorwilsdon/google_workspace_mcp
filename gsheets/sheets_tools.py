@@ -35,12 +35,15 @@ from gsheets.sheets_helpers import (
     _format_conditional_rules_section,
     _format_named_ranges_list,
     _format_sheet_error_section,
+    _grid_range_to_a1,
+    _index_to_column,
     _normalize_chips_input,
     _parse_a1_range,
     _parse_condition_values,
     _parse_gradient_points,
     _parse_hex_color,
     _select_sheet,
+    _split_sheet_and_range,
     _values_contain_sheets_errors,
 )
 
@@ -3047,6 +3050,484 @@ async def manage_named_range(
         new_name=new_name,
         new_range=new_range,
     )
+
+
+async def _manage_sheet_basic_filter_impl(
+    service,
+    spreadsheet_id: str,
+    action: str,
+    sheet_name: Optional[str] = None,
+    range_name: Optional[str] = None,
+    hidden_values: Optional[dict] = None,
+    sort_column: Optional[Union[str, int]] = None,
+    sort_order: Optional[str] = None,
+    filter_criteria: Optional[dict] = None,
+) -> dict:
+    """Internal implementation for managing basic filters in a Google Sheet."""
+    if not spreadsheet_id or not spreadsheet_id.strip():
+        raise UserInputError("spreadsheet_id is required.")
+
+    if not action or not action.strip():
+        raise UserInputError("action is required.")
+
+    action_norm = action.strip().lower()
+    valid_actions = {
+        "set",
+        "add",
+        "create",
+        "modify",
+        "update",
+        "clear",
+        "remove",
+        "delete",
+        "get",
+        "inspect",
+        "view",
+        "status",
+        "list",
+    }
+    if action_norm not in valid_actions:
+        raise UserInputError(
+            f"Invalid action '{action}'. Must be one of 'set' (or 'add'), 'modify' (or 'update'), 'clear' (or 'remove'), 'get' (or 'inspect')."
+        )
+
+    # Fetch spreadsheet metadata with sheets properties and basicFilter
+    metadata = await asyncio.to_thread(
+        service.spreadsheets()
+        .get(
+            spreadsheetId=spreadsheet_id,
+            fields="sheets(properties(sheetId,title),basicFilter)",
+        )
+        .execute
+    )
+    sheets = metadata.get("sheets", [])
+    if not sheets:
+        raise UserInputError("Spreadsheet contains no sheets.")
+
+    sheet_titles = {
+        s.get("properties", {}).get("sheetId"): s.get("properties", {}).get("title", "")
+        for s in sheets
+    }
+
+    # Determine target sheet
+    target_sheet = None
+    if sheet_name and sheet_name.strip():
+        for s in sheets:
+            if s.get("properties", {}).get("title") == sheet_name.strip():
+                target_sheet = s
+                break
+        if target_sheet is None:
+            available = [
+                s.get("properties", {}).get("title", "Untitled") for s in sheets
+            ]
+            raise UserInputError(
+                f"Sheet '{sheet_name}' not found. Available sheets: {', '.join(available)}."
+            )
+    elif range_name and "!" in range_name:
+        extracted_sheet, _ = _split_sheet_and_range(range_name)
+        if extracted_sheet:
+            for s in sheets:
+                if s.get("properties", {}).get("title") == extracted_sheet:
+                    target_sheet = s
+                    break
+            if target_sheet is None:
+                available = [
+                    s.get("properties", {}).get("title", "Untitled") for s in sheets
+                ]
+                raise UserInputError(
+                    f"Sheet '{extracted_sheet}' not found. Available sheets: {', '.join(available)}."
+                )
+
+    if target_sheet is None:
+        target_sheet = sheets[0]
+
+    sheet_id = target_sheet.get("properties", {}).get("sheetId")
+    sheet_title = target_sheet.get("properties", {}).get("title", "")
+    existing_filter = target_sheet.get("basicFilter")
+
+    def _parse_sort_spec(col_ref, order_val):
+        if col_ref is None:
+            return None
+        if isinstance(col_ref, int):
+            c_idx = col_ref
+        elif isinstance(col_ref, str) and col_ref.strip().isdigit():
+            c_idx = int(col_ref.strip())
+        elif isinstance(col_ref, str):
+            c_idx = _column_to_index(col_ref.strip().upper())
+            if c_idx is None:
+                raise UserInputError(
+                    f"Invalid sort_column '{col_ref}'. Must be a valid column letter (e.g. 'A') or index."
+                )
+        else:
+            raise UserInputError(f"Invalid sort_column '{col_ref}'.")
+
+        ord_str = (order_val or "ASCENDING").strip().upper()
+        if ord_str not in {"ASCENDING", "DESCENDING"}:
+            raise UserInputError(
+                f"sort_order must be 'ASCENDING' or 'DESCENDING', got '{order_val}'."
+            )
+        return {"dimensionIndex": c_idx, "sortOrder": ord_str}
+
+    def _build_filter_specs_and_criteria(h_vals, f_crits):
+        criteria_map = {}
+        filter_specs_list = []
+
+        if h_vals:
+            if not isinstance(h_vals, dict):
+                raise UserInputError(
+                    "hidden_values must be a dictionary mapping column identifiers to lists of hidden values."
+                )
+            for col_ref, vals in h_vals.items():
+                if isinstance(col_ref, int):
+                    c_idx = col_ref
+                elif isinstance(col_ref, str) and col_ref.strip().isdigit():
+                    c_idx = int(col_ref.strip())
+                elif isinstance(col_ref, str):
+                    c_idx = _column_to_index(col_ref.strip().upper())
+                    if c_idx is None:
+                        raise UserInputError(
+                            f"Invalid column identifier '{col_ref}' in hidden_values."
+                        )
+                else:
+                    raise UserInputError(
+                        f"Invalid column identifier '{col_ref}' in hidden_values."
+                    )
+
+                vals_list = (
+                    [str(v) for v in vals]
+                    if isinstance(vals, (list, tuple))
+                    else [str(vals)]
+                )
+                criteria_map[str(c_idx)] = {"hiddenValues": vals_list}
+                filter_specs_list.append(
+                    {
+                        "columnIndex": c_idx,
+                        "filterCriteria": {"hiddenValues": vals_list},
+                    }
+                )
+
+        if f_crits:
+            if not isinstance(f_crits, dict):
+                raise UserInputError(
+                    "filter_criteria must be a dictionary mapping column identifiers to filter criteria objects."
+                )
+            for col_ref, crit in f_crits.items():
+                if isinstance(col_ref, int):
+                    c_idx = col_ref
+                elif isinstance(col_ref, str) and col_ref.strip().isdigit():
+                    c_idx = int(col_ref.strip())
+                elif isinstance(col_ref, str):
+                    c_idx = _column_to_index(col_ref.strip().upper())
+                    if c_idx is None:
+                        raise UserInputError(
+                            f"Invalid column identifier '{col_ref}' in filter_criteria."
+                        )
+                else:
+                    raise UserInputError(
+                        f"Invalid column identifier '{col_ref}' in filter_criteria."
+                    )
+
+                if not isinstance(crit, dict):
+                    raise UserInputError(
+                        f"Criteria for column '{col_ref}' must be a dictionary."
+                    )
+
+                if str(c_idx) in criteria_map:
+                    criteria_map[str(c_idx)].update(crit)
+                else:
+                    criteria_map[str(c_idx)] = copy.deepcopy(crit)
+
+                found = False
+                for fs in filter_specs_list:
+                    if fs["columnIndex"] == c_idx:
+                        fs["filterCriteria"].update(crit)
+                        found = True
+                        break
+                if not found:
+                    filter_specs_list.append(
+                        {"columnIndex": c_idx, "filterCriteria": copy.deepcopy(crit)}
+                    )
+
+        return criteria_map, filter_specs_list
+
+    # ACTION: GET / INSPECT / VIEW / STATUS / LIST
+    if action_norm in {"get", "inspect", "view", "status", "list"}:
+        if not existing_filter:
+            return {
+                "action": "get",
+                "spreadsheet_id": spreadsheet_id,
+                "sheet_id": sheet_id,
+                "sheet_name": sheet_title,
+                "has_filter": False,
+                "filter": None,
+                "message": f"No basic filter found on sheet '{sheet_title}'.",
+            }
+
+        filter_range_a1 = _grid_range_to_a1(
+            existing_filter.get("range", {}), sheet_titles
+        )
+        return {
+            "action": "get",
+            "spreadsheet_id": spreadsheet_id,
+            "sheet_id": sheet_id,
+            "sheet_name": sheet_title,
+            "has_filter": True,
+            "filter": existing_filter,
+            "range_a1": filter_range_a1,
+            "message": f"Basic filter active on sheet '{sheet_title}' covering range '{filter_range_a1}'.",
+        }
+
+    # ACTION: CLEAR / REMOVE / DELETE
+    if action_norm in {"clear", "remove", "delete"}:
+        requests = [{"clearBasicFilter": {"sheetId": sheet_id}}]
+        await asyncio.to_thread(
+            service.spreadsheets()
+            .batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests})
+            .execute
+        )
+        return {
+            "action": "clear",
+            "spreadsheet_id": spreadsheet_id,
+            "sheet_id": sheet_id,
+            "sheet_name": sheet_title,
+            "message": f"Cleared basic filter on sheet '{sheet_title}'.",
+        }
+
+    # ACTION: SET / ADD / CREATE
+    if action_norm in {"set", "add", "create"}:
+        if not range_name or not range_name.strip():
+            raise UserInputError(
+                "range_name is required when setting a basic filter (e.g. 'A1:Z50' or ''Sheet1'!A1:Z')."
+            )
+
+        clean_range = range_name.strip()
+        if "!" not in clean_range:
+            clean_range = f"'{sheet_title}'!{clean_range}"
+
+        grid_range = _parse_a1_range(clean_range, sheets)
+        basic_filter = {"range": grid_range}
+
+        sort_spec = _parse_sort_spec(sort_column, sort_order)
+        if sort_spec:
+            basic_filter["sortSpecs"] = [sort_spec]
+
+        criteria_map, filter_specs_list = _build_filter_specs_and_criteria(
+            hidden_values, filter_criteria
+        )
+        if criteria_map:
+            basic_filter["criteria"] = criteria_map
+        if filter_specs_list:
+            basic_filter["filterSpecs"] = filter_specs_list
+
+        requests = [{"setBasicFilter": {"filter": basic_filter}}]
+        await asyncio.to_thread(
+            service.spreadsheets()
+            .batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests})
+            .execute
+        )
+
+        applied_range_a1 = _grid_range_to_a1(grid_range, sheet_titles)
+        return {
+            "action": "set",
+            "spreadsheet_id": spreadsheet_id,
+            "sheet_id": sheet_id,
+            "sheet_name": sheet_title,
+            "range_a1": applied_range_a1,
+            "sort_spec": sort_spec,
+            "criteria": criteria_map,
+            "filter": basic_filter,
+            "message": f"Successfully set basic filter on sheet '{sheet_title}' for range '{applied_range_a1}'.",
+        }
+
+    # ACTION: MODIFY / UPDATE
+    if action_norm in {"modify", "update"}:
+        if not existing_filter and (not range_name or not range_name.strip()):
+            raise UserInputError(
+                f"No existing basic filter found on sheet '{sheet_title}' to modify. Please provide a range_name to set a new filter."
+            )
+
+        updated_filter = copy.deepcopy(existing_filter) if existing_filter else {}
+
+        if range_name and range_name.strip():
+            clean_range = range_name.strip()
+            if "!" not in clean_range:
+                clean_range = f"'{sheet_title}'!{clean_range}"
+            updated_filter["range"] = _parse_a1_range(clean_range, sheets)
+        elif not updated_filter.get("range"):
+            raise UserInputError(
+                "Cannot modify basic filter: range could not be resolved."
+            )
+
+        sort_spec = _parse_sort_spec(sort_column, sort_order)
+        if sort_spec:
+            updated_filter["sortSpecs"] = [sort_spec]
+
+        new_criteria, new_filter_specs = _build_filter_specs_and_criteria(
+            hidden_values, filter_criteria
+        )
+        if new_criteria:
+            existing_criteria = updated_filter.get("criteria", {})
+            for col_k, c_v in new_criteria.items():
+                if col_k in existing_criteria:
+                    existing_criteria[col_k].update(c_v)
+                else:
+                    existing_criteria[col_k] = copy.deepcopy(c_v)
+            updated_filter["criteria"] = existing_criteria
+
+        if new_filter_specs:
+            existing_f_specs = updated_filter.get("filterSpecs", [])
+            for n_fs in new_filter_specs:
+                found = False
+                for e_fs in existing_f_specs:
+                    if e_fs.get("columnIndex") == n_fs.get("columnIndex"):
+                        e_fs["filterCriteria"].update(n_fs.get("filterCriteria", {}))
+                        found = True
+                        break
+                if not found:
+                    existing_f_specs.append(copy.deepcopy(n_fs))
+            updated_filter["filterSpecs"] = existing_f_specs
+
+        requests = [{"setBasicFilter": {"filter": updated_filter}}]
+        await asyncio.to_thread(
+            service.spreadsheets()
+            .batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests})
+            .execute
+        )
+
+        applied_range_a1 = _grid_range_to_a1(updated_filter["range"], sheet_titles)
+        return {
+            "action": "modify",
+            "spreadsheet_id": spreadsheet_id,
+            "sheet_id": sheet_id,
+            "sheet_name": sheet_title,
+            "range_a1": applied_range_a1,
+            "filter": updated_filter,
+            "message": f"Successfully updated basic filter on sheet '{sheet_title}' for range '{applied_range_a1}'.",
+        }
+
+
+@server.tool(
+    title="Manage Sheet Basic Filter",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("manage_sheet_basic_filter", service_type="sheets")
+@require_google_service("sheets", "sheets_write")
+async def manage_sheet_basic_filter(
+    service,
+    user_google_email: str,
+    spreadsheet_id: str,
+    action: str,
+    sheet_name: Optional[str] = None,
+    range_name: Optional[str] = None,
+    hidden_values: Optional[dict] = None,
+    sort_column: Optional[Union[str, int]] = None,
+    sort_order: Optional[str] = None,
+    filter_criteria: Optional[dict] = None,
+) -> str:
+    """Manage basic filters (add, modify, clear, get) on Google Sheets.
+
+    A basic filter allows filtering and sorting data directly on the sheet grid.
+    Only one basic filter can exist per sheet tab.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        spreadsheet_id (str): The ID of the spreadsheet. Required.
+        action (str): Action to perform:
+            - 'set' (or 'add'): Set a new basic filter on the specified range (replaces any existing filter).
+            - 'modify' (or 'update'): Update the range, sort order, or criteria of an existing filter.
+            - 'clear' (or 'remove'): Remove the basic filter from the sheet.
+            - 'get' (or 'inspect'): Inspect the current basic filter configuration on the sheet.
+        sheet_name (Optional[str]): Target sheet tab name. Defaults to the sheet specified in range_name, or the first sheet.
+        range_name (Optional[str]): A1-style range to filter (e.g. 'A1:Z100', 'A4:L', ''Sheet1'!A1:F50').
+            Required for action='set'.
+        hidden_values (Optional[dict]): Dictionary mapping column letters or 0-based column indexes to lists of values to hide.
+            Example: {"D": ["Archivé"], "F": ["Lu"]} or {"3": ["Archivé"]}.
+        sort_column (Optional[Union[str, int]]): Column letter (e.g. 'A') or 0-based column index to sort by.
+        sort_order (Optional[str]): Sort order: 'ASCENDING' or 'DESCENDING'. Defaults to 'ASCENDING' if sort_column is set.
+        filter_criteria (Optional[dict]): Advanced filter criteria per column (mapping column letter/index to FilterCriteria dict).
+
+    Returns:
+        str: Human-readable confirmation or report describing the filter state.
+    """
+    logger.info(
+        "[manage_sheet_basic_filter] Invoked. Email: '%s', Spreadsheet: %s, Action: %s",
+        user_google_email,
+        spreadsheet_id,
+        action,
+    )
+    res = await _manage_sheet_basic_filter_impl(
+        service=service,
+        spreadsheet_id=spreadsheet_id,
+        action=action,
+        sheet_name=sheet_name,
+        range_name=range_name,
+        hidden_values=hidden_values,
+        sort_column=sort_column,
+        sort_order=sort_order,
+        filter_criteria=filter_criteria,
+    )
+
+    action_norm = action.strip().lower()
+    if action_norm in {"get", "inspect", "view", "status", "list"}:
+        if not res.get("has_filter"):
+            return res.get("message", "No filter found.")
+        lines = [
+            f'Sheet: "{res["sheet_name"]}"',
+            "Status: Active basic filter",
+            f"Range: {res.get('range_a1', 'Unknown')}",
+        ]
+        flt = res.get("filter", {})
+        sort_specs = flt.get("sortSpecs", [])
+        if sort_specs:
+            lines.append("Sort specifications:")
+            for ss in sort_specs:
+                dim_idx = ss.get("dimensionIndex")
+                col_letter = _index_to_column(dim_idx) if dim_idx is not None else "?"
+                lines.append(
+                    f"  - Column {col_letter}: {ss.get('sortOrder', 'ASCENDING')}"
+                )
+        criteria = flt.get("criteria", {})
+        if criteria:
+            lines.append("Column criteria:")
+            for col_idx_str, c_data in criteria.items():
+                c_idx = int(col_idx_str) if col_idx_str.isdigit() else col_idx_str
+                col_letter = (
+                    _index_to_column(c_idx) if isinstance(c_idx, int) else col_idx_str
+                )
+                hidden = c_data.get("hiddenValues", [])
+                if hidden:
+                    lines.append(f"  - Column {col_letter} hidden values: {hidden}")
+                cond = c_data.get("condition")
+                if cond:
+                    lines.append(
+                        f"  - Column {col_letter} condition: {cond.get('type')}"
+                    )
+        return "\n".join(lines)
+
+    lines = [res.get("message", "Operation completed.")]
+    if "range_a1" in res:
+        lines.append(f"Range: {res['range_a1']}")
+    if res.get("sort_spec"):
+        ss = res["sort_spec"]
+        dim_idx = ss.get("dimensionIndex")
+        col_letter = _index_to_column(dim_idx) if dim_idx is not None else "?"
+        lines.append(f"Sort: Column {col_letter} ({ss.get('sortOrder')})")
+    if res.get("criteria"):
+        lines.append("Criteria applied:")
+        for col_idx_str, c_data in res["criteria"].items():
+            c_idx = int(col_idx_str) if col_idx_str.isdigit() else col_idx_str
+            col_letter = (
+                _index_to_column(c_idx) if isinstance(c_idx, int) else col_idx_str
+            )
+            hidden = c_data.get("hiddenValues", [])
+            if hidden:
+                lines.append(f"  - Column {col_letter} hidden values: {hidden}")
+    return "\n".join(lines)
 
 
 # Create comment management tools for sheets

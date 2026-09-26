@@ -8,6 +8,7 @@ MCP tools for reading, writing, formatting, and managing Google Sheets. All tool
 - Create: create_spreadsheet, create_sheet, move_sheet_rows
 - Formatting: format_sheet_range, manage_conditional_formatting
 - Named Ranges: manage_named_range
+- Filters: manage_sheet_basic_filter
 - Comments: list_spreadsheet_comments, manage_spreadsheet_comment
 - Tips
 
@@ -170,6 +171,25 @@ List, create, update, or delete named ranges in a spreadsheet.
 | named_range_id | string | no | | ID of the named range (optional identifier for `update`/`delete`) |
 | new_name | string | no | | New name for the named range (action `update`) |
 | new_range | string | no | | New A1-style range for the named range (action `update`) |
+
+---
+
+## Filters
+
+### manage_sheet_basic_filter
+Manage basic filters (add, modify, clear, get) on Google Sheets to sort and filter rows.
+
+| Parameter | Type | Required | Default | Notes |
+|-----------|------|----------|---------|-------|
+| user_google_email | string | yes | | |
+| spreadsheet_id | string | yes | | |
+| action | string | yes | | `set` (or `add`), `modify` (or `update`), `clear` (or `remove`), `get` (or `inspect`) |
+| sheet_name | string | no | | Target sheet tab name. Defaults to sheet in range_name or first sheet |
+| range_name | string | conditional | | A1-style range to filter (e.g. `A1:Z100`, `A4:L`). Required for `set` |
+| hidden_values | object | no | | Dict mapping column letter or index to list of hidden values (e.g. `{"D": ["Archivé"]}`) |
+| sort_column | string or integer | no | | Column letter (e.g. `A`) or 0-based column index to sort by |
+| sort_order | string | no | ASCENDING | `ASCENDING` or `DESCENDING` |
+| filter_criteria | object | no | | Advanced filter criteria dict per column |
 
 ---
 

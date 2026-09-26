@@ -98,6 +98,7 @@ sheets:
     - manage_spreadsheet_comment
     - manage_conditional_formatting
     - manage_named_range
+    - manage_sheet_basic_filter
 
 chat:
   core:
