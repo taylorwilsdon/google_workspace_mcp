@@ -375,3 +375,39 @@ def test_configure_server_for_http_passes_expiry_config_to_external_provider(
     assert captured["token_expiry_threshold_seconds"] == 120
     assert captured["fastmcp_access_token_expiry_seconds"] == 86400
     assert captured["fallback_refresh_token_expiry_seconds"] == 2592000
+
+
+def test_configure_server_for_http_passes_token_validation_workers(monkeypatch):
+    captured = {}
+
+    class FakeExternalOAuthProvider:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setenv("WORKSPACE_MCP_TOKEN_VALIDATION_WORKERS", "32")
+    monkeypatch.setattr(server_module, "get_transport_mode", lambda: "streamable-http")
+    monkeypatch.setattr(
+        "auth.external_oauth_provider.ExternalOAuthProvider",
+        FakeExternalOAuthProvider,
+    )
+    monkeypatch.setattr(server_module, "set_auth_provider", lambda provider: None)
+    monkeypatch.setattr(server_module, "get_oauth_proxy_expiry_kwargs", lambda: {})
+    monkeypatch.setattr(server_module, "_auth_provider", server_module._auth_provider)
+    monkeypatch.setattr(server_module.server, "auth", server_module.server.auth)
+    monkeypatch.setattr(
+        "auth.oauth_config.get_oauth_config",
+        lambda: SimpleNamespace(
+            is_oauth21_enabled=lambda: True,
+            is_configured=lambda: True,
+            is_public_client=lambda: False,
+            is_external_oauth21_provider=lambda: True,
+            client_id="client-id",
+            client_secret="client-secret",
+            get_oauth_base_url=lambda: "https://workspace-mcp.example.test",
+            redirect_path="/oauth2callback",
+        ),
+    )
+
+    server_module.configure_server_for_http()
+
+    assert captured["token_validation_workers"] == 32

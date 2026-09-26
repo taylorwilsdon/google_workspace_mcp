@@ -36,6 +36,7 @@ _MAX_SESSION_TIME = 86400
 # socket timeout. Keep it out of asyncio's process-wide default executor so a burst
 # of invalid tokens cannot starve authenticated Google Workspace operations.
 _DEFAULT_TOKEN_VALIDATION_WORKERS = 4
+_TOKEN_VALIDATION_WORKERS_ENV = "WORKSPACE_MCP_TOKEN_VALIDATION_WORKERS"
 
 
 @functools.lru_cache(maxsize=1)
@@ -63,6 +64,27 @@ def get_session_time() -> int:
             _MAX_SESSION_TIME,
         )
     return clamped
+
+
+def get_token_validation_workers() -> int:
+    """Parse WORKSPACE_MCP_TOKEN_VALIDATION_WORKERS, defaulting when unset.
+
+    The pool is shared by every caller of the process, so a gateway fronting
+    many users needs more than the default. Invalid values raise instead of
+    falling back, so a misconfigured deployment fails at startup.
+    """
+    raw = os.getenv(_TOKEN_VALIDATION_WORKERS_ENV, "").strip()
+    if not raw:
+        return _DEFAULT_TOKEN_VALIDATION_WORKERS
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value < 1:
+        raise ValueError(
+            f"{_TOKEN_VALIDATION_WORKERS_ENV} must be a positive integer, got {raw!r}"
+        )
+    return value
 
 
 class ExternalOAuthProvider(GoogleProvider):
