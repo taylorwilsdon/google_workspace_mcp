@@ -11,6 +11,7 @@ Google's Authorization Server but does not issue tokens itself.
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import functools
+import hashlib
 import logging
 import os
 import time
@@ -36,6 +37,13 @@ _MAX_SESSION_TIME = 86400
 # socket timeout. Keep it out of asyncio's process-wide default executor so a burst
 # of invalid tokens cannot starve authenticated Google Workspace operations.
 _DEFAULT_TOKEN_VALIDATION_WORKERS = 4
+
+# Validated identities are remembered per token hash for this many seconds.
+# Off by default: a cached token skips the userinfo check until it ages out.
+_TOKEN_VALIDATION_CACHE_TTL_ENV = "WORKSPACE_MCP_TOKEN_VALIDATION_CACHE_TTL"
+_TOKEN_VALIDATION_CACHE_MAX_ENTRIES = 10_000
+# Caps how long a revoked or expired token can keep passing the local check.
+_MAX_TOKEN_VALIDATION_CACHE_TTL = 300
 
 
 @functools.lru_cache(maxsize=1)
@@ -65,6 +73,35 @@ def get_session_time() -> int:
     return clamped
 
 
+def get_token_validation_cache_ttl() -> int:
+    """Parse WORKSPACE_MCP_TOKEN_VALIDATION_CACHE_TTL; unset or 0 disables it.
+
+    Invalid values raise instead of falling back, so a misconfigured deployment
+    fails at startup. Values above the maximum are clamped with a warning.
+    """
+    raw = os.getenv(_TOKEN_VALIDATION_CACHE_TTL_ENV, "").strip()
+    if not raw:
+        return 0
+    try:
+        value = int(raw)
+    except ValueError:
+        value = -1
+    if value < 0:
+        raise ValueError(
+            f"{_TOKEN_VALIDATION_CACHE_TTL_ENV} must be a non-negative integer "
+            f"(seconds), got {raw!r}"
+        )
+    if value > _MAX_TOKEN_VALIDATION_CACHE_TTL:
+        logger.warning(
+            "%s=%d clamped to %d",
+            _TOKEN_VALIDATION_CACHE_TTL_ENV,
+            value,
+            _MAX_TOKEN_VALIDATION_CACHE_TTL,
+        )
+        return _MAX_TOKEN_VALIDATION_CACHE_TTL
+    return value
+
+
 class ExternalOAuthProvider(GoogleProvider):
     """
     Extended GoogleProvider that supports validating external Google OAuth access tokens.
@@ -84,11 +121,14 @@ class ExternalOAuthProvider(GoogleProvider):
         client_secret: Optional[str] = None,
         resource_server_url: Optional[str] = None,
         token_validation_workers: int = _DEFAULT_TOKEN_VALIDATION_WORKERS,
+        token_validation_cache_ttl: int = 0,
         **kwargs,
     ):
         """Initialize and store client credentials for token validation."""
         if token_validation_workers < 1:
             raise ValueError("token_validation_workers must be at least 1")
+        if token_validation_cache_ttl < 0:
+            raise ValueError("token_validation_cache_ttl must not be negative")
 
         self._resource_server_url = resource_server_url
         if resource_server_url and "resource_base_url" not in kwargs:
@@ -108,9 +148,54 @@ class ExternalOAuthProvider(GoogleProvider):
         # ThreadPoolExecutor has an unbounded internal queue. Admit no more work
         # than can run immediately so overload fails closed instead of accumulating.
         self._token_validation_slots = asyncio.Semaphore(token_validation_workers)
+        # Only touched from the event loop, so no lock is needed. Values are
+        # (monotonic expiry, email, sub); the token itself is never stored.
+        self._token_validation_cache_ttl = token_validation_cache_ttl
+        self._validated_identities: dict[str, tuple[float, str, Optional[str]]] = {}
+
+    def _cached_identity(self, cache_key: str) -> Optional[tuple[str, Optional[str]]]:
+        entry = self._validated_identities.get(cache_key)
+        if entry is None:
+            return None
+        expires_at, email, sub = entry
+        if expires_at <= time.monotonic():
+            del self._validated_identities[cache_key]
+            return None
+        return email, sub
+
+    def _remember_identity(
+        self, cache_key: str, email: str, sub: Optional[str]
+    ) -> None:
+        if not self._token_validation_cache_ttl:
+            return
+        now = time.monotonic()
+        cache = self._validated_identities
+        if len(cache) >= _TOKEN_VALIDATION_CACHE_MAX_ENTRIES:
+            for key in [
+                k for k, (expires_at, _, _) in cache.items() if expires_at <= now
+            ]:
+                del cache[key]
+        if len(cache) >= _TOKEN_VALIDATION_CACHE_MAX_ENTRIES:
+            del cache[next(iter(cache))]
+        cache[cache_key] = (now + self._token_validation_cache_ttl, email, sub)
+
+    def _build_access_token(
+        self, token: str, email: str, sub: Optional[str]
+    ) -> WorkspaceAccessToken:
+        scope_list = list(getattr(self, "required_scopes", []) or [])
+        return WorkspaceAccessToken(
+            token=token,
+            scopes=scope_list,
+            expires_at=int(time.time()) + get_session_time(),
+            claims={"email": email, "sub": sub},
+            client_id=self._client_id,
+            email=email,
+            sub=sub,
+        )
 
     def close(self) -> None:
         """Stop accepting token-validation work and release executor resources."""
+        self._validated_identities.clear()
         executor = self._token_validation_executor
         if executor is None:
             return
@@ -133,6 +218,11 @@ class ExternalOAuthProvider(GoogleProvider):
         # For ya29.* access tokens, validate using Google's userinfo API
         if token.startswith("ya29."):
             logger.debug("Validating external Google OAuth access token")
+
+            cache_key = hashlib.sha256(token.encode()).hexdigest()
+            cached = self._cached_identity(cache_key)
+            if cached is not None:
+                return self._build_access_token(token, *cached)
 
             try:
                 from auth.google_auth import get_user_info
@@ -182,26 +272,15 @@ class ExternalOAuthProvider(GoogleProvider):
                 user_info = await asyncio.shield(validation_future)
 
                 if user_info and user_info.get("email"):
-                    session_time = get_session_time()
-                    # Token is valid - create AccessToken object
                     logger.info(
                         f"Validated external access token for: {user_info['email']}"
                     )
-
-                    scope_list = list(getattr(self, "required_scopes", []) or [])
-                    access_token = WorkspaceAccessToken(
-                        token=token,
-                        scopes=scope_list,
-                        expires_at=int(time.time()) + session_time,
-                        claims={
-                            "email": user_info["email"],
-                            "sub": user_info.get("id"),
-                        },
-                        client_id=self._client_id,
-                        email=user_info["email"],
-                        sub=user_info.get("id"),
+                    self._remember_identity(
+                        cache_key, user_info["email"], user_info.get("id")
                     )
-                    return access_token
+                    return self._build_access_token(
+                        token, user_info["email"], user_info.get("id")
+                    )
                 else:
                     logger.error("Could not get user info from access token")
                     return None

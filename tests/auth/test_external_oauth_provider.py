@@ -4,10 +4,14 @@ import threading
 
 import pytest
 
-from auth.external_oauth_provider import ExternalOAuthProvider
+import auth.external_oauth_provider as provider_module
+from auth.external_oauth_provider import (
+    ExternalOAuthProvider,
+    get_token_validation_cache_ttl,
+)
 
 
-def _make_provider(*, workers: int = 1) -> ExternalOAuthProvider:
+def _make_provider(*, workers: int = 1, cache_ttl: int = 0) -> ExternalOAuthProvider:
     return ExternalOAuthProvider(
         client_id="test-client",
         client_secret="test-client-secret",
@@ -15,6 +19,7 @@ def _make_provider(*, workers: int = 1) -> ExternalOAuthProvider:
         resource_server_url="https://workspace-mcp.example.test",
         required_scopes=["openid"],
         token_validation_workers=workers,
+        token_validation_cache_ttl=cache_ttl,
     )
 
 
@@ -185,3 +190,163 @@ async def test_validation_failure_returns_none_and_releases_capacity(monkeypatch
 
     assert valid is not None
     assert valid.email == "user@example.com"
+
+
+def _counting_user_info(monkeypatch):
+    calls = []
+
+    def get_user_info(credentials, *, skip_valid_check=False):
+        calls.append(credentials.token)
+        return {"email": f"{credentials.token}@example.com", "id": credentials.token}
+
+    monkeypatch.setattr("auth.google_auth.get_user_info", get_user_info)
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_validation_cache_is_off_by_default(monkeypatch):
+    provider = _make_provider()
+    calls = _counting_user_info(monkeypatch)
+
+    try:
+        await provider.verify_token("ya29.same")
+        await provider.verify_token("ya29.same")
+    finally:
+        provider.close()
+
+    assert calls == ["ya29.same", "ya29.same"]
+
+
+@pytest.mark.asyncio
+async def test_cached_token_skips_userinfo_and_keeps_its_identity(monkeypatch):
+    provider = _make_provider(cache_ttl=60)
+    calls = _counting_user_info(monkeypatch)
+
+    try:
+        first = await provider.verify_token("ya29.alice")
+        second = await provider.verify_token("ya29.alice")
+        other = await provider.verify_token("ya29.bob")
+    finally:
+        provider.close()
+
+    assert calls == ["ya29.alice", "ya29.bob"]
+    assert second.token == "ya29.alice"
+    assert (second.email, second.sub) == (first.email, first.sub)
+    assert other.email == "ya29.bob@example.com"
+    assert "ya29.alice" not in provider._validated_identities
+
+
+@pytest.mark.asyncio
+async def test_cached_token_bypasses_exhausted_validation_capacity(monkeypatch):
+    provider = _make_provider(cache_ttl=60)
+    validation_started = threading.Event()
+    release_validation = threading.Event()
+
+    def get_user_info(credentials, *, skip_valid_check=False):
+        if credentials.token == "ya29.slow":
+            validation_started.set()
+            assert release_validation.wait(timeout=2)
+        return {"email": "user@example.com", "id": "user-id"}
+
+    monkeypatch.setattr("auth.google_auth.get_user_info", get_user_info)
+
+    await provider.verify_token("ya29.cached")
+    slow_validation = asyncio.create_task(provider.verify_token("ya29.slow"))
+    try:
+        await _wait_for_thread_event(validation_started)
+        assert await provider.verify_token("ya29.uncached") is None
+        cached = await asyncio.wait_for(
+            provider.verify_token("ya29.cached"), timeout=0.2
+        )
+        assert cached is not None
+    finally:
+        release_validation.set()
+        await asyncio.wait_for(slow_validation, timeout=1)
+        provider.close()
+
+
+@pytest.mark.asyncio
+async def test_cached_token_is_revalidated_after_ttl(monkeypatch):
+    provider = _make_provider(cache_ttl=60)
+    calls = _counting_user_info(monkeypatch)
+    now = [1000.0]
+    monkeypatch.setattr(provider_module.time, "monotonic", lambda: now[0])
+
+    try:
+        await provider.verify_token("ya29.token")
+        now[0] += 59
+        await provider.verify_token("ya29.token")
+        now[0] += 2
+        await provider.verify_token("ya29.token")
+    finally:
+        provider.close()
+
+    assert calls == ["ya29.token", "ya29.token"]
+
+
+@pytest.mark.asyncio
+async def test_failed_validation_is_not_cached(monkeypatch):
+    provider = _make_provider(cache_ttl=60)
+    results = iter([None, {"email": "user@example.com", "id": "user-id"}])
+
+    def get_user_info(credentials, *, skip_valid_check=False):
+        return next(results)
+
+    monkeypatch.setattr("auth.google_auth.get_user_info", get_user_info)
+
+    try:
+        assert await provider.verify_token("ya29.flaky") is None
+        assert await provider.verify_token("ya29.flaky") is not None
+    finally:
+        provider.close()
+
+
+@pytest.mark.asyncio
+async def test_validation_cache_is_bounded(monkeypatch):
+    monkeypatch.setattr(provider_module, "_TOKEN_VALIDATION_CACHE_MAX_ENTRIES", 3)
+    provider = _make_provider(cache_ttl=60)
+    _counting_user_info(monkeypatch)
+
+    try:
+        for i in range(5):
+            await provider.verify_token(f"ya29.token-{i}")
+        assert len(provider._validated_identities) == 3
+    finally:
+        provider.close()
+
+
+def test_cache_ttl_defaults_to_disabled(monkeypatch):
+    monkeypatch.delenv("WORKSPACE_MCP_TOKEN_VALIDATION_CACHE_TTL", raising=False)
+
+    assert get_token_validation_cache_ttl() == 0
+
+
+def test_cache_ttl_reads_env(monkeypatch):
+    monkeypatch.setenv("WORKSPACE_MCP_TOKEN_VALIDATION_CACHE_TTL", " 60 ")
+
+    assert get_token_validation_cache_ttl() == 60
+
+
+@pytest.mark.parametrize("raw", ["-1", "soon", "1.5"])
+def test_cache_ttl_rejects_invalid_env(monkeypatch, raw):
+    monkeypatch.setenv("WORKSPACE_MCP_TOKEN_VALIDATION_CACHE_TTL", raw)
+
+    with pytest.raises(ValueError, match="WORKSPACE_MCP_TOKEN_VALIDATION_CACHE_TTL"):
+        get_token_validation_cache_ttl()
+
+
+def test_cache_ttl_is_clamped_to_maximum(monkeypatch):
+    monkeypatch.setenv("WORKSPACE_MCP_TOKEN_VALIDATION_CACHE_TTL", "86400")
+
+    assert get_token_validation_cache_ttl() == 300
+
+
+@pytest.mark.asyncio
+async def test_close_clears_cached_identities(monkeypatch):
+    provider = _make_provider(cache_ttl=60)
+    _counting_user_info(monkeypatch)
+
+    await provider.verify_token("ya29.cached")
+    provider.close()
+
+    assert provider._validated_identities == {}
