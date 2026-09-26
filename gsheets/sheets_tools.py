@@ -85,6 +85,7 @@ async def list_spreadsheets(
             orderBy="modifiedTime desc",
             supportsAllDrives=True,
             includeItemsFromAllDrives=True,
+            corpora="allDrives",
         )
         .execute
     )

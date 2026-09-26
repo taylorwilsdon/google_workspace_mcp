@@ -164,6 +164,7 @@ async def search_docs(
             fields="files(id, name, createdTime, modifiedTime, webViewLink)",
             supportsAllDrives=True,
             includeItemsFromAllDrives=True,
+            corpora="allDrives",
         )
         .execute
     )

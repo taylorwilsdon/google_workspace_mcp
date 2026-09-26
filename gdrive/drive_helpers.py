@@ -301,7 +301,8 @@ def build_drive_list_params(
         page_size: Maximum number of items to return
         drive_id: Optional shared drive ID
         include_items_from_all_drives: Whether to include items from all drives
-        corpora: Optional corpus specification
+        corpora: Optional corpus specification. Defaults to 'drive' when drive_id
+                 is set, otherwise 'allDrives' when include_items_from_all_drives is True.
         page_token: Optional page token for pagination (from a previous nextPageToken)
         detailed: Whether to request size, modifiedTime, and webViewLink fields.
                   Defaults to True to preserve existing behavior.
@@ -345,12 +346,13 @@ def build_drive_list_params(
 
     if drive_id:
         list_params["driveId"] = drive_id
-        if corpora:
-            list_params["corpora"] = corpora
-        else:
-            list_params["corpora"] = "drive"
+        list_params["corpora"] = corpora or "drive"
     elif corpora:
         list_params["corpora"] = corpora
+    elif include_items_from_all_drives:
+        # The API's default 'user' corpus skips shared drives the user belongs to
+        # even when includeItemsFromAllDrives is set.
+        list_params["corpora"] = "allDrives"
 
     return list_params
 

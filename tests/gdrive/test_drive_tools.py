@@ -937,6 +937,29 @@ def test_build_params_order_by_omits_whitespace_only_values():
     assert "orderBy" not in params
 
 
+@pytest.mark.parametrize(
+    "kwargs, expected",
+    [
+        ({}, "allDrives"),
+        ({"corpora": "user"}, "user"),
+        ({"drive_id": "d1"}, "drive"),
+        ({"drive_id": "d1", "corpora": "allDrives"}, "allDrives"),
+    ],
+)
+def test_build_params_corpora_defaults(kwargs, expected):
+    """Shared drives are searched by default instead of the API's 'user' corpus."""
+    params = build_drive_list_params(query="q", page_size=5, **kwargs)
+    assert params["corpora"] == expected
+
+
+def test_build_params_omits_corpora_when_excluding_shared_drives():
+    """'allDrives' requires includeItemsFromAllDrives, so it is not defaulted without it."""
+    params = build_drive_list_params(
+        query="q", page_size=5, include_items_from_all_drives=False
+    )
+    assert "corpora" not in params
+
+
 # ---------------------------------------------------------------------------
 # import_to_google_doc — upload retries
 # ---------------------------------------------------------------------------

@@ -133,7 +133,8 @@ async def search_drive_files(
         include_items_from_all_drives (bool): Whether shared drive items should be included in results. Defaults to True. This is effective when not specifying a `drive_id`.
         corpora (Optional[str]): Bodies of items to query (e.g., 'user', 'domain', 'drive', 'allDrives').
                                  If 'drive_id' is specified and 'corpora' is None, it defaults to 'drive'.
-                                 Otherwise, Drive API default behavior applies. Prefer 'user' or 'drive' over 'allDrives' for efficiency.
+                                 Otherwise it defaults to 'allDrives' when `include_items_from_all_drives` is True.
+                                 Pass 'user' to search only My Drive and files shared with the user.
         file_type (Optional[str]): Restrict results to a specific file type. Accepts a friendly
                                    name ('folder', 'document'/'doc', 'spreadsheet'/'sheet',
                                    'presentation'/'slides', 'form', 'drawing', 'pdf', 'shortcut',
@@ -628,7 +629,7 @@ async def list_drive_items(
         page_token (Optional[str]): Page token from a previous response's nextPageToken to retrieve the next page of results.
         drive_id (Optional[str]): ID of the shared drive. If provided, the listing is scoped to this drive.
         include_items_from_all_drives (bool): Whether items from all accessible shared drives should be included if `drive_id` is not set. Defaults to True.
-        corpora (Optional[str]): Corpus to query ('user', 'drive', 'allDrives'). If `drive_id` is set and `corpora` is None, 'drive' is used. If None and no `drive_id`, API defaults apply.
+        corpora (Optional[str]): Corpus to query ('user', 'drive', 'allDrives'). If `drive_id` is set and `corpora` is None, 'drive' is used. If None and no `drive_id`, 'allDrives' is used when `include_items_from_all_drives` is True.
         file_type (Optional[str]): Restrict results to a specific file type. Accepts a friendly
                                    name ('folder', 'document'/'doc', 'spreadsheet'/'sheet',
                                    'presentation'/'slides', 'form', 'drawing', 'pdf', 'shortcut',
