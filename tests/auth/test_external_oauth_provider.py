@@ -4,7 +4,10 @@ import threading
 
 import pytest
 
-from auth.external_oauth_provider import ExternalOAuthProvider
+from auth.external_oauth_provider import (
+    ExternalOAuthProvider,
+    get_token_validation_workers,
+)
 
 
 def _make_provider(*, workers: int = 1) -> ExternalOAuthProvider:
@@ -185,3 +188,59 @@ async def test_validation_failure_returns_none_and_releases_capacity(monkeypatch
 
     assert valid is not None
     assert valid.email == "user@example.com"
+
+
+def test_token_validation_workers_defaults_when_unset(monkeypatch):
+    monkeypatch.delenv("WORKSPACE_MCP_TOKEN_VALIDATION_WORKERS", raising=False)
+
+    assert get_token_validation_workers() == 4
+
+
+def test_token_validation_workers_reads_env(monkeypatch):
+    monkeypatch.setenv("WORKSPACE_MCP_TOKEN_VALIDATION_WORKERS", " 64 ")
+
+    assert get_token_validation_workers() == 64
+
+
+@pytest.mark.parametrize("raw", ["0", "-3", "many", "1.5"])
+def test_token_validation_workers_rejects_invalid_env(monkeypatch, raw):
+    monkeypatch.setenv("WORKSPACE_MCP_TOKEN_VALIDATION_WORKERS", raw)
+
+    with pytest.raises(ValueError, match="WORKSPACE_MCP_TOKEN_VALIDATION_WORKERS"):
+        get_token_validation_workers()
+
+
+@pytest.mark.asyncio
+async def test_configured_workers_admit_that_many_concurrent_validations(
+    monkeypatch,
+):
+    workers = 8
+    provider = _make_provider(workers=workers)
+    all_started = threading.Barrier(workers + 1)
+    release_validation = threading.Event()
+
+    def blocking_get_user_info(credentials, *, skip_valid_check=False):
+        all_started.wait(timeout=2)
+        assert release_validation.wait(timeout=2)
+        return {"email": "user@example.com", "id": "user-id"}
+
+    monkeypatch.setattr("auth.google_auth.get_user_info", blocking_get_user_info)
+
+    validations = [
+        asyncio.create_task(provider.verify_token(f"ya29.concurrent-{i}"))
+        for i in range(workers)
+    ]
+    try:
+        await asyncio.to_thread(all_started.wait, 2)
+        rejected = await asyncio.wait_for(
+            provider.verify_token("ya29.one-too-many"), timeout=0.2
+        )
+        assert rejected is None
+
+        release_validation.set()
+        accepted = await asyncio.wait_for(asyncio.gather(*validations), timeout=2)
+    finally:
+        release_validation.set()
+        provider.close()
+
+    assert all(token is not None for token in accepted)
