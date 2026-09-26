@@ -179,3 +179,88 @@ appscript:
     - get_script_activity
     - manage_script_trigger
   complete: []
+
+admin-directory:
+  core:
+    - get_admin_user
+    - list_admin_capabilities
+    - plan_user_offboarding
+    - get_offboarding_status
+    - admin_operation
+  extended:
+    - advance_user_offboarding
+    - confirm_admin_operation
+
+# Opt-in admin services whose operations are used by tools listed under
+# admin-directory.
+admin-directory-devices:
+  core: []
+
+admin-directory-resources:
+  core: []
+
+admin-directory-printers:
+  core: []
+
+admin-datatransfer:
+  core: []
+
+admin-licensing:
+  core: []
+
+admin-reports:
+  core: []
+
+admin-vault:
+  core: []
+
+admin-alertcenter:
+  core: []
+
+admin-groupssettings:
+  core: []
+
+admin-cloudidentity-groups:
+  core: []
+
+admin-cloudidentity-devices:
+  core: []
+
+admin-cloudidentity-sso:
+  core: []
+
+admin-cloudidentity-policies:
+  core: []
+
+admin-cloudidentity-invitations:
+  core: []
+
+admin-cloudidentity-domains:
+  core: []
+
+admin-cloudidentity-orgunits:
+  core: []
+
+admin-chrome-reports:
+  core: []
+
+admin-chrome-telemetry:
+  core: []
+
+admin-chrome-profiles:
+  core: []
+
+admin-chrome-insights:
+  core: []
+
+admin-chrome-policy:
+  core: []
+
+admin-access-context:
+  core: []
+
+admin-contact-delegation:
+  core: []
+
+admin-gmail-delegates:
+  core: []

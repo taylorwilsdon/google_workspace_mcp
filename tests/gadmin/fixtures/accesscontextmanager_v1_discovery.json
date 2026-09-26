@@ -1,0 +1,1163 @@
+{
+  "methods": {
+    "accesscontextmanager.accessPolicies.accessLevels.create": {
+      "httpMethod": "POST",
+      "parameters": {
+        "parent": {
+          "location": "path",
+          "pattern": "^accessPolicies/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+parent}/accessLevels",
+      "request": "AccessLevel",
+      "response": "Operation",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    },
+    "accesscontextmanager.accessPolicies.accessLevels.delete": {
+      "httpMethod": "DELETE",
+      "parameters": {
+        "name": {
+          "location": "path",
+          "pattern": "^accessPolicies/[^/]+/accessLevels/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}",
+      "request": null,
+      "response": "Operation",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    },
+    "accesscontextmanager.accessPolicies.accessLevels.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "accessLevelFormat": {
+          "enum": [
+            "LEVEL_FORMAT_UNSPECIFIED",
+            "AS_DEFINED",
+            "CEL"
+          ],
+          "location": "query",
+          "type": "string"
+        },
+        "name": {
+          "location": "path",
+          "pattern": "^accessPolicies/[^/]+/accessLevels/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}",
+      "request": null,
+      "response": "AccessLevel",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    },
+    "accesscontextmanager.accessPolicies.accessLevels.list": {
+      "httpMethod": "GET",
+      "parameters": {
+        "accessLevelFormat": {
+          "enum": [
+            "LEVEL_FORMAT_UNSPECIFIED",
+            "AS_DEFINED",
+            "CEL"
+          ],
+          "location": "query",
+          "type": "string"
+        },
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        },
+        "parent": {
+          "location": "path",
+          "pattern": "^accessPolicies/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+parent}/accessLevels",
+      "request": null,
+      "response": "ListAccessLevelsResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    },
+    "accesscontextmanager.accessPolicies.accessLevels.patch": {
+      "httpMethod": "PATCH",
+      "parameters": {
+        "name": {
+          "location": "path",
+          "pattern": "^accessPolicies/[^/]+/accessLevels/[^/]+$",
+          "required": true,
+          "type": "string"
+        },
+        "updateMask": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}",
+      "request": "AccessLevel",
+      "response": "Operation",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    },
+    "accesscontextmanager.accessPolicies.accessLevels.replaceAll": {
+      "httpMethod": "POST",
+      "parameters": {
+        "parent": {
+          "location": "path",
+          "pattern": "^accessPolicies/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+parent}/accessLevels:replaceAll",
+      "request": "ReplaceAccessLevelsRequest",
+      "response": "Operation",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    },
+    "accesscontextmanager.accessPolicies.accessLevels.testIamPermissions": {
+      "httpMethod": "POST",
+      "parameters": {
+        "resource": {
+          "location": "path",
+          "pattern": "^accessPolicies/[^/]+/accessLevels/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+resource}:testIamPermissions",
+      "request": "TestIamPermissionsRequest",
+      "response": "TestIamPermissionsResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    },
+    "accesscontextmanager.accessPolicies.authorizedOrgsDescs.create": {
+      "httpMethod": "POST",
+      "parameters": {
+        "parent": {
+          "location": "path",
+          "pattern": "^accessPolicies/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+parent}/authorizedOrgsDescs",
+      "request": "AuthorizedOrgsDesc",
+      "response": "Operation",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    },
+    "accesscontextmanager.accessPolicies.authorizedOrgsDescs.delete": {
+      "httpMethod": "DELETE",
+      "parameters": {
+        "name": {
+          "location": "path",
+          "pattern": "^accessPolicies/[^/]+/authorizedOrgsDescs/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}",
+      "request": null,
+      "response": "Operation",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    },
+    "accesscontextmanager.accessPolicies.authorizedOrgsDescs.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "name": {
+          "location": "path",
+          "pattern": "^accessPolicies/[^/]+/authorizedOrgsDescs/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}",
+      "request": null,
+      "response": "AuthorizedOrgsDesc",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    },
+    "accesscontextmanager.accessPolicies.authorizedOrgsDescs.list": {
+      "httpMethod": "GET",
+      "parameters": {
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        },
+        "parent": {
+          "location": "path",
+          "pattern": "^accessPolicies/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+parent}/authorizedOrgsDescs",
+      "request": null,
+      "response": "ListAuthorizedOrgsDescsResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    },
+    "accesscontextmanager.accessPolicies.authorizedOrgsDescs.patch": {
+      "httpMethod": "PATCH",
+      "parameters": {
+        "name": {
+          "location": "path",
+          "pattern": "^accessPolicies/[^/]+/authorizedOrgsDescs/[^/]+$",
+          "required": true,
+          "type": "string"
+        },
+        "updateMask": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}",
+      "request": "AuthorizedOrgsDesc",
+      "response": "Operation",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    },
+    "accesscontextmanager.accessPolicies.create": {
+      "httpMethod": "POST",
+      "parameters": {},
+      "path": "v1/accessPolicies",
+      "request": "AccessPolicy",
+      "response": "Operation",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    },
+    "accesscontextmanager.accessPolicies.delete": {
+      "httpMethod": "DELETE",
+      "parameters": {
+        "name": {
+          "location": "path",
+          "pattern": "^accessPolicies/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}",
+      "request": null,
+      "response": "Operation",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    },
+    "accesscontextmanager.accessPolicies.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "name": {
+          "location": "path",
+          "pattern": "^accessPolicies/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}",
+      "request": null,
+      "response": "AccessPolicy",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    },
+    "accesscontextmanager.accessPolicies.getIamPolicy": {
+      "httpMethod": "POST",
+      "parameters": {
+        "resource": {
+          "location": "path",
+          "pattern": "^accessPolicies/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+resource}:getIamPolicy",
+      "request": "GetIamPolicyRequest",
+      "response": "Policy",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    },
+    "accesscontextmanager.accessPolicies.list": {
+      "httpMethod": "GET",
+      "parameters": {
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        },
+        "parent": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/accessPolicies",
+      "request": null,
+      "response": "ListAccessPoliciesResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    },
+    "accesscontextmanager.accessPolicies.patch": {
+      "httpMethod": "PATCH",
+      "parameters": {
+        "name": {
+          "location": "path",
+          "pattern": "^accessPolicies/[^/]+$",
+          "required": true,
+          "type": "string"
+        },
+        "updateMask": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}",
+      "request": "AccessPolicy",
+      "response": "Operation",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    },
+    "accesscontextmanager.accessPolicies.servicePerimeters.commit": {
+      "httpMethod": "POST",
+      "parameters": {
+        "parent": {
+          "location": "path",
+          "pattern": "^accessPolicies/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+parent}/servicePerimeters:commit",
+      "request": "CommitServicePerimetersRequest",
+      "response": "Operation",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    },
+    "accesscontextmanager.accessPolicies.servicePerimeters.create": {
+      "httpMethod": "POST",
+      "parameters": {
+        "parent": {
+          "location": "path",
+          "pattern": "^accessPolicies/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+parent}/servicePerimeters",
+      "request": "ServicePerimeter",
+      "response": "Operation",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    },
+    "accesscontextmanager.accessPolicies.servicePerimeters.delete": {
+      "httpMethod": "DELETE",
+      "parameters": {
+        "name": {
+          "location": "path",
+          "pattern": "^accessPolicies/[^/]+/servicePerimeters/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}",
+      "request": null,
+      "response": "Operation",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    },
+    "accesscontextmanager.accessPolicies.servicePerimeters.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "deletedPrincipalSyntax": {
+          "enum": [
+            "DELETED_PRINCIPAL_SYNTAX_SUPPORT_UNSPECIFIED",
+            "DELETED_PRINCIPAL_SYNTAX_SUPPORT_DISABLED",
+            "DELETED_PRINCIPAL_SYNTAX_SUPPORT_ENABLED"
+          ],
+          "location": "query",
+          "type": "string"
+        },
+        "name": {
+          "location": "path",
+          "pattern": "^accessPolicies/[^/]+/servicePerimeters/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}",
+      "request": null,
+      "response": "ServicePerimeter",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    },
+    "accesscontextmanager.accessPolicies.servicePerimeters.list": {
+      "httpMethod": "GET",
+      "parameters": {
+        "deletedPrincipalSyntax": {
+          "enum": [
+            "DELETED_PRINCIPAL_SYNTAX_SUPPORT_UNSPECIFIED",
+            "DELETED_PRINCIPAL_SYNTAX_SUPPORT_DISABLED",
+            "DELETED_PRINCIPAL_SYNTAX_SUPPORT_ENABLED"
+          ],
+          "location": "query",
+          "type": "string"
+        },
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        },
+        "parent": {
+          "location": "path",
+          "pattern": "^accessPolicies/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+parent}/servicePerimeters",
+      "request": null,
+      "response": "ListServicePerimetersResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    },
+    "accesscontextmanager.accessPolicies.servicePerimeters.patch": {
+      "httpMethod": "PATCH",
+      "parameters": {
+        "deletedPrincipalSyntax": {
+          "enum": [
+            "DELETED_PRINCIPAL_SYNTAX_SUPPORT_UNSPECIFIED",
+            "DELETED_PRINCIPAL_SYNTAX_SUPPORT_DISABLED",
+            "DELETED_PRINCIPAL_SYNTAX_SUPPORT_ENABLED"
+          ],
+          "location": "query",
+          "type": "string"
+        },
+        "name": {
+          "location": "path",
+          "pattern": "^accessPolicies/[^/]+/servicePerimeters/[^/]+$",
+          "required": true,
+          "type": "string"
+        },
+        "updateMask": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}",
+      "request": "ServicePerimeter",
+      "response": "Operation",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    },
+    "accesscontextmanager.accessPolicies.servicePerimeters.replaceAll": {
+      "httpMethod": "POST",
+      "parameters": {
+        "parent": {
+          "location": "path",
+          "pattern": "^accessPolicies/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+parent}/servicePerimeters:replaceAll",
+      "request": "ReplaceServicePerimetersRequest",
+      "response": "Operation",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    },
+    "accesscontextmanager.accessPolicies.servicePerimeters.testIamPermissions": {
+      "httpMethod": "POST",
+      "parameters": {
+        "resource": {
+          "location": "path",
+          "pattern": "^accessPolicies/[^/]+/servicePerimeters/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+resource}:testIamPermissions",
+      "request": "TestIamPermissionsRequest",
+      "response": "TestIamPermissionsResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    },
+    "accesscontextmanager.accessPolicies.setIamPolicy": {
+      "httpMethod": "POST",
+      "parameters": {
+        "resource": {
+          "location": "path",
+          "pattern": "^accessPolicies/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+resource}:setIamPolicy",
+      "request": "SetIamPolicyRequest",
+      "response": "Policy",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    },
+    "accesscontextmanager.accessPolicies.testIamPermissions": {
+      "httpMethod": "POST",
+      "parameters": {
+        "resource": {
+          "location": "path",
+          "pattern": "^accessPolicies/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+resource}:testIamPermissions",
+      "request": "TestIamPermissionsRequest",
+      "response": "TestIamPermissionsResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    },
+    "accesscontextmanager.folders.lookupConfiguredServicePerimeter": {
+      "httpMethod": "GET",
+      "parameters": {
+        "resource": {
+          "location": "path",
+          "pattern": "^folders/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+resource}:lookupConfiguredServicePerimeter",
+      "request": null,
+      "response": "LookupConfiguredServicePerimeterResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    },
+    "accesscontextmanager.operations.cancel": {
+      "httpMethod": "POST",
+      "parameters": {
+        "name": {
+          "location": "path",
+          "pattern": "^operations/.*$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}:cancel",
+      "request": "CancelOperationRequest",
+      "response": "Empty",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    },
+    "accesscontextmanager.operations.delete": {
+      "httpMethod": "DELETE",
+      "parameters": {
+        "name": {
+          "location": "path",
+          "pattern": "^operations/.*$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}",
+      "request": null,
+      "response": "Empty",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    },
+    "accesscontextmanager.operations.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "name": {
+          "location": "path",
+          "pattern": "^operations/.*$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}",
+      "request": null,
+      "response": "Operation",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    },
+    "accesscontextmanager.operations.list": {
+      "httpMethod": "GET",
+      "parameters": {
+        "filter": {
+          "location": "query",
+          "type": "string"
+        },
+        "name": {
+          "location": "path",
+          "pattern": "^operations$",
+          "required": true,
+          "type": "string"
+        },
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        },
+        "returnPartialSuccess": {
+          "location": "query",
+          "type": "boolean"
+        }
+      },
+      "path": "v1/{+name}",
+      "request": null,
+      "response": "ListOperationsResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    },
+    "accesscontextmanager.organizations.gcpUserAccessBindings.create": {
+      "httpMethod": "POST",
+      "parameters": {
+        "parent": {
+          "location": "path",
+          "pattern": "^organizations/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+parent}/gcpUserAccessBindings",
+      "request": "GcpUserAccessBinding",
+      "response": "Operation",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    },
+    "accesscontextmanager.organizations.gcpUserAccessBindings.delete": {
+      "httpMethod": "DELETE",
+      "parameters": {
+        "name": {
+          "location": "path",
+          "pattern": "^organizations/[^/]+/gcpUserAccessBindings/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}",
+      "request": null,
+      "response": "Operation",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    },
+    "accesscontextmanager.organizations.gcpUserAccessBindings.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "name": {
+          "location": "path",
+          "pattern": "^organizations/[^/]+/gcpUserAccessBindings/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}",
+      "request": null,
+      "response": "GcpUserAccessBinding",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    },
+    "accesscontextmanager.organizations.gcpUserAccessBindings.list": {
+      "httpMethod": "GET",
+      "parameters": {
+        "filter": {
+          "location": "query",
+          "type": "string"
+        },
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        },
+        "parent": {
+          "location": "path",
+          "pattern": "^organizations/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+parent}/gcpUserAccessBindings",
+      "request": null,
+      "response": "ListGcpUserAccessBindingsResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    },
+    "accesscontextmanager.organizations.gcpUserAccessBindings.patch": {
+      "httpMethod": "PATCH",
+      "parameters": {
+        "append": {
+          "location": "query",
+          "type": "boolean"
+        },
+        "name": {
+          "location": "path",
+          "pattern": "^organizations/[^/]+/gcpUserAccessBindings/[^/]+$",
+          "required": true,
+          "type": "string"
+        },
+        "updateMask": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}",
+      "request": "GcpUserAccessBinding",
+      "response": "Operation",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    },
+    "accesscontextmanager.permissions.list": {
+      "httpMethod": "GET",
+      "parameters": {
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/permissions",
+      "request": null,
+      "response": "ListSupportedPermissionsResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    },
+    "accesscontextmanager.projects.lookupConfiguredServicePerimeter": {
+      "httpMethod": "GET",
+      "parameters": {
+        "resource": {
+          "location": "path",
+          "pattern": "^projects/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+resource}:lookupConfiguredServicePerimeter",
+      "request": null,
+      "response": "LookupConfiguredServicePerimeterResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    },
+    "accesscontextmanager.services.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "name": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/services/{name}",
+      "request": null,
+      "response": "SupportedService",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    },
+    "accesscontextmanager.services.list": {
+      "httpMethod": "GET",
+      "parameters": {
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/services",
+      "request": null,
+      "response": "ListSupportedServicesResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ]
+    }
+  },
+  "name": "accesscontextmanager",
+  "retrieved": "2026-09-26",
+  "revision": "20260916",
+  "schemas": {
+    "AccessContextManagerOperationMetadata": {},
+    "AccessLevel": {
+      "basic": "BasicLevel",
+      "custom": "CustomLevel",
+      "description": "string",
+      "name": "string",
+      "title": "string"
+    },
+    "AccessPolicy": {
+      "etag": "string",
+      "name": "string",
+      "parent": "string",
+      "scopes": "array:string",
+      "title": "string"
+    },
+    "AccessScope": {
+      "clientScope": "ClientScope"
+    },
+    "AccessSettings": {
+      "accessLevels": "array:string",
+      "sessionSettings": "SessionSettings"
+    },
+    "AddRequestHeader": {
+      "key": "string",
+      "value": "string"
+    },
+    "ApiOperation": {
+      "methodSelectors": "array:MethodSelector",
+      "serviceName": "string"
+    },
+    "Application": {
+      "clientId": "string",
+      "name": "string"
+    },
+    "AuditConfig": {
+      "auditLogConfigs": "array:AuditLogConfig",
+      "service": "string"
+    },
+    "AuditLogConfig": {
+      "exemptedMembers": "array:string",
+      "logType": "string"
+    },
+    "AuthorizedOrgsDesc": {
+      "assetType": "string",
+      "authorizationDirection": "string",
+      "authorizationType": "string",
+      "name": "string",
+      "orgs": "array:string"
+    },
+    "BasicLevel": {
+      "combiningFunction": "string",
+      "conditions": "array:Condition"
+    },
+    "Binding": {
+      "condition": "Expr",
+      "members": "array:string",
+      "role": "string"
+    },
+    "CancelOperationRequest": {},
+    "ClientScope": {
+      "restrictedClientApplication": "Application",
+      "restrictedProject": "Project"
+    },
+    "CommitServicePerimetersRequest": {
+      "etag": "string"
+    },
+    "CommitServicePerimetersResponse": {
+      "servicePerimeters": "array:ServicePerimeter"
+    },
+    "Condition": {
+      "devicePolicy": "DevicePolicy",
+      "ipSubnetworks": "array:string",
+      "members": "array:string",
+      "negate": "boolean",
+      "regions": "array:string",
+      "requiredAccessLevels": "array:string",
+      "vpcNetworkSources": "array:VpcNetworkSource"
+    },
+    "CustomLevel": {
+      "expr": "Expr"
+    },
+    "DevicePolicy": {
+      "allowedDeviceManagementLevels": "array:string",
+      "allowedEncryptionStatuses": "array:string",
+      "osConstraints": "array:OsConstraint",
+      "requireAdminApproval": "boolean",
+      "requireCorpOwned": "boolean",
+      "requireScreenlock": "boolean"
+    },
+    "EgressFrom": {
+      "identities": "array:string",
+      "identityType": "string",
+      "sourceRestriction": "string",
+      "sources": "array:EgressSource"
+    },
+    "EgressPolicy": {
+      "egressFrom": "EgressFrom",
+      "egressTo": "EgressTo",
+      "title": "string"
+    },
+    "EgressSource": {
+      "accessLevel": "string",
+      "pscEndpoint": "PrivateServiceConnectEndpoint",
+      "resource": "string"
+    },
+    "EgressTo": {
+      "externalResources": "array:string",
+      "operations": "array:ApiOperation",
+      "resources": "array:string",
+      "roles": "array:string"
+    },
+    "Empty": {},
+    "Expr": {
+      "description": "string",
+      "expression": "string",
+      "location": "string",
+      "title": "string"
+    },
+    "GcpUserAccessBinding": {
+      "accessLevels": "array:string",
+      "dryRunAccessLevels": "array:string",
+      "groupKey": "string",
+      "name": "string",
+      "principal": "Principal",
+      "scopedAccessSettings": "array:ScopedAccessSettings",
+      "sessionSettings": "SessionSettings"
+    },
+    "GcpUserAccessBindingOperationMetadata": {},
+    "GetIamPolicyRequest": {
+      "options": "GetPolicyOptions"
+    },
+    "GetPolicyOptions": {
+      "requestedPolicyVersion": "integer"
+    },
+    "IngressFrom": {
+      "identities": "array:string",
+      "identityType": "string",
+      "sources": "array:IngressSource"
+    },
+    "IngressPolicy": {
+      "ingressFrom": "IngressFrom",
+      "ingressTo": "IngressTo",
+      "title": "string"
+    },
+    "IngressSource": {
+      "accessLevel": "string",
+      "pscEndpoint": "PrivateServiceConnectEndpoint",
+      "resource": "string"
+    },
+    "IngressTo": {
+      "operations": "array:ApiOperation",
+      "resources": "array:string",
+      "roles": "array:string"
+    },
+    "ListAccessLevelsResponse": {
+      "accessLevels": "array:AccessLevel",
+      "nextPageToken": "string"
+    },
+    "ListAccessPoliciesResponse": {
+      "accessPolicies": "array:AccessPolicy",
+      "nextPageToken": "string"
+    },
+    "ListAuthorizedOrgsDescsResponse": {
+      "authorizedOrgsDescs": "array:AuthorizedOrgsDesc",
+      "nextPageToken": "string"
+    },
+    "ListGcpUserAccessBindingsResponse": {
+      "gcpUserAccessBindings": "array:GcpUserAccessBinding",
+      "nextPageToken": "string"
+    },
+    "ListOperationsResponse": {
+      "nextPageToken": "string",
+      "operations": "array:Operation",
+      "unreachable": "array:string"
+    },
+    "ListServicePerimetersResponse": {
+      "nextPageToken": "string",
+      "servicePerimeters": "array:ServicePerimeter"
+    },
+    "ListSupportedPermissionsResponse": {
+      "nextPageToken": "string",
+      "supportedPermissions": "array:string"
+    },
+    "ListSupportedServicesResponse": {
+      "nextPageToken": "string",
+      "supportedServices": "array:SupportedService"
+    },
+    "LookupConfiguredServicePerimeterResponse": {
+      "restrictedResource": "string",
+      "restrictedResourceDryRun": "string",
+      "servicePerimeter": "string",
+      "servicePerimeterDryRun": "string"
+    },
+    "MethodSelector": {
+      "method": "string",
+      "permission": "string"
+    },
+    "Modifier": {
+      "addRequestHeader": "AddRequestHeader"
+    },
+    "Operation": {
+      "done": "boolean",
+      "error": "Status",
+      "metadata": "object",
+      "name": "string",
+      "response": "object"
+    },
+    "OsConstraint": {
+      "minimumVersion": "string",
+      "osType": "string",
+      "requireVerifiedChromeOs": "boolean"
+    },
+    "Policy": {
+      "auditConfigs": "array:AuditConfig",
+      "bindings": "array:Binding",
+      "etag": "string",
+      "version": "integer"
+    },
+    "Principal": {
+      "federatedPrincipal": "string",
+      "serviceAccount": "string",
+      "serviceAccountProjectNumber": "string"
+    },
+    "PrivateServiceConnectEndpoint": {
+      "forwardingRule": "string"
+    },
+    "Project": {
+      "name": "string"
+    },
+    "ReplaceAccessLevelsRequest": {
+      "accessLevels": "array:AccessLevel",
+      "etag": "string"
+    },
+    "ReplaceAccessLevelsResponse": {
+      "accessLevels": "array:AccessLevel"
+    },
+    "ReplaceServicePerimetersRequest": {
+      "etag": "string",
+      "servicePerimeters": "array:ServicePerimeter"
+    },
+    "ReplaceServicePerimetersResponse": {
+      "servicePerimeters": "array:ServicePerimeter"
+    },
+    "ScopedAccessSettings": {
+      "activeSettings": "AccessSettings",
+      "dryRunSettings": "AccessSettings",
+      "scope": "AccessScope"
+    },
+    "ServicePattern": {
+      "modifiers": "array:Modifier",
+      "pattern": "string",
+      "service": "string"
+    },
+    "ServicePerimeter": {
+      "description": "string",
+      "etag": "string",
+      "name": "string",
+      "perimeterType": "string",
+      "spec": "ServicePerimeterConfig",
+      "status": "ServicePerimeterConfig",
+      "title": "string",
+      "useExplicitDryRunSpec": "boolean"
+    },
+    "ServicePerimeterConfig": {
+      "accessLevels": "array:string",
+      "egressPolicies": "array:EgressPolicy",
+      "ingressPolicies": "array:IngressPolicy",
+      "resources": "array:string",
+      "restrictedServices": "array:string",
+      "vpcAccessibleServices": "VpcAccessibleServices"
+    },
+    "SessionSettings": {
+      "maxInactivity": "string",
+      "sessionLength": "string",
+      "sessionLengthEnabled": "boolean",
+      "sessionReauthMethod": "string",
+      "useOidcMaxAge": "boolean"
+    },
+    "SetIamPolicyRequest": {
+      "policy": "Policy",
+      "updateMask": "string"
+    },
+    "Status": {
+      "code": "integer",
+      "details": "array:object",
+      "message": "string"
+    },
+    "SupportedService": {
+      "availableOnRestrictedVip": "boolean",
+      "knownLimitations": "boolean",
+      "name": "string",
+      "serviceSupportStage": "string",
+      "supportStage": "string",
+      "supportedMethods": "array:MethodSelector",
+      "title": "string"
+    },
+    "TestIamPermissionsRequest": {
+      "permissions": "array:string"
+    },
+    "TestIamPermissionsResponse": {
+      "permissions": "array:string"
+    },
+    "VpcAccessibleServices": {
+      "allowedServicePatterns": "array:ServicePattern",
+      "allowedServices": "array:string",
+      "enableRestriction": "boolean",
+      "servicePatternsEnforcementScopes": "array:string"
+    },
+    "VpcNetworkSource": {
+      "vpcSubnetwork": "VpcSubNetwork"
+    },
+    "VpcSubNetwork": {
+      "network": "string",
+      "vpcIpSubnetworks": "array:string"
+    }
+  },
+  "source": "https://accesscontextmanager.googleapis.com/$discovery/rest?version=v1",
+  "version": "v1"
+}

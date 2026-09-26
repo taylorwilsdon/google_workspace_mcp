@@ -1,3 +1,4 @@
+import asyncio
 import gc
 import inspect
 import json
@@ -13,7 +14,11 @@ from google.auth.exceptions import RefreshError
 from google.oauth2 import service_account as google_service_account
 from googleapiclient.discovery import build
 from fastmcp.server.dependencies import get_access_token, get_context
-from auth.google_auth import get_authenticated_google_service, GoogleAuthenticationError
+from auth.google_auth import (
+    get_authenticated_google_service,
+    get_verified_account_email,
+    GoogleAuthenticationError,
+)
 from auth.gateway_identity import (
     require_gateway_principal,
     get_verified_gateway_principal,
@@ -71,6 +76,45 @@ from auth.scopes import (
     SCRIPT_DEPLOYMENTS_READONLY_SCOPE,
     SCRIPT_EXTERNAL_REQUEST_SCOPE,
     SCRIPT_SCRIPTAPP_SCOPE,
+    ADMIN_DIRECTORY_USER_SCOPE,
+    ADMIN_DIRECTORY_USER_READONLY_SCOPE,
+    ADMIN_DIRECTORY_USER_SECURITY_SCOPE,
+    ADMIN_DIRECTORY_GROUP_READONLY_SCOPE,
+    ADMIN_DIRECTORY_GROUP_MEMBER_SCOPE,
+    ADMIN_DIRECTORY_ROLEMANAGEMENT_READONLY_SCOPE,
+    ADMIN_DATATRANSFER_SCOPE,
+    ADMIN_DATATRANSFER_READONLY_SCOPE,
+    LICENSING_SCOPE,
+    REPORTS_AUDIT_READONLY_SCOPE,
+    REPORTS_USAGE_READONLY_SCOPE,
+    VAULT_SCOPE,
+    VAULT_READONLY_SCOPE,
+    ALERTCENTER_SCOPE,
+    GROUPS_SETTINGS_SCOPE,
+    CLOUD_IDENTITY_GROUPS_SCOPE,
+    CLOUD_IDENTITY_GROUPS_READONLY_SCOPE,
+    CLOUD_IDENTITY_DEVICES_SCOPE,
+    CLOUD_IDENTITY_DEVICES_READONLY_SCOPE,
+    CLOUD_IDENTITY_INBOUNDSSO_SCOPE,
+    CLOUD_IDENTITY_INBOUNDSSO_READONLY_SCOPE,
+    CLOUD_IDENTITY_POLICIES_SCOPE,
+    CLOUD_IDENTITY_POLICIES_READONLY_SCOPE,
+    CLOUD_IDENTITY_USERINVITATIONS_SCOPE,
+    CLOUD_IDENTITY_USERINVITATIONS_READONLY_SCOPE,
+    CLOUD_IDENTITY_ALLOWLISTEDDOMAINS_SCOPE,
+    CLOUD_IDENTITY_ALLOWLISTEDDOMAINS_READONLY_SCOPE,
+    CLOUD_IDENTITY_ORGUNITS_SCOPE,
+    CLOUD_IDENTITY_ORGUNITS_READONLY_SCOPE,
+    ADMIN_DIRECTORY_DEVICE_CHROMEOS_SCOPE,
+    ADMIN_DIRECTORY_DEVICE_CHROMEOS_READONLY_SCOPE,
+    ADMIN_DIRECTORY_DEVICE_MOBILE_SCOPE,
+    ADMIN_DIRECTORY_DEVICE_MOBILE_ACTION_SCOPE,
+    ADMIN_DIRECTORY_DEVICE_MOBILE_READONLY_SCOPE,
+    ADMIN_DIRECTORY_RESOURCE_CALENDAR_SCOPE,
+    ADMIN_DIRECTORY_RESOURCE_CALENDAR_READONLY_SCOPE,
+    ADMIN_CHROME_PRINTERS_SCOPE,
+    ADMIN_CHROME_PRINTERS_READONLY_SCOPE,
+    USERINFO_EMAIL_SCOPE,
     has_required_scopes,
 )
 
@@ -130,6 +174,27 @@ def _user_email_is_managed() -> bool:
     passing it. Drives hiding + auto-filling the user_google_email tool parameter so
     the client never has to ask for it."""
     return is_oauth21_enabled() or is_trust_gateway_identity()
+
+
+def assert_identity_binding(
+    selected_email: str,
+    *,
+    identity_email: Optional[str] = None,
+    actual_email: Optional[str] = None,
+) -> None:
+    """Refuse a selected account that differs from the verified request identity
+    or from the account the credentials actually authenticated as."""
+    selected = (selected_email or "").casefold()
+    if not selected:
+        raise GoogleAuthenticationError("A selected Google account is required.")
+    if identity_email and identity_email.casefold() != selected:
+        raise GoogleAuthenticationError(
+            "Selected account does not match the request identity."
+        )
+    if actual_email is not None and actual_email.casefold() != selected:
+        raise GoogleAuthenticationError(
+            "Authenticated account does not match the selected account."
+        )
 
 
 def _detect_oauth_version(
@@ -320,9 +385,15 @@ async def _authenticate_service(
     resolved_scopes: List[str],
     mcp_session_id: Optional[str],
     authenticated_user: Optional[str],
+    verify_account: bool = False,
 ) -> Tuple[Any, str]:
     """
     Authenticate and get Google service using appropriate OAuth version.
+
+    With verify_account, OAuth credentials report the account Google's userinfo
+    endpoint confirms for them. A service-account token is minted for the subject
+    chosen here (USER_GOOGLE_EMAIL or the verified gateway principal), so that
+    subject is its verified account.
 
     Returns:
         Tuple of (service, actual_user_email)
@@ -360,6 +431,9 @@ async def _authenticate_service(
         )
         return service, target_email
 
+    if verify_account and USERINFO_EMAIL_SCOPE not in resolved_scopes:
+        resolved_scopes = [*resolved_scopes, USERINFO_EMAIL_SCOPE]
+
     if use_oauth21:
         logger.debug(f"[{tool_name}] Using OAuth 2.1 flow")
         return await get_authenticated_google_service_oauth21(
@@ -371,6 +445,7 @@ async def _authenticate_service(
             session_id=mcp_session_id,
             auth_token_email=authenticated_user,
             allow_recent_auth=False,
+            verify_account=verify_account,
         )
     else:
         logger.debug(f"[{tool_name}] Using legacy OAuth 2.0 flow")
@@ -381,6 +456,7 @@ async def _authenticate_service(
             user_google_email=user_google_email,
             required_scopes=resolved_scopes,
             session_id=mcp_session_id,
+            verify_account=verify_account,
         )
 
 
@@ -393,9 +469,13 @@ async def get_authenticated_google_service_oauth21(
     session_id: Optional[str] = None,
     auth_token_email: Optional[str] = None,
     allow_recent_auth: bool = False,
+    verify_account: bool = False,
 ) -> tuple[Any, str]:
     """
     OAuth 2.1 authentication using the session store with security validation.
+
+    With verify_account, the returned email is the account Google's userinfo
+    endpoint confirms for the credentials.
     """
     provider = get_auth_provider()
     access_token = get_access_token()
@@ -438,6 +518,10 @@ async def get_authenticated_google_service_oauth21(
                 f"OAuth credentials lack required scopes. Need: {required_scopes}, Have: {sorted(scopes_available)}"
             )
 
+        if verify_account:
+            resolved_email = await asyncio.to_thread(
+                get_verified_account_email, credentials
+            )
         service = build(service_name, version, credentials=credentials)
         logger.info(
             f"[{tool_name}] Authenticated {service_name} for "
@@ -471,13 +555,15 @@ async def get_authenticated_google_service_oauth21(
             f"OAuth 2.1 credentials lack required scopes. Need: {required_scopes}, Have: {sorted(scopes_available)}"
         )
 
+    account_email = user_google_email
+    if verify_account:
+        account_email = await asyncio.to_thread(get_verified_account_email, credentials)
     service = build(service_name, version, credentials=credentials)
     logger.info(
-        f"[{tool_name}] Authenticated {service_name} for "
-        f"{user_google_email} via oauth2.1"
+        f"[{tool_name}] Authenticated {service_name} for {account_email} via oauth2.1"
     )
 
-    return service, user_google_email
+    return service, account_email
 
 
 def _extract_oauth21_user_email(
@@ -595,6 +681,29 @@ SERVICE_CONFIGS = {
     "people": {"service": "people", "version": "v1"},
     "customsearch": {"service": "customsearch", "version": "v1"},
     "script": {"service": "script", "version": "v1"},
+    "admin-directory": {"service": "admin", "version": "directory_v1"},
+    "admin-directory-devices": {"service": "admin", "version": "directory_v1"},
+    "admin-directory-resources": {"service": "admin", "version": "directory_v1"},
+    "admin-directory-printers": {"service": "admin", "version": "directory_v1"},
+    "admin-datatransfer": {"service": "admin", "version": "datatransfer_v1"},
+    "admin-licensing": {"service": "licensing", "version": "v1"},
+    "admin-reports": {"service": "admin", "version": "reports_v1"},
+    "admin-vault": {"service": "vault", "version": "v1"},
+    "admin-alertcenter": {"service": "alertcenter", "version": "v1beta1"},
+    "admin-groupssettings": {"service": "groupssettings", "version": "v1"},
+    "admin-cloudidentity-groups": {"service": "cloudidentity", "version": "v1"},
+    "admin-cloudidentity-devices": {"service": "cloudidentity", "version": "v1"},
+    "admin-cloudidentity-sso": {"service": "cloudidentity", "version": "v1"},
+    "admin-cloudidentity-policies": {"service": "cloudidentity", "version": "v1"},
+    "admin-cloudidentity-invitations": {"service": "cloudidentity", "version": "v1"},
+    "admin-cloudidentity-domains": {"service": "cloudidentity", "version": "v1"},
+    "admin-cloudidentity-orgunits": {"service": "cloudidentity", "version": "v1beta1"},
+    "admin-chrome-reports": {"service": "chromemanagement", "version": "v1"},
+    "admin-chrome-telemetry": {"service": "chromemanagement", "version": "v1"},
+    "admin-chrome-profiles": {"service": "chromemanagement", "version": "v1"},
+    "admin-chrome-insights": {"service": "chromemanagement", "version": "v1"},
+    "admin-chrome-policy": {"service": "chromepolicy", "version": "v1"},
+    "admin-access-context": {"service": "accesscontextmanager", "version": "v1"},
 }
 
 
@@ -650,6 +759,45 @@ SCOPE_GROUPS = {
     "script_deployments_readonly": SCRIPT_DEPLOYMENTS_READONLY_SCOPE,
     "script_run": SCRIPT_EXTERNAL_REQUEST_SCOPE,
     "script_scriptapp": SCRIPT_SCRIPTAPP_SCOPE,
+    # Admin SDK Directory scopes
+    "admin_directory_user": ADMIN_DIRECTORY_USER_SCOPE,
+    "admin_directory_user_read": ADMIN_DIRECTORY_USER_READONLY_SCOPE,
+    "admin_directory_user_security": ADMIN_DIRECTORY_USER_SECURITY_SCOPE,
+    "admin_directory_group_read": ADMIN_DIRECTORY_GROUP_READONLY_SCOPE,
+    "admin_directory_group_member": ADMIN_DIRECTORY_GROUP_MEMBER_SCOPE,
+    "admin_directory_rolemanagement_read": ADMIN_DIRECTORY_ROLEMANAGEMENT_READONLY_SCOPE,
+    "admin_directory_device_chromeos": ADMIN_DIRECTORY_DEVICE_CHROMEOS_SCOPE,
+    "admin_directory_device_chromeos_read": ADMIN_DIRECTORY_DEVICE_CHROMEOS_READONLY_SCOPE,
+    "admin_directory_device_mobile": ADMIN_DIRECTORY_DEVICE_MOBILE_SCOPE,
+    "admin_directory_device_mobile_action": ADMIN_DIRECTORY_DEVICE_MOBILE_ACTION_SCOPE,
+    "admin_directory_device_mobile_read": ADMIN_DIRECTORY_DEVICE_MOBILE_READONLY_SCOPE,
+    "admin_directory_resource_calendar": ADMIN_DIRECTORY_RESOURCE_CALENDAR_SCOPE,
+    "admin_directory_resource_calendar_read": ADMIN_DIRECTORY_RESOURCE_CALENDAR_READONLY_SCOPE,
+    "admin_chrome_printers": ADMIN_CHROME_PRINTERS_SCOPE,
+    "admin_chrome_printers_read": ADMIN_CHROME_PRINTERS_READONLY_SCOPE,
+    "admin_datatransfer": ADMIN_DATATRANSFER_SCOPE,
+    "admin_datatransfer_read": ADMIN_DATATRANSFER_READONLY_SCOPE,
+    "admin_licensing": LICENSING_SCOPE,
+    "admin_reports_audit_read": REPORTS_AUDIT_READONLY_SCOPE,
+    "admin_reports_usage_read": REPORTS_USAGE_READONLY_SCOPE,
+    "admin_vault": VAULT_SCOPE,
+    "admin_vault_read": VAULT_READONLY_SCOPE,
+    "admin_alertcenter": ALERTCENTER_SCOPE,
+    "admin_groups_settings": GROUPS_SETTINGS_SCOPE,
+    "cloudidentity_groups": CLOUD_IDENTITY_GROUPS_SCOPE,
+    "cloudidentity_groups_read": CLOUD_IDENTITY_GROUPS_READONLY_SCOPE,
+    "cloudidentity_devices": CLOUD_IDENTITY_DEVICES_SCOPE,
+    "cloudidentity_devices_read": CLOUD_IDENTITY_DEVICES_READONLY_SCOPE,
+    "cloudidentity_inboundsso": CLOUD_IDENTITY_INBOUNDSSO_SCOPE,
+    "cloudidentity_inboundsso_read": CLOUD_IDENTITY_INBOUNDSSO_READONLY_SCOPE,
+    "cloudidentity_policies": CLOUD_IDENTITY_POLICIES_SCOPE,
+    "cloudidentity_policies_read": CLOUD_IDENTITY_POLICIES_READONLY_SCOPE,
+    "cloudidentity_userinvitations": CLOUD_IDENTITY_USERINVITATIONS_SCOPE,
+    "cloudidentity_userinvitations_read": CLOUD_IDENTITY_USERINVITATIONS_READONLY_SCOPE,
+    "cloudidentity_allowlisteddomains": CLOUD_IDENTITY_ALLOWLISTEDDOMAINS_SCOPE,
+    "cloudidentity_allowlisteddomains_read": CLOUD_IDENTITY_ALLOWLISTEDDOMAINS_READONLY_SCOPE,
+    "cloudidentity_orgunits": CLOUD_IDENTITY_ORGUNITS_SCOPE,
+    "cloudidentity_orgunits_read": CLOUD_IDENTITY_ORGUNITS_READONLY_SCOPE,
 }
 
 
@@ -752,6 +900,7 @@ def require_google_service(
     service_type: str,
     scopes: Union[str, List[str]],
     version: Optional[str] = None,
+    bind_identity: bool = False,
 ):
     """
     Decorator that automatically handles Google service authentication and injection.
@@ -760,6 +909,10 @@ def require_google_service(
         service_type: Type of Google service ("gmail", "drive", "calendar", etc.)
         scopes: Required scopes (can be scope group names or actual URLs)
         version: Service version (defaults to standard version for service type)
+        bind_identity: Reject, rather than override, a selected account that
+            differs from the request identity, and reject credentials whose
+            Google-verified account (userinfo) is another account. Used by admin
+            tools.
 
     Usage:
         @require_google_service("gmail", "gmail_read")
@@ -838,6 +991,11 @@ def require_google_service(
                     authenticated_user, mcp_session_id, tool_name
                 )
 
+                if bind_identity:
+                    assert_identity_binding(
+                        user_google_email, identity_email=authenticated_user
+                    )
+
                 # In OAuth 2.1 mode, user_google_email is already set to authenticated_user
                 # In OAuth 2.0 mode, we may need to override it
                 if not _user_email_is_managed():
@@ -862,6 +1020,7 @@ def require_google_service(
                     resolved_scopes,
                     mcp_session_id,
                     authenticated_user,
+                    verify_account=bind_identity,
                 )
             except GoogleAuthenticationError as e:
                 logger.error(
@@ -873,6 +1032,11 @@ def require_google_service(
                 raise
 
             try:
+                if bind_identity:
+                    assert_identity_binding(
+                        user_google_email, actual_email=actual_user_email
+                    )
+
                 # In OAuth 2.1 mode, we need to add user_google_email to kwargs since it was removed from signature
                 if _user_email_is_managed():
                     kwargs["user_google_email"] = user_google_email

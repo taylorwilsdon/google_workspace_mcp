@@ -1,0 +1,315 @@
+{
+  "service": "groupssettings",
+  "version": "v1",
+  "discovery": {
+    "url": "https://groupssettings.googleapis.com/$discovery/rest?version=v1",
+    "revision": "20220614",
+    "checked": "2026-09-25"
+  },
+  "operations": {
+    "groupsSettings.groups.get": {
+      "resource_path": [
+        "groups"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/apps.groups.settings"
+      ],
+      "risk": "read",
+      "params": {
+        "groupUniqueId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "groupUniqueId",
+      "response": {
+        "fields": [
+          "email",
+          "name",
+          "description",
+          "whoCanJoin",
+          "whoCanViewMembership",
+          "whoCanViewGroup",
+          "whoCanPostMessage",
+          "allowExternalMembers",
+          "whoCanDiscoverGroup",
+          "whoCanContactOwner",
+          "whoCanLeaveGroup",
+          "whoCanModerateMembers",
+          "whoCanModerateContent",
+          "whoCanAssistContent",
+          "messageModerationLevel",
+          "spamModerationLevel",
+          "includeInGlobalAddressList",
+          "isArchived",
+          "archiveOnly",
+          "allowWebPosting",
+          "membersCanPostAsTheGroup",
+          "enableCollaborativeInbox",
+          "sendMessageDenyNotification"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "group",
+          "param": "groupUniqueId",
+          "as": "email"
+        }
+      ]
+    },
+    "groupsSettings.groups.patch": {
+      "resource_path": [
+        "groups"
+      ],
+      "method": "patch",
+      "scopes": [
+        "https://www.googleapis.com/auth/apps.groups.settings"
+      ],
+      "risk": "manage",
+      "params": {
+        "groupUniqueId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "body": {
+        "whoCanJoin": {
+          "type": "string",
+          "enum": [
+            "ANYONE_CAN_JOIN",
+            "ALL_IN_DOMAIN_CAN_JOIN",
+            "INVITED_CAN_JOIN",
+            "CAN_REQUEST_TO_JOIN"
+          ]
+        },
+        "whoCanViewMembership": {
+          "type": "string",
+          "enum": [
+            "ALL_IN_DOMAIN_CAN_VIEW",
+            "ALL_MEMBERS_CAN_VIEW",
+            "ALL_MANAGERS_CAN_VIEW"
+          ]
+        },
+        "whoCanViewGroup": {
+          "type": "string",
+          "enum": [
+            "ANYONE_CAN_VIEW",
+            "ALL_IN_DOMAIN_CAN_VIEW",
+            "ALL_MEMBERS_CAN_VIEW",
+            "ALL_MANAGERS_CAN_VIEW"
+          ]
+        },
+        "whoCanPostMessage": {
+          "type": "string",
+          "enum": [
+            "NONE_CAN_POST",
+            "ALL_MANAGERS_CAN_POST",
+            "ALL_MEMBERS_CAN_POST",
+            "ALL_OWNERS_CAN_POST",
+            "ALL_IN_DOMAIN_CAN_POST",
+            "ANYONE_CAN_POST"
+          ]
+        },
+        "allowExternalMembers": {
+          "type": "string",
+          "enum": [
+            "true",
+            "false"
+          ]
+        },
+        "whoCanDiscoverGroup": {
+          "type": "string",
+          "enum": [
+            "ANYONE_CAN_DISCOVER",
+            "ALL_IN_DOMAIN_CAN_DISCOVER",
+            "ALL_MEMBERS_CAN_DISCOVER"
+          ]
+        },
+        "whoCanContactOwner": {
+          "type": "string",
+          "enum": [
+            "ALL_IN_DOMAIN_CAN_CONTACT",
+            "ALL_MANAGERS_CAN_CONTACT",
+            "ALL_MEMBERS_CAN_CONTACT",
+            "ANYONE_CAN_CONTACT",
+            "ALL_OWNERS_CAN_CONTACT"
+          ]
+        },
+        "whoCanLeaveGroup": {
+          "type": "string",
+          "enum": [
+            "ALL_MANAGERS_CAN_LEAVE",
+            "ALL_MEMBERS_CAN_LEAVE",
+            "NONE_CAN_LEAVE"
+          ]
+        },
+        "whoCanModerateMembers": {
+          "type": "string",
+          "enum": [
+            "ALL_MEMBERS",
+            "OWNERS_AND_MANAGERS",
+            "OWNERS_ONLY",
+            "NONE"
+          ]
+        },
+        "whoCanModerateContent": {
+          "type": "string",
+          "enum": [
+            "ALL_MEMBERS",
+            "OWNERS_AND_MANAGERS",
+            "OWNERS_ONLY",
+            "NONE"
+          ]
+        },
+        "whoCanAssistContent": {
+          "type": "string",
+          "enum": [
+            "ALL_MEMBERS",
+            "OWNERS_AND_MANAGERS",
+            "MANAGERS_ONLY",
+            "OWNERS_ONLY",
+            "NONE"
+          ]
+        },
+        "messageModerationLevel": {
+          "type": "string",
+          "enum": [
+            "MODERATE_ALL_MESSAGES",
+            "MODERATE_NON_MEMBERS",
+            "MODERATE_NEW_MEMBERS",
+            "MODERATE_NONE"
+          ]
+        },
+        "spamModerationLevel": {
+          "type": "string",
+          "enum": [
+            "ALLOW",
+            "MODERATE",
+            "SILENTLY_MODERATE",
+            "REJECT"
+          ]
+        },
+        "includeInGlobalAddressList": {
+          "type": "string",
+          "enum": [
+            "true",
+            "false"
+          ]
+        },
+        "isArchived": {
+          "type": "string",
+          "enum": [
+            "true",
+            "false"
+          ]
+        },
+        "archiveOnly": {
+          "type": "string",
+          "enum": [
+            "true",
+            "false"
+          ]
+        },
+        "allowWebPosting": {
+          "type": "string",
+          "enum": [
+            "true",
+            "false"
+          ]
+        },
+        "membersCanPostAsTheGroup": {
+          "type": "string",
+          "enum": [
+            "true",
+            "false"
+          ]
+        },
+        "enableCollaborativeInbox": {
+          "type": "string",
+          "enum": [
+            "true",
+            "false"
+          ]
+        },
+        "sendMessageDenyNotification": {
+          "type": "string",
+          "enum": [
+            "true",
+            "false"
+          ]
+        }
+      },
+      "target_param": "groupUniqueId",
+      "risk_escalations": [
+        {
+          "field": "whoCanJoin",
+          "equals": "ANYONE_CAN_JOIN",
+          "risk": "destructive"
+        },
+        {
+          "field": "allowExternalMembers",
+          "equals": "true",
+          "risk": "destructive"
+        },
+        {
+          "field": "whoCanViewGroup",
+          "equals": "ANYONE_CAN_VIEW",
+          "risk": "destructive"
+        },
+        {
+          "field": "whoCanPostMessage",
+          "equals": "ANYONE_CAN_POST",
+          "risk": "destructive"
+        },
+        {
+          "field": "whoCanDiscoverGroup",
+          "equals": "ANYONE_CAN_DISCOVER",
+          "risk": "destructive"
+        }
+      ],
+      "response": {
+        "fields": [
+          "email",
+          "name",
+          "description",
+          "whoCanJoin",
+          "whoCanViewMembership",
+          "whoCanViewGroup",
+          "whoCanPostMessage",
+          "allowExternalMembers",
+          "whoCanDiscoverGroup",
+          "whoCanContactOwner",
+          "whoCanLeaveGroup",
+          "whoCanModerateMembers",
+          "whoCanModerateContent",
+          "whoCanAssistContent",
+          "messageModerationLevel",
+          "spamModerationLevel",
+          "includeInGlobalAddressList",
+          "isArchived",
+          "archiveOnly",
+          "allowWebPosting",
+          "membersCanPostAsTheGroup",
+          "enableCollaborativeInbox",
+          "sendMessageDenyNotification"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "group",
+          "param": "groupUniqueId",
+          "as": "email"
+        }
+      ]
+    }
+  },
+  "excluded": {
+    "groupsSettings.groups.update": {
+      "category": "replacement-variant",
+      "reason": "A full PUT of every group setting, including deprecated and free-text fields; groupsSettings.groups.patch changes the same validated settings without resetting the rest."
+    }
+  }
+}

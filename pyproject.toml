@@ -157,6 +157,7 @@ filterwarnings = [
 
 [tool.setuptools.package-data]
 core = ["tool_tiers.yaml"]
+gadmin = ["registry/*.json", "discovery/*.json"]
 
 [tool.uv]
 # Security floors for transitively-pulled deps (not direct dependencies).

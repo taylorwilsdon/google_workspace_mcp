@@ -1,0 +1,153 @@
+{
+  "methods": {
+    "datatransfer.applications.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "applicationId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "admin/datatransfer/v1/applications/{applicationId}",
+      "request": null,
+      "response": "Application",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.datatransfer",
+        "https://www.googleapis.com/auth/admin.datatransfer.readonly"
+      ]
+    },
+    "datatransfer.applications.list": {
+      "httpMethod": "GET",
+      "parameters": {
+        "customerId": {
+          "location": "query",
+          "type": "string"
+        },
+        "maxResults": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "admin/datatransfer/v1/applications",
+      "request": null,
+      "response": "ApplicationsListResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.datatransfer",
+        "https://www.googleapis.com/auth/admin.datatransfer.readonly"
+      ]
+    },
+    "datatransfer.transfers.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "dataTransferId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "admin/datatransfer/v1/transfers/{dataTransferId}",
+      "request": null,
+      "response": "DataTransfer",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.datatransfer",
+        "https://www.googleapis.com/auth/admin.datatransfer.readonly"
+      ]
+    },
+    "datatransfer.transfers.insert": {
+      "httpMethod": "POST",
+      "parameters": {},
+      "path": "admin/datatransfer/v1/transfers",
+      "request": "DataTransfer",
+      "response": "DataTransfer",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.datatransfer"
+      ]
+    },
+    "datatransfer.transfers.list": {
+      "httpMethod": "GET",
+      "parameters": {
+        "customerId": {
+          "location": "query",
+          "type": "string"
+        },
+        "maxResults": {
+          "location": "query",
+          "type": "integer"
+        },
+        "newOwnerUserId": {
+          "location": "query",
+          "type": "string"
+        },
+        "oldOwnerUserId": {
+          "location": "query",
+          "type": "string"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        },
+        "status": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "admin/datatransfer/v1/transfers",
+      "request": null,
+      "response": "DataTransfersListResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.datatransfer",
+        "https://www.googleapis.com/auth/admin.datatransfer.readonly"
+      ]
+    }
+  },
+  "name": "admin",
+  "retrieved": "2026-09-25",
+  "revision": "20260917",
+  "schemas": {
+    "Application": {
+      "etag": "string",
+      "id": "string",
+      "kind": "string",
+      "name": "string",
+      "transferParams": "array:ApplicationTransferParam"
+    },
+    "ApplicationDataTransfer": {
+      "applicationId": "string",
+      "applicationTransferParams": "array:ApplicationTransferParam",
+      "applicationTransferStatus": "string"
+    },
+    "ApplicationTransferParam": {
+      "key": "string",
+      "value": "array:string"
+    },
+    "ApplicationsListResponse": {
+      "applications": "array:Application",
+      "etag": "string",
+      "kind": "string",
+      "nextPageToken": "string"
+    },
+    "DataTransfer": {
+      "applicationDataTransfers": "array:ApplicationDataTransfer",
+      "etag": "string",
+      "id": "string",
+      "kind": "string",
+      "newOwnerUserId": "string",
+      "oldOwnerUserId": "string",
+      "overallTransferStatusCode": "string",
+      "requestTime": "string"
+    },
+    "DataTransfersListResponse": {
+      "dataTransfers": "array:DataTransfer",
+      "etag": "string",
+      "kind": "string",
+      "nextPageToken": "string"
+    }
+  },
+  "source": "https://admin.googleapis.com/$discovery/rest?version=datatransfer_v1",
+  "version": "datatransfer_v1"
+}
