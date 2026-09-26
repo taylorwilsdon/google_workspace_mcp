@@ -1,0 +1,219 @@
+{
+  "methods": {
+    "licensing.licenseAssignments.delete": {
+      "httpMethod": "DELETE",
+      "parameters": {
+        "productId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "skuId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "apps/licensing/v1/product/{productId}/sku/{skuId}/user/{userId}",
+      "request": null,
+      "response": "Empty",
+      "scopes": [
+        "https://www.googleapis.com/auth/apps.licensing"
+      ]
+    },
+    "licensing.licenseAssignments.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "productId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "skuId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "apps/licensing/v1/product/{productId}/sku/{skuId}/user/{userId}",
+      "request": null,
+      "response": "LicenseAssignment",
+      "scopes": [
+        "https://www.googleapis.com/auth/apps.licensing"
+      ]
+    },
+    "licensing.licenseAssignments.insert": {
+      "httpMethod": "POST",
+      "parameters": {
+        "productId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "skuId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "apps/licensing/v1/product/{productId}/sku/{skuId}/user",
+      "request": "LicenseAssignmentInsert",
+      "response": "LicenseAssignment",
+      "scopes": [
+        "https://www.googleapis.com/auth/apps.licensing"
+      ]
+    },
+    "licensing.licenseAssignments.listForProduct": {
+      "httpMethod": "GET",
+      "parameters": {
+        "customerId": {
+          "location": "query",
+          "required": true,
+          "type": "string"
+        },
+        "maxResults": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        },
+        "productId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "apps/licensing/v1/product/{productId}/users",
+      "request": null,
+      "response": "LicenseAssignmentList",
+      "scopes": [
+        "https://www.googleapis.com/auth/apps.licensing"
+      ]
+    },
+    "licensing.licenseAssignments.listForProductAndSku": {
+      "httpMethod": "GET",
+      "parameters": {
+        "customerId": {
+          "location": "query",
+          "required": true,
+          "type": "string"
+        },
+        "maxResults": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        },
+        "productId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "skuId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "apps/licensing/v1/product/{productId}/sku/{skuId}/users",
+      "request": null,
+      "response": "LicenseAssignmentList",
+      "scopes": [
+        "https://www.googleapis.com/auth/apps.licensing"
+      ]
+    },
+    "licensing.licenseAssignments.patch": {
+      "httpMethod": "PATCH",
+      "parameters": {
+        "productId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "skuId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "apps/licensing/v1/product/{productId}/sku/{skuId}/user/{userId}",
+      "request": "LicenseAssignment",
+      "response": "LicenseAssignment",
+      "scopes": [
+        "https://www.googleapis.com/auth/apps.licensing"
+      ]
+    },
+    "licensing.licenseAssignments.update": {
+      "httpMethod": "PUT",
+      "parameters": {
+        "productId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "skuId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "apps/licensing/v1/product/{productId}/sku/{skuId}/user/{userId}",
+      "request": "LicenseAssignment",
+      "response": "LicenseAssignment",
+      "scopes": [
+        "https://www.googleapis.com/auth/apps.licensing"
+      ]
+    }
+  },
+  "name": "licensing",
+  "retrieved": "2026-09-25",
+  "revision": "20260916",
+  "schemas": {
+    "Empty": {},
+    "LicenseAssignment": {
+      "etags": "string",
+      "kind": "string",
+      "productId": "string",
+      "productName": "string",
+      "selfLink": "string",
+      "skuId": "string",
+      "skuName": "string",
+      "userId": "string"
+    },
+    "LicenseAssignmentInsert": {
+      "userId": "string"
+    },
+    "LicenseAssignmentList": {
+      "etag": "string",
+      "items": "array:LicenseAssignment",
+      "kind": "string",
+      "nextPageToken": "string"
+    }
+  },
+  "source": "https://licensing.googleapis.com/$discovery/rest?version=v1",
+  "version": "v1"
+}

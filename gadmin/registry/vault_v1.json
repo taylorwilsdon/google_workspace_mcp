@@ -1,0 +1,1745 @@
+{
+  "service": "vault",
+  "version": "v1",
+  "discovery": {
+    "url": "https://vault.googleapis.com/$discovery/rest?version=v1",
+    "revision": "20260915",
+    "checked": "2026-09-25"
+  },
+  "operations": {
+    "vault.matters.list": {
+      "resource_path": [
+        "matters"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        },
+        "state": {
+          "type": "string",
+          "location": "query",
+          "enum": [
+            "OPEN",
+            "CLOSED",
+            "DELETED"
+          ]
+        },
+        "view": {
+          "type": "string",
+          "location": "query",
+          "enum": [
+            "BASIC",
+            "FULL"
+          ]
+        }
+      },
+      "response": {
+        "items_key": "matters",
+        "fields": [
+          "matterId",
+          "name",
+          "description",
+          "state",
+          "matterPermissions",
+          "matterRegion"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "tenant"
+        }
+      ]
+    },
+    "vault.matters.get": {
+      "resource_path": [
+        "matters"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "matterId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "view": {
+          "type": "string",
+          "location": "query",
+          "enum": [
+            "BASIC",
+            "FULL"
+          ]
+        }
+      },
+      "target_param": "matterId",
+      "response": {
+        "fields": [
+          "matterId",
+          "name",
+          "description",
+          "state",
+          "matterPermissions",
+          "matterRegion"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "tenant"
+        }
+      ]
+    },
+    "vault.matters.create": {
+      "resource_path": [
+        "matters"
+      ],
+      "method": "create",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ],
+      "risk": "manage",
+      "params": {},
+      "body": {
+        "name": {
+          "type": "string",
+          "required": true
+        },
+        "description": "string",
+        "matterRegion": {
+          "type": "string",
+          "enum": [
+            "ANY",
+            "US",
+            "EUROPE"
+          ]
+        }
+      },
+      "response": {
+        "fields": [
+          "matterId",
+          "name",
+          "description",
+          "state",
+          "matterPermissions",
+          "matterRegion"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "tenant"
+        }
+      ]
+    },
+    "vault.matters.update": {
+      "resource_path": [
+        "matters"
+      ],
+      "method": "update",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ],
+      "risk": "manage",
+      "params": {
+        "matterId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "body": {
+        "name": {
+          "type": "string",
+          "required": true
+        },
+        "description": {
+          "type": "string",
+          "required": true
+        }
+      },
+      "target_param": "matterId",
+      "response": {
+        "fields": [
+          "matterId",
+          "name",
+          "description",
+          "state",
+          "matterPermissions",
+          "matterRegion"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "tenant"
+        }
+      ]
+    },
+    "vault.matters.close": {
+      "resource_path": [
+        "matters"
+      ],
+      "method": "close",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ],
+      "risk": "manage",
+      "params": {
+        "matterId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "matterId",
+      "response": {
+        "fields": [
+          "matter"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "tenant"
+        }
+      ]
+    },
+    "vault.matters.reopen": {
+      "resource_path": [
+        "matters"
+      ],
+      "method": "reopen",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ],
+      "risk": "manage",
+      "params": {
+        "matterId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "matterId",
+      "response": {
+        "fields": [
+          "matter"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "tenant"
+        }
+      ]
+    },
+    "vault.matters.undelete": {
+      "resource_path": [
+        "matters"
+      ],
+      "method": "undelete",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ],
+      "risk": "manage",
+      "params": {
+        "matterId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "matterId",
+      "response": {
+        "fields": [
+          "matterId",
+          "name",
+          "description",
+          "state",
+          "matterPermissions",
+          "matterRegion"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "tenant"
+        }
+      ]
+    },
+    "vault.matters.delete": {
+      "resource_path": [
+        "matters"
+      ],
+      "method": "delete",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ],
+      "risk": "destructive",
+      "params": {
+        "matterId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "matterId",
+      "response": {
+        "fields": [
+          "matterId",
+          "name",
+          "description",
+          "state",
+          "matterPermissions",
+          "matterRegion"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "tenant"
+        }
+      ]
+    },
+    "vault.matters.addPermissions": {
+      "resource_path": [
+        "matters"
+      ],
+      "method": "addPermissions",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ],
+      "risk": "destructive",
+      "params": {
+        "matterId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "body": {
+        "matterPermission": {
+          "type": "object",
+          "required": true,
+          "fields": {
+            "role": {
+              "type": "string",
+              "enum": [
+                "COLLABORATOR",
+                "OWNER"
+              ],
+              "required": true
+            },
+            "accountId": {
+              "type": "string",
+              "required": true
+            }
+          }
+        },
+        "sendEmails": "boolean",
+        "ccMe": "boolean"
+      },
+      "target_param": "matterId",
+      "response": {
+        "fields": [
+          "accountId",
+          "role"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "tenant"
+        },
+        {
+          "kind": "account",
+          "field": "matterPermission.accountId"
+        }
+      ]
+    },
+    "vault.matters.removePermissions": {
+      "resource_path": [
+        "matters"
+      ],
+      "method": "removePermissions",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ],
+      "risk": "manage",
+      "params": {
+        "matterId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "body": {
+        "accountId": {
+          "type": "string",
+          "required": true
+        }
+      },
+      "target_param": "matterId",
+      "boundary": [
+        {
+          "kind": "tenant"
+        },
+        {
+          "kind": "account",
+          "field": "accountId"
+        }
+      ]
+    },
+    "vault.matters.count": {
+      "resource_path": [
+        "matters"
+      ],
+      "method": "count",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ],
+      "risk": "manage",
+      "params": {
+        "matterId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "body": {
+        "query": {
+          "type": "object",
+          "required": true,
+          "fields": {
+            "corpus": {
+              "type": "string",
+              "enum": [
+                "DRIVE",
+                "MAIL",
+                "HANGOUTS_CHAT",
+                "VOICE",
+                "CALENDAR",
+                "GEMINI"
+              ],
+              "required": true
+            },
+            "method": {
+              "type": "string",
+              "enum": [
+                "ACCOUNT",
+                "ENTIRE_ORG"
+              ],
+              "required": true
+            },
+            "dataScope": {
+              "type": "string",
+              "enum": [
+                "ALL_DATA",
+                "HELD_DATA",
+                "UNPROCESSED_DATA"
+              ]
+            },
+            "accountInfo": {
+              "type": "object",
+              "fields": {
+                "emails": {
+                  "type": "array",
+                  "items": "string"
+                }
+              }
+            },
+            "terms": "string",
+            "startTime": "string",
+            "endTime": "string",
+            "timeZone": "string",
+            "mailOptions": {
+              "type": "object",
+              "fields": {
+                "excludeDrafts": "boolean",
+                "clientSideEncryptedOption": {
+                  "type": "string",
+                  "enum": [
+                    "CLIENT_SIDE_ENCRYPTED_OPTION_ANY",
+                    "CLIENT_SIDE_ENCRYPTED_OPTION_ENCRYPTED",
+                    "CLIENT_SIDE_ENCRYPTED_OPTION_UNENCRYPTED"
+                  ]
+                }
+              }
+            },
+            "driveOptions": {
+              "type": "object",
+              "fields": {
+                "sharedDrivesOption": {
+                  "type": "string",
+                  "enum": [
+                    "NOT_INCLUDED",
+                    "INCLUDED_IF_ACCOUNT_IS_NOT_A_MEMBER",
+                    "INCLUDED"
+                  ]
+                },
+                "versionDate": "string",
+                "clientSideEncryptedOption": {
+                  "type": "string",
+                  "enum": [
+                    "CLIENT_SIDE_ENCRYPTED_OPTION_ANY",
+                    "CLIENT_SIDE_ENCRYPTED_OPTION_ENCRYPTED",
+                    "CLIENT_SIDE_ENCRYPTED_OPTION_UNENCRYPTED"
+                  ]
+                }
+              }
+            },
+            "hangoutsChatOptions": {
+              "type": "object",
+              "fields": {
+                "includeRooms": "boolean"
+              }
+            },
+            "voiceOptions": {
+              "type": "object",
+              "fields": {
+                "coveredData": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "TEXT_MESSAGES",
+                      "VOICEMAILS",
+                      "CALL_LOGS"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "view": {
+          "type": "string",
+          "enum": [
+            "TOTAL_COUNT",
+            "ALL"
+          ]
+        }
+      },
+      "target_param": "matterId",
+      "response": {
+        "fields": [
+          "name",
+          "done",
+          "response",
+          "error"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "tenant"
+        },
+        {
+          "kind": "account",
+          "field": "query.accountInfo.emails",
+          "as": "email"
+        }
+      ]
+    },
+    "vault.matters.holds.list": {
+      "resource_path": [
+        "matters",
+        "holds"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "matterId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        },
+        "view": {
+          "type": "string",
+          "location": "query",
+          "enum": [
+            "BASIC_HOLD",
+            "FULL_HOLD"
+          ]
+        }
+      },
+      "target_param": "matterId",
+      "response": {
+        "items_key": "holds",
+        "fields": [
+          "holdId",
+          "name",
+          "corpus",
+          "updateTime",
+          "accounts",
+          "orgUnit",
+          "query"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "tenant"
+        }
+      ]
+    },
+    "vault.matters.holds.get": {
+      "resource_path": [
+        "matters",
+        "holds"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "matterId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "holdId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "view": {
+          "type": "string",
+          "location": "query",
+          "enum": [
+            "BASIC_HOLD",
+            "FULL_HOLD"
+          ]
+        }
+      },
+      "target_param": "matterId",
+      "response": {
+        "fields": [
+          "holdId",
+          "name",
+          "corpus",
+          "updateTime",
+          "accounts",
+          "orgUnit",
+          "query"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "tenant"
+        }
+      ]
+    },
+    "vault.matters.holds.create": {
+      "resource_path": [
+        "matters",
+        "holds"
+      ],
+      "method": "create",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ],
+      "risk": "manage",
+      "params": {
+        "matterId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "body": {
+        "name": {
+          "type": "string",
+          "required": true
+        },
+        "corpus": {
+          "type": "string",
+          "enum": [
+            "DRIVE",
+            "MAIL",
+            "HANGOUTS_CHAT",
+            "VOICE",
+            "CALENDAR",
+            "GEMINI"
+          ],
+          "required": true
+        },
+        "accounts": {
+          "type": "array",
+          "required": true,
+          "items": {
+            "type": "object",
+            "fields": {
+              "accountId": {
+                "type": "string",
+                "required": true
+              }
+            }
+          }
+        },
+        "query": {
+          "type": "object",
+          "fields": {
+            "mailQuery": {
+              "type": "object",
+              "fields": {
+                "terms": "string",
+                "startTime": "string",
+                "endTime": "string"
+              }
+            },
+            "driveQuery": {
+              "type": "object",
+              "fields": {
+                "includeSharedDriveFiles": "boolean"
+              }
+            },
+            "hangoutsChatQuery": {
+              "type": "object",
+              "fields": {
+                "includeRooms": "boolean"
+              }
+            },
+            "voiceQuery": {
+              "type": "object",
+              "fields": {
+                "coveredData": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "TEXT_MESSAGES",
+                      "VOICEMAILS",
+                      "CALL_LOGS"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "target_param": "matterId",
+      "response": {
+        "fields": [
+          "holdId",
+          "name",
+          "corpus",
+          "updateTime",
+          "accounts",
+          "orgUnit",
+          "query"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "tenant"
+        },
+        {
+          "kind": "account",
+          "field": "accounts.accountId"
+        }
+      ]
+    },
+    "vault.matters.holds.addHeldAccounts": {
+      "resource_path": [
+        "matters",
+        "holds"
+      ],
+      "method": "addHeldAccounts",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ],
+      "risk": "manage",
+      "params": {
+        "matterId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "holdId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "body": {
+        "accountIds": {
+          "type": "array",
+          "items": "string"
+        },
+        "emails": {
+          "type": "array",
+          "items": "string"
+        }
+      },
+      "target_param": "matterId",
+      "response": {
+        "fields": [
+          "responses"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "tenant"
+        },
+        {
+          "kind": "account",
+          "field": "accountIds"
+        },
+        {
+          "kind": "account",
+          "field": "emails",
+          "as": "email"
+        }
+      ]
+    },
+    "vault.matters.holds.removeHeldAccounts": {
+      "resource_path": [
+        "matters",
+        "holds"
+      ],
+      "method": "removeHeldAccounts",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ],
+      "risk": "destructive",
+      "params": {
+        "matterId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "holdId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "body": {
+        "accountIds": {
+          "type": "array",
+          "items": "string",
+          "required": true
+        }
+      },
+      "target_param": "matterId",
+      "response": {
+        "fields": [
+          "statuses"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "tenant"
+        },
+        {
+          "kind": "account",
+          "field": "accountIds"
+        }
+      ]
+    },
+    "vault.matters.holds.delete": {
+      "resource_path": [
+        "matters",
+        "holds"
+      ],
+      "method": "delete",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ],
+      "risk": "destructive",
+      "params": {
+        "matterId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "holdId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "matterId",
+      "boundary": [
+        {
+          "kind": "tenant"
+        }
+      ]
+    },
+    "vault.matters.holds.accounts.list": {
+      "resource_path": [
+        "matters",
+        "holds",
+        "accounts"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "matterId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "holdId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "matterId",
+      "response": {
+        "items_key": "accounts",
+        "fields": [
+          "accountId",
+          "email",
+          "firstName",
+          "lastName",
+          "holdTime"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "tenant"
+        }
+      ]
+    },
+    "vault.matters.holds.accounts.create": {
+      "resource_path": [
+        "matters",
+        "holds",
+        "accounts"
+      ],
+      "method": "create",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ],
+      "risk": "manage",
+      "params": {
+        "matterId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "holdId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "body": {
+        "accountId": {
+          "type": "string",
+          "required": true
+        }
+      },
+      "target_param": "matterId",
+      "response": {
+        "fields": [
+          "accountId",
+          "email",
+          "firstName",
+          "lastName",
+          "holdTime"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "tenant"
+        },
+        {
+          "kind": "account",
+          "field": "accountId"
+        }
+      ]
+    },
+    "vault.matters.holds.accounts.delete": {
+      "resource_path": [
+        "matters",
+        "holds",
+        "accounts"
+      ],
+      "method": "delete",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ],
+      "risk": "destructive",
+      "params": {
+        "matterId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "holdId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "accountId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "matterId",
+      "boundary": [
+        {
+          "kind": "tenant"
+        },
+        {
+          "kind": "account",
+          "param": "accountId"
+        }
+      ]
+    },
+    "vault.matters.exports.list": {
+      "resource_path": [
+        "matters",
+        "exports"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "matterId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "target_param": "matterId",
+      "response": {
+        "items_key": "exports",
+        "fields": [
+          "id",
+          "matterId",
+          "name",
+          "status",
+          "createTime",
+          "requester",
+          "stats",
+          "query",
+          "exportOptions",
+          "parentExportId"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "tenant"
+        }
+      ]
+    },
+    "vault.matters.exports.get": {
+      "resource_path": [
+        "matters",
+        "exports"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "matterId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "exportId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "matterId",
+      "response": {
+        "fields": [
+          "id",
+          "matterId",
+          "name",
+          "status",
+          "createTime",
+          "requester",
+          "stats",
+          "query",
+          "exportOptions",
+          "parentExportId"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "tenant"
+        }
+      ]
+    },
+    "vault.matters.exports.create": {
+      "resource_path": [
+        "matters",
+        "exports"
+      ],
+      "method": "create",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ],
+      "risk": "destructive",
+      "params": {
+        "matterId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "body": {
+        "name": {
+          "type": "string",
+          "required": true
+        },
+        "query": {
+          "type": "object",
+          "required": true,
+          "fields": {
+            "corpus": {
+              "type": "string",
+              "enum": [
+                "DRIVE",
+                "MAIL",
+                "HANGOUTS_CHAT",
+                "VOICE",
+                "CALENDAR",
+                "GEMINI"
+              ],
+              "required": true
+            },
+            "method": {
+              "type": "string",
+              "enum": [
+                "ACCOUNT",
+                "ENTIRE_ORG"
+              ],
+              "required": true
+            },
+            "dataScope": {
+              "type": "string",
+              "enum": [
+                "ALL_DATA",
+                "HELD_DATA",
+                "UNPROCESSED_DATA"
+              ]
+            },
+            "accountInfo": {
+              "type": "object",
+              "fields": {
+                "emails": {
+                  "type": "array",
+                  "items": "string"
+                }
+              }
+            },
+            "terms": "string",
+            "startTime": "string",
+            "endTime": "string",
+            "timeZone": "string",
+            "mailOptions": {
+              "type": "object",
+              "fields": {
+                "excludeDrafts": "boolean",
+                "clientSideEncryptedOption": {
+                  "type": "string",
+                  "enum": [
+                    "CLIENT_SIDE_ENCRYPTED_OPTION_ANY",
+                    "CLIENT_SIDE_ENCRYPTED_OPTION_ENCRYPTED",
+                    "CLIENT_SIDE_ENCRYPTED_OPTION_UNENCRYPTED"
+                  ]
+                }
+              }
+            },
+            "driveOptions": {
+              "type": "object",
+              "fields": {
+                "sharedDrivesOption": {
+                  "type": "string",
+                  "enum": [
+                    "NOT_INCLUDED",
+                    "INCLUDED_IF_ACCOUNT_IS_NOT_A_MEMBER",
+                    "INCLUDED"
+                  ]
+                },
+                "versionDate": "string",
+                "clientSideEncryptedOption": {
+                  "type": "string",
+                  "enum": [
+                    "CLIENT_SIDE_ENCRYPTED_OPTION_ANY",
+                    "CLIENT_SIDE_ENCRYPTED_OPTION_ENCRYPTED",
+                    "CLIENT_SIDE_ENCRYPTED_OPTION_UNENCRYPTED"
+                  ]
+                }
+              }
+            },
+            "hangoutsChatOptions": {
+              "type": "object",
+              "fields": {
+                "includeRooms": "boolean"
+              }
+            },
+            "voiceOptions": {
+              "type": "object",
+              "fields": {
+                "coveredData": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "TEXT_MESSAGES",
+                      "VOICEMAILS",
+                      "CALL_LOGS"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "exportOptions": {
+          "type": "object",
+          "fields": {
+            "mailOptions": {
+              "type": "object",
+              "fields": {
+                "exportFormat": {
+                  "type": "string",
+                  "enum": [
+                    "MBOX",
+                    "PST"
+                  ]
+                },
+                "showConfidentialModeContent": "boolean",
+                "useNewExport": "boolean"
+              }
+            },
+            "driveOptions": {
+              "type": "object",
+              "fields": {
+                "includeAccessInfo": "boolean"
+              }
+            },
+            "hangoutsChatOptions": {
+              "type": "object",
+              "fields": {
+                "exportFormat": {
+                  "type": "string",
+                  "enum": [
+                    "MBOX",
+                    "PST"
+                  ]
+                }
+              }
+            },
+            "voiceOptions": {
+              "type": "object",
+              "fields": {
+                "exportFormat": {
+                  "type": "string",
+                  "enum": [
+                    "MBOX",
+                    "PST"
+                  ]
+                }
+              }
+            },
+            "calendarOptions": {
+              "type": "object",
+              "fields": {
+                "exportFormat": {
+                  "type": "string",
+                  "enum": [
+                    "ICS",
+                    "PST"
+                  ]
+                }
+              }
+            },
+            "region": {
+              "type": "string",
+              "enum": [
+                "ANY",
+                "US",
+                "EUROPE"
+              ]
+            }
+          }
+        }
+      },
+      "target_param": "matterId",
+      "response": {
+        "fields": [
+          "id",
+          "matterId",
+          "name",
+          "status",
+          "createTime",
+          "requester",
+          "stats",
+          "query",
+          "exportOptions",
+          "parentExportId"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "tenant"
+        },
+        {
+          "kind": "account",
+          "field": "query.accountInfo.emails",
+          "as": "email"
+        }
+      ]
+    },
+    "vault.matters.exports.delete": {
+      "resource_path": [
+        "matters",
+        "exports"
+      ],
+      "method": "delete",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ],
+      "risk": "destructive",
+      "params": {
+        "matterId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "exportId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "matterId",
+      "boundary": [
+        {
+          "kind": "tenant"
+        }
+      ]
+    },
+    "vault.matters.savedQueries.list": {
+      "resource_path": [
+        "matters",
+        "savedQueries"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "matterId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "target_param": "matterId",
+      "response": {
+        "items_key": "savedQueries",
+        "fields": [
+          "savedQueryId",
+          "displayName",
+          "matterId",
+          "createTime",
+          "query"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "tenant"
+        }
+      ]
+    },
+    "vault.matters.savedQueries.get": {
+      "resource_path": [
+        "matters",
+        "savedQueries"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "matterId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "savedQueryId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "matterId",
+      "response": {
+        "fields": [
+          "savedQueryId",
+          "displayName",
+          "matterId",
+          "createTime",
+          "query"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "tenant"
+        }
+      ]
+    },
+    "vault.matters.savedQueries.create": {
+      "resource_path": [
+        "matters",
+        "savedQueries"
+      ],
+      "method": "create",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ],
+      "risk": "manage",
+      "params": {
+        "matterId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "body": {
+        "displayName": {
+          "type": "string",
+          "required": true
+        },
+        "query": {
+          "type": "object",
+          "required": true,
+          "fields": {
+            "corpus": {
+              "type": "string",
+              "enum": [
+                "DRIVE",
+                "MAIL",
+                "HANGOUTS_CHAT",
+                "VOICE",
+                "CALENDAR",
+                "GEMINI"
+              ],
+              "required": true
+            },
+            "method": {
+              "type": "string",
+              "enum": [
+                "ACCOUNT",
+                "ENTIRE_ORG"
+              ],
+              "required": true
+            },
+            "dataScope": {
+              "type": "string",
+              "enum": [
+                "ALL_DATA",
+                "HELD_DATA",
+                "UNPROCESSED_DATA"
+              ]
+            },
+            "accountInfo": {
+              "type": "object",
+              "fields": {
+                "emails": {
+                  "type": "array",
+                  "items": "string"
+                }
+              }
+            },
+            "terms": "string",
+            "startTime": "string",
+            "endTime": "string",
+            "timeZone": "string",
+            "mailOptions": {
+              "type": "object",
+              "fields": {
+                "excludeDrafts": "boolean",
+                "clientSideEncryptedOption": {
+                  "type": "string",
+                  "enum": [
+                    "CLIENT_SIDE_ENCRYPTED_OPTION_ANY",
+                    "CLIENT_SIDE_ENCRYPTED_OPTION_ENCRYPTED",
+                    "CLIENT_SIDE_ENCRYPTED_OPTION_UNENCRYPTED"
+                  ]
+                }
+              }
+            },
+            "driveOptions": {
+              "type": "object",
+              "fields": {
+                "sharedDrivesOption": {
+                  "type": "string",
+                  "enum": [
+                    "NOT_INCLUDED",
+                    "INCLUDED_IF_ACCOUNT_IS_NOT_A_MEMBER",
+                    "INCLUDED"
+                  ]
+                },
+                "versionDate": "string",
+                "clientSideEncryptedOption": {
+                  "type": "string",
+                  "enum": [
+                    "CLIENT_SIDE_ENCRYPTED_OPTION_ANY",
+                    "CLIENT_SIDE_ENCRYPTED_OPTION_ENCRYPTED",
+                    "CLIENT_SIDE_ENCRYPTED_OPTION_UNENCRYPTED"
+                  ]
+                }
+              }
+            },
+            "hangoutsChatOptions": {
+              "type": "object",
+              "fields": {
+                "includeRooms": "boolean"
+              }
+            },
+            "voiceOptions": {
+              "type": "object",
+              "fields": {
+                "coveredData": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "TEXT_MESSAGES",
+                      "VOICEMAILS",
+                      "CALL_LOGS"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "target_param": "matterId",
+      "response": {
+        "fields": [
+          "savedQueryId",
+          "displayName",
+          "matterId",
+          "createTime",
+          "query"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "tenant"
+        },
+        {
+          "kind": "account",
+          "field": "query.accountInfo.emails",
+          "as": "email"
+        }
+      ]
+    },
+    "vault.matters.savedQueries.delete": {
+      "resource_path": [
+        "matters",
+        "savedQueries"
+      ],
+      "method": "delete",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ],
+      "risk": "manage",
+      "params": {
+        "matterId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "savedQueryId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "matterId",
+      "boundary": [
+        {
+          "kind": "tenant"
+        }
+      ]
+    },
+    "vault.operations.get": {
+      "resource_path": [
+        "operations"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^operations/[A-Za-z0-9._-]+$"
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "done",
+          "response",
+          "error"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "tenant"
+        }
+      ]
+    },
+    "vault.operations.list": {
+      "resource_path": [
+        "operations"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^operations$"
+        },
+        "filter": {
+          "type": "string",
+          "location": "query"
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "operations",
+        "fields": [
+          "name",
+          "done",
+          "response",
+          "error"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "tenant"
+        }
+      ]
+    },
+    "vault.operations.cancel": {
+      "resource_path": [
+        "operations"
+      ],
+      "method": "cancel",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ],
+      "risk": "manage",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^operations/[A-Za-z0-9._-]+$"
+        }
+      },
+      "target_param": "name",
+      "boundary": [
+        {
+          "kind": "tenant"
+        }
+      ]
+    },
+    "vault.operations.delete": {
+      "resource_path": [
+        "operations"
+      ],
+      "method": "delete",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ],
+      "risk": "manage",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^operations/[A-Za-z0-9._-]+$"
+        }
+      },
+      "target_param": "name",
+      "boundary": [
+        {
+          "kind": "tenant"
+        }
+      ]
+    }
+  },
+  "excluded": {
+    "vault.matters.holds.update": {
+      "category": "replacement-variant",
+      "reason": "A full PUT that replaces the hold's scope and query, so accounts omitted from the body silently stop being preserved; addHeldAccounts, removeHeldAccounts, and holds.create cover the same changes explicitly."
+    }
+  }
+}

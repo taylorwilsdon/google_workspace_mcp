@@ -1,0 +1,240 @@
+{
+  "kind": "discovery#restDescription",
+  "discoveryVersion": "v1",
+  "id": "admin:contacts_v1",
+  "name": "admin",
+  "version": "contacts_v1",
+  "revision": "20260926",
+  "title": "Contact Delegation API (hand-written)",
+  "description": "Hand-written from the Contact Delegation REST reference, which states that no discovery documents are available for this service. Paths are the documented {parent=users/*} and {name=users/*/delegates/*} templates with each segment as its own parameter: https://developers.google.com/workspace/admin/contact-delegation/reference/rest",
+  "documentationLink": "https://developers.google.com/workspace/admin/contact-delegation/reference/rest",
+  "protocol": "rest",
+  "rootUrl": "https://admin.googleapis.com/",
+  "servicePath": "",
+  "basePath": "",
+  "baseUrl": "https://admin.googleapis.com/",
+  "batchPath": "batch",
+  "parameters": {
+    "$.xgafv": {
+      "type": "string",
+      "enum": [
+        "1",
+        "2"
+      ],
+      "description": "V1 error format.",
+      "location": "query",
+      "enumDescriptions": [
+        "v1 error format",
+        "v2 error format"
+      ]
+    },
+    "key": {
+      "description": "API key. Your API key identifies your project and provides you with API access, quota, and reports. Required unless you provide an OAuth 2.0 token.",
+      "type": "string",
+      "location": "query"
+    },
+    "uploadType": {
+      "location": "query",
+      "description": "Legacy upload protocol for media (e.g. \"media\", \"multipart\").",
+      "type": "string"
+    },
+    "alt": {
+      "description": "Data format for response.",
+      "location": "query",
+      "type": "string",
+      "enumDescriptions": [
+        "Responses with Content-Type of application/json",
+        "Media download with context-dependent Content-Type",
+        "Responses with Content-Type of application/x-protobuf"
+      ],
+      "enum": [
+        "json",
+        "media",
+        "proto"
+      ],
+      "default": "json"
+    },
+    "oauth_token": {
+      "location": "query",
+      "type": "string",
+      "description": "OAuth 2.0 token for the current user."
+    },
+    "callback": {
+      "location": "query",
+      "description": "JSONP",
+      "type": "string"
+    },
+    "upload_protocol": {
+      "description": "Upload protocol for media (e.g. \"raw\", \"multipart\").",
+      "type": "string",
+      "location": "query"
+    },
+    "prettyPrint": {
+      "location": "query",
+      "description": "Returns response with indentations and line breaks.",
+      "type": "boolean",
+      "default": "true"
+    },
+    "fields": {
+      "location": "query",
+      "description": "Selector specifying which fields to include in a partial response.",
+      "type": "string"
+    },
+    "quotaUser": {
+      "location": "query",
+      "description": "Available to use for quota purposes for server-side applications. Can be any arbitrary string assigned to a user, but should not exceed 40 characters.",
+      "type": "string"
+    },
+    "access_token": {
+      "type": "string",
+      "location": "query",
+      "description": "OAuth access token."
+    }
+  },
+  "auth": {
+    "oauth2": {
+      "scopes": {
+        "https://www.googleapis.com/auth/admin.contact.delegation": {
+          "description": "Manage contact delegates of users in your organization"
+        },
+        "https://www.googleapis.com/auth/admin.contact.delegation.readonly": {
+          "description": "View contact delegates of users in your organization"
+        }
+      }
+    }
+  },
+  "schemas": {
+    "Delegate": {
+      "id": "Delegate",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "description": "The delegate's email address."
+        }
+      }
+    },
+    "ListDelegatesResponse": {
+      "id": "ListDelegatesResponse",
+      "type": "object",
+      "properties": {
+        "delegates": {
+          "type": "array",
+          "items": {
+            "$ref": "Delegate"
+          }
+        },
+        "nextPageToken": {
+          "type": "string"
+        }
+      }
+    },
+    "Empty": {
+      "id": "Empty",
+      "type": "object",
+      "properties": {}
+    }
+  },
+  "resources": {
+    "users": {
+      "resources": {
+        "delegates": {
+          "methods": {
+            "list": {
+              "id": "admin.contacts.v1.users.delegates.list",
+              "httpMethod": "GET",
+              "path": "admin/contacts/v1/users/{userId}/delegates",
+              "flatPath": "admin/contacts/v1/users/{userId}/delegates",
+              "parameters": {
+                "userId": {
+                  "description": "The delegator's email address.",
+                  "location": "path",
+                  "required": true,
+                  "type": "string"
+                },
+                "pageSize": {
+                  "location": "query",
+                  "type": "integer",
+                  "format": "int32"
+                },
+                "pageToken": {
+                  "location": "query",
+                  "type": "string"
+                }
+              },
+              "parameterOrder": [
+                "userId"
+              ],
+              "scopes": [
+                "https://www.googleapis.com/auth/admin.contact.delegation",
+                "https://www.googleapis.com/auth/admin.contact.delegation.readonly"
+              ],
+              "description": "Lists the delegates of a given user.",
+              "response": {
+                "$ref": "ListDelegatesResponse"
+              }
+            },
+            "create": {
+              "id": "admin.contacts.v1.users.delegates.create",
+              "httpMethod": "POST",
+              "path": "admin/contacts/v1/users/{userId}/delegates",
+              "flatPath": "admin/contacts/v1/users/{userId}/delegates",
+              "parameters": {
+                "userId": {
+                  "description": "The delegator's email address.",
+                  "location": "path",
+                  "required": true,
+                  "type": "string"
+                }
+              },
+              "parameterOrder": [
+                "userId"
+              ],
+              "scopes": [
+                "https://www.googleapis.com/auth/admin.contact.delegation"
+              ],
+              "description": "Creates one or more delegates for a given user.",
+              "request": {
+                "$ref": "Delegate"
+              },
+              "response": {
+                "$ref": "Delegate"
+              }
+            },
+            "delete": {
+              "id": "admin.contacts.v1.users.delegates.delete",
+              "httpMethod": "DELETE",
+              "path": "admin/contacts/v1/users/{userId}/delegates/{delegate}",
+              "flatPath": "admin/contacts/v1/users/{userId}/delegates/{delegate}",
+              "parameters": {
+                "userId": {
+                  "description": "The delegator's email address.",
+                  "location": "path",
+                  "required": true,
+                  "type": "string"
+                },
+                "delegate": {
+                  "description": "The delegate's email address.",
+                  "location": "path",
+                  "required": true,
+                  "type": "string"
+                }
+              },
+              "parameterOrder": [
+                "userId",
+                "delegate"
+              ],
+              "scopes": [
+                "https://www.googleapis.com/auth/admin.contact.delegation"
+              ],
+              "description": "Deletes a delegate from a given user.",
+              "response": {
+                "$ref": "Empty"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

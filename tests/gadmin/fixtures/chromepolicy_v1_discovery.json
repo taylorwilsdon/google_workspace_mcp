@@ -1,0 +1,517 @@
+{
+  "methods": {
+    "chromepolicy.customers.policies.groups.batchDelete": {
+      "httpMethod": "POST",
+      "parameters": {
+        "customer": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+customer}/policies/groups:batchDelete",
+      "request": "GoogleChromePolicyVersionsV1BatchDeleteGroupPoliciesRequest",
+      "response": "GoogleProtobufEmpty",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.policy"
+      ]
+    },
+    "chromepolicy.customers.policies.groups.batchModify": {
+      "httpMethod": "POST",
+      "parameters": {
+        "customer": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+customer}/policies/groups:batchModify",
+      "request": "GoogleChromePolicyVersionsV1BatchModifyGroupPoliciesRequest",
+      "response": "GoogleProtobufEmpty",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.policy"
+      ]
+    },
+    "chromepolicy.customers.policies.groups.listGroupPriorityOrdering": {
+      "httpMethod": "POST",
+      "parameters": {
+        "customer": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+customer}/policies/groups:listGroupPriorityOrdering",
+      "request": "GoogleChromePolicyVersionsV1ListGroupPriorityOrderingRequest",
+      "response": "GoogleChromePolicyVersionsV1ListGroupPriorityOrderingResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.policy",
+        "https://www.googleapis.com/auth/chrome.management.policy.readonly"
+      ]
+    },
+    "chromepolicy.customers.policies.groups.updateGroupPriorityOrdering": {
+      "httpMethod": "POST",
+      "parameters": {
+        "customer": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+customer}/policies/groups:updateGroupPriorityOrdering",
+      "request": "GoogleChromePolicyVersionsV1UpdateGroupPriorityOrderingRequest",
+      "response": "GoogleProtobufEmpty",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.policy"
+      ]
+    },
+    "chromepolicy.customers.policies.networks.defineCertificate": {
+      "httpMethod": "POST",
+      "parameters": {
+        "customer": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+customer}/policies/networks:defineCertificate",
+      "request": "GoogleChromePolicyVersionsV1DefineCertificateRequest",
+      "response": "GoogleChromePolicyVersionsV1DefineCertificateResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.policy"
+      ]
+    },
+    "chromepolicy.customers.policies.networks.defineNetwork": {
+      "httpMethod": "POST",
+      "parameters": {
+        "customer": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+customer}/policies/networks:defineNetwork",
+      "request": "GoogleChromePolicyVersionsV1DefineNetworkRequest",
+      "response": "GoogleChromePolicyVersionsV1DefineNetworkResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.policy"
+      ]
+    },
+    "chromepolicy.customers.policies.networks.removeCertificate": {
+      "httpMethod": "POST",
+      "parameters": {
+        "customer": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+customer}/policies/networks:removeCertificate",
+      "request": "GoogleChromePolicyVersionsV1RemoveCertificateRequest",
+      "response": "GoogleChromePolicyVersionsV1RemoveCertificateResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.policy"
+      ]
+    },
+    "chromepolicy.customers.policies.networks.removeNetwork": {
+      "httpMethod": "POST",
+      "parameters": {
+        "customer": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+customer}/policies/networks:removeNetwork",
+      "request": "GoogleChromePolicyVersionsV1RemoveNetworkRequest",
+      "response": "GoogleChromePolicyVersionsV1RemoveNetworkResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.policy"
+      ]
+    },
+    "chromepolicy.customers.policies.orgunits.batchInherit": {
+      "httpMethod": "POST",
+      "parameters": {
+        "customer": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+customer}/policies/orgunits:batchInherit",
+      "request": "GoogleChromePolicyVersionsV1BatchInheritOrgUnitPoliciesRequest",
+      "response": "GoogleProtobufEmpty",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.policy"
+      ]
+    },
+    "chromepolicy.customers.policies.orgunits.batchModify": {
+      "httpMethod": "POST",
+      "parameters": {
+        "customer": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+customer}/policies/orgunits:batchModify",
+      "request": "GoogleChromePolicyVersionsV1BatchModifyOrgUnitPoliciesRequest",
+      "response": "GoogleProtobufEmpty",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.policy"
+      ]
+    },
+    "chromepolicy.customers.policies.resolve": {
+      "httpMethod": "POST",
+      "parameters": {
+        "customer": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+customer}/policies:resolve",
+      "request": "GoogleChromePolicyVersionsV1ResolveRequest",
+      "response": "GoogleChromePolicyVersionsV1ResolveResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.policy",
+        "https://www.googleapis.com/auth/chrome.management.policy.readonly"
+      ]
+    },
+    "chromepolicy.customers.policySchemas.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "name": {
+          "location": "path",
+          "pattern": "^customers/[^/]+/policySchemas/.*$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}",
+      "request": null,
+      "response": "GoogleChromePolicyVersionsV1PolicySchema",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.policy",
+        "https://www.googleapis.com/auth/chrome.management.policy.readonly"
+      ]
+    },
+    "chromepolicy.customers.policySchemas.list": {
+      "httpMethod": "GET",
+      "parameters": {
+        "filter": {
+          "location": "query",
+          "type": "string"
+        },
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        },
+        "parent": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+parent}/policySchemas",
+      "request": null,
+      "response": "GoogleChromePolicyVersionsV1ListPolicySchemasResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.policy",
+        "https://www.googleapis.com/auth/chrome.management.policy.readonly"
+      ]
+    },
+    "chromepolicy.media.upload": {
+      "httpMethod": "POST",
+      "parameters": {
+        "customer": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+customer}/policies/files:uploadPolicyFile",
+      "request": "GoogleChromePolicyVersionsV1UploadPolicyFileRequest",
+      "response": "GoogleChromePolicyVersionsV1UploadPolicyFileResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.policy"
+      ]
+    }
+  },
+  "name": "chromepolicy",
+  "retrieved": "2026-09-26",
+  "revision": "20260923",
+  "schemas": {
+    "GoogleChromePolicyVersionsV1AdditionalTargetKeyName": {
+      "key": "string",
+      "keyDescription": "string"
+    },
+    "GoogleChromePolicyVersionsV1BatchDeleteGroupPoliciesRequest": {
+      "requests": "array:GoogleChromePolicyVersionsV1DeleteGroupPolicyRequest"
+    },
+    "GoogleChromePolicyVersionsV1BatchInheritOrgUnitPoliciesRequest": {
+      "requests": "array:GoogleChromePolicyVersionsV1InheritOrgUnitPolicyRequest"
+    },
+    "GoogleChromePolicyVersionsV1BatchModifyGroupPoliciesRequest": {
+      "requests": "array:GoogleChromePolicyVersionsV1ModifyGroupPolicyRequest"
+    },
+    "GoogleChromePolicyVersionsV1BatchModifyOrgUnitPoliciesRequest": {
+      "requests": "array:GoogleChromePolicyVersionsV1ModifyOrgUnitPolicyRequest"
+    },
+    "GoogleChromePolicyVersionsV1CertificateReference": {
+      "network": "string",
+      "orgUnitId": "string"
+    },
+    "GoogleChromePolicyVersionsV1DefineCertificateRequest": {
+      "ceritificateName": "string",
+      "certificate": "string",
+      "settings": "array:GoogleChromePolicyVersionsV1NetworkSetting",
+      "targetResource": "string"
+    },
+    "GoogleChromePolicyVersionsV1DefineCertificateResponse": {
+      "networkId": "string",
+      "settings": "array:GoogleChromePolicyVersionsV1NetworkSetting",
+      "targetResource": "string"
+    },
+    "GoogleChromePolicyVersionsV1DefineNetworkRequest": {
+      "name": "string",
+      "settings": "array:GoogleChromePolicyVersionsV1NetworkSetting",
+      "targetResource": "string"
+    },
+    "GoogleChromePolicyVersionsV1DefineNetworkResponse": {
+      "networkId": "string",
+      "settings": "array:GoogleChromePolicyVersionsV1NetworkSetting",
+      "targetResource": "string"
+    },
+    "GoogleChromePolicyVersionsV1DeleteGroupPolicyRequest": {
+      "policySchema": "string",
+      "policyTargetKey": "GoogleChromePolicyVersionsV1PolicyTargetKey"
+    },
+    "GoogleChromePolicyVersionsV1FieldConstraints": {
+      "numericRangeConstraint": "GoogleChromePolicyVersionsV1NumericRangeConstraint",
+      "uploadedFileConstraints": "GoogleChromePolicyVersionsV1UploadedFileConstraints"
+    },
+    "GoogleChromePolicyVersionsV1InheritOrgUnitPolicyRequest": {
+      "policySchema": "string",
+      "policyTargetKey": "GoogleChromePolicyVersionsV1PolicyTargetKey"
+    },
+    "GoogleChromePolicyVersionsV1ListGroupPriorityOrderingRequest": {
+      "policyNamespace": "string",
+      "policySchema": "string",
+      "policyTargetKey": "GoogleChromePolicyVersionsV1PolicyTargetKey"
+    },
+    "GoogleChromePolicyVersionsV1ListGroupPriorityOrderingResponse": {
+      "groupIds": "array:string",
+      "policyNamespace": "string",
+      "policySchema": "string",
+      "policyTargetKey": "GoogleChromePolicyVersionsV1PolicyTargetKey"
+    },
+    "GoogleChromePolicyVersionsV1ListPolicySchemasResponse": {
+      "nextPageToken": "string",
+      "policySchemas": "array:GoogleChromePolicyVersionsV1PolicySchema"
+    },
+    "GoogleChromePolicyVersionsV1ModifyGroupPolicyRequest": {
+      "policyTargetKey": "GoogleChromePolicyVersionsV1PolicyTargetKey",
+      "policyValue": "GoogleChromePolicyVersionsV1PolicyValue",
+      "updateMask": "string"
+    },
+    "GoogleChromePolicyVersionsV1ModifyOrgUnitPolicyRequest": {
+      "policyTargetKey": "GoogleChromePolicyVersionsV1PolicyTargetKey",
+      "policyValue": "GoogleChromePolicyVersionsV1PolicyValue",
+      "updateMask": "string"
+    },
+    "GoogleChromePolicyVersionsV1NetworkSetting": {
+      "policySchema": "string",
+      "value": "object"
+    },
+    "GoogleChromePolicyVersionsV1NumericRangeConstraint": {
+      "maximum": "string",
+      "minimum": "string"
+    },
+    "GoogleChromePolicyVersionsV1PolicyApiLifecycle": {
+      "deprecatedInFavorOf": "array:string",
+      "description": "string",
+      "endSupport": "GoogleTypeDate",
+      "policyApiLifecycleStage": "string",
+      "scheduledToDeprecatePolicies": "array:string"
+    },
+    "GoogleChromePolicyVersionsV1PolicyModificationError": {
+      "errors": "array:string",
+      "fieldErrors": "array:GoogleChromePolicyVersionsV1PolicyModificationFieldError",
+      "policySchema": "string",
+      "policyTargetKey": "GoogleChromePolicyVersionsV1PolicyTargetKey"
+    },
+    "GoogleChromePolicyVersionsV1PolicyModificationErrorDetails": {
+      "modificationErrors": "array:GoogleChromePolicyVersionsV1PolicyModificationError"
+    },
+    "GoogleChromePolicyVersionsV1PolicyModificationFieldError": {
+      "error": "string",
+      "field": "string"
+    },
+    "GoogleChromePolicyVersionsV1PolicySchema": {
+      "accessRestrictions": "array:string",
+      "additionalTargetKeyNames": "array:GoogleChromePolicyVersionsV1AdditionalTargetKeyName",
+      "categoryTitle": "string",
+      "definition": "Proto2FileDescriptorProto",
+      "fieldDescriptions": "array:GoogleChromePolicyVersionsV1PolicySchemaFieldDescription",
+      "name": "string",
+      "notices": "array:GoogleChromePolicyVersionsV1PolicySchemaNoticeDescription",
+      "policyApiLifecycle": "GoogleChromePolicyVersionsV1PolicyApiLifecycle",
+      "policyDescription": "string",
+      "schemaName": "string",
+      "supportUri": "string",
+      "supportedPlatforms": "array:string",
+      "validTargetResources": "array:string"
+    },
+    "GoogleChromePolicyVersionsV1PolicySchemaFieldDependencies": {
+      "sourceField": "string",
+      "sourceFieldValue": "string"
+    },
+    "GoogleChromePolicyVersionsV1PolicySchemaFieldDescription": {
+      "defaultValue": "any",
+      "description": "string",
+      "field": "string",
+      "fieldConstraints": "GoogleChromePolicyVersionsV1FieldConstraints",
+      "fieldDependencies": "array:GoogleChromePolicyVersionsV1PolicySchemaFieldDependencies",
+      "fieldDescription": "string",
+      "inputConstraint": "string",
+      "knownValueDescriptions": "array:GoogleChromePolicyVersionsV1PolicySchemaFieldKnownValueDescription",
+      "name": "string",
+      "nestedFieldDescriptions": "array:GoogleChromePolicyVersionsV1PolicySchemaFieldDescription",
+      "requiredItems": "array:GoogleChromePolicyVersionsV1PolicySchemaRequiredItems"
+    },
+    "GoogleChromePolicyVersionsV1PolicySchemaFieldKnownValueDescription": {
+      "description": "string",
+      "fieldDependencies": "array:GoogleChromePolicyVersionsV1PolicySchemaFieldDependencies",
+      "value": "string"
+    },
+    "GoogleChromePolicyVersionsV1PolicySchemaNoticeDescription": {
+      "acknowledgementRequired": "boolean",
+      "field": "string",
+      "noticeMessage": "string",
+      "noticeValue": "string"
+    },
+    "GoogleChromePolicyVersionsV1PolicySchemaRequiredItems": {
+      "fieldConditions": "array:string",
+      "requiredFields": "array:string"
+    },
+    "GoogleChromePolicyVersionsV1PolicyTargetKey": {
+      "additionalTargetKeys": "object",
+      "targetResource": "string"
+    },
+    "GoogleChromePolicyVersionsV1PolicyValue": {
+      "policySchema": "string",
+      "value": "object"
+    },
+    "GoogleChromePolicyVersionsV1RemoveCertificateErrorDetails": {
+      "certificateReferences": "array:GoogleChromePolicyVersionsV1CertificateReference"
+    },
+    "GoogleChromePolicyVersionsV1RemoveCertificateRequest": {
+      "networkId": "string",
+      "targetResource": "string"
+    },
+    "GoogleChromePolicyVersionsV1RemoveCertificateResponse": {},
+    "GoogleChromePolicyVersionsV1RemoveNetworkRequest": {
+      "networkId": "string",
+      "targetResource": "string"
+    },
+    "GoogleChromePolicyVersionsV1RemoveNetworkResponse": {},
+    "GoogleChromePolicyVersionsV1ResolveRequest": {
+      "pageSize": "integer",
+      "pageToken": "string",
+      "policySchemaFilter": "string",
+      "policyTargetKey": "GoogleChromePolicyVersionsV1PolicyTargetKey"
+    },
+    "GoogleChromePolicyVersionsV1ResolveResponse": {
+      "nextPageToken": "string",
+      "resolvedPolicies": "array:GoogleChromePolicyVersionsV1ResolvedPolicy"
+    },
+    "GoogleChromePolicyVersionsV1ResolvedPolicy": {
+      "addedSourceKey": "GoogleChromePolicyVersionsV1PolicyTargetKey",
+      "sourceKey": "GoogleChromePolicyVersionsV1PolicyTargetKey",
+      "targetKey": "GoogleChromePolicyVersionsV1PolicyTargetKey",
+      "value": "GoogleChromePolicyVersionsV1PolicyValue"
+    },
+    "GoogleChromePolicyVersionsV1UpdateGroupPriorityOrderingRequest": {
+      "groupIds": "array:string",
+      "policyNamespace": "string",
+      "policySchema": "string",
+      "policyTargetKey": "GoogleChromePolicyVersionsV1PolicyTargetKey"
+    },
+    "GoogleChromePolicyVersionsV1UploadPolicyFileRequest": {
+      "policyField": "string"
+    },
+    "GoogleChromePolicyVersionsV1UploadPolicyFileResponse": {
+      "downloadUri": "string"
+    },
+    "GoogleChromePolicyVersionsV1UploadedFileConstraints": {
+      "sizeLimitBytes": "string",
+      "supportedContentTypes": "array:string"
+    },
+    "GoogleProtobufEmpty": {},
+    "GoogleTypeDate": {
+      "day": "integer",
+      "month": "integer",
+      "year": "integer"
+    },
+    "Proto2DescriptorProto": {
+      "enumType": "array:Proto2EnumDescriptorProto",
+      "field": "array:Proto2FieldDescriptorProto",
+      "name": "string",
+      "nestedType": "array:Proto2DescriptorProto",
+      "oneofDecl": "array:Proto2OneofDescriptorProto",
+      "visibility": "string"
+    },
+    "Proto2EnumDescriptorProto": {
+      "name": "string",
+      "value": "array:Proto2EnumValueDescriptorProto",
+      "visibility": "string"
+    },
+    "Proto2EnumValueDescriptorProto": {
+      "name": "string",
+      "number": "integer"
+    },
+    "Proto2FieldDescriptorProto": {
+      "defaultValue": "string",
+      "jsonName": "string",
+      "label": "string",
+      "name": "string",
+      "number": "integer",
+      "oneofIndex": "integer",
+      "proto3Optional": "boolean",
+      "type": "string",
+      "typeName": "string"
+    },
+    "Proto2FileDescriptorProto": {
+      "editionDeprecated": "string",
+      "enumType": "array:Proto2EnumDescriptorProto",
+      "messageType": "array:Proto2DescriptorProto",
+      "name": "string",
+      "optionDependency": "array:string",
+      "package": "string",
+      "syntax": "string"
+    },
+    "Proto2OneofDescriptorProto": {
+      "name": "string"
+    }
+  },
+  "source": "https://chromepolicy.googleapis.com/$discovery/rest?version=v1",
+  "version": "v1"
+}

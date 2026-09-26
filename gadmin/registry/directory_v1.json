@@ -1,0 +1,4663 @@
+{
+  "service": "admin",
+  "version": "directory_v1",
+  "discovery": {
+    "url": "https://admin.googleapis.com/$discovery/rest?version=directory_v1",
+    "revision": "20260917",
+    "checked": "2026-09-25"
+  },
+  "operations": {
+    "directory.users.get": {
+      "resource_path": [
+        "users"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.user.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "userKey": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "projection": {
+          "type": "string",
+          "location": "query",
+          "enum": [
+            "basic",
+            "full"
+          ]
+        },
+        "viewType": {
+          "type": "string",
+          "location": "query",
+          "enum": [
+            "admin_view",
+            "domain_public"
+          ]
+        }
+      },
+      "target_param": "userKey",
+      "response": {
+        "fields": [
+          "id",
+          "primaryEmail",
+          "customerId",
+          "name",
+          "suspended",
+          "suspensionReason",
+          "archived",
+          "isAdmin",
+          "isDelegatedAdmin",
+          "orgUnitPath",
+          "aliases",
+          "lastLoginTime",
+          "creationTime",
+          "isEnrolledIn2Sv",
+          "isEnforcedIn2Sv"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "user",
+          "as": "id",
+          "param": "userKey"
+        }
+      ]
+    },
+    "directory.users.list": {
+      "resource_path": [
+        "users"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.user.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "query"
+        },
+        "domain": {
+          "type": "string",
+          "location": "query"
+        },
+        "query": {
+          "type": "string",
+          "location": "query"
+        },
+        "orderBy": {
+          "type": "string",
+          "location": "query",
+          "enum": [
+            "email",
+            "familyName",
+            "givenName"
+          ]
+        },
+        "sortOrder": {
+          "type": "string",
+          "location": "query",
+          "enum": [
+            "ASCENDING",
+            "DESCENDING"
+          ]
+        },
+        "projection": {
+          "type": "string",
+          "location": "query",
+          "enum": [
+            "basic",
+            "full"
+          ]
+        },
+        "viewType": {
+          "type": "string",
+          "location": "query",
+          "enum": [
+            "admin_view",
+            "domain_public"
+          ]
+        },
+        "showDeleted": {
+          "type": "string",
+          "location": "query",
+          "enum": [
+            "true",
+            "false"
+          ]
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        },
+        "maxResults": {
+          "type": "integer",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "users",
+        "fields": [
+          "id",
+          "primaryEmail",
+          "customerId",
+          "name",
+          "suspended",
+          "suspensionReason",
+          "archived",
+          "isAdmin",
+          "isDelegatedAdmin",
+          "orgUnitPath",
+          "aliases",
+          "lastLoginTime",
+          "creationTime",
+          "isEnrolledIn2Sv",
+          "isEnforcedIn2Sv"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer"
+        },
+        {
+          "kind": "deny",
+          "param": "domain"
+        }
+      ]
+    },
+    "directory.users.update": {
+      "resource_path": [
+        "users"
+      ],
+      "method": "update",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.user"
+      ],
+      "risk": "manage",
+      "params": {
+        "userKey": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "userKey",
+      "body": {
+        "name": {
+          "type": "object",
+          "fields": {
+            "givenName": "string",
+            "familyName": "string"
+          }
+        },
+        "orgUnitPath": "string",
+        "suspended": "boolean",
+        "changePasswordAtNextLogin": "boolean",
+        "includeInGlobalAddressList": "boolean"
+      },
+      "risk_escalations": [
+        {
+          "field": "suspended",
+          "equals": true,
+          "risk": "destructive"
+        }
+      ],
+      "response": {
+        "fields": [
+          "id",
+          "primaryEmail",
+          "customerId",
+          "name",
+          "suspended",
+          "suspensionReason",
+          "archived",
+          "isAdmin",
+          "isDelegatedAdmin",
+          "orgUnitPath",
+          "aliases",
+          "lastLoginTime",
+          "creationTime",
+          "isEnrolledIn2Sv",
+          "isEnforcedIn2Sv"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "user",
+          "as": "id",
+          "param": "userKey"
+        }
+      ]
+    },
+    "directory.users.signOut": {
+      "resource_path": [
+        "users"
+      ],
+      "method": "signOut",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.user.security"
+      ],
+      "risk": "manage",
+      "params": {
+        "userKey": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "userKey",
+      "boundary": [
+        {
+          "kind": "user",
+          "as": "id",
+          "param": "userKey"
+        }
+      ]
+    },
+    "directory.users.delete": {
+      "resource_path": [
+        "users"
+      ],
+      "method": "delete",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.user"
+      ],
+      "risk": "destructive",
+      "params": {
+        "userKey": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "userKey",
+      "boundary": [
+        {
+          "kind": "user",
+          "as": "id",
+          "param": "userKey"
+        }
+      ]
+    },
+    "directory.tokens.list": {
+      "resource_path": [
+        "tokens"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.user.security"
+      ],
+      "risk": "read",
+      "params": {
+        "userKey": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "userKey",
+      "response": {
+        "items_key": "items",
+        "fields": [
+          "clientId",
+          "displayText",
+          "anonymous",
+          "nativeApp",
+          "scopes"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "user",
+          "as": "id",
+          "param": "userKey"
+        }
+      ]
+    },
+    "directory.tokens.delete": {
+      "resource_path": [
+        "tokens"
+      ],
+      "method": "delete",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.user.security"
+      ],
+      "risk": "manage",
+      "params": {
+        "userKey": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "clientId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "userKey",
+      "boundary": [
+        {
+          "kind": "user",
+          "as": "id",
+          "param": "userKey"
+        }
+      ]
+    },
+    "directory.groups.list": {
+      "resource_path": [
+        "groups"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.group.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "query"
+        },
+        "domain": {
+          "type": "string",
+          "location": "query"
+        },
+        "userKey": {
+          "type": "string",
+          "location": "query"
+        },
+        "query": {
+          "type": "string",
+          "location": "query"
+        },
+        "orderBy": {
+          "type": "string",
+          "location": "query",
+          "enum": [
+            "email"
+          ]
+        },
+        "sortOrder": {
+          "type": "string",
+          "location": "query",
+          "enum": [
+            "ASCENDING",
+            "DESCENDING"
+          ]
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        },
+        "maxResults": {
+          "type": "integer",
+          "location": "query"
+        }
+      },
+      "target_param": "userKey",
+      "response": {
+        "items_key": "groups",
+        "fields": [
+          "id",
+          "email",
+          "name",
+          "description",
+          "directMembersCount",
+          "adminCreated"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer"
+        },
+        {
+          "kind": "deny",
+          "param": "domain"
+        },
+        {
+          "kind": "deny",
+          "param": "userKey"
+        }
+      ]
+    },
+    "directory.members.list": {
+      "resource_path": [
+        "members"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.group.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "groupKey": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "roles": {
+          "type": "string",
+          "location": "query"
+        },
+        "includeDerivedMembership": {
+          "type": "boolean",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        },
+        "maxResults": {
+          "type": "integer",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "members",
+        "fields": [
+          "id",
+          "email",
+          "role",
+          "type",
+          "status"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "group",
+          "param": "groupKey"
+        }
+      ]
+    },
+    "directory.members.delete": {
+      "resource_path": [
+        "members"
+      ],
+      "method": "delete",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.group.member"
+      ],
+      "risk": "manage",
+      "params": {
+        "groupKey": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "memberKey": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "memberKey",
+      "boundary": [
+        {
+          "kind": "group",
+          "param": "groupKey"
+        },
+        {
+          "kind": "member",
+          "param": "memberKey"
+        }
+      ]
+    },
+    "directory.roleAssignments.list": {
+      "resource_path": [
+        "roleAssignments"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.rolemanagement.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "userKey": {
+          "type": "string",
+          "location": "query"
+        },
+        "roleId": {
+          "type": "string",
+          "location": "query"
+        },
+        "includeIndirectRoleAssignments": {
+          "type": "boolean",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        },
+        "maxResults": {
+          "type": "integer",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "items",
+        "fields": [
+          "roleAssignmentId",
+          "roleId",
+          "assignedTo",
+          "assigneeType",
+          "scopeType",
+          "orgUnitId"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer"
+        },
+        {
+          "kind": "user",
+          "as": "id",
+          "param": "userKey"
+        }
+      ]
+    },
+    "directory.roles.list": {
+      "resource_path": [
+        "roles"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.rolemanagement.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        },
+        "maxResults": {
+          "type": "integer",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "items",
+        "fields": [
+          "roleId",
+          "roleName",
+          "isSuperAdminRole",
+          "isSystemRole"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer"
+        }
+      ]
+    },
+    "directory.users.patch": {
+      "resource_path": [
+        "users"
+      ],
+      "method": "patch",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.user"
+      ],
+      "risk": "manage",
+      "params": {
+        "userKey": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "userKey",
+      "body": {
+        "name": {
+          "type": "object",
+          "fields": {
+            "givenName": "string",
+            "familyName": "string"
+          }
+        },
+        "orgUnitPath": "string",
+        "suspended": "boolean",
+        "changePasswordAtNextLogin": "boolean",
+        "includeInGlobalAddressList": "boolean"
+      },
+      "risk_escalations": [
+        {
+          "field": "suspended",
+          "equals": true,
+          "risk": "destructive"
+        }
+      ],
+      "response": {
+        "fields": [
+          "id",
+          "primaryEmail",
+          "customerId",
+          "name",
+          "suspended",
+          "suspensionReason",
+          "archived",
+          "isAdmin",
+          "isDelegatedAdmin",
+          "orgUnitPath",
+          "aliases",
+          "lastLoginTime",
+          "creationTime",
+          "isEnrolledIn2Sv",
+          "isEnforcedIn2Sv"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "user",
+          "as": "id",
+          "param": "userKey"
+        }
+      ]
+    },
+    "directory.users.makeAdmin": {
+      "resource_path": [
+        "users"
+      ],
+      "method": "makeAdmin",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.user"
+      ],
+      "risk": "destructive",
+      "params": {
+        "userKey": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "userKey",
+      "body": {
+        "status": "boolean"
+      },
+      "boundary": [
+        {
+          "kind": "user",
+          "as": "id",
+          "param": "userKey"
+        }
+      ]
+    },
+    "directory.users.aliases.list": {
+      "resource_path": [
+        "users",
+        "aliases"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.user.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "userKey": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "userKey",
+      "response": {
+        "items_key": "aliases",
+        "fields": [
+          "alias",
+          "primaryEmail"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "user",
+          "as": "id",
+          "param": "userKey"
+        }
+      ]
+    },
+    "directory.users.aliases.insert": {
+      "resource_path": [
+        "users",
+        "aliases"
+      ],
+      "method": "insert",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.user"
+      ],
+      "risk": "manage",
+      "params": {
+        "userKey": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "userKey",
+      "body": {
+        "alias": "string"
+      },
+      "response": {
+        "fields": [
+          "alias",
+          "primaryEmail"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "user",
+          "as": "id",
+          "param": "userKey"
+        },
+        {
+          "kind": "domain",
+          "field": "alias"
+        }
+      ]
+    },
+    "directory.users.aliases.delete": {
+      "resource_path": [
+        "users",
+        "aliases"
+      ],
+      "method": "delete",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.user"
+      ],
+      "risk": "manage",
+      "params": {
+        "alias": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "userKey": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "userKey",
+      "boundary": [
+        {
+          "kind": "user",
+          "as": "id",
+          "param": "userKey"
+        },
+        {
+          "kind": "domain",
+          "param": "alias"
+        }
+      ]
+    },
+    "directory.users.photos.delete": {
+      "resource_path": [
+        "users",
+        "photos"
+      ],
+      "method": "delete",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.user"
+      ],
+      "risk": "manage",
+      "params": {
+        "userKey": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "userKey",
+      "boundary": [
+        {
+          "kind": "user",
+          "as": "id",
+          "param": "userKey"
+        }
+      ]
+    },
+    "directory.tokens.get": {
+      "resource_path": [
+        "tokens"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.user.security"
+      ],
+      "risk": "read",
+      "params": {
+        "clientId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "userKey": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "userKey",
+      "response": {
+        "fields": [
+          "clientId",
+          "displayText",
+          "anonymous",
+          "nativeApp",
+          "scopes"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "user",
+          "as": "id",
+          "param": "userKey"
+        }
+      ]
+    },
+    "directory.asps.list": {
+      "resource_path": [
+        "asps"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.user.security"
+      ],
+      "risk": "read",
+      "params": {
+        "userKey": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "userKey",
+      "response": {
+        "items_key": "items",
+        "fields": [
+          "codeId",
+          "name",
+          "creationTime",
+          "lastTimeUsed"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "user",
+          "as": "id",
+          "param": "userKey"
+        }
+      ]
+    },
+    "directory.asps.get": {
+      "resource_path": [
+        "asps"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.user.security"
+      ],
+      "risk": "read",
+      "params": {
+        "codeId": {
+          "type": "integer",
+          "location": "path",
+          "required": true
+        },
+        "userKey": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "userKey",
+      "response": {
+        "fields": [
+          "codeId",
+          "name",
+          "creationTime",
+          "lastTimeUsed"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "user",
+          "as": "id",
+          "param": "userKey"
+        }
+      ]
+    },
+    "directory.asps.delete": {
+      "resource_path": [
+        "asps"
+      ],
+      "method": "delete",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.user.security"
+      ],
+      "risk": "manage",
+      "params": {
+        "codeId": {
+          "type": "integer",
+          "location": "path",
+          "required": true
+        },
+        "userKey": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "userKey",
+      "boundary": [
+        {
+          "kind": "user",
+          "as": "id",
+          "param": "userKey"
+        }
+      ]
+    },
+    "directory.verificationCodes.invalidate": {
+      "resource_path": [
+        "verificationCodes"
+      ],
+      "method": "invalidate",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.user.security"
+      ],
+      "risk": "manage",
+      "params": {
+        "userKey": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "userKey",
+      "boundary": [
+        {
+          "kind": "user",
+          "as": "id",
+          "param": "userKey"
+        }
+      ]
+    },
+    "directory.twoStepVerification.turnOff": {
+      "resource_path": [
+        "twoStepVerification"
+      ],
+      "method": "turnOff",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.user.security"
+      ],
+      "risk": "destructive",
+      "params": {
+        "userKey": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "userKey",
+      "boundary": [
+        {
+          "kind": "user",
+          "as": "id",
+          "param": "userKey"
+        }
+      ]
+    },
+    "directory.groups.get": {
+      "resource_path": [
+        "groups"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.group.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "groupKey": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "groupKey",
+      "response": {
+        "fields": [
+          "id",
+          "email",
+          "name",
+          "description",
+          "directMembersCount",
+          "adminCreated",
+          "aliases",
+          "nonEditableAliases"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "group",
+          "param": "groupKey"
+        }
+      ]
+    },
+    "directory.groups.insert": {
+      "resource_path": [
+        "groups"
+      ],
+      "method": "insert",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.group"
+      ],
+      "risk": "manage",
+      "params": {},
+      "body": {
+        "email": "string",
+        "name": "string",
+        "description": "string"
+      },
+      "response": {
+        "fields": [
+          "id",
+          "email",
+          "name",
+          "description",
+          "directMembersCount",
+          "adminCreated",
+          "aliases",
+          "nonEditableAliases"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "domain",
+          "field": "email"
+        }
+      ]
+    },
+    "directory.groups.patch": {
+      "resource_path": [
+        "groups"
+      ],
+      "method": "patch",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.group"
+      ],
+      "risk": "manage",
+      "params": {
+        "groupKey": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "groupKey",
+      "body": {
+        "name": "string",
+        "description": "string"
+      },
+      "response": {
+        "fields": [
+          "id",
+          "email",
+          "name",
+          "description",
+          "directMembersCount",
+          "adminCreated",
+          "aliases",
+          "nonEditableAliases"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "group",
+          "param": "groupKey"
+        }
+      ]
+    },
+    "directory.groups.delete": {
+      "resource_path": [
+        "groups"
+      ],
+      "method": "delete",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.group"
+      ],
+      "risk": "destructive",
+      "params": {
+        "groupKey": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "groupKey",
+      "boundary": [
+        {
+          "kind": "group",
+          "param": "groupKey"
+        }
+      ]
+    },
+    "directory.groups.aliases.list": {
+      "resource_path": [
+        "groups",
+        "aliases"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.group.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "groupKey": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "groupKey",
+      "response": {
+        "items_key": "aliases",
+        "fields": [
+          "alias",
+          "primaryEmail"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "group",
+          "param": "groupKey"
+        }
+      ]
+    },
+    "directory.groups.aliases.insert": {
+      "resource_path": [
+        "groups",
+        "aliases"
+      ],
+      "method": "insert",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.group"
+      ],
+      "risk": "manage",
+      "params": {
+        "groupKey": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "groupKey",
+      "body": {
+        "alias": "string"
+      },
+      "response": {
+        "fields": [
+          "alias",
+          "primaryEmail"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "group",
+          "param": "groupKey"
+        },
+        {
+          "kind": "domain",
+          "field": "alias"
+        }
+      ]
+    },
+    "directory.groups.aliases.delete": {
+      "resource_path": [
+        "groups",
+        "aliases"
+      ],
+      "method": "delete",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.group"
+      ],
+      "risk": "manage",
+      "params": {
+        "alias": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "groupKey": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "groupKey",
+      "boundary": [
+        {
+          "kind": "group",
+          "param": "groupKey"
+        },
+        {
+          "kind": "domain",
+          "param": "alias"
+        }
+      ]
+    },
+    "directory.members.get": {
+      "resource_path": [
+        "members"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.group.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "groupKey": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "memberKey": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "groupKey",
+      "response": {
+        "fields": [
+          "id",
+          "email",
+          "role",
+          "type",
+          "status",
+          "delivery_settings"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "group",
+          "param": "groupKey"
+        }
+      ]
+    },
+    "directory.members.hasMember": {
+      "resource_path": [
+        "members"
+      ],
+      "method": "hasMember",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.group.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "groupKey": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "memberKey": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "groupKey",
+      "response": {
+        "fields": [
+          "isMember"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "group",
+          "param": "groupKey"
+        }
+      ]
+    },
+    "directory.members.insert": {
+      "resource_path": [
+        "members"
+      ],
+      "method": "insert",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.group.member"
+      ],
+      "risk": "manage",
+      "params": {
+        "groupKey": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "groupKey",
+      "body": {
+        "email": "string",
+        "role": {
+          "type": "string",
+          "enum": [
+            "OWNER",
+            "MANAGER",
+            "MEMBER"
+          ]
+        },
+        "delivery_settings": {
+          "type": "string",
+          "enum": [
+            "ALL_MAIL",
+            "DAILY",
+            "DIGEST",
+            "DISABLED",
+            "NONE"
+          ]
+        }
+      },
+      "response": {
+        "fields": [
+          "id",
+          "email",
+          "role",
+          "type",
+          "status",
+          "delivery_settings"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "group",
+          "param": "groupKey"
+        },
+        {
+          "kind": "user",
+          "as": "email",
+          "field": "email"
+        }
+      ]
+    },
+    "directory.members.patch": {
+      "resource_path": [
+        "members"
+      ],
+      "method": "patch",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.group.member"
+      ],
+      "risk": "manage",
+      "params": {
+        "groupKey": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "memberKey": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "memberKey",
+      "body": {
+        "role": {
+          "type": "string",
+          "enum": [
+            "OWNER",
+            "MANAGER",
+            "MEMBER"
+          ]
+        },
+        "delivery_settings": {
+          "type": "string",
+          "enum": [
+            "ALL_MAIL",
+            "DAILY",
+            "DIGEST",
+            "DISABLED",
+            "NONE"
+          ]
+        }
+      },
+      "response": {
+        "fields": [
+          "id",
+          "email",
+          "role",
+          "type",
+          "status",
+          "delivery_settings"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "group",
+          "param": "groupKey"
+        },
+        {
+          "kind": "member",
+          "param": "memberKey"
+        }
+      ]
+    },
+    "directory.roles.get": {
+      "resource_path": [
+        "roles"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.rolemanagement.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "roleId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "response": {
+        "fields": [
+          "roleId",
+          "roleName",
+          "roleDescription",
+          "isSuperAdminRole",
+          "isSystemRole",
+          "rolePrivileges"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer"
+        }
+      ]
+    },
+    "directory.roleAssignments.get": {
+      "resource_path": [
+        "roleAssignments"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.rolemanagement.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "roleAssignmentId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "response": {
+        "fields": [
+          "roleAssignmentId",
+          "roleId",
+          "assignedTo",
+          "assigneeType",
+          "scopeType",
+          "orgUnitId"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer"
+        }
+      ]
+    },
+    "directory.roleAssignments.insert": {
+      "resource_path": [
+        "roleAssignments"
+      ],
+      "method": "insert",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.rolemanagement"
+      ],
+      "risk": "destructive",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "body": {
+        "roleId": "string",
+        "assignedTo": "string",
+        "scopeType": {
+          "type": "string",
+          "enum": [
+            "CUSTOMER",
+            "ORG_UNIT"
+          ]
+        },
+        "orgUnitId": "string"
+      },
+      "response": {
+        "fields": [
+          "roleAssignmentId",
+          "roleId",
+          "assignedTo",
+          "assigneeType",
+          "scopeType",
+          "orgUnitId"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer"
+        },
+        {
+          "kind": "user",
+          "as": "id",
+          "field": "assignedTo"
+        },
+        {
+          "kind": "role",
+          "field": "roleId"
+        }
+      ]
+    },
+    "directory.roleAssignments.delete": {
+      "resource_path": [
+        "roleAssignments"
+      ],
+      "method": "delete",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.rolemanagement"
+      ],
+      "risk": "destructive",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "roleAssignmentId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "roleAssignmentId",
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer"
+        },
+        {
+          "kind": "role_assignment",
+          "param": "roleAssignmentId"
+        }
+      ]
+    },
+    "directory.privileges.list": {
+      "resource_path": [
+        "privileges"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.rolemanagement.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "response": {
+        "items_key": "items",
+        "fields": [
+          "serviceId",
+          "serviceName",
+          "privilegeName",
+          "isOuScopable"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer"
+        }
+      ]
+    },
+    "directory.domains.list": {
+      "resource_path": [
+        "domains"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.domain.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "response": {
+        "items_key": "domains",
+        "fields": [
+          "domainName",
+          "isPrimary",
+          "verified",
+          "creationTime",
+          "domainAliases"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer"
+        }
+      ]
+    },
+    "directory.domains.get": {
+      "resource_path": [
+        "domains"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.domain.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "domainName": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "response": {
+        "fields": [
+          "domainName",
+          "isPrimary",
+          "verified",
+          "creationTime",
+          "domainAliases"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer"
+        }
+      ]
+    },
+    "directory.domainAliases.list": {
+      "resource_path": [
+        "domainAliases"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.domain.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "parentDomainName": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "domainAliases",
+        "fields": [
+          "domainAliasName",
+          "parentDomainName",
+          "verified",
+          "creationTime"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer"
+        }
+      ]
+    },
+    "directory.domainAliases.get": {
+      "resource_path": [
+        "domainAliases"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.domain.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "domainAliasName": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "response": {
+        "fields": [
+          "domainAliasName",
+          "parentDomainName",
+          "verified",
+          "creationTime"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer"
+        }
+      ]
+    },
+    "directory.customers.get": {
+      "resource_path": [
+        "customers"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.customer.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customerKey": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "response": {
+        "fields": [
+          "id",
+          "customerDomain",
+          "language",
+          "customerCreationTime"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customerKey"
+        }
+      ]
+    },
+    "directory.orgunits.list": {
+      "resource_path": [
+        "orgunits"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.orgunit.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customerId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "orgUnitPath": {
+          "type": "string",
+          "location": "query"
+        },
+        "type": {
+          "type": "string",
+          "location": "query",
+          "enum": [
+            "all",
+            "children",
+            "allIncludingParent"
+          ]
+        }
+      },
+      "response": {
+        "items_key": "organizationUnits",
+        "fields": [
+          "orgUnitId",
+          "orgUnitPath",
+          "name",
+          "description",
+          "parentOrgUnitId",
+          "parentOrgUnitPath",
+          "blockInheritance"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customerId"
+        }
+      ]
+    },
+    "directory.orgunits.get": {
+      "resource_path": [
+        "orgunits"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.orgunit.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customerId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "orgUnitPath": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^id:[A-Za-z0-9_-]+$"
+        }
+      },
+      "target_param": "orgUnitPath",
+      "response": {
+        "fields": [
+          "orgUnitId",
+          "orgUnitPath",
+          "name",
+          "description",
+          "parentOrgUnitId",
+          "parentOrgUnitPath",
+          "blockInheritance"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customerId"
+        }
+      ]
+    },
+    "directory.orgunits.insert": {
+      "resource_path": [
+        "orgunits"
+      ],
+      "method": "insert",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.orgunit"
+      ],
+      "risk": "manage",
+      "params": {
+        "customerId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "body": {
+        "name": "string",
+        "description": "string",
+        "parentOrgUnitId": {
+          "type": "string",
+          "pattern": "^id:[A-Za-z0-9_-]+$"
+        }
+      },
+      "response": {
+        "fields": [
+          "orgUnitId",
+          "orgUnitPath",
+          "name",
+          "description",
+          "parentOrgUnitId",
+          "parentOrgUnitPath",
+          "blockInheritance"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customerId"
+        }
+      ]
+    },
+    "directory.orgunits.patch": {
+      "resource_path": [
+        "orgunits"
+      ],
+      "method": "patch",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.orgunit"
+      ],
+      "risk": "manage",
+      "params": {
+        "customerId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "orgUnitPath": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^id:[A-Za-z0-9_-]+$"
+        }
+      },
+      "target_param": "orgUnitPath",
+      "body": {
+        "name": "string",
+        "description": "string",
+        "parentOrgUnitId": {
+          "type": "string",
+          "pattern": "^id:[A-Za-z0-9_-]+$"
+        }
+      },
+      "response": {
+        "fields": [
+          "orgUnitId",
+          "orgUnitPath",
+          "name",
+          "description",
+          "parentOrgUnitId",
+          "parentOrgUnitPath",
+          "blockInheritance"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customerId"
+        }
+      ]
+    },
+    "directory.orgunits.delete": {
+      "resource_path": [
+        "orgunits"
+      ],
+      "method": "delete",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.orgunit"
+      ],
+      "risk": "destructive",
+      "params": {
+        "customerId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "orgUnitPath": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^id:[A-Za-z0-9_-]+$"
+        }
+      },
+      "target_param": "orgUnitPath",
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customerId"
+        }
+      ]
+    },
+    "directory.schemas.list": {
+      "resource_path": [
+        "schemas"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.userschema.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customerId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "response": {
+        "items_key": "schemas",
+        "fields": [
+          "schemaId",
+          "schemaName",
+          "displayName",
+          "fields"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customerId"
+        }
+      ]
+    },
+    "directory.schemas.get": {
+      "resource_path": [
+        "schemas"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.userschema.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customerId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "schemaKey": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "response": {
+        "fields": [
+          "schemaId",
+          "schemaName",
+          "displayName",
+          "fields"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customerId"
+        }
+      ]
+    },
+    "directory.chromeosdevices.get": {
+      "resource_path": [
+        "chromeosdevices"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customerId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "deviceId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "projection": {
+          "type": "string",
+          "location": "query",
+          "enum": [
+            "BASIC",
+            "FULL"
+          ]
+        }
+      },
+      "target_param": "deviceId",
+      "response": {
+        "fields": [
+          "deviceId",
+          "serialNumber",
+          "status",
+          "model",
+          "osVersion",
+          "platformVersion",
+          "firmwareVersion",
+          "bootMode",
+          "lastSync",
+          "firstEnrollmentTime",
+          "lastEnrollmentTime",
+          "orgUnitPath",
+          "orgUnitId",
+          "annotatedUser",
+          "annotatedLocation",
+          "annotatedAssetId",
+          "notes",
+          "autoUpdateThrough",
+          "deprovisionReason",
+          "deviceLicenseType"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customerId"
+        }
+      ]
+    },
+    "directory.chromeosdevices.list": {
+      "resource_path": [
+        "chromeosdevices"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customerId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "orgUnitPath": {
+          "type": "string",
+          "location": "query"
+        },
+        "includeChildOrgunits": {
+          "type": "boolean",
+          "location": "query"
+        },
+        "query": {
+          "type": "string",
+          "location": "query"
+        },
+        "orderBy": {
+          "type": "string",
+          "location": "query",
+          "enum": [
+            "annotatedLocation",
+            "annotatedUser",
+            "lastSync",
+            "notes",
+            "serialNumber",
+            "status"
+          ]
+        },
+        "sortOrder": {
+          "type": "string",
+          "location": "query",
+          "enum": [
+            "ASCENDING",
+            "DESCENDING"
+          ]
+        },
+        "projection": {
+          "type": "string",
+          "location": "query",
+          "enum": [
+            "BASIC",
+            "FULL"
+          ]
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        },
+        "maxResults": {
+          "type": "integer",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "chromeosdevices",
+        "fields": [
+          "deviceId",
+          "serialNumber",
+          "status",
+          "model",
+          "osVersion",
+          "platformVersion",
+          "firmwareVersion",
+          "bootMode",
+          "lastSync",
+          "firstEnrollmentTime",
+          "lastEnrollmentTime",
+          "orgUnitPath",
+          "orgUnitId",
+          "annotatedUser",
+          "annotatedLocation",
+          "annotatedAssetId",
+          "notes",
+          "autoUpdateThrough",
+          "deprovisionReason",
+          "deviceLicenseType"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customerId"
+        }
+      ]
+    },
+    "admin.customer.devices.chromeos.countChromeOsDevices": {
+      "resource_path": [
+        "customer",
+        "devices",
+        "chromeos"
+      ],
+      "method": "countChromeOsDevices",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customerId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "orgUnitPath": {
+          "type": "string",
+          "location": "query"
+        },
+        "includeChildOrgunits": {
+          "type": "boolean",
+          "location": "query"
+        },
+        "filter": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "response": {
+        "fields": [
+          "count"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customerId"
+        }
+      ]
+    },
+    "directory.chromeosdevices.patch": {
+      "resource_path": [
+        "chromeosdevices"
+      ],
+      "method": "patch",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.device.chromeos"
+      ],
+      "risk": "manage",
+      "params": {
+        "customerId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "deviceId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "projection": {
+          "type": "string",
+          "location": "query",
+          "enum": [
+            "BASIC",
+            "FULL"
+          ]
+        }
+      },
+      "target_param": "deviceId",
+      "body": {
+        "annotatedUser": "string",
+        "annotatedLocation": "string",
+        "annotatedAssetId": "string",
+        "notes": "string"
+      },
+      "response": {
+        "fields": [
+          "deviceId",
+          "serialNumber",
+          "status",
+          "model",
+          "osVersion",
+          "platformVersion",
+          "firmwareVersion",
+          "bootMode",
+          "lastSync",
+          "firstEnrollmentTime",
+          "lastEnrollmentTime",
+          "orgUnitPath",
+          "orgUnitId",
+          "annotatedUser",
+          "annotatedLocation",
+          "annotatedAssetId",
+          "notes",
+          "autoUpdateThrough",
+          "deprovisionReason",
+          "deviceLicenseType"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customerId"
+        },
+        {
+          "kind": "resource",
+          "param": "deviceId",
+          "read": "directory.chromeosdevices.get"
+        }
+      ]
+    },
+    "directory.chromeosdevices.moveDevicesToOu": {
+      "resource_path": [
+        "chromeosdevices"
+      ],
+      "method": "moveDevicesToOu",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.device.chromeos"
+      ],
+      "risk": "destructive",
+      "params": {
+        "customerId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "orgUnitPath": {
+          "type": "string",
+          "location": "query",
+          "required": true,
+          "pattern": "^id:[A-Za-z0-9_-]+$"
+        }
+      },
+      "body": {
+        "deviceIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "max_items": 50,
+          "required": true
+        }
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customerId"
+        },
+        {
+          "kind": "org_unit",
+          "param": "orgUnitPath"
+        },
+        {
+          "kind": "resource",
+          "field": "deviceIds",
+          "read": "directory.chromeosdevices.get"
+        }
+      ]
+    },
+    "admin.customer.devices.chromeos.batchChangeStatus": {
+      "resource_path": [
+        "customer",
+        "devices",
+        "chromeos"
+      ],
+      "method": "batchChangeStatus",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.device.chromeos"
+      ],
+      "risk": "manage",
+      "params": {
+        "customerId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "body": {
+        "deviceIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "max_items": 50,
+          "required": true
+        },
+        "changeChromeOsDeviceStatusAction": {
+          "type": "string",
+          "enum": [
+            "CHANGE_CHROME_OS_DEVICE_STATUS_ACTION_REENABLE",
+            "CHANGE_CHROME_OS_DEVICE_STATUS_ACTION_DISABLE",
+            "CHANGE_CHROME_OS_DEVICE_STATUS_ACTION_DEPROVISION"
+          ],
+          "required": true
+        },
+        "deprovisionReason": {
+          "type": "string",
+          "enum": [
+            "DEPROVISION_REASON_SAME_MODEL_REPLACEMENT",
+            "DEPROVISION_REASON_UPGRADE",
+            "DEPROVISION_REASON_DOMAIN_MOVE",
+            "DEPROVISION_REASON_SERVICE_EXPIRATION",
+            "DEPROVISION_REASON_OTHER",
+            "DEPROVISION_REASON_DIFFERENT_MODEL_REPLACEMENT",
+            "DEPROVISION_REASON_RETIRING_DEVICE",
+            "DEPROVISION_REASON_UPGRADE_TRANSFER",
+            "DEPROVISION_REASON_NOT_REQUIRED",
+            "DEPROVISION_REASON_REPAIR_CENTER"
+          ]
+        }
+      },
+      "risk_escalations": [
+        {
+          "field": "changeChromeOsDeviceStatusAction",
+          "equals": "CHANGE_CHROME_OS_DEVICE_STATUS_ACTION_DISABLE",
+          "risk": "destructive"
+        },
+        {
+          "field": "changeChromeOsDeviceStatusAction",
+          "equals": "CHANGE_CHROME_OS_DEVICE_STATUS_ACTION_DEPROVISION",
+          "risk": "destructive"
+        }
+      ],
+      "response": {
+        "fields": [
+          "changeChromeOsDeviceStatusResults"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customerId"
+        },
+        {
+          "kind": "resource",
+          "field": "deviceIds",
+          "read": "directory.chromeosdevices.get"
+        }
+      ]
+    },
+    "directory.mobiledevices.get": {
+      "resource_path": [
+        "mobiledevices"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.device.mobile.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customerId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "resourceId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "projection": {
+          "type": "string",
+          "location": "query",
+          "enum": [
+            "BASIC",
+            "FULL"
+          ]
+        }
+      },
+      "target_param": "resourceId",
+      "response": {
+        "fields": [
+          "resourceId",
+          "email",
+          "name",
+          "model",
+          "os",
+          "type",
+          "status",
+          "firstSync",
+          "lastSync",
+          "deviceCompromisedStatus",
+          "devicePasswordStatus",
+          "encryptionStatus",
+          "brand",
+          "manufacturer",
+          "releaseVersion",
+          "securityPatchLevel",
+          "privilege",
+          "supportsWorkProfile",
+          "managedAccountIsOnOwnerProfile"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customerId"
+        }
+      ]
+    },
+    "directory.mobiledevices.list": {
+      "resource_path": [
+        "mobiledevices"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.device.mobile.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customerId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "query": {
+          "type": "string",
+          "location": "query"
+        },
+        "orderBy": {
+          "type": "string",
+          "location": "query",
+          "enum": [
+            "deviceId",
+            "email",
+            "lastSync",
+            "model",
+            "name",
+            "os",
+            "status",
+            "type"
+          ]
+        },
+        "sortOrder": {
+          "type": "string",
+          "location": "query",
+          "enum": [
+            "ASCENDING",
+            "DESCENDING"
+          ]
+        },
+        "projection": {
+          "type": "string",
+          "location": "query",
+          "enum": [
+            "BASIC",
+            "FULL"
+          ]
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        },
+        "maxResults": {
+          "type": "integer",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "mobiledevices",
+        "fields": [
+          "resourceId",
+          "email",
+          "name",
+          "model",
+          "os",
+          "type",
+          "status",
+          "firstSync",
+          "lastSync",
+          "deviceCompromisedStatus",
+          "devicePasswordStatus",
+          "encryptionStatus",
+          "brand",
+          "manufacturer",
+          "releaseVersion",
+          "securityPatchLevel",
+          "privilege",
+          "supportsWorkProfile",
+          "managedAccountIsOnOwnerProfile"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customerId"
+        }
+      ]
+    },
+    "directory.mobiledevices.action": {
+      "resource_path": [
+        "mobiledevices"
+      ],
+      "method": "action",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.device.mobile.action"
+      ],
+      "risk": "manage",
+      "params": {
+        "customerId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "resourceId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "resourceId",
+      "body": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "approve",
+            "cancel_remote_wipe_then_activate",
+            "block",
+            "admin_remote_wipe",
+            "admin_account_wipe",
+            "cancel_remote_wipe_then_block"
+          ],
+          "required": true
+        }
+      },
+      "risk_escalations": [
+        {
+          "field": "action",
+          "equals": "block",
+          "risk": "destructive"
+        },
+        {
+          "field": "action",
+          "equals": "admin_remote_wipe",
+          "risk": "destructive"
+        },
+        {
+          "field": "action",
+          "equals": "admin_account_wipe",
+          "risk": "destructive"
+        },
+        {
+          "field": "action",
+          "equals": "cancel_remote_wipe_then_block",
+          "risk": "destructive"
+        }
+      ],
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customerId"
+        },
+        {
+          "kind": "resource",
+          "param": "resourceId",
+          "read": "directory.mobiledevices.get"
+        }
+      ]
+    },
+    "directory.mobiledevices.delete": {
+      "resource_path": [
+        "mobiledevices"
+      ],
+      "method": "delete",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.device.mobile"
+      ],
+      "risk": "destructive",
+      "params": {
+        "customerId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "resourceId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "resourceId",
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customerId"
+        },
+        {
+          "kind": "resource",
+          "param": "resourceId",
+          "read": "directory.mobiledevices.get"
+        }
+      ]
+    },
+    "admin.customers.chrome.printers.get": {
+      "resource_path": [
+        "customers",
+        "chrome",
+        "printers"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.chrome.printers.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+/chrome/printers/[A-Za-z0-9_-]+$"
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "id",
+          "displayName",
+          "description",
+          "makeAndModel",
+          "orgUnitId",
+          "createTime",
+          "useDriverlessConfig"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer_path",
+          "param": "name"
+        }
+      ]
+    },
+    "admin.customers.chrome.printers.list": {
+      "resource_path": [
+        "customers",
+        "chrome",
+        "printers"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.chrome.printers.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "parent": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        },
+        "filter": {
+          "type": "string",
+          "location": "query"
+        },
+        "orderBy": {
+          "type": "string",
+          "location": "query"
+        },
+        "orgUnitId": {
+          "type": "string",
+          "location": "query"
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "printers",
+        "fields": [
+          "name",
+          "id",
+          "displayName",
+          "description",
+          "makeAndModel",
+          "orgUnitId",
+          "createTime",
+          "useDriverlessConfig"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "parent",
+          "as": "name"
+        }
+      ]
+    },
+    "admin.customers.chrome.printers.patch": {
+      "resource_path": [
+        "customers",
+        "chrome",
+        "printers"
+      ],
+      "method": "patch",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.chrome.printers"
+      ],
+      "risk": "manage",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+/chrome/printers/[A-Za-z0-9_-]+$"
+        },
+        "updateMask": {
+          "type": "string",
+          "location": "query",
+          "pattern": "^(displayName|display_name|description|makeAndModel|make_and_model|useDriverlessConfig|use_driverless_config)(,(displayName|display_name|description|makeAndModel|make_and_model|useDriverlessConfig|use_driverless_config))*$"
+        },
+        "clearMask": {
+          "type": "string",
+          "location": "query",
+          "pattern": "^(displayName|display_name|description|makeAndModel|make_and_model|useDriverlessConfig|use_driverless_config)(,(displayName|display_name|description|makeAndModel|make_and_model|useDriverlessConfig|use_driverless_config))*$"
+        }
+      },
+      "target_param": "name",
+      "body": {
+        "displayName": "string",
+        "description": "string",
+        "makeAndModel": "string",
+        "useDriverlessConfig": "boolean"
+      },
+      "response": {
+        "fields": [
+          "name",
+          "id",
+          "displayName",
+          "description",
+          "makeAndModel",
+          "orgUnitId",
+          "createTime",
+          "useDriverlessConfig"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer_path",
+          "param": "name"
+        },
+        {
+          "kind": "resource",
+          "param": "name",
+          "read": "admin.customers.chrome.printers.get"
+        }
+      ]
+    },
+    "admin.customers.chrome.printers.delete": {
+      "resource_path": [
+        "customers",
+        "chrome",
+        "printers"
+      ],
+      "method": "delete",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.chrome.printers"
+      ],
+      "risk": "destructive",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+/chrome/printers/[A-Za-z0-9_-]+$"
+        }
+      },
+      "target_param": "name",
+      "boundary": [
+        {
+          "kind": "customer_path",
+          "param": "name"
+        },
+        {
+          "kind": "resource",
+          "param": "name",
+          "read": "admin.customers.chrome.printers.get"
+        }
+      ]
+    },
+    "admin.customers.chrome.printers.batchDeletePrinters": {
+      "resource_path": [
+        "customers",
+        "chrome",
+        "printers"
+      ],
+      "method": "batchDeletePrinters",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.chrome.printers"
+      ],
+      "risk": "destructive",
+      "params": {
+        "parent": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        }
+      },
+      "body": {
+        "printerIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "max_items": 50,
+          "required": true
+        }
+      },
+      "response": {
+        "fields": [
+          "printerIds",
+          "failedPrinters"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "parent",
+          "as": "name"
+        },
+        {
+          "kind": "resource",
+          "field": "printerIds",
+          "read": "admin.customers.chrome.printers.get",
+          "prefix": "customers/my_customer/chrome/printers/"
+        }
+      ]
+    },
+    "admin.customers.chrome.printServers.get": {
+      "resource_path": [
+        "customers",
+        "chrome",
+        "printServers"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.chrome.printers.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+/chrome/printServers/[A-Za-z0-9_-]+$"
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "id",
+          "displayName",
+          "description",
+          "orgUnitId",
+          "createTime"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer_path",
+          "param": "name"
+        }
+      ]
+    },
+    "admin.customers.chrome.printServers.list": {
+      "resource_path": [
+        "customers",
+        "chrome",
+        "printServers"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.chrome.printers.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "parent": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        },
+        "filter": {
+          "type": "string",
+          "location": "query"
+        },
+        "orderBy": {
+          "type": "string",
+          "location": "query"
+        },
+        "orgUnitId": {
+          "type": "string",
+          "location": "query"
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "printServers",
+        "fields": [
+          "name",
+          "id",
+          "displayName",
+          "description",
+          "orgUnitId",
+          "createTime"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "parent",
+          "as": "name"
+        }
+      ]
+    },
+    "admin.customers.chrome.printServers.patch": {
+      "resource_path": [
+        "customers",
+        "chrome",
+        "printServers"
+      ],
+      "method": "patch",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.chrome.printers"
+      ],
+      "risk": "manage",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+/chrome/printServers/[A-Za-z0-9_-]+$"
+        },
+        "updateMask": {
+          "type": "string",
+          "location": "query",
+          "pattern": "^(displayName|display_name|description)(,(displayName|display_name|description))*$"
+        }
+      },
+      "target_param": "name",
+      "body": {
+        "displayName": "string",
+        "description": "string"
+      },
+      "response": {
+        "fields": [
+          "name",
+          "id",
+          "displayName",
+          "description",
+          "orgUnitId",
+          "createTime"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer_path",
+          "param": "name"
+        },
+        {
+          "kind": "resource",
+          "param": "name",
+          "read": "admin.customers.chrome.printServers.get"
+        }
+      ]
+    },
+    "admin.customers.chrome.printServers.delete": {
+      "resource_path": [
+        "customers",
+        "chrome",
+        "printServers"
+      ],
+      "method": "delete",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.chrome.printers"
+      ],
+      "risk": "destructive",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+/chrome/printServers/[A-Za-z0-9_-]+$"
+        }
+      },
+      "target_param": "name",
+      "boundary": [
+        {
+          "kind": "customer_path",
+          "param": "name"
+        },
+        {
+          "kind": "resource",
+          "param": "name",
+          "read": "admin.customers.chrome.printServers.get"
+        }
+      ]
+    },
+    "admin.customers.chrome.printServers.batchDeletePrintServers": {
+      "resource_path": [
+        "customers",
+        "chrome",
+        "printServers"
+      ],
+      "method": "batchDeletePrintServers",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.chrome.printers"
+      ],
+      "risk": "destructive",
+      "params": {
+        "parent": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        }
+      },
+      "body": {
+        "printServerIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "max_items": 50,
+          "required": true
+        }
+      },
+      "response": {
+        "fields": [
+          "printServerIds",
+          "failedPrintServers"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "parent",
+          "as": "name"
+        },
+        {
+          "kind": "resource",
+          "field": "printServerIds",
+          "read": "admin.customers.chrome.printServers.get",
+          "prefix": "customers/my_customer/chrome/printServers/"
+        }
+      ]
+    },
+    "admin.customers.chrome.printers.listPrinterModels": {
+      "resource_path": [
+        "customers",
+        "chrome",
+        "printers"
+      ],
+      "method": "listPrinterModels",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.chrome.printers.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "parent": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        },
+        "filter": {
+          "type": "string",
+          "location": "query"
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "printerModels",
+        "fields": [
+          "displayName",
+          "makeAndModel",
+          "manufacturer"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "parent",
+          "as": "name"
+        }
+      ]
+    },
+    "directory.resources.buildings.get": {
+      "resource_path": [
+        "resources",
+        "buildings"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.resource.calendar.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "buildingId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "buildingId",
+      "response": {
+        "fields": [
+          "buildingId",
+          "buildingName",
+          "description",
+          "floorNames",
+          "address"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer"
+        }
+      ]
+    },
+    "directory.resources.buildings.list": {
+      "resource_path": [
+        "resources",
+        "buildings"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.resource.calendar.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        },
+        "maxResults": {
+          "type": "integer",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "buildings",
+        "fields": [
+          "buildingId",
+          "buildingName",
+          "description",
+          "floorNames",
+          "address"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer"
+        }
+      ]
+    },
+    "directory.resources.buildings.insert": {
+      "resource_path": [
+        "resources",
+        "buildings"
+      ],
+      "method": "insert",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.resource.calendar"
+      ],
+      "risk": "manage",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "body": {
+        "buildingId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]{1,100}$",
+          "required": true
+        },
+        "buildingName": {
+          "type": "string",
+          "required": true
+        },
+        "description": "string",
+        "floorNames": {
+          "type": "array",
+          "items": "string",
+          "max_items": 200
+        },
+        "address": {
+          "type": "object",
+          "fields": {
+            "addressLines": {
+              "type": "array",
+              "items": "string",
+              "max_items": 10
+            },
+            "administrativeArea": "string",
+            "languageCode": "string",
+            "locality": "string",
+            "postalCode": "string",
+            "regionCode": "string",
+            "sublocality": "string"
+          }
+        }
+      },
+      "response": {
+        "fields": [
+          "buildingId",
+          "buildingName",
+          "description",
+          "floorNames",
+          "address"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer"
+        }
+      ]
+    },
+    "directory.resources.buildings.patch": {
+      "resource_path": [
+        "resources",
+        "buildings"
+      ],
+      "method": "patch",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.resource.calendar"
+      ],
+      "risk": "manage",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "buildingId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "buildingId",
+      "body": {
+        "buildingName": "string",
+        "description": "string",
+        "floorNames": {
+          "type": "array",
+          "items": "string",
+          "max_items": 200
+        },
+        "address": {
+          "type": "object",
+          "fields": {
+            "addressLines": {
+              "type": "array",
+              "items": "string",
+              "max_items": 10
+            },
+            "administrativeArea": "string",
+            "languageCode": "string",
+            "locality": "string",
+            "postalCode": "string",
+            "regionCode": "string",
+            "sublocality": "string"
+          }
+        }
+      },
+      "response": {
+        "fields": [
+          "buildingId",
+          "buildingName",
+          "description",
+          "floorNames",
+          "address"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer"
+        },
+        {
+          "kind": "resource",
+          "param": "buildingId",
+          "read": "directory.resources.buildings.get"
+        }
+      ]
+    },
+    "directory.resources.buildings.delete": {
+      "resource_path": [
+        "resources",
+        "buildings"
+      ],
+      "method": "delete",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.resource.calendar"
+      ],
+      "risk": "destructive",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "buildingId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "buildingId",
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer"
+        },
+        {
+          "kind": "resource",
+          "param": "buildingId",
+          "read": "directory.resources.buildings.get"
+        }
+      ]
+    },
+    "directory.resources.calendars.get": {
+      "resource_path": [
+        "resources",
+        "calendars"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.resource.calendar.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "calendarResourceId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "calendarResourceId",
+      "response": {
+        "fields": [
+          "resourceId",
+          "resourceName",
+          "resourceEmail",
+          "generatedResourceName",
+          "resourceDescription",
+          "userVisibleDescription",
+          "resourceType",
+          "resourceCategory",
+          "capacity",
+          "buildingId",
+          "floorName",
+          "floorSection",
+          "featureInstances"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer"
+        }
+      ]
+    },
+    "directory.resources.calendars.list": {
+      "resource_path": [
+        "resources",
+        "calendars"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.resource.calendar.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "query": {
+          "type": "string",
+          "location": "query"
+        },
+        "orderBy": {
+          "type": "string",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        },
+        "maxResults": {
+          "type": "integer",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "items",
+        "fields": [
+          "resourceId",
+          "resourceName",
+          "resourceEmail",
+          "generatedResourceName",
+          "resourceDescription",
+          "userVisibleDescription",
+          "resourceType",
+          "resourceCategory",
+          "capacity",
+          "buildingId",
+          "floorName",
+          "floorSection",
+          "featureInstances"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer"
+        }
+      ]
+    },
+    "directory.resources.calendars.insert": {
+      "resource_path": [
+        "resources",
+        "calendars"
+      ],
+      "method": "insert",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.resource.calendar"
+      ],
+      "risk": "manage",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "body": {
+        "resourceId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]{1,100}$",
+          "required": true
+        },
+        "resourceName": {
+          "type": "string",
+          "required": true
+        },
+        "resourceDescription": "string",
+        "userVisibleDescription": "string",
+        "resourceType": "string",
+        "resourceCategory": {
+          "type": "string",
+          "enum": [
+            "CONFERENCE_ROOM",
+            "OTHER"
+          ]
+        },
+        "capacity": "integer",
+        "buildingId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]{1,100}$"
+        },
+        "floorName": "string",
+        "floorSection": "string",
+        "featureInstances": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "fields": {
+              "feature": {
+                "type": "object",
+                "fields": {
+                  "name": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9 ._'&()+-]{1,100}$"
+                  }
+                }
+              }
+            }
+          },
+          "max_items": 50
+        }
+      },
+      "response": {
+        "fields": [
+          "resourceId",
+          "resourceName",
+          "resourceEmail",
+          "generatedResourceName",
+          "resourceDescription",
+          "userVisibleDescription",
+          "resourceType",
+          "resourceCategory",
+          "capacity",
+          "buildingId",
+          "floorName",
+          "floorSection",
+          "featureInstances"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer"
+        },
+        {
+          "kind": "resource",
+          "field": "buildingId",
+          "read": "directory.resources.buildings.get"
+        },
+        {
+          "kind": "resource",
+          "field": "featureInstances.feature.name",
+          "read": "directory.resources.features.get"
+        }
+      ]
+    },
+    "directory.resources.calendars.patch": {
+      "resource_path": [
+        "resources",
+        "calendars"
+      ],
+      "method": "patch",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.resource.calendar"
+      ],
+      "risk": "manage",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "calendarResourceId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "calendarResourceId",
+      "body": {
+        "resourceName": "string",
+        "resourceDescription": "string",
+        "userVisibleDescription": "string",
+        "resourceType": "string",
+        "resourceCategory": {
+          "type": "string",
+          "enum": [
+            "CONFERENCE_ROOM",
+            "OTHER"
+          ]
+        },
+        "capacity": "integer",
+        "buildingId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]{1,100}$"
+        },
+        "floorName": "string",
+        "floorSection": "string",
+        "featureInstances": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "fields": {
+              "feature": {
+                "type": "object",
+                "fields": {
+                  "name": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9 ._'&()+-]{1,100}$"
+                  }
+                }
+              }
+            }
+          },
+          "max_items": 50
+        }
+      },
+      "response": {
+        "fields": [
+          "resourceId",
+          "resourceName",
+          "resourceEmail",
+          "generatedResourceName",
+          "resourceDescription",
+          "userVisibleDescription",
+          "resourceType",
+          "resourceCategory",
+          "capacity",
+          "buildingId",
+          "floorName",
+          "floorSection",
+          "featureInstances"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer"
+        },
+        {
+          "kind": "resource",
+          "param": "calendarResourceId",
+          "read": "directory.resources.calendars.get"
+        },
+        {
+          "kind": "resource",
+          "field": "buildingId",
+          "read": "directory.resources.buildings.get"
+        },
+        {
+          "kind": "resource",
+          "field": "featureInstances.feature.name",
+          "read": "directory.resources.features.get"
+        }
+      ]
+    },
+    "directory.resources.calendars.delete": {
+      "resource_path": [
+        "resources",
+        "calendars"
+      ],
+      "method": "delete",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.resource.calendar"
+      ],
+      "risk": "destructive",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "calendarResourceId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "calendarResourceId",
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer"
+        },
+        {
+          "kind": "resource",
+          "param": "calendarResourceId",
+          "read": "directory.resources.calendars.get"
+        }
+      ]
+    },
+    "directory.resources.features.get": {
+      "resource_path": [
+        "resources",
+        "features"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.resource.calendar.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "featureKey": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^[A-Za-z0-9 ._'&()+-]{1,100}$"
+        }
+      },
+      "target_param": "featureKey",
+      "response": {
+        "fields": [
+          "name"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer"
+        }
+      ]
+    },
+    "directory.resources.features.list": {
+      "resource_path": [
+        "resources",
+        "features"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.resource.calendar.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        },
+        "maxResults": {
+          "type": "integer",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "features",
+        "fields": [
+          "name"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer"
+        }
+      ]
+    },
+    "directory.resources.features.insert": {
+      "resource_path": [
+        "resources",
+        "features"
+      ],
+      "method": "insert",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.resource.calendar"
+      ],
+      "risk": "manage",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "body": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9 ._'&()+-]{1,100}$",
+          "required": true
+        }
+      },
+      "response": {
+        "fields": [
+          "name"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer"
+        }
+      ]
+    },
+    "directory.resources.features.patch": {
+      "resource_path": [
+        "resources",
+        "features"
+      ],
+      "method": "patch",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.resource.calendar"
+      ],
+      "risk": "manage",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "featureKey": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^[A-Za-z0-9 ._'&()+-]{1,100}$"
+        }
+      },
+      "target_param": "featureKey",
+      "body": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9 ._'&()+-]{1,100}$",
+          "required": true
+        }
+      },
+      "response": {
+        "fields": [
+          "name"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer"
+        },
+        {
+          "kind": "resource",
+          "param": "featureKey",
+          "read": "directory.resources.features.get"
+        }
+      ]
+    },
+    "directory.resources.features.rename": {
+      "resource_path": [
+        "resources",
+        "features"
+      ],
+      "method": "rename",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.resource.calendar"
+      ],
+      "risk": "manage",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "oldName": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^[A-Za-z0-9 ._'&()+-]{1,100}$"
+        }
+      },
+      "target_param": "oldName",
+      "body": {
+        "newName": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9 ._'&()+-]{1,100}$",
+          "required": true
+        }
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer"
+        },
+        {
+          "kind": "resource",
+          "param": "oldName",
+          "read": "directory.resources.features.get"
+        }
+      ]
+    },
+    "directory.resources.features.delete": {
+      "resource_path": [
+        "resources",
+        "features"
+      ],
+      "method": "delete",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.resource.calendar"
+      ],
+      "risk": "destructive",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "featureKey": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^[A-Za-z0-9 ._'&()+-]{1,100}$"
+        }
+      },
+      "target_param": "featureKey",
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer"
+        },
+        {
+          "kind": "resource",
+          "param": "featureKey",
+          "read": "directory.resources.features.get"
+        }
+      ]
+    },
+    "directory.customers.patch": {
+      "resource_path": [
+        "customers"
+      ],
+      "method": "patch",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.customer"
+      ],
+      "risk": "destructive",
+      "params": {
+        "customerKey": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "customerKey",
+      "body": {
+        "phoneNumber": {
+          "type": "string",
+          "required": true,
+          "pattern": "^\\+[1-9][0-9]{1,14}$"
+        }
+      },
+      "response": {
+        "fields": [
+          "id",
+          "phoneNumber"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customerKey"
+        },
+        {
+          "kind": "customer_record"
+        }
+      ]
+    },
+    "directory.roles.insert": {
+      "resource_path": [
+        "roles"
+      ],
+      "method": "insert",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.rolemanagement"
+      ],
+      "risk": "destructive",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "body": {
+        "roleName": {
+          "type": "string",
+          "required": true
+        },
+        "roleDescription": "string",
+        "rolePrivileges": {
+          "type": "array",
+          "required": true,
+          "max_items": 30,
+          "items": {
+            "type": "object",
+            "fields": {
+              "serviceId": {
+                "type": "string",
+                "required": true,
+                "pattern": "^[A-Za-z0-9_-]+$"
+              },
+              "privilegeName": {
+                "type": "string",
+                "required": true,
+                "pattern": "^[A-Za-z0-9_.-]+$"
+              }
+            }
+          }
+        }
+      },
+      "response": {
+        "fields": [
+          "roleId",
+          "roleName",
+          "roleDescription",
+          "isSystemRole",
+          "isSuperAdminRole"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer"
+        },
+        {
+          "kind": "role_privileges",
+          "field": "rolePrivileges"
+        }
+      ]
+    },
+    "directory.roles.patch": {
+      "resource_path": [
+        "roles"
+      ],
+      "method": "patch",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.rolemanagement"
+      ],
+      "risk": "destructive",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "roleId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "roleId",
+      "body": {
+        "roleName": "string",
+        "roleDescription": "string"
+      },
+      "response": {
+        "fields": [
+          "roleId",
+          "roleName",
+          "roleDescription",
+          "isSystemRole",
+          "isSuperAdminRole"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer"
+        },
+        {
+          "kind": "custom_role",
+          "param": "roleId"
+        }
+      ]
+    },
+    "directory.roles.delete": {
+      "resource_path": [
+        "roles"
+      ],
+      "method": "delete",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.rolemanagement"
+      ],
+      "risk": "destructive",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "roleId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "roleId",
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer"
+        },
+        {
+          "kind": "custom_role",
+          "param": "roleId"
+        }
+      ]
+    },
+    "directory.schemas.insert": {
+      "resource_path": [
+        "schemas"
+      ],
+      "method": "insert",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.userschema"
+      ],
+      "risk": "destructive",
+      "params": {
+        "customerId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "body": {
+        "schemaName": {
+          "type": "string",
+          "required": true,
+          "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+        },
+        "displayName": "string",
+        "fields": {
+          "type": "array",
+          "required": true,
+          "max_items": 20,
+          "items": {
+            "type": "object",
+            "fields": {
+              "fieldName": {
+                "type": "string",
+                "required": true,
+                "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+              },
+              "displayName": {
+                "type": "string",
+                "required": true
+              },
+              "fieldType": {
+                "type": "string",
+                "required": true,
+                "enum": [
+                  "STRING",
+                  "BOOL",
+                  "INT64",
+                  "DATE"
+                ]
+              },
+              "readAccessType": {
+                "type": "string",
+                "required": true,
+                "enum": [
+                  "ADMINS_AND_SELF"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "response": {
+        "fields": [
+          "schemaId",
+          "schemaName",
+          "displayName"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customerId"
+        }
+      ]
+    },
+    "directory.schemas.patch": {
+      "resource_path": [
+        "schemas"
+      ],
+      "method": "patch",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.userschema"
+      ],
+      "risk": "destructive",
+      "params": {
+        "customerId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "schemaKey": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "schemaKey",
+      "body": {
+        "displayName": {
+          "type": "string",
+          "required": true
+        }
+      },
+      "response": {
+        "fields": [
+          "schemaId",
+          "schemaName",
+          "displayName"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customerId"
+        },
+        {
+          "kind": "custom_schema",
+          "param": "schemaKey"
+        }
+      ]
+    },
+    "directory.schemas.delete": {
+      "resource_path": [
+        "schemas"
+      ],
+      "method": "delete",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.userschema"
+      ],
+      "risk": "destructive",
+      "params": {
+        "customerId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "schemaKey": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "schemaKey",
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customerId"
+        },
+        {
+          "kind": "custom_schema",
+          "param": "schemaKey"
+        }
+      ]
+    },
+    "admin.customer.devices.chromeos.issueCommand": {
+      "resource_path": [
+        "customer",
+        "devices",
+        "chromeos"
+      ],
+      "method": "issueCommand",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.device.chromeos"
+      ],
+      "risk": "destructive",
+      "params": {
+        "customerId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "deviceId": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        }
+      },
+      "target_param": "deviceId",
+      "body": {
+        "commandType": {
+          "type": "string",
+          "required": true,
+          "enum": [
+            "REBOOT"
+          ]
+        }
+      },
+      "response": {
+        "fields": [
+          "commandId"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customerId"
+        },
+        {
+          "kind": "resource",
+          "param": "deviceId",
+          "read": "directory.chromeosdevices.get"
+        }
+      ]
+    },
+    "admin.customer.devices.chromeos.commands.get": {
+      "resource_path": [
+        "customer",
+        "devices",
+        "chromeos",
+        "commands"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customerId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "deviceId": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "commandId": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^[0-9]{1,20}$"
+        }
+      },
+      "target_param": "deviceId",
+      "response": {
+        "fields": [
+          "commandId",
+          "type",
+          "state",
+          "commandResult"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customerId"
+        },
+        {
+          "kind": "resource",
+          "param": "deviceId",
+          "read": "directory.chromeosdevices.get"
+        }
+      ]
+    }
+  },
+  "excluded": {
+    "admin.channels.stop": {
+      "category": "push-channel",
+      "reason": "Stops a push channel by caller-supplied channel and resource IDs; no watch method is registered, so this server never creates a channel to stop."
+    },
+    "admin.customers.chrome.printServers.batchCreatePrintServers": {
+      "category": "caller-url",
+      "reason": "Needs a caller-supplied print server URI; managed ChromeOS devices would send print jobs to a network address the server cannot tie to the customer, and a URI can embed credentials."
+    },
+    "admin.customers.chrome.printServers.create": {
+      "category": "caller-url",
+      "reason": "Needs a caller-supplied print server URI; managed ChromeOS devices would send print jobs to a network address the server cannot tie to the customer, and a URI can embed credentials."
+    },
+    "admin.customers.chrome.printers.batchCreatePrinters": {
+      "category": "caller-url",
+      "reason": "Needs a caller-supplied printer URI; managed ChromeOS devices would send print jobs to a network address the server cannot tie to the customer, and a URI can embed credentials."
+    },
+    "admin.customers.chrome.printers.create": {
+      "category": "caller-url",
+      "reason": "Needs a caller-supplied printer URI; managed ChromeOS devices would send print jobs to a network address the server cannot tie to the customer, and a URI can embed credentials."
+    },
+    "directory.chromeosdevices.action": {
+      "category": "deprecated",
+      "reason": "Deprecated by Google in favour of admin.customer.devices.chromeos.batchChangeStatus."
+    },
+    "directory.chromeosdevices.update": {
+      "category": "replacement-variant",
+      "reason": "Full-replacement (PUT) variant of the registered patch method; replacement can clear fields the caller did not send."
+    },
+    "directory.customers.update": {
+      "category": "replacement-variant",
+      "reason": "Full-replacement (PUT) variant of the phone-only customer patch; it can reset unsubmitted tenant contact, address, and primary-domain settings."
+    },
+    "directory.domainAliases.delete": {
+      "category": "tenant-config",
+      "reason": "Changes tenant domain routing or addresses; API customer-scoped reads cannot prove external domain ownership and all mail-routing or account dependencies before this write."
+    },
+    "directory.domainAliases.insert": {
+      "category": "tenant-config",
+      "reason": "Changes tenant domain routing or addresses; API customer-scoped reads cannot prove external domain ownership and all mail-routing or account dependencies before this write."
+    },
+    "directory.domains.delete": {
+      "category": "tenant-config",
+      "reason": "Changes tenant domain routing or addresses; API customer-scoped reads cannot prove external domain ownership and all mail-routing or account dependencies before this write."
+    },
+    "directory.domains.insert": {
+      "category": "tenant-config",
+      "reason": "Changes tenant domain routing or addresses; API customer-scoped reads cannot prove external domain ownership and all mail-routing or account dependencies before this write."
+    },
+    "directory.groups.update": {
+      "category": "replacement-variant",
+      "reason": "Full-replacement (PUT) variant of the registered patch method; replacement can clear fields the caller did not send."
+    },
+    "directory.members.update": {
+      "category": "replacement-variant",
+      "reason": "Full-replacement (PUT) variant of the registered patch method; replacement can clear fields the caller did not send."
+    },
+    "directory.orgunits.update": {
+      "category": "replacement-variant",
+      "reason": "Full-replacement (PUT) variant of the registered patch method; replacement can clear fields the caller did not send."
+    },
+    "directory.resources.buildings.update": {
+      "category": "replacement-variant",
+      "reason": "Full-replacement (PUT) variant of the registered patch method; replacement can clear fields the caller did not send."
+    },
+    "directory.resources.calendars.update": {
+      "category": "replacement-variant",
+      "reason": "Full-replacement (PUT) variant of the registered patch method; replacement can clear fields the caller did not send."
+    },
+    "directory.resources.features.update": {
+      "category": "replacement-variant",
+      "reason": "Full-replacement (PUT) variant of the registered patch method; replacement can clear fields the caller did not send."
+    },
+    "directory.roles.update": {
+      "category": "replacement-variant",
+      "reason": "Full-replacement (PUT) variant of custom-role patch; replacing privileges can remove admin access for assigned users, so only a metadata-only patch is registered."
+    },
+    "directory.schemas.update": {
+      "category": "replacement-variant",
+      "reason": "Full-replacement (PUT) variant of the metadata-only schema patch; replacing fields can delete custom profile values for every user."
+    },
+    "directory.users.aliases.watch": {
+      "category": "push-channel",
+      "reason": "Opens a push notification channel to a caller-supplied webhook address; the server accepts no caller URLs and the channel is not bound to the customer."
+    },
+    "directory.users.createGuest": {
+      "category": "unguarded-target",
+      "reason": "Creates a guest account for an external address that cannot be verified against the customer before creation."
+    },
+    "directory.users.insert": {
+      "category": "secret-in-payload",
+      "reason": "The request body carries the new user's password, which would be stored in the confirmation record and echoed in the proposal."
+    },
+    "directory.users.photos.get": {
+      "category": "sensitive-content",
+      "reason": "Returns base64 photo data, which is personal content of unbounded size."
+    },
+    "directory.users.photos.patch": {
+      "category": "sensitive-content",
+      "reason": "The body is base64 image data, which would be stored in the confirmation record."
+    },
+    "directory.users.photos.update": {
+      "category": "sensitive-content",
+      "reason": "The body is base64 image data, which would be stored in the confirmation record."
+    },
+    "directory.users.undelete": {
+      "category": "unguarded-target",
+      "reason": "Deleted users are absent from users.get; a customer-scoped users.list with showDeleted is paged and can miss an arbitrary immutable ID, so the current guard cannot prove this restore target before the write."
+    },
+    "directory.users.watch": {
+      "category": "push-channel",
+      "reason": "Opens a push notification channel to a caller-supplied webhook address; the server accepts no caller URLs and the channel is not bound to the customer."
+    },
+    "directory.verificationCodes.generate": {
+      "category": "secret-exposure",
+      "reason": "Replaces the user's backup codes; the new codes are readable only through the excluded verificationCodes.list."
+    },
+    "directory.verificationCodes.list": {
+      "category": "secret-exposure",
+      "reason": "Returns the user's backup verification codes, which are sign-in secrets."
+    }
+  }
+}

@@ -1,0 +1,617 @@
+{
+  "methods": {
+    "alertcenter.alerts.batchDelete": {
+      "httpMethod": "POST",
+      "parameters": {},
+      "path": "v1beta1/alerts:batchDelete",
+      "request": "BatchDeleteAlertsRequest",
+      "response": "BatchDeleteAlertsResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/apps.alerts"
+      ]
+    },
+    "alertcenter.alerts.batchUndelete": {
+      "httpMethod": "POST",
+      "parameters": {},
+      "path": "v1beta1/alerts:batchUndelete",
+      "request": "BatchUndeleteAlertsRequest",
+      "response": "BatchUndeleteAlertsResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/apps.alerts"
+      ]
+    },
+    "alertcenter.alerts.delete": {
+      "httpMethod": "DELETE",
+      "parameters": {
+        "alertId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "customerId": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1beta1/alerts/{alertId}",
+      "request": null,
+      "response": "Empty",
+      "scopes": [
+        "https://www.googleapis.com/auth/apps.alerts"
+      ]
+    },
+    "alertcenter.alerts.feedback.create": {
+      "httpMethod": "POST",
+      "parameters": {
+        "alertId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "customerId": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1beta1/alerts/{alertId}/feedback",
+      "request": "AlertFeedback",
+      "response": "AlertFeedback",
+      "scopes": [
+        "https://www.googleapis.com/auth/apps.alerts"
+      ]
+    },
+    "alertcenter.alerts.feedback.list": {
+      "httpMethod": "GET",
+      "parameters": {
+        "alertId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "customerId": {
+          "location": "query",
+          "type": "string"
+        },
+        "filter": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1beta1/alerts/{alertId}/feedback",
+      "request": null,
+      "response": "ListAlertFeedbackResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/apps.alerts"
+      ]
+    },
+    "alertcenter.alerts.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "alertId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "customerId": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1beta1/alerts/{alertId}",
+      "request": null,
+      "response": "Alert",
+      "scopes": [
+        "https://www.googleapis.com/auth/apps.alerts"
+      ]
+    },
+    "alertcenter.alerts.getMetadata": {
+      "httpMethod": "GET",
+      "parameters": {
+        "alertId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "customerId": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1beta1/alerts/{alertId}/metadata",
+      "request": null,
+      "response": "AlertMetadata",
+      "scopes": [
+        "https://www.googleapis.com/auth/apps.alerts"
+      ]
+    },
+    "alertcenter.alerts.list": {
+      "httpMethod": "GET",
+      "parameters": {
+        "customerId": {
+          "location": "query",
+          "type": "string"
+        },
+        "filter": {
+          "location": "query",
+          "type": "string"
+        },
+        "orderBy": {
+          "location": "query",
+          "type": "string"
+        },
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1beta1/alerts",
+      "request": null,
+      "response": "ListAlertsResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/apps.alerts"
+      ]
+    },
+    "alertcenter.alerts.undelete": {
+      "httpMethod": "POST",
+      "parameters": {
+        "alertId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1beta1/alerts/{alertId}:undelete",
+      "request": "UndeleteAlertRequest",
+      "response": "Alert",
+      "scopes": [
+        "https://www.googleapis.com/auth/apps.alerts"
+      ]
+    },
+    "alertcenter.getSettings": {
+      "httpMethod": "GET",
+      "parameters": {
+        "customerId": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1beta1/settings",
+      "request": null,
+      "response": "Settings",
+      "scopes": [
+        "https://www.googleapis.com/auth/apps.alerts"
+      ]
+    },
+    "alertcenter.updateSettings": {
+      "httpMethod": "PATCH",
+      "parameters": {
+        "customerId": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1beta1/settings",
+      "request": "Settings",
+      "response": "Settings",
+      "scopes": [
+        "https://www.googleapis.com/auth/apps.alerts"
+      ]
+    }
+  },
+  "name": "alertcenter",
+  "retrieved": "2026-09-25",
+  "revision": "20260921",
+  "schemas": {
+    "AbuseDetected": {
+      "additionalDetails": "EntityList",
+      "product": "string",
+      "subAlertId": "string",
+      "variationType": "string"
+    },
+    "AccessApproval": {
+      "justificationReason": "array:string",
+      "officeLocation": "string",
+      "products": "array:string",
+      "requestId": "string",
+      "scope": "string",
+      "tickets": "array:SupportTicket"
+    },
+    "AccountSuspensionDetails": {
+      "abuseReason": "string",
+      "productName": "string"
+    },
+    "AccountSuspensionWarning": {
+      "appealWindow": "string",
+      "state": "string",
+      "suspensionDetails": "array:AccountSuspensionDetails"
+    },
+    "AccountWarning": {
+      "email": "string",
+      "loginDetails": "LoginDetails"
+    },
+    "ActionInfo": {
+      "evidenceLockerFilePath": "string"
+    },
+    "ActivityRule": {
+      "actionNames": "array:string",
+      "createTime": "string",
+      "description": "string",
+      "displayName": "string",
+      "name": "string",
+      "query": "string",
+      "supersededAlerts": "array:string",
+      "supersedingAlert": "string",
+      "threshold": "string",
+      "triggerSource": "string",
+      "updateTime": "string",
+      "windowSize": "string"
+    },
+    "Alert": {
+      "alertId": "string",
+      "createTime": "string",
+      "customerId": "string",
+      "data": "object",
+      "deleted": "boolean",
+      "endTime": "string",
+      "etag": "string",
+      "metadata": "AlertMetadata",
+      "securityInvestigationToolLink": "string",
+      "source": "string",
+      "startTime": "string",
+      "type": "string",
+      "updateTime": "string"
+    },
+    "AlertFeedback": {
+      "alertId": "string",
+      "createTime": "string",
+      "customerId": "string",
+      "email": "string",
+      "feedbackId": "string",
+      "type": "string"
+    },
+    "AlertMetadata": {
+      "alertId": "string",
+      "assignee": "string",
+      "customerId": "string",
+      "etag": "string",
+      "severity": "string",
+      "status": "string",
+      "updateTime": "string"
+    },
+    "ApnsCertificateExpirationInfo": {
+      "appleId": "string",
+      "expirationTime": "string",
+      "uid": "string"
+    },
+    "AppMakerSqlSetupNotification": {
+      "requestInfo": "array:RequestInfo"
+    },
+    "AppSettingsChanged": {
+      "alertDetails": "string",
+      "name": "string"
+    },
+    "AppsOutage": {
+      "dashboardUri": "string",
+      "incidentTrackingId": "string",
+      "mergeInfo": "MergeInfo",
+      "nextUpdateTime": "string",
+      "products": "array:string",
+      "resolutionTime": "string",
+      "status": "string"
+    },
+    "Attachment": {
+      "csv": "Csv"
+    },
+    "BadWhitelist": {
+      "domainId": "DomainId",
+      "maliciousEntity": "MaliciousEntity",
+      "messages": "array:GmailMessageInfo",
+      "sourceIp": "string"
+    },
+    "BatchDeleteAlertsRequest": {
+      "alertId": "array:string",
+      "customerId": "string"
+    },
+    "BatchDeleteAlertsResponse": {
+      "failedAlertStatus": "object",
+      "successAlertIds": "array:string"
+    },
+    "BatchUndeleteAlertsRequest": {
+      "alertId": "array:string",
+      "customerId": "string"
+    },
+    "BatchUndeleteAlertsResponse": {
+      "failedAlertStatus": "object",
+      "successAlertIds": "array:string"
+    },
+    "ClientSideEncryptionServiceUnavailable": {
+      "idpError": "array:IdentityProviderError",
+      "keyServiceError": "array:KeyServiceError"
+    },
+    "CloudPubsubTopic": {
+      "payloadFormat": "string",
+      "topicName": "string"
+    },
+    "Csv": {
+      "dataRows": "array:CsvRow",
+      "headers": "array:string"
+    },
+    "CsvRow": {
+      "entries": "array:string"
+    },
+    "DeviceCompromised": {
+      "email": "string",
+      "events": "array:DeviceCompromisedSecurityDetail"
+    },
+    "DeviceCompromisedSecurityDetail": {
+      "deviceCompromisedState": "string",
+      "deviceId": "string",
+      "deviceModel": "string",
+      "deviceType": "string",
+      "iosVendorId": "string",
+      "resourceId": "string",
+      "serialNumber": "string"
+    },
+    "DeviceManagementRule": {
+      "deviceId": "string",
+      "deviceModel": "string",
+      "deviceType": "string",
+      "email": "string",
+      "id": "string",
+      "iosVendorId": "string",
+      "ownerId": "string",
+      "resourceId": "string",
+      "ruleAction": "string",
+      "serialNumber": "string"
+    },
+    "DlpRuleViolation": {
+      "ruleViolationInfo": "RuleViolationInfo"
+    },
+    "DomainId": {
+      "customerPrimaryDomain": "string"
+    },
+    "DomainWideTakeoutInitiated": {
+      "email": "string",
+      "takeoutRequestId": "string"
+    },
+    "DriveSyncStateChanged": {
+      "email": "string",
+      "syncPauseStartTime": "string",
+      "syncState": "string",
+      "syncStateChangeReason": "string"
+    },
+    "Empty": {},
+    "Entity": {
+      "link": "string",
+      "name": "string",
+      "values": "array:string"
+    },
+    "EntityList": {
+      "entities": "array:Entity",
+      "headers": "array:string",
+      "name": "string"
+    },
+    "GmailMessageInfo": {
+      "attachmentsSha256Hash": "array:string",
+      "date": "string",
+      "md5HashMessageBody": "string",
+      "md5HashSubject": "string",
+      "messageBodySnippet": "string",
+      "messageId": "string",
+      "recipient": "string",
+      "sentTime": "string",
+      "subjectText": "string"
+    },
+    "GoogleOperations": {
+      "affectedUserEmails": "array:string",
+      "attachmentData": "Attachment",
+      "description": "string",
+      "domain": "string",
+      "header": "string",
+      "title": "string"
+    },
+    "IdentityProviderError": {
+      "authorizationBaseUrl": "string",
+      "errorCount": "string",
+      "errorInfo": "string"
+    },
+    "KeyServiceError": {
+      "errorCount": "string",
+      "errorInfo": "string",
+      "httpResponseCode": "string",
+      "keyServiceUrl": "string"
+    },
+    "ListAlertFeedbackResponse": {
+      "feedback": "array:AlertFeedback"
+    },
+    "ListAlertsResponse": {
+      "alerts": "array:Alert",
+      "nextPageToken": "string"
+    },
+    "LoginDetails": {
+      "ipAddress": "string",
+      "loginTime": "string"
+    },
+    "MailPhishing": {
+      "domainId": "DomainId",
+      "isInternal": "boolean",
+      "maliciousEntity": "MaliciousEntity",
+      "messages": "array:GmailMessageInfo",
+      "systemActionType": "string"
+    },
+    "MaliciousEntity": {
+      "displayName": "string",
+      "entity": "User",
+      "fromHeader": "string"
+    },
+    "MandatoryServiceAnnouncement": {
+      "description": "string",
+      "title": "string"
+    },
+    "MatchInfo": {
+      "predefinedDetector": "PredefinedDetectorInfo",
+      "userDefinedDetector": "UserDefinedDetectorInfo"
+    },
+    "MergeInfo": {
+      "newAlertId": "string",
+      "newIncidentTrackingId": "string"
+    },
+    "Notification": {
+      "cloudPubsubTopic": "CloudPubsubTopic"
+    },
+    "PhishingSpike": {
+      "domainId": "DomainId",
+      "isInternal": "boolean",
+      "maliciousEntity": "MaliciousEntity",
+      "messages": "array:GmailMessageInfo"
+    },
+    "PredefinedDetectorInfo": {
+      "detectorName": "string"
+    },
+    "PrimaryAdminChangedEvent": {
+      "domain": "string",
+      "previousAdminEmail": "string",
+      "updatedAdminEmail": "string"
+    },
+    "ReportingRule": {
+      "alertDetails": "string",
+      "name": "string",
+      "query": "string"
+    },
+    "RequestInfo": {
+      "appDeveloperEmail": "array:string",
+      "appKey": "string",
+      "numberOfRequests": "string"
+    },
+    "ResourceInfo": {
+      "chatAttachmentId": "string",
+      "chatMessageId": "string",
+      "deviceId": "string",
+      "documentId": "string",
+      "messageId": "string",
+      "resourceTitle": "string"
+    },
+    "RuleInfo": {
+      "displayName": "string",
+      "resourceName": "string"
+    },
+    "RuleViolationInfo": {
+      "agentType": "string",
+      "dataSource": "string",
+      "eventType": "string",
+      "matchInfo": "array:MatchInfo",
+      "recipients": "array:string",
+      "resourceInfo": "ResourceInfo",
+      "ruleInfo": "RuleInfo",
+      "suppressedActionTypes": "array:string",
+      "trigger": "string",
+      "triggeredActionInfo": "array:ActionInfo",
+      "triggeredActionTypes": "array:string",
+      "triggeringUserEmail": "string"
+    },
+    "SSOProfileCreatedEvent": {
+      "inboundSsoProfileName": "string"
+    },
+    "SSOProfileDeletedEvent": {
+      "inboundSsoProfileName": "string"
+    },
+    "SSOProfileUpdatedEvent": {
+      "inboundSsoProfileChanges": "string",
+      "inboundSsoProfileName": "string"
+    },
+    "SensitiveAdminAction": {
+      "actorEmail": "string",
+      "eventTime": "string",
+      "primaryAdminChangedEvent": "PrimaryAdminChangedEvent",
+      "ssoProfileCreatedEvent": "SSOProfileCreatedEvent",
+      "ssoProfileDeletedEvent": "SSOProfileDeletedEvent",
+      "ssoProfileUpdatedEvent": "SSOProfileUpdatedEvent",
+      "superAdminPasswordResetEvent": "SuperAdminPasswordResetEvent"
+    },
+    "Settings": {
+      "notifications": "array:Notification"
+    },
+    "StateSponsoredAttack": {
+      "email": "string"
+    },
+    "Status": {
+      "code": "integer",
+      "details": "array:object",
+      "message": "string"
+    },
+    "SuperAdminPasswordResetEvent": {
+      "userEmail": "string"
+    },
+    "SupportTicket": {
+      "ticketId": "string",
+      "ticketUrl": "string"
+    },
+    "SuspiciousActivity": {
+      "email": "string",
+      "events": "array:SuspiciousActivitySecurityDetail"
+    },
+    "SuspiciousActivitySecurityDetail": {
+      "deviceId": "string",
+      "deviceModel": "string",
+      "deviceProperty": "string",
+      "deviceType": "string",
+      "iosVendorId": "string",
+      "newValue": "string",
+      "oldValue": "string",
+      "resourceId": "string",
+      "serialNumber": "string"
+    },
+    "TransferError": {
+      "email": "string",
+      "entityType": "string",
+      "id": "string",
+      "invalidReason": "string",
+      "name": "string"
+    },
+    "TransferMisconfiguration": {
+      "errors": "array:TransferError"
+    },
+    "UndeleteAlertRequest": {
+      "customerId": "string"
+    },
+    "User": {
+      "displayName": "string",
+      "emailAddress": "string"
+    },
+    "UserChanges": {
+      "name": "string"
+    },
+    "UserDefinedDetectorInfo": {
+      "displayName": "string",
+      "resourceName": "string"
+    },
+    "VaultAcceleratedDeletion": {
+      "actionType": "string",
+      "appType": "string",
+      "createTime": "string",
+      "deletionRequestId": "string",
+      "matterId": "string"
+    },
+    "VoiceMisconfiguration": {
+      "entityName": "string",
+      "entityType": "string",
+      "fixUri": "string",
+      "membersMisconfiguration": "TransferMisconfiguration",
+      "transferMisconfiguration": "TransferMisconfiguration",
+      "voicemailMisconfiguration": "VoicemailMisconfiguration"
+    },
+    "VoicemailMisconfiguration": {
+      "errors": "array:VoicemailRecipientError"
+    },
+    "VoicemailRecipientError": {
+      "email": "string",
+      "invalidReason": "string"
+    }
+  },
+  "source": "https://alertcenter.googleapis.com/$discovery/rest?version=v1beta1",
+  "version": "v1beta1"
+}

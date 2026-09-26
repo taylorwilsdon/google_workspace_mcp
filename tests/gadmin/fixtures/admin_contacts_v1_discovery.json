@@ -1,0 +1,81 @@
+{
+  "methods": {
+    "admin.contacts.v1.users.delegates.create": {
+      "httpMethod": "POST",
+      "parameters": {
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "admin/contacts/v1/users/{userId}/delegates",
+      "request": "Delegate",
+      "response": "Delegate",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.contact.delegation"
+      ]
+    },
+    "admin.contacts.v1.users.delegates.delete": {
+      "httpMethod": "DELETE",
+      "parameters": {
+        "delegate": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "admin/contacts/v1/users/{userId}/delegates/{delegate}",
+      "request": null,
+      "response": "Empty",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.contact.delegation"
+      ]
+    },
+    "admin.contacts.v1.users.delegates.list": {
+      "httpMethod": "GET",
+      "parameters": {
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "admin/contacts/v1/users/{userId}/delegates",
+      "request": null,
+      "response": "ListDelegatesResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.contact.delegation",
+        "https://www.googleapis.com/auth/admin.contact.delegation.readonly"
+      ]
+    }
+  },
+  "name": "admin",
+  "retrieved": "2026-09-26",
+  "revision": "20260926",
+  "schemas": {
+    "Delegate": {
+      "email": "string"
+    },
+    "Empty": {},
+    "ListDelegatesResponse": {
+      "delegates": "array:Delegate",
+      "nextPageToken": "string"
+    }
+  },
+  "source": "https://developers.google.com/workspace/admin/contact-delegation/reference/rest",
+  "version": "contacts_v1"
+}

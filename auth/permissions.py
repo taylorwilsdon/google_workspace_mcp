@@ -10,6 +10,7 @@ Usage:
 
 Gmail levels: readonly, organize, drafts, send, full
 Tasks levels: readonly, manage, full
+Admin Directory levels (opt-in): readonly, manage, destructive
 Other services: readonly, full (extensible by adding entries to SERVICE_PERMISSION_LEVELS)
 """
 
@@ -56,6 +57,23 @@ from auth.scopes import (
     SCRIPT_METRICS_SCOPE,
     SCRIPT_EXTERNAL_REQUEST_SCOPE,
     SCRIPT_SCRIPTAPP_SCOPE,
+    ADMIN_DIRECTORY_MANAGE_SCOPES,
+    ADMIN_DIRECTORY_READONLY_SCOPES,
+    ADMIN_DIRECTORY_ROLEMANAGEMENT_SCOPE,
+    ADMIN_DIRECTORY_CUSTOMER_SCOPE,
+    ADMIN_DIRECTORY_USERSCHEMA_SCOPE,
+    ADMIN_DATATRANSFER_SCOPE,
+    ADMIN_DATATRANSFER_READONLY_SCOPE,
+    LICENSING_SCOPE,
+    REPORTS_AUDIT_READONLY_SCOPE,
+    REPORTS_USAGE_READONLY_SCOPE,
+    VAULT_SCOPE,
+    VAULT_READONLY_SCOPE,
+    ALERTCENTER_SCOPE,
+    GROUPS_SETTINGS_SCOPE,
+    DELEGATED_SERVICES,
+    DIRECTORY_AREA_SERVICES,
+    READ_WRITE_SERVICES,
 )
 
 logger = logging.getLogger(__name__)
@@ -144,6 +162,74 @@ SERVICE_PERMISSION_LEVELS: Dict[str, List[Tuple[str, List[str]]]] = {
             ],
         ),
     ],
+    # Opt-in admin service. gadmin.auth also caps each call's risk by level, so
+    # "manage" cannot run destructive operations that share its scopes.
+    "admin-directory": [
+        ("readonly", ADMIN_DIRECTORY_READONLY_SCOPES),
+        ("manage", ADMIN_DIRECTORY_MANAGE_SCOPES),
+        (
+            "destructive",
+            [
+                ADMIN_DIRECTORY_ROLEMANAGEMENT_SCOPE,
+                ADMIN_DIRECTORY_CUSTOMER_SCOPE,
+                ADMIN_DIRECTORY_USERSCHEMA_SCOPE,
+            ],
+        ),
+    ],
+    "admin-datatransfer": [
+        ("readonly", [ADMIN_DATATRANSFER_READONLY_SCOPE]),
+        ("manage", [ADMIN_DATATRANSFER_SCOPE]),
+        ("destructive", []),
+    ],
+    # Licensing has no read-only scope, so even license reads need "manage".
+    "admin-licensing": [
+        ("readonly", []),
+        ("manage", [LICENSING_SCOPE]),
+        ("destructive", []),
+    ],
+    "admin-reports": [
+        (
+            "readonly",
+            [REPORTS_AUDIT_READONLY_SCOPE, REPORTS_USAGE_READONLY_SCOPE],
+        ),
+        ("manage", []),
+        ("destructive", []),
+    ],
+    "admin-vault": [
+        ("readonly", [VAULT_READONLY_SCOPE]),
+        ("manage", [VAULT_SCOPE]),
+        ("destructive", []),
+    ],
+    # Alert Center and Groups Settings have no read-only scope either.
+    "admin-alertcenter": [
+        ("readonly", []),
+        ("manage", [ALERTCENTER_SCOPE]),
+        ("destructive", []),
+    ],
+    "admin-groupssettings": [
+        ("readonly", []),
+        ("manage", [GROUPS_SETTINGS_SCOPE]),
+        ("destructive", []),
+    ],
+    **{
+        service: [
+            ("readonly", read),
+            ("manage", manage),
+            ("destructive", destructive),
+        ]
+        for service, (read, manage, destructive) in DIRECTORY_AREA_SERVICES.items()
+    },
+    # Every Cloud Identity, Chrome, and access context write scope is granted
+    # at manage; destructive operations are gated by risk, not by an extra scope.
+    **{
+        service: [("readonly", read), ("manage", write), ("destructive", [])]
+        for service, (read, write) in READ_WRITE_SERVICES.items()
+    },
+    # No OAuth scope at any level: the level only caps operation risk.
+    **{
+        service: [("readonly", []), ("manage", []), ("destructive", [])]
+        for service in DELEGATED_SERVICES
+    },
 }
 
 # Actions denied at specific permission levels.
