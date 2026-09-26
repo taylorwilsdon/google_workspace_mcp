@@ -85,6 +85,7 @@ sheets:
   extended:
     - list_spreadsheets
     - get_spreadsheet_info
+    - read_sheet_dimensions
     - format_sheet_range
     - list_sheet_tables
     - insert_smart_chips
@@ -93,6 +94,7 @@ sheets:
     - manage_sheet_tab
     - append_table_rows
     - resize_sheet_dimensions
+    - read_sheet_dimensions
     - move_sheet_rows
     - list_spreadsheet_comments
     - manage_spreadsheet_comment

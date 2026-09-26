@@ -25,6 +25,7 @@ from gsheets.sheets_helpers import (
     _a1_range_for_values,
     _clamp_a1_read_rows,
     _column_to_index,
+    _index_to_column,
     _build_boolean_rule,
     _build_gradient_rule,
     _fetch_cell_formulas,
@@ -2596,6 +2597,220 @@ async def resize_sheet_dimensions(
         f"Applied dimension changes in spreadsheet {result['spreadsheet_id']} "
         f"for {user_google_email}: {result['summary']}."
     )
+
+
+async def _read_sheet_dimensions_impl(
+    service,
+    spreadsheet_id: str,
+    sheet_name: Optional[str] = None,
+    include_rows: bool = False,
+) -> dict:
+    """Internal implementation for read_sheet_dimensions.
+
+    Reads visual dimension properties of a sheet: column widths in pixels,
+    hidden column status, row heights in pixels, hidden row status,
+    and total grid dimensions (rowCount x columnCount).
+
+    Args:
+        service: Google Sheets API service client.
+        spreadsheet_id: The ID of the spreadsheet. Required.
+        sheet_name: Sheet name to target. Defaults to the first sheet if omitted.
+        include_rows: Whether to extract and include individual row heights. Defaults to False.
+
+    Returns:
+        Dictionary with keys:
+            - spreadsheet_id (str): The ID of the spreadsheet.
+            - sheet_name (str): Title of the target sheet.
+            - sheet_id (int): Numeric sheet ID.
+            - row_count (int): Total allocated row count in the grid.
+            - column_count (int): Total allocated column count in the grid.
+            - column_sizes (dict[str, int]): Dict mapping column letters (A, B, ...) to pixel widths.
+            - hidden_columns (list[str]): List of column letters hidden by user.
+            - row_sizes (dict[int, int]): Dict mapping 1-based row numbers to pixel heights.
+            - hidden_rows (list[int]): List of 1-based row numbers hidden by user.
+
+    Raises:
+        UserInputError: If the spreadsheet contains no sheets or if the requested
+            sheet_name is not found.
+    """
+    metadata = await asyncio.to_thread(
+        service.spreadsheets()
+        .get(
+            spreadsheetId=spreadsheet_id,
+            fields="sheets.properties",
+        )
+        .execute
+    )
+    sheets = metadata.get("sheets", [])
+    if not sheets:
+        raise UserInputError("No sheets found in spreadsheet.")
+
+    target_sheet = None
+    if sheet_name:
+        for s in sheets:
+            if s.get("properties", {}).get("title") == sheet_name:
+                target_sheet = s
+                break
+        if not target_sheet:
+            available = [s.get("properties", {}).get("title", "") for s in sheets]
+            raise UserInputError(
+                f"Sheet '{sheet_name}' not found. Available sheets: {', '.join(available)}."
+            )
+    else:
+        target_sheet = sheets[0]
+
+    sheet_props = target_sheet.get("properties", {})
+    title = sheet_props.get("title", "Unknown")
+    sheet_id = sheet_props.get("sheetId", 0)
+    grid_props = sheet_props.get("gridProperties", {})
+    row_count = grid_props.get("rowCount", 0)
+    col_count = grid_props.get("columnCount", 0)
+
+    safe_title = title.replace("'", "''")
+    grid_data = await asyncio.to_thread(
+        service.spreadsheets()
+        .get(
+            spreadsheetId=spreadsheet_id,
+            ranges=[f"'{safe_title}'"],
+            includeGridData=True,
+            fields="sheets(properties(sheetId,title),data(columnMetadata(pixelSize,hiddenByUser),rowMetadata(pixelSize,hiddenByUser)))",
+        )
+        .execute
+    )
+
+    data_sheets = grid_data.get("sheets", [])
+    target_data = None
+    for s in data_sheets:
+        if s.get("properties", {}).get("title") == title:
+            target_data = s
+            break
+
+    col_meta = []
+    row_meta = []
+    if target_data and target_data.get("data"):
+        col_meta = target_data["data"][0].get("columnMetadata", [])
+        row_meta = target_data["data"][0].get("rowMetadata", [])
+
+    column_sizes = {}
+    hidden_columns = []
+    for idx, col in enumerate(col_meta):
+        col_letter = _index_to_column(idx)
+        px = col.get("pixelSize", 100)
+        column_sizes[col_letter] = px
+        if col.get("hiddenByUser"):
+            hidden_columns.append(col_letter)
+
+    row_sizes = {}
+    hidden_rows = []
+    if include_rows:
+        for idx, row in enumerate(row_meta):
+            row_num = idx + 1
+            px = row.get("pixelSize", 21)
+            row_sizes[row_num] = px
+            if row.get("hiddenByUser"):
+                hidden_rows.append(row_num)
+
+    return {
+        "spreadsheet_id": spreadsheet_id,
+        "sheet_name": title,
+        "sheet_id": sheet_id,
+        "row_count": row_count,
+        "column_count": col_count,
+        "column_sizes": column_sizes,
+        "hidden_columns": hidden_columns,
+        "row_sizes": row_sizes,
+        "hidden_rows": hidden_rows,
+    }
+
+
+@server.tool(
+    title="Read Sheet Dimensions",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("read_sheet_dimensions", is_read_only=True, service_type="sheets")
+@require_google_service("sheets", "sheets_read")
+async def read_sheet_dimensions(
+    service,
+    user_google_email: str,
+    spreadsheet_id: str,
+    sheet_name: Optional[str] = None,
+    include_rows: bool = False,
+) -> str:
+    """
+    Reads the visual dimension properties of a sheet in a Google Spreadsheet:
+    column widths (in pixels), row heights (in pixels), and whether columns/rows are hidden.
+
+    Args:
+        user_google_email: The user's Google email address. Required.
+        spreadsheet_id: The ID of the spreadsheet. Required.
+        sheet_name: Sheet name to inspect. Defaults to the first sheet if omitted.
+        include_rows: Whether to include row heights in the output. Defaults to False.
+
+    Returns:
+        str: Formatted text displaying sheet dimensions, column widths, and a JSON
+             mapping ready for use in resize_sheet_dimensions.
+
+    Raises:
+        UserInputError: If the spreadsheet contains no sheets or if the requested
+            sheet_name is not found.
+    """
+    logger.info(
+        "[read_sheet_dimensions] Invoked. Email: '%s', Spreadsheet: %s, Sheet: %s",
+        user_google_email,
+        spreadsheet_id,
+        sheet_name,
+    )
+
+    data = await _read_sheet_dimensions_impl(
+        service=service,
+        spreadsheet_id=spreadsheet_id,
+        sheet_name=sheet_name,
+        include_rows=include_rows,
+    )
+
+    title = data["sheet_name"]
+    sheet_id = data["sheet_id"]
+    row_count = data["row_count"]
+    col_count = data["column_count"]
+    col_sizes = data["column_sizes"]
+    hidden_cols = data["hidden_columns"]
+
+    lines = [
+        f'Sheet: "{title}" (ID: {sheet_id})',
+        f"Grid size: {row_count} rows x {col_count} columns",
+        f"\nColumn widths ({len(col_sizes)} explicit / {col_count} total):",
+    ]
+
+    if col_sizes:
+        for col_letter, px in col_sizes.items():
+            status = " (hidden)" if col_letter in hidden_cols else ""
+            lines.append(f"  Column {col_letter}: {px}px{status}")
+    else:
+        lines.append("  All columns are at default width (100px)")
+
+    lines.append(
+        f"\ncolumn_sizes JSON for resize_sheet_dimensions:\n{json.dumps(col_sizes)}"
+    )
+
+    if include_rows:
+        row_sizes = data["row_sizes"]
+        hidden_rows = data["hidden_rows"]
+        lines.append(f"\nRow heights ({len(row_sizes)} explicit / {row_count} total):")
+        if row_sizes:
+            for row_num, px in list(row_sizes.items())[:50]:
+                status = " (hidden)" if row_num in hidden_rows else ""
+                lines.append(f"  Row {row_num}: {px}px{status}")
+            if len(row_sizes) > 50:
+                lines.append(f"  ... and {len(row_sizes) - 50} more rows")
+        else:
+            lines.append("  All rows are at default height (21px)")
+
+    return "\n".join(lines)
 
 
 @server.tool(
