@@ -42,6 +42,8 @@ _DEFAULT_TOKEN_VALIDATION_WORKERS = 4
 # Off by default: a cached token skips the userinfo check until it ages out.
 _TOKEN_VALIDATION_CACHE_TTL_ENV = "WORKSPACE_MCP_TOKEN_VALIDATION_CACHE_TTL"
 _TOKEN_VALIDATION_CACHE_MAX_ENTRIES = 10_000
+# Caps how long a revoked or expired token can keep passing the local check.
+_MAX_TOKEN_VALIDATION_CACHE_TTL = 300
 
 
 @functools.lru_cache(maxsize=1)
@@ -75,7 +77,7 @@ def get_token_validation_cache_ttl() -> int:
     """Parse WORKSPACE_MCP_TOKEN_VALIDATION_CACHE_TTL; unset or 0 disables it.
 
     Invalid values raise instead of falling back, so a misconfigured deployment
-    fails at startup.
+    fails at startup. Values above the maximum are clamped with a warning.
     """
     raw = os.getenv(_TOKEN_VALIDATION_CACHE_TTL_ENV, "").strip()
     if not raw:
@@ -89,6 +91,14 @@ def get_token_validation_cache_ttl() -> int:
             f"{_TOKEN_VALIDATION_CACHE_TTL_ENV} must be a non-negative integer "
             f"(seconds), got {raw!r}"
         )
+    if value > _MAX_TOKEN_VALIDATION_CACHE_TTL:
+        logger.warning(
+            "%s=%d clamped to %d",
+            _TOKEN_VALIDATION_CACHE_TTL_ENV,
+            value,
+            _MAX_TOKEN_VALIDATION_CACHE_TTL,
+        )
+        return _MAX_TOKEN_VALIDATION_CACHE_TTL
     return value
 
 
@@ -185,6 +195,7 @@ class ExternalOAuthProvider(GoogleProvider):
 
     def close(self) -> None:
         """Stop accepting token-validation work and release executor resources."""
+        self._validated_identities.clear()
         executor = self._token_validation_executor
         if executor is None:
             return

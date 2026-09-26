@@ -310,10 +310,9 @@ async def test_validation_cache_is_bounded(monkeypatch):
     try:
         for i in range(5):
             await provider.verify_token(f"ya29.token-{i}")
+        assert len(provider._validated_identities) == 3
     finally:
         provider.close()
-
-    assert len(provider._validated_identities) == 3
 
 
 def test_cache_ttl_defaults_to_disabled(monkeypatch):
@@ -334,3 +333,20 @@ def test_cache_ttl_rejects_invalid_env(monkeypatch, raw):
 
     with pytest.raises(ValueError, match="WORKSPACE_MCP_TOKEN_VALIDATION_CACHE_TTL"):
         get_token_validation_cache_ttl()
+
+
+def test_cache_ttl_is_clamped_to_maximum(monkeypatch):
+    monkeypatch.setenv("WORKSPACE_MCP_TOKEN_VALIDATION_CACHE_TTL", "86400")
+
+    assert get_token_validation_cache_ttl() == 300
+
+
+@pytest.mark.asyncio
+async def test_close_clears_cached_identities(monkeypatch):
+    provider = _make_provider(cache_ttl=60)
+    _counting_user_info(monkeypatch)
+
+    await provider.verify_token("ya29.cached")
+    provider.close()
+
+    assert provider._validated_identities == {}
