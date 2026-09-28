@@ -101,17 +101,26 @@ asyncio.run(main())
             {"required": ["content"]},
             {"required": ["file_url"]},
             {"required": ["base64_content"]},
-            {"required": ["return_upload_url", "source_format"]},
+            {
+                "required": ["return_upload_url", "source_format"],
+                "properties": {"return_upload_url": {"enum": [True]}},
+            },
         ],
         "import_to_google_sheets": [
             {"required": ["content"]},
             {"required": ["file_url"]},
             {"required": ["base64_content"]},
-            {"required": ["return_upload_url", "source_format"]},
+            {
+                "required": ["return_upload_url", "source_format"],
+                "properties": {"return_upload_url": {"enum": [True]}},
+            },
         ],
         "import_to_google_slides": [
             {"required": ["file_url"]},
             {"required": ["base64_content"]},
-            {"required": ["return_upload_url", "source_format"]},
+            {
+                "required": ["return_upload_url", "source_format"],
+                "properties": {"return_upload_url": {"enum": [True]}},
+            },
         ],
     }

@@ -110,7 +110,12 @@ def _with_exclusive_source_schema(
 
     variants = [{"required": [field]} for field in source_fields]
     if "return_upload_url" in properties:
-        variants.append({"required": ["return_upload_url", "source_format"]})
+        variants.append(
+            {
+                "required": ["return_upload_url", "source_format"],
+                "properties": {"return_upload_url": {"enum": [True]}},
+            }
+        )
 
     patched = dict(schema)
     patched["oneOf"] = variants
