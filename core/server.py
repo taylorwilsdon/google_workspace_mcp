@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 import logging
 import os
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from importlib import metadata
 from urllib.parse import urlparse, ParseResult
 
@@ -72,11 +72,49 @@ _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 # header that received the request (a same-origin check).
 _DEFAULT_PORTS = {"http": 80, "https": 443, "ws": 80, "wss": 443}
 _ALLOW_NULL_ORIGIN_CONSENT_ENV = "WORKSPACE_MCP_ALLOW_NULL_ORIGIN_CONSENT"
+_EXCLUSIVE_SOURCE_TOOL_NAMES = frozenset(
+    {
+        "import_to_google_doc",
+        "import_to_google_slides",
+        "import_to_google_sheets",
+    }
+)
 
 
 def _parse_bool_env(value: str) -> bool:
     """Parse environment variable string to boolean."""
     return value.lower() in ("1", "true", "yes", "on")
+
+
+def _with_exclusive_source_schema(
+    tool_name: str, schema: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Advertise mutually exclusive upload sources for conversion tools.
+
+    The runtime already enforces that exactly one content source is supplied, but
+    plain function signatures cannot express that to MCP clients. Publish a
+    ``oneOf`` over the currently advertised source fields so models see the same
+    constraint before they call the tool.
+    """
+    if tool_name not in _EXCLUSIVE_SOURCE_TOOL_NAMES:
+        return schema
+
+    properties = schema.get("properties", {})
+    source_fields = [
+        name
+        for name in ("content", "file_path", "file_url", "base64_content")
+        if name in properties
+    ]
+    if len(source_fields) < 2:
+        return schema
+
+    variants = [{"required": [field]} for field in source_fields]
+    if "return_upload_url" in properties:
+        variants.append({"required": ["return_upload_url", "source_format"]})
+
+    patched = dict(schema)
+    patched["oneOf"] = variants
+    return patched
 
 
 def _normalize_parsed(parsed: ParseResult) -> Optional[str]:
@@ -277,6 +315,18 @@ class SecureFastMCP(FastMCP):
         runtime still resolves the email correctly via the service decorator.
         """
         tools = list(await super().list_tools(run_middleware=run_middleware))
+        tools = [
+            tool.model_copy(
+                update={
+                    "parameters": _with_exclusive_source_schema(
+                        tool.name, dict(tool.parameters)
+                    )
+                }
+            )
+            if tool.name in _EXCLUSIVE_SOURCE_TOOL_NAMES
+            else tool
+            for tool in tools
+        ]
         if is_trust_gateway_identity():
             patched = []
             for tool in tools:
