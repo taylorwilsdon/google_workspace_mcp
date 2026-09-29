@@ -1,9 +1,21 @@
 import json
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlparse
 
 import pytest
+from key_value.aio.stores.memory import MemoryStore
+from mcp.server.auth.provider import AuthorizationParams
+from mcp.shared.auth import OAuthClientInformationFull
+from pydantic import AnyUrl
 
 import core.server as server_module
+from auth.scopes import (
+    DRIVE_FILE_SCOPE,
+    GMAIL_MODIFY_SCOPE,
+    GMAIL_READONLY_SCOPE,
+    OPENID_SCOPE,
+    USERINFO_EMAIL_SCOPE,
+)
 
 
 def test_close_auth_provider_releases_resources_and_clears_globals(monkeypatch):
@@ -85,7 +97,7 @@ def test_configure_server_for_http_uses_protocol_auth_required_scopes(monkeypatc
             self._cimd_manager = SimpleNamespace(default_scope=default_scope)
 
     monkeypatch.setattr(server_module, "get_transport_mode", lambda: "streamable-http")
-    monkeypatch.setattr(server_module, "GoogleProvider", FakeGoogleProvider)
+    monkeypatch.setattr(server_module, "WorkspaceGoogleProvider", FakeGoogleProvider)
     monkeypatch.setattr(
         server_module,
         "get_current_scopes",
@@ -152,7 +164,7 @@ def test_configure_server_for_http_rejects_google_provider_without_client_secret
         "this-is-a-long-enough-jwt-signing-key",
     )
     monkeypatch.setattr(server_module, "get_transport_mode", lambda: "streamable-http")
-    monkeypatch.setattr(server_module, "GoogleProvider", object)
+    monkeypatch.setattr(server_module, "WorkspaceGoogleProvider", object)
     monkeypatch.setattr(server_module, "set_auth_provider", lambda provider: None)
     monkeypatch.setattr(server_module, "_auth_provider", server_module._auth_provider)
     monkeypatch.setattr(server_module.server, "auth", server_module.server.auth)
@@ -216,7 +228,7 @@ def test_configure_server_for_http_accepts_client_secret_from_file(
             self.client_registration_options = None
 
     monkeypatch.setattr(server_module, "get_transport_mode", lambda: "streamable-http")
-    monkeypatch.setattr(server_module, "GoogleProvider", FakeGoogleProvider)
+    monkeypatch.setattr(server_module, "WorkspaceGoogleProvider", FakeGoogleProvider)
     monkeypatch.setattr(
         server_module,
         "get_current_scopes",
@@ -246,7 +258,7 @@ def test_configure_server_for_http_rejects_external_provider_without_jwt_key(
 ):
     monkeypatch.delenv("FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY", raising=False)
     monkeypatch.setattr(server_module, "get_transport_mode", lambda: "streamable-http")
-    monkeypatch.setattr(server_module, "GoogleProvider", object)
+    monkeypatch.setattr(server_module, "WorkspaceGoogleProvider", object)
     monkeypatch.setattr(server_module, "set_auth_provider", lambda provider: None)
     monkeypatch.setattr(server_module, "_auth_provider", server_module._auth_provider)
     monkeypatch.setattr(server_module.server, "auth", server_module.server.auth)
@@ -413,3 +425,80 @@ def test_configure_server_for_http_passes_token_validation_settings(monkeypatch)
 
     assert captured["token_validation_workers"] == 32
     assert captured["token_validation_cache_ttl"] == 45
+
+
+VALID_SCOPES = sorted(
+    [DRIVE_FILE_SCOPE, GMAIL_READONLY_SCOPE, USERINFO_EMAIL_SCOPE, OPENID_SCOPE]
+)
+
+
+async def _upstream_authorize_scopes(registered_scopes, requested_scopes):
+    """Return the scopes the provider asks Google for in one authorization."""
+    provider = server_module.WorkspaceGoogleProvider(
+        client_id="client-id",
+        client_secret="client-secret",
+        base_url="https://workspace-mcp.example.test",
+        client_storage=MemoryStore(),
+        jwt_signing_key="test-signing-key",
+        required_scopes=sorted(server_module.PROTOCOL_AUTH_SCOPES),
+        valid_scopes=VALID_SCOPES,
+        # Return the Google authorization URL instead of the consent page URL.
+        require_authorization_consent=False,
+    )
+    redirect_uri = AnyUrl("http://localhost:33418/callback")
+    client = OAuthClientInformationFull(
+        client_id="mcp-client",
+        redirect_uris=[redirect_uri],
+        scope=" ".join(registered_scopes),
+    )
+    params = AuthorizationParams(
+        state="client-state",
+        # The MCP SDK passes None when the request has no scope parameter.
+        scopes=requested_scopes,
+        code_challenge="code-challenge",
+        redirect_uri=redirect_uri,
+        redirect_uri_provided_explicitly=True,
+    )
+
+    upstream_url = await provider.authorize(client, params)
+
+    assert upstream_url.startswith("https://accounts.google.com/")
+    return parse_qs(urlparse(upstream_url).query)["scope"][0].split()
+
+
+@pytest.mark.asyncio
+async def test_authorize_without_scope_requests_registered_tool_scopes():
+    """An omitted scope must not narrow the grant to the identity scopes.
+
+    RFC 6749 section 3.3 lets a client omit scope. The token must still carry
+    the tool scopes, or every tool call fails for missing scopes.
+    """
+    upstream_scopes = await _upstream_authorize_scopes(
+        registered_scopes=VALID_SCOPES, requested_scopes=None
+    )
+
+    assert upstream_scopes == VALID_SCOPES
+
+
+@pytest.mark.asyncio
+async def test_authorize_without_scope_limits_default_to_offered_scopes():
+    """The default keeps the identity scopes and drops scopes no longer offered.
+
+    A persisted client registration can outlive a change to the enabled tools.
+    """
+    upstream_scopes = await _upstream_authorize_scopes(
+        registered_scopes=[GMAIL_MODIFY_SCOPE, DRIVE_FILE_SCOPE],
+        requested_scopes=None,
+    )
+
+    assert upstream_scopes == [DRIVE_FILE_SCOPE, USERINFO_EMAIL_SCOPE, OPENID_SCOPE]
+
+
+@pytest.mark.asyncio
+async def test_authorize_keeps_explicitly_requested_scopes():
+    upstream_scopes = await _upstream_authorize_scopes(
+        registered_scopes=VALID_SCOPES,
+        requested_scopes=[GMAIL_READONLY_SCOPE, OPENID_SCOPE],
+    )
+
+    assert upstream_scopes == [GMAIL_READONLY_SCOPE, OPENID_SCOPE]
