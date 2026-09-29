@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import re
+import tempfile
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import List, Optional
@@ -230,10 +231,29 @@ class LocalDirectoryCredentialStore(CredentialStore):
             "expiry": credentials.expiry.isoformat() if credentials.expiry else None,
         }
 
+        # Write atomically. Several server processes (one per MCP client) can
+        # share this directory, and a truncate-then-write leaves a window in
+        # which a concurrent reader sees an empty or partial file, fails to
+        # decode it, and reports the account as needing authentication.
         try:
-            fd = os.open(str(creds_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, "w") as f:
-                json.dump(creds_data, f, indent=2)
+            tmp_fd, tmp_path = tempfile.mkstemp(
+                dir=os.path.dirname(creds_path),
+                prefix=os.path.basename(creds_path) + ".",
+                suffix=".tmp",
+            )
+            try:
+                with os.fdopen(tmp_fd, "w") as f:
+                    json.dump(creds_data, f, indent=2)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.chmod(tmp_path, 0o600)
+                os.replace(tmp_path, creds_path)
+            except BaseException:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
             logger.info(f"Stored credentials for {user_email} to {creds_path}")
             return True
         except IOError as e:

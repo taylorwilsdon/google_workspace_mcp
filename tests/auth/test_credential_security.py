@@ -193,3 +193,56 @@ class TestPathTraversal:
             "user+admin@example.com",
             "user_admin@example.com",
         ]
+
+
+class TestAtomicWrite:
+    """store_credential must never expose a partially written file."""
+
+    @staticmethod
+    def _creds(token="tok"):
+        mock_creds = MagicMock()
+        mock_creds.token = token
+        mock_creds.refresh_token = "rtok"
+        mock_creds.token_uri = "https://oauth2.googleapis.com/token"
+        mock_creds.client_id = "cid"
+        mock_creds.client_secret = "csec"
+        mock_creds.scopes = ["scope"]
+        mock_creds.expiry = None
+        return mock_creds
+
+    def test_existing_file_never_truncated(self, cred_store, monkeypatch):
+        """A failure mid-write leaves the previous credential file intact."""
+        email = "test@example.com"
+        assert cred_store.store_credential(email, self._creds("first"))
+        path = cred_store._get_credential_path(email)
+        before = open(path).read()
+
+        def boom(*args, **kwargs):
+            raise IOError("disk full")
+
+        monkeypatch.setattr(json, "dump", boom)
+        assert cred_store.store_credential(email, self._creds("second")) is False
+        assert open(path).read() == before
+        assert json.loads(before)["token"] == "first"
+
+    def test_no_temp_file_left_behind(self, cred_store, monkeypatch):
+        """The temporary file is removed on failure and on success."""
+        email = "test@example.com"
+        assert cred_store.store_credential(email, self._creds())
+
+        def boom(*args, **kwargs):
+            raise IOError("disk full")
+
+        monkeypatch.setattr(json, "dump", boom)
+        cred_store.store_credential(email, self._creds())
+        leftovers = [n for n in os.listdir(cred_store.base_dir) if n.endswith(".tmp")]
+        assert leftovers == []
+
+    def test_replaced_file_keeps_0600(self, cred_store):
+        """Overwriting an existing credential keeps mode 0600."""
+        email = "test@example.com"
+        cred_store.store_credential(email, self._creds("first"))
+        cred_store.store_credential(email, self._creds("second"))
+        path = cred_store._get_credential_path(email)
+        assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+        assert json.load(open(path))["token"] == "second"
