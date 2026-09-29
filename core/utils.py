@@ -1101,6 +1101,28 @@ def _format_http_error_for_log(error: HttpError) -> str:
     return f"status={status}, request={request}"
 
 
+APPS_SCRIPT_USER_SETTINGS_URL = "https://script.google.com/home/usersettings"
+
+
+def _is_apps_script_api_disabled_for_user(error: HttpError, error_details: str) -> bool:
+    """Whether ``error`` is Google refusing Apps Script calls for this user.
+
+    The Apps Script API also has a per-user switch, separate from enabling
+    ``script.googleapis.com`` in the Cloud project. While it is off, Google's
+    documented answer is a 403 "User has not enabled the Apps Script API", but
+    in practice it also answers 503 "Service error -27" with an HTML error
+    page, which reads like an outage. Either way the fix is the user's own
+    setting, so both are treated alike.
+    """
+    host = urllib.parse.urlparse(getattr(error, "uri", None) or "").hostname
+    if host != "script.googleapis.com":
+        return False
+    status = getattr(error.resp, "status", None)
+    if status == 503:
+        return True
+    return status == 403 and "has not enabled the Apps Script API" in error_details
+
+
 def handle_http_errors(
     tool_name: str, is_read_only: bool = False, service_type: Optional[str] = None
 ):
@@ -1172,6 +1194,19 @@ def handle_http_errors(
                                 f"The required API is not enabled for your project. "
                                 f"Please check the Google Cloud Console to enable it."
                             )
+                    elif _is_apps_script_api_disabled_for_user(error, error_details):
+                        # Before the generic 401/403 branch: re-authenticating
+                        # does not help, the user's own setting does.
+                        message = (
+                            f"API error in {tool_name}: the Apps Script API refused "
+                            f"the request (HTTP {error.resp.status}) for user "
+                            f"'{user_google_email}'. This usually means the Apps "
+                            f"Script API is turned off in that user's Apps Script "
+                            f"settings. LLM: Ask the user to open "
+                            f"{APPS_SCRIPT_USER_SETTINGS_URL}, turn on 'Google Apps "
+                            f"Script API', wait a minute, and retry. If it is "
+                            f"already on, this is likely a temporary Google outage."
+                        )
                     elif error.resp.status in [401, 403]:
                         # Authentication/authorization errors
                         if is_oauth21_enabled():
