@@ -255,6 +255,11 @@ async def send_message(
     Sends a message to a Google Chat space, or edits a message already sent there.
 
     Args:
+        message_text: Message text. To @-mention someone, write
+            <users/EMAIL> (e.g. <users/alice@example.com>) or <users/USER_ID>;
+            <users/all> mentions everyone. Chat renders the mention as the
+            person's name, so do not repeat it. A plain "@Name" is sent as
+            text and does not mention anyone.
         thread_name: Reply in an existing thread by its resource name (e.g. spaces/X/threads/Y).
         thread_key: Reply in a thread by app-defined key (creates thread if not found).
         message_name: Edit this message in place instead of sending a new one

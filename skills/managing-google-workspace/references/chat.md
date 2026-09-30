@@ -46,7 +46,7 @@ Sends a message to a Google Chat space. Can reply to existing threads, or edit a
 |-----------|------|----------|---------|-------|
 | user_google_email | string | yes | | |
 | space_id | string | yes | | |
-| message_text | string | yes | | |
+| message_text | string | yes | | `<users/EMAIL>` or `<users/USER_ID>` mentions a person, `<users/all>` everyone |
 | thread_key | any | no | | App-defined key; creates thread if not found |
 | thread_name | any | no | | Resource name, e.g. `spaces/X/threads/Y` |
 | message_name | any | no | | Edit this message in place, e.g. `spaces/X/messages/Y`; must sit in `space_id`, own messages only, cannot be combined with a thread parameter |
@@ -80,6 +80,8 @@ Downloads an attachment from a Chat message. Returns a local file path (stdio mo
 **Space IDs**: Call `list_spaces` first to discover available spaces and their IDs. You need the space ID for all message operations.
 
 **Unnamed spaces**: Direct messages and group chats have no name of their own, so `list_spaces`, `get_messages` and `search_messages` label them after up to three other members (e.g. `Alice Smith, Bob Jones and 2 others`). Naming needs the `chat.memberships.readonly` and `contacts.readonly` scopes (requested with the Chat scopes) and the People API enabled in the Google Cloud project. Tokens granted before `chat.memberships.readonly` was added keep working without re-consent. If the member lookup fails, for example because that scope is missing, the label falls back to `Direct message` or `Group chat`; if only a member's name cannot be resolved, their user ID (e.g. `users/123`) is shown in its place.
+
+**Mentions**: A plain `@Name` in `message_text` is sent as text and notifies no one. Put a mention token in the text instead, e.g. `Hi <users/alice@example.com>, please review`. The user's email works as an alias for their user ID, and `<users/all>` mentions everyone in the space. Chat renders the token as the person's name, so don't repeat the name next to it.
 
 **Message resource names**: Messages are identified by their full resource name in the format `spaces/SPACE_ID/messages/MESSAGE_ID`. This is the value expected by `create_reaction` and `download_chat_attachment`.
 
