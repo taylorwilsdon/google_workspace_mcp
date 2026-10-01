@@ -38,6 +38,12 @@ When using this MCP server, please ensure:
 5. Limit OAuth scopes to only what's necessary
 6. Keep local file reads narrowly scoped. By default, path-based attachments are limited to `WORKSPACE_ATTACHMENT_DIR`; expanding `ALLOWED_FILE_DIRS` increases exposure to prompt-injection-driven exfiltration.
 
+### Workspace administration safeguards
+
+The admin services are opt-in and are absent from the default launcher. Each admin call must use credentials verified as the selected account, recheck that the actor is an active admin in the target's customer, and enforce the selected service's permission level at execution time. Destructive offboarding actions also reject self-suspension or self-deletion and removal of the final active super admin. Never treat a caller-supplied email or customer ID as an authorization claim. Data Transfer must complete before licenses or the user account can be deleted. The per-step one-use confirmation is a server check, not an MCP client prompt.
+
+A workflow needs private durable state for its workflow IDs, step states, transfer ID, and short-lived confirmation token hashes. A multi-node or stateless deployment without shared atomic storage and locks cannot safely resume one. An uncertain write must be reconciled against Google, or stopped for manual investigation, rather than blindly repeated. Offboarding does not check Vault retention, all app-specific data, or all delegated access, and the registered API-step status is not a blanket data-retention or compliance claim. See [the current capability and gap report](docs/admin-capability-coverage.md). Do not enable admin scopes or test a live write without the intended organization's verified admin identity, customer ID, entitlements, and separate authorization.
+
 For more information on securing your use of the project, see https://workspacemcp.com/privacy
 
 ## Preferred Languages

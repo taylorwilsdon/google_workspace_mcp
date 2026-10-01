@@ -1,0 +1,344 @@
+{
+  "service": "accesscontextmanager",
+  "version": "v1",
+  "discovery": {
+    "url": "https://accesscontextmanager.googleapis.com/$discovery/rest?version=v1",
+    "revision": "20260916",
+    "checked": "2026-09-26"
+  },
+  "operations": {
+    "accesscontextmanager.accessPolicies.list": {
+      "resource_path": [
+        "accessPolicies"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ],
+      "risk": "read",
+      "params": {
+        "parent": {
+          "type": "string",
+          "location": "query",
+          "pattern": "^organizations/[0-9]+$"
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "accessPolicies",
+        "fields": [
+          "name",
+          "parent",
+          "title",
+          "scopes"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "organization",
+          "param": "parent"
+        },
+        {
+          "kind": "response_organization",
+          "field": "parent"
+        }
+      ]
+    },
+    "accesscontextmanager.accessPolicies.get": {
+      "resource_path": [
+        "accessPolicies"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ],
+      "risk": "read",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^accessPolicies/[0-9]+$"
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "parent",
+          "title",
+          "scopes"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "response_organization",
+          "field": "parent"
+        },
+        {
+          "kind": "response_unscoped",
+          "field": "scopes"
+        }
+      ]
+    },
+    "accesscontextmanager.accessPolicies.accessLevels.list": {
+      "resource_path": [
+        "accessPolicies",
+        "accessLevels"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ],
+      "risk": "read",
+      "params": {
+        "parent": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^accessPolicies/[0-9]+$"
+        },
+        "accessLevelFormat": {
+          "type": "string",
+          "location": "query",
+          "enum": [
+            "AS_DEFINED",
+            "CEL"
+          ]
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "target_param": "parent",
+      "response": {
+        "items_key": "accessLevels",
+        "fields": [
+          "name",
+          "title",
+          "description",
+          "basic",
+          "custom"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "resource",
+          "param": "parent",
+          "read": "accesscontextmanager.accessPolicies.get"
+        }
+      ]
+    },
+    "accesscontextmanager.accessPolicies.accessLevels.get": {
+      "resource_path": [
+        "accessPolicies",
+        "accessLevels"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+      ],
+      "risk": "read",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^accessPolicies/[0-9]+/accessLevels/[A-Za-z][A-Za-z0-9_]{0,49}$"
+        },
+        "accessLevelFormat": {
+          "type": "string",
+          "location": "query",
+          "enum": [
+            "AS_DEFINED",
+            "CEL"
+          ]
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "title",
+          "description",
+          "basic",
+          "custom"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "resource",
+          "param": "name",
+          "read": "accesscontextmanager.accessPolicies.get",
+          "segments": 2
+        }
+      ]
+    }
+  },
+  "excluded": {
+    "accesscontextmanager.accessPolicies.accessLevels.create": {
+      "category": "console-only",
+      "reason": "Google's Workspace Context-Aware Access guide warns that access levels added or changed outside the Admin console Context-Aware Access page can use attributes Workspace does not support and block users, so this server leaves the change to the Admin console."
+    },
+    "accesscontextmanager.accessPolicies.accessLevels.delete": {
+      "category": "console-only",
+      "reason": "Deleting an access level that Workspace apps or Google Cloud perimeters still reference can lock users out; google's Workspace Context-Aware Access guide warns that access levels added or changed outside the Admin console Context-Aware Access page can use attributes Workspace does not support and block users, so this server leaves the change to the Admin console."
+    },
+    "accesscontextmanager.accessPolicies.accessLevels.patch": {
+      "category": "console-only",
+      "reason": "Google's Workspace Context-Aware Access guide warns that access levels added or changed outside the Admin console Context-Aware Access page can use attributes Workspace does not support and block users, so this server leaves the change to the Admin console."
+    },
+    "accesscontextmanager.accessPolicies.accessLevels.replaceAll": {
+      "category": "console-only",
+      "reason": "Replacing every access level of a policy at once would delete levels Workspace app assignments rely on; google's Workspace Context-Aware Access guide warns that access levels added or changed outside the Admin console Context-Aware Access page can use attributes Workspace does not support and block users, so this server leaves the change to the Admin console."
+    },
+    "accesscontextmanager.accessPolicies.accessLevels.testIamPermissions": {
+      "category": "cloud-resource",
+      "reason": "Tests the caller's Google Cloud IAM permissions on an access level; it reports Cloud IAM state, not Workspace access-level configuration."
+    },
+    "accesscontextmanager.accessPolicies.authorizedOrgsDescs.create": {
+      "category": "unguarded-target",
+      "reason": "An authorized organizations description names other Google Cloud organizations whose devices or access levels this organization trusts; those organizations cannot be verified against this customer."
+    },
+    "accesscontextmanager.accessPolicies.authorizedOrgsDescs.delete": {
+      "category": "unguarded-target",
+      "reason": "An authorized organizations description names other Google Cloud organizations whose devices or access levels this organization trusts; those organizations cannot be verified against this customer."
+    },
+    "accesscontextmanager.accessPolicies.authorizedOrgsDescs.get": {
+      "category": "unguarded-target",
+      "reason": "An authorized organizations description names other Google Cloud organizations whose devices or access levels this organization trusts; those organizations cannot be verified against this customer."
+    },
+    "accesscontextmanager.accessPolicies.authorizedOrgsDescs.list": {
+      "category": "unguarded-target",
+      "reason": "An authorized organizations description names other Google Cloud organizations whose devices or access levels this organization trusts; those organizations cannot be verified against this customer."
+    },
+    "accesscontextmanager.accessPolicies.authorizedOrgsDescs.patch": {
+      "category": "unguarded-target",
+      "reason": "An authorized organizations description names other Google Cloud organizations whose devices or access levels this organization trusts; those organizations cannot be verified against this customer."
+    },
+    "accesscontextmanager.accessPolicies.create": {
+      "category": "console-only",
+      "reason": "Workspace uses the single organization-level access policy that the Admin console creates; creating a policy from the API could add a Cloud-scoped policy outside Workspace Context-Aware Access."
+    },
+    "accesscontextmanager.accessPolicies.delete": {
+      "category": "console-only",
+      "reason": "Deleting the organization access policy removes every access level and perimeter in it, including the ones Workspace Context-Aware Access enforces."
+    },
+    "accesscontextmanager.accessPolicies.getIamPolicy": {
+      "category": "cloud-resource",
+      "reason": "Returns the Google Cloud IAM bindings on an access policy, which name principals outside the Workspace directory model."
+    },
+    "accesscontextmanager.accessPolicies.patch": {
+      "category": "cloud-resource",
+      "reason": "Only the title and Google Cloud scopes of a policy can change, and scopes delegate the policy to Cloud folders or projects rather than Workspace."
+    },
+    "accesscontextmanager.accessPolicies.servicePerimeters.commit": {
+      "category": "cloud-resource",
+      "reason": "Service perimeters are VPC Service Controls boundaries around Google Cloud projects and services; they do not govern Workspace apps and are outside this server's Workspace scope."
+    },
+    "accesscontextmanager.accessPolicies.servicePerimeters.create": {
+      "category": "cloud-resource",
+      "reason": "Service perimeters are VPC Service Controls boundaries around Google Cloud projects and services; they do not govern Workspace apps and are outside this server's Workspace scope."
+    },
+    "accesscontextmanager.accessPolicies.servicePerimeters.delete": {
+      "category": "cloud-resource",
+      "reason": "Service perimeters are VPC Service Controls boundaries around Google Cloud projects and services; they do not govern Workspace apps and are outside this server's Workspace scope."
+    },
+    "accesscontextmanager.accessPolicies.servicePerimeters.get": {
+      "category": "cloud-resource",
+      "reason": "Service perimeters are VPC Service Controls boundaries around Google Cloud projects and services; they do not govern Workspace apps and are outside this server's Workspace scope."
+    },
+    "accesscontextmanager.accessPolicies.servicePerimeters.list": {
+      "category": "cloud-resource",
+      "reason": "Service perimeters are VPC Service Controls boundaries around Google Cloud projects and services; they do not govern Workspace apps and are outside this server's Workspace scope."
+    },
+    "accesscontextmanager.accessPolicies.servicePerimeters.patch": {
+      "category": "cloud-resource",
+      "reason": "Service perimeters are VPC Service Controls boundaries around Google Cloud projects and services; they do not govern Workspace apps and are outside this server's Workspace scope."
+    },
+    "accesscontextmanager.accessPolicies.servicePerimeters.replaceAll": {
+      "category": "cloud-resource",
+      "reason": "Service perimeters are VPC Service Controls boundaries around Google Cloud projects and services; they do not govern Workspace apps and are outside this server's Workspace scope."
+    },
+    "accesscontextmanager.accessPolicies.servicePerimeters.testIamPermissions": {
+      "category": "cloud-resource",
+      "reason": "Service perimeters are VPC Service Controls boundaries around Google Cloud projects and services; they do not govern Workspace apps and are outside this server's Workspace scope."
+    },
+    "accesscontextmanager.accessPolicies.setIamPolicy": {
+      "category": "cloud-resource",
+      "reason": "Replaces the Google Cloud IAM bindings on an access policy, which could grant any principal control of every access level."
+    },
+    "accesscontextmanager.accessPolicies.testIamPermissions": {
+      "category": "cloud-resource",
+      "reason": "Tests the caller's Google Cloud IAM permissions on an access policy; it reports Cloud IAM state, not Workspace configuration."
+    },
+    "accesscontextmanager.folders.lookupConfiguredServicePerimeter": {
+      "category": "cloud-resource",
+      "reason": "Looks up the VPC Service Controls perimeter configured for a Google Cloud folder; perimeters protect Cloud resources, not Workspace apps."
+    },
+    "accesscontextmanager.operations.cancel": {
+      "category": "unguarded-target",
+      "reason": "Cancels a long-running operation named without any organization or policy, so its owner cannot be verified first; no access-context write that starts one is registered."
+    },
+    "accesscontextmanager.operations.delete": {
+      "category": "unguarded-target",
+      "reason": "Deletes a long-running operation record named without any organization or policy, so its owner cannot be verified first."
+    },
+    "accesscontextmanager.operations.get": {
+      "category": "unguarded-target",
+      "reason": "A long-running operation name carries no organization or policy, so it cannot be tied to the verified organization before it is read, and its response echoes changed resources."
+    },
+    "accesscontextmanager.operations.list": {
+      "category": "unguarded-target",
+      "reason": "Lists long-running operations by a caller-supplied collection name that cannot be tied to the verified organization, and each response echoes changed resources."
+    },
+    "accesscontextmanager.organizations.gcpUserAccessBindings.create": {
+      "category": "cloud-resource",
+      "reason": "Google Cloud user access bindings apply access levels to Google Cloud console and API sessions, not to Workspace apps, which Context-Aware Access assigns in the Admin console."
+    },
+    "accesscontextmanager.organizations.gcpUserAccessBindings.delete": {
+      "category": "cloud-resource",
+      "reason": "Google Cloud user access bindings apply access levels to Google Cloud console and API sessions, not to Workspace apps, which Context-Aware Access assigns in the Admin console."
+    },
+    "accesscontextmanager.organizations.gcpUserAccessBindings.get": {
+      "category": "cloud-resource",
+      "reason": "Google Cloud user access bindings apply access levels to Google Cloud console and API sessions, not to Workspace apps, which Context-Aware Access assigns in the Admin console."
+    },
+    "accesscontextmanager.organizations.gcpUserAccessBindings.list": {
+      "category": "cloud-resource",
+      "reason": "Google Cloud user access bindings apply access levels to Google Cloud console and API sessions, not to Workspace apps, which Context-Aware Access assigns in the Admin console."
+    },
+    "accesscontextmanager.organizations.gcpUserAccessBindings.patch": {
+      "category": "cloud-resource",
+      "reason": "Google Cloud user access bindings apply access levels to Google Cloud console and API sessions, not to Workspace apps, which Context-Aware Access assigns in the Admin console."
+    },
+    "accesscontextmanager.permissions.list": {
+      "category": "cloud-resource",
+      "reason": "Lists the Google Cloud IAM permissions that VPC Service Controls perimeters can restrict; it is not Workspace configuration."
+    },
+    "accesscontextmanager.projects.lookupConfiguredServicePerimeter": {
+      "category": "cloud-resource",
+      "reason": "Looks up the VPC Service Controls perimeter configured for a Google Cloud project; perimeters protect Cloud resources, not Workspace apps."
+    },
+    "accesscontextmanager.services.get": {
+      "category": "cloud-resource",
+      "reason": "Describes a Google Cloud service that VPC Service Controls perimeters can restrict; it is not Workspace configuration."
+    },
+    "accesscontextmanager.services.list": {
+      "category": "cloud-resource",
+      "reason": "Lists the Google Cloud services that VPC Service Controls perimeters can restrict; it is not Workspace configuration."
+    }
+  }
+}

@@ -1,0 +1,784 @@
+{
+  "service": "gmail",
+  "version": "v1",
+  "discovery": {
+    "url": "https://gmail.googleapis.com/$discovery/rest?version=v1",
+    "revision": "20260921",
+    "checked": "2026-09-26"
+  },
+  "operations": {
+    "gmail.users.settings.delegates.list": {
+      "resource_path": [
+        "users",
+        "settings",
+        "delegates"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.settings.basic"
+      ],
+      "risk": "read",
+      "params": {
+        "userId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "userId",
+      "response": {
+        "items_key": "delegates",
+        "fields": [
+          "delegateEmail",
+          "verificationStatus"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "account",
+          "param": "userId",
+          "as": "email"
+        }
+      ]
+    },
+    "gmail.users.settings.delegates.get": {
+      "resource_path": [
+        "users",
+        "settings",
+        "delegates"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.settings.basic"
+      ],
+      "risk": "read",
+      "params": {
+        "userId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "delegateEmail": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "userId",
+      "response": {
+        "fields": [
+          "delegateEmail",
+          "verificationStatus"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "account",
+          "param": "userId",
+          "as": "email"
+        }
+      ]
+    },
+    "gmail.users.settings.delegates.create": {
+      "resource_path": [
+        "users",
+        "settings",
+        "delegates"
+      ],
+      "method": "create",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.settings.sharing"
+      ],
+      "risk": "manage",
+      "params": {
+        "userId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "body": {
+        "delegateEmail": {
+          "type": "string",
+          "required": true
+        }
+      },
+      "target_param": "userId",
+      "response": {
+        "fields": [
+          "delegateEmail",
+          "verificationStatus"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "account",
+          "param": "userId",
+          "as": "email"
+        },
+        {
+          "kind": "account",
+          "field": "delegateEmail",
+          "as": "email"
+        }
+      ]
+    },
+    "gmail.users.settings.delegates.delete": {
+      "resource_path": [
+        "users",
+        "settings",
+        "delegates"
+      ],
+      "method": "delete",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.settings.sharing"
+      ],
+      "risk": "destructive",
+      "params": {
+        "userId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "delegateEmail": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "userId",
+      "boundary": [
+        {
+          "kind": "account",
+          "param": "userId",
+          "as": "email"
+        },
+        {
+          "kind": "listed",
+          "param": "delegateEmail",
+          "field": "delegateEmail",
+          "read": "gmail.users.settings.delegates.list"
+        }
+      ]
+    },
+    "gmail.users.settings.getAutoForwarding": {
+      "resource_path": [
+        "users",
+        "settings"
+      ],
+      "method": "getAutoForwarding",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.settings.basic"
+      ],
+      "risk": "read",
+      "params": {
+        "userId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "userId",
+      "response": {
+        "fields": [
+          "enabled",
+          "emailAddress",
+          "disposition"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "account",
+          "param": "userId",
+          "as": "email"
+        }
+      ]
+    },
+    "gmail.users.settings.getImap": {
+      "resource_path": [
+        "users",
+        "settings"
+      ],
+      "method": "getImap",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.settings.basic"
+      ],
+      "risk": "read",
+      "params": {
+        "userId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "userId",
+      "response": {
+        "fields": [
+          "enabled",
+          "autoExpunge",
+          "expungeBehavior",
+          "maxFolderSize"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "account",
+          "param": "userId",
+          "as": "email"
+        }
+      ]
+    },
+    "gmail.users.settings.getPop": {
+      "resource_path": [
+        "users",
+        "settings"
+      ],
+      "method": "getPop",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.settings.basic"
+      ],
+      "risk": "read",
+      "params": {
+        "userId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "userId",
+      "response": {
+        "fields": [
+          "accessWindow",
+          "disposition"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "account",
+          "param": "userId",
+          "as": "email"
+        }
+      ]
+    },
+    "gmail.users.settings.getVacation": {
+      "resource_path": [
+        "users",
+        "settings"
+      ],
+      "method": "getVacation",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.settings.basic"
+      ],
+      "risk": "read",
+      "params": {
+        "userId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "userId",
+      "response": {
+        "fields": [
+          "enableAutoReply",
+          "restrictToContacts",
+          "restrictToDomain",
+          "startTime",
+          "endTime"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "account",
+          "param": "userId",
+          "as": "email"
+        }
+      ]
+    },
+    "gmail.users.settings.getLanguage": {
+      "resource_path": [
+        "users",
+        "settings"
+      ],
+      "method": "getLanguage",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.settings.basic"
+      ],
+      "risk": "read",
+      "params": {
+        "userId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "userId",
+      "response": {
+        "fields": [
+          "displayLanguage"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "account",
+          "param": "userId",
+          "as": "email"
+        }
+      ]
+    },
+    "gmail.users.settings.sendAs.list": {
+      "resource_path": [
+        "users",
+        "settings",
+        "sendAs"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.settings.basic"
+      ],
+      "risk": "read",
+      "params": {
+        "userId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "userId",
+      "response": {
+        "fields": [
+          "sendAsEmail",
+          "displayName",
+          "replyToAddress",
+          "isPrimary",
+          "isDefault",
+          "verificationStatus"
+        ],
+        "items_key": "sendAs"
+      },
+      "boundary": [
+        {
+          "kind": "account",
+          "param": "userId",
+          "as": "email"
+        }
+      ]
+    },
+    "gmail.users.settings.sendAs.get": {
+      "resource_path": [
+        "users",
+        "settings",
+        "sendAs"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.settings.basic"
+      ],
+      "risk": "read",
+      "params": {
+        "userId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "sendAsEmail": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^[A-Za-z0-9._+\\-]+@[A-Za-z0-9.\\-]+$"
+        }
+      },
+      "target_param": "userId",
+      "response": {
+        "fields": [
+          "sendAsEmail",
+          "displayName",
+          "replyToAddress",
+          "isPrimary",
+          "isDefault",
+          "verificationStatus"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "account",
+          "param": "userId",
+          "as": "email"
+        }
+      ]
+    },
+    "gmail.users.settings.forwardingAddresses.list": {
+      "resource_path": [
+        "users",
+        "settings",
+        "forwardingAddresses"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.settings.basic"
+      ],
+      "risk": "read",
+      "params": {
+        "userId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "userId",
+      "response": {
+        "fields": [
+          "forwardingEmail",
+          "verificationStatus"
+        ],
+        "items_key": "forwardingAddresses"
+      },
+      "boundary": [
+        {
+          "kind": "account",
+          "param": "userId",
+          "as": "email"
+        }
+      ]
+    },
+    "gmail.users.settings.forwardingAddresses.get": {
+      "resource_path": [
+        "users",
+        "settings",
+        "forwardingAddresses"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.settings.basic"
+      ],
+      "risk": "read",
+      "params": {
+        "userId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "forwardingEmail": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^[A-Za-z0-9._+\\-]+@[A-Za-z0-9.\\-]+$"
+        }
+      },
+      "target_param": "userId",
+      "response": {
+        "fields": [
+          "forwardingEmail",
+          "verificationStatus"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "account",
+          "param": "userId",
+          "as": "email"
+        }
+      ]
+    },
+    "gmail.users.settings.updateLanguage": {
+      "resource_path": [
+        "users",
+        "settings"
+      ],
+      "method": "updateLanguage",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.settings.basic"
+      ],
+      "risk": "manage",
+      "params": {
+        "userId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "userId",
+      "body": {
+        "displayLanguage": {
+          "type": "string",
+          "required": true,
+          "pattern": "^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,2}$"
+        }
+      },
+      "response": {
+        "fields": [
+          "displayLanguage"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "account",
+          "param": "userId",
+          "as": "email"
+        }
+      ]
+    }
+  },
+  "excluded": {
+    "gmail.users.drafts.create": {
+      "category": "message-scope",
+      "reason": "Needs a Gmail message, label, or whole-mailbox scope and reads or changes the user's mail; this service requests only the two delegate settings scopes."
+    },
+    "gmail.users.drafts.delete": {
+      "category": "message-scope",
+      "reason": "Needs a Gmail message, label, or whole-mailbox scope and reads or changes the user's mail; this service requests only the two delegate settings scopes."
+    },
+    "gmail.users.drafts.get": {
+      "category": "message-scope",
+      "reason": "Needs a Gmail message, label, or whole-mailbox scope and reads or changes the user's mail; this service requests only the two delegate settings scopes."
+    },
+    "gmail.users.drafts.list": {
+      "category": "message-scope",
+      "reason": "Needs a Gmail message, label, or whole-mailbox scope and reads or changes the user's mail; this service requests only the two delegate settings scopes."
+    },
+    "gmail.users.drafts.send": {
+      "category": "message-scope",
+      "reason": "Needs a Gmail message, label, or whole-mailbox scope and reads or changes the user's mail; this service requests only the two delegate settings scopes."
+    },
+    "gmail.users.drafts.update": {
+      "category": "message-scope",
+      "reason": "Needs a Gmail message, label, or whole-mailbox scope and reads or changes the user's mail; this service requests only the two delegate settings scopes."
+    },
+    "gmail.users.getProfile": {
+      "category": "message-scope",
+      "reason": "Needs a Gmail message, label, or whole-mailbox scope and reads or changes the user's mail; this service requests only the two delegate settings scopes."
+    },
+    "gmail.users.history.list": {
+      "category": "message-scope",
+      "reason": "Needs a Gmail message, label, or whole-mailbox scope and reads or changes the user's mail; this service requests only the two delegate settings scopes."
+    },
+    "gmail.users.labels.create": {
+      "category": "message-scope",
+      "reason": "Needs a Gmail message, label, or whole-mailbox scope and reads or changes the user's mail; this service requests only the two delegate settings scopes."
+    },
+    "gmail.users.labels.delete": {
+      "category": "message-scope",
+      "reason": "Needs a Gmail message, label, or whole-mailbox scope and reads or changes the user's mail; this service requests only the two delegate settings scopes."
+    },
+    "gmail.users.labels.get": {
+      "category": "message-scope",
+      "reason": "Needs a Gmail message, label, or whole-mailbox scope and reads or changes the user's mail; this service requests only the two delegate settings scopes."
+    },
+    "gmail.users.labels.list": {
+      "category": "message-scope",
+      "reason": "Needs a Gmail message, label, or whole-mailbox scope and reads or changes the user's mail; this service requests only the two delegate settings scopes."
+    },
+    "gmail.users.labels.patch": {
+      "category": "message-scope",
+      "reason": "Needs a Gmail message, label, or whole-mailbox scope and reads or changes the user's mail; this service requests only the two delegate settings scopes."
+    },
+    "gmail.users.labels.update": {
+      "category": "message-scope",
+      "reason": "Needs a Gmail message, label, or whole-mailbox scope and reads or changes the user's mail; this service requests only the two delegate settings scopes."
+    },
+    "gmail.users.messages.attachments.get": {
+      "category": "message-scope",
+      "reason": "Needs a Gmail message, label, or whole-mailbox scope and reads or changes the user's mail; this service requests only the two delegate settings scopes."
+    },
+    "gmail.users.messages.batchDelete": {
+      "category": "message-scope",
+      "reason": "Needs a Gmail message, label, or whole-mailbox scope and reads or changes the user's mail; this service requests only the two delegate settings scopes."
+    },
+    "gmail.users.messages.batchModify": {
+      "category": "message-scope",
+      "reason": "Needs a Gmail message, label, or whole-mailbox scope and reads or changes the user's mail; this service requests only the two delegate settings scopes."
+    },
+    "gmail.users.messages.delete": {
+      "category": "message-scope",
+      "reason": "Needs a Gmail message, label, or whole-mailbox scope and reads or changes the user's mail; this service requests only the two delegate settings scopes."
+    },
+    "gmail.users.messages.get": {
+      "category": "message-scope",
+      "reason": "Needs a Gmail message, label, or whole-mailbox scope and reads or changes the user's mail; this service requests only the two delegate settings scopes."
+    },
+    "gmail.users.messages.import": {
+      "category": "message-scope",
+      "reason": "Needs a Gmail message, label, or whole-mailbox scope and reads or changes the user's mail; this service requests only the two delegate settings scopes."
+    },
+    "gmail.users.messages.insert": {
+      "category": "message-scope",
+      "reason": "Needs a Gmail message, label, or whole-mailbox scope and reads or changes the user's mail; this service requests only the two delegate settings scopes."
+    },
+    "gmail.users.messages.list": {
+      "category": "message-scope",
+      "reason": "Needs a Gmail message, label, or whole-mailbox scope and reads or changes the user's mail; this service requests only the two delegate settings scopes."
+    },
+    "gmail.users.messages.modify": {
+      "category": "message-scope",
+      "reason": "Needs a Gmail message, label, or whole-mailbox scope and reads or changes the user's mail; this service requests only the two delegate settings scopes."
+    },
+    "gmail.users.messages.send": {
+      "category": "message-scope",
+      "reason": "Needs a Gmail message, label, or whole-mailbox scope and reads or changes the user's mail; this service requests only the two delegate settings scopes."
+    },
+    "gmail.users.messages.trash": {
+      "category": "message-scope",
+      "reason": "Needs a Gmail message, label, or whole-mailbox scope and reads or changes the user's mail; this service requests only the two delegate settings scopes."
+    },
+    "gmail.users.messages.untrash": {
+      "category": "message-scope",
+      "reason": "Needs a Gmail message, label, or whole-mailbox scope and reads or changes the user's mail; this service requests only the two delegate settings scopes."
+    },
+    "gmail.users.settings.cse.identities.create": {
+      "category": "encryption-key",
+      "reason": "Reads or changes client-side encryption or S/MIME keys and certificates; a mistake can make encrypted mail unreadable, and some changes are irreversible."
+    },
+    "gmail.users.settings.cse.identities.delete": {
+      "category": "encryption-key",
+      "reason": "Reads or changes client-side encryption or S/MIME keys and certificates; a mistake can make encrypted mail unreadable, and some changes are irreversible."
+    },
+    "gmail.users.settings.cse.identities.get": {
+      "category": "encryption-key",
+      "reason": "Reads or changes client-side encryption or S/MIME keys and certificates; a mistake can make encrypted mail unreadable, and some changes are irreversible."
+    },
+    "gmail.users.settings.cse.identities.list": {
+      "category": "encryption-key",
+      "reason": "Reads or changes client-side encryption or S/MIME keys and certificates; a mistake can make encrypted mail unreadable, and some changes are irreversible."
+    },
+    "gmail.users.settings.cse.identities.patch": {
+      "category": "encryption-key",
+      "reason": "Reads or changes client-side encryption or S/MIME keys and certificates; a mistake can make encrypted mail unreadable, and some changes are irreversible."
+    },
+    "gmail.users.settings.cse.keypairs.create": {
+      "category": "secret-in-payload",
+      "reason": "The request carries a wrapped private key for client-side encryption."
+    },
+    "gmail.users.settings.cse.keypairs.disable": {
+      "category": "encryption-key",
+      "reason": "Reads or changes client-side encryption or S/MIME keys and certificates; a mistake can make encrypted mail unreadable, and some changes are irreversible."
+    },
+    "gmail.users.settings.cse.keypairs.enable": {
+      "category": "encryption-key",
+      "reason": "Reads or changes client-side encryption or S/MIME keys and certificates; a mistake can make encrypted mail unreadable, and some changes are irreversible."
+    },
+    "gmail.users.settings.cse.keypairs.get": {
+      "category": "encryption-key",
+      "reason": "Reads or changes client-side encryption or S/MIME keys and certificates; a mistake can make encrypted mail unreadable, and some changes are irreversible."
+    },
+    "gmail.users.settings.cse.keypairs.list": {
+      "category": "encryption-key",
+      "reason": "Reads or changes client-side encryption or S/MIME keys and certificates; a mistake can make encrypted mail unreadable, and some changes are irreversible."
+    },
+    "gmail.users.settings.cse.keypairs.obliterate": {
+      "category": "encryption-key",
+      "reason": "Reads or changes client-side encryption or S/MIME keys and certificates; a mistake can make encrypted mail unreadable, and some changes are irreversible."
+    },
+    "gmail.users.settings.filters.create": {
+      "category": "mailbox-setting",
+      "reason": "Filter criteria and actions can contain mail-search text or redirect and delete messages; no typed content scrubber or action-specific guard is registered."
+    },
+    "gmail.users.settings.filters.delete": {
+      "category": "mailbox-setting",
+      "reason": "Filter criteria and actions can contain mail-search text or redirect and delete messages; no typed content scrubber or action-specific guard is registered."
+    },
+    "gmail.users.settings.filters.get": {
+      "category": "mailbox-setting",
+      "reason": "Filter criteria and actions can contain mail-search text or redirect and delete messages; no typed content scrubber or action-specific guard is registered."
+    },
+    "gmail.users.settings.filters.list": {
+      "category": "mailbox-setting",
+      "reason": "Filter criteria and actions can contain mail-search text or redirect and delete messages; no typed content scrubber or action-specific guard is registered."
+    },
+    "gmail.users.settings.forwardingAddresses.create": {
+      "category": "mailbox-setting",
+      "reason": "Changing forwarding destinations can redirect mail outside the customer; verification of the external recipient and the destination is not available to the customer guard."
+    },
+    "gmail.users.settings.forwardingAddresses.delete": {
+      "category": "mailbox-setting",
+      "reason": "Changing forwarding destinations can redirect mail outside the customer; verification of the external recipient and the destination is not available to the customer guard."
+    },
+    "gmail.users.settings.sendAs.create": {
+      "category": "secret-in-payload",
+      "reason": "The request can carry an SMTP relay password for the send-as address."
+    },
+    "gmail.users.settings.sendAs.delete": {
+      "category": "mailbox-setting",
+      "reason": "Changing or verifying a send-as identity can alter who mail is sent as; an external identity cannot be verified against the Workspace customer with Directory."
+    },
+    "gmail.users.settings.sendAs.patch": {
+      "category": "secret-in-payload",
+      "reason": "The request can carry an SMTP relay password for the send-as address."
+    },
+    "gmail.users.settings.sendAs.smimeInfo.delete": {
+      "category": "encryption-key",
+      "reason": "Reads or changes client-side encryption or S/MIME keys and certificates; a mistake can make encrypted mail unreadable, and some changes are irreversible."
+    },
+    "gmail.users.settings.sendAs.smimeInfo.get": {
+      "category": "encryption-key",
+      "reason": "Reads or changes client-side encryption or S/MIME keys and certificates; a mistake can make encrypted mail unreadable, and some changes are irreversible."
+    },
+    "gmail.users.settings.sendAs.smimeInfo.insert": {
+      "category": "secret-in-payload",
+      "reason": "The request carries a PKCS#12 private key and its encryption password."
+    },
+    "gmail.users.settings.sendAs.smimeInfo.list": {
+      "category": "encryption-key",
+      "reason": "Reads or changes client-side encryption or S/MIME keys and certificates; a mistake can make encrypted mail unreadable, and some changes are irreversible."
+    },
+    "gmail.users.settings.sendAs.smimeInfo.setDefault": {
+      "category": "encryption-key",
+      "reason": "Reads or changes client-side encryption or S/MIME keys and certificates; a mistake can make encrypted mail unreadable, and some changes are irreversible."
+    },
+    "gmail.users.settings.sendAs.update": {
+      "category": "secret-in-payload",
+      "reason": "The request can carry an SMTP relay password for the send-as address."
+    },
+    "gmail.users.settings.sendAs.verify": {
+      "category": "mailbox-setting",
+      "reason": "Changing or verifying a send-as identity can alter who mail is sent as; an external identity cannot be verified against the Workspace customer with Directory."
+    },
+    "gmail.users.settings.updateAutoForwarding": {
+      "category": "mailbox-setting",
+      "reason": "Changing automatic forwarding can route mailbox contents to an external destination the customer guard cannot verify; only bounded settings reads are registered."
+    },
+    "gmail.users.settings.updateImap": {
+      "category": "mailbox-setting",
+      "reason": "Changing mailbox access protocols can broaden message access; these methods require a separate policy guard and are not covered by the bounded settings reads."
+    },
+    "gmail.users.settings.updatePop": {
+      "category": "mailbox-setting",
+      "reason": "Changing mailbox access protocols can broaden message access; these methods require a separate policy guard and are not covered by the bounded settings reads."
+    },
+    "gmail.users.settings.updateVacation": {
+      "category": "mailbox-setting",
+      "reason": "The vacation update body carries user-written response text sent to outside contacts; the proposal store would persist and echo that content."
+    },
+    "gmail.users.stop": {
+      "category": "push-channel",
+      "reason": "Starts or stops Gmail push notifications to a caller-chosen Cloud Pub/Sub topic, which would send mailbox change events outside this server."
+    },
+    "gmail.users.threads.delete": {
+      "category": "message-scope",
+      "reason": "Needs a Gmail message, label, or whole-mailbox scope and reads or changes the user's mail; this service requests only the two delegate settings scopes."
+    },
+    "gmail.users.threads.get": {
+      "category": "message-scope",
+      "reason": "Needs a Gmail message, label, or whole-mailbox scope and reads or changes the user's mail; this service requests only the two delegate settings scopes."
+    },
+    "gmail.users.threads.list": {
+      "category": "message-scope",
+      "reason": "Needs a Gmail message, label, or whole-mailbox scope and reads or changes the user's mail; this service requests only the two delegate settings scopes."
+    },
+    "gmail.users.threads.modify": {
+      "category": "message-scope",
+      "reason": "Needs a Gmail message, label, or whole-mailbox scope and reads or changes the user's mail; this service requests only the two delegate settings scopes."
+    },
+    "gmail.users.threads.trash": {
+      "category": "message-scope",
+      "reason": "Needs a Gmail message, label, or whole-mailbox scope and reads or changes the user's mail; this service requests only the two delegate settings scopes."
+    },
+    "gmail.users.threads.untrash": {
+      "category": "message-scope",
+      "reason": "Needs a Gmail message, label, or whole-mailbox scope and reads or changes the user's mail; this service requests only the two delegate settings scopes."
+    },
+    "gmail.users.watch": {
+      "category": "push-channel",
+      "reason": "Starts or stops Gmail push notifications to a caller-chosen Cloud Pub/Sub topic, which would send mailbox change events outside this server."
+    }
+  }
+}

@@ -1,0 +1,238 @@
+{
+  "service": "admin",
+  "version": "datatransfer_v1",
+  "discovery": {
+    "url": "https://admin.googleapis.com/$discovery/rest?version=datatransfer_v1",
+    "revision": "20260917",
+    "checked": "2026-09-25"
+  },
+  "operations": {
+    "datatransfer.applications.list": {
+      "resource_path": [
+        "applications"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.datatransfer.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customerId": {
+          "type": "string",
+          "location": "query"
+        },
+        "maxResults": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "applications",
+        "fields": [
+          "id",
+          "name",
+          "transferParams"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customerId"
+        }
+      ]
+    },
+    "datatransfer.transfers.get": {
+      "resource_path": [
+        "transfers"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.datatransfer.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "dataTransferId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "response": {
+        "fields": [
+          "id",
+          "oldOwnerUserId",
+          "newOwnerUserId",
+          "applicationDataTransfers",
+          "overallTransferStatusCode",
+          "requestTime"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "response_user",
+          "field": "oldOwnerUserId"
+        },
+        {
+          "kind": "response_user",
+          "field": "newOwnerUserId"
+        }
+      ]
+    },
+    "datatransfer.transfers.list": {
+      "resource_path": [
+        "transfers"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.datatransfer.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customerId": {
+          "type": "string",
+          "location": "query"
+        },
+        "oldOwnerUserId": {
+          "type": "string",
+          "location": "query"
+        },
+        "newOwnerUserId": {
+          "type": "string",
+          "location": "query"
+        },
+        "status": {
+          "type": "string",
+          "location": "query"
+        },
+        "maxResults": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "dataTransfers",
+        "fields": [
+          "id",
+          "oldOwnerUserId",
+          "newOwnerUserId",
+          "applicationDataTransfers",
+          "overallTransferStatusCode",
+          "requestTime"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customerId"
+        },
+        {
+          "kind": "user",
+          "as": "id",
+          "param": "oldOwnerUserId"
+        },
+        {
+          "kind": "user",
+          "as": "id",
+          "param": "newOwnerUserId"
+        }
+      ]
+    },
+    "datatransfer.transfers.insert": {
+      "resource_path": [
+        "transfers"
+      ],
+      "method": "insert",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.datatransfer"
+      ],
+      "risk": "manage",
+      "params": {},
+      "body": {
+        "oldOwnerUserId": "string",
+        "newOwnerUserId": "string",
+        "applicationDataTransfers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "fields": {
+              "applicationId": "string",
+              "applicationTransferParams": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "fields": {
+                    "key": "string",
+                    "value": {
+                      "type": "array",
+                      "items": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "response": {
+        "fields": [
+          "id",
+          "oldOwnerUserId",
+          "newOwnerUserId",
+          "applicationDataTransfers",
+          "overallTransferStatusCode",
+          "requestTime"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "user",
+          "as": "id",
+          "field": "oldOwnerUserId"
+        },
+        {
+          "kind": "user",
+          "as": "id",
+          "field": "newOwnerUserId"
+        }
+      ]
+    },
+    "datatransfer.applications.get": {
+      "resource_path": [
+        "applications"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.datatransfer.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "applicationId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "response": {
+        "fields": [
+          "id",
+          "name",
+          "transferParams"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "global"
+        }
+      ]
+    }
+  },
+  "excluded": {}
+}

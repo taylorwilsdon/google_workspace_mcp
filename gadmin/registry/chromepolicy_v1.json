@@ -1,0 +1,646 @@
+{
+  "service": "chromepolicy",
+  "version": "v1",
+  "discovery": {
+    "url": "https://chromepolicy.googleapis.com/$discovery/rest?version=v1",
+    "revision": "20260923",
+    "checked": "2026-09-26"
+  },
+  "operations": {
+    "chromepolicy.customers.policySchemas.get": {
+      "resource_path": [
+        "customers",
+        "policySchemas"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.policy.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+/policySchemas/chrome(\\.[A-Za-z0-9]+)+$"
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "schemaName",
+          "policyDescription",
+          "categoryTitle",
+          "definition",
+          "fieldDescriptions",
+          "additionalTargetKeyNames",
+          "validTargetResources",
+          "supportedPlatforms",
+          "policyApiLifecycle",
+          "accessRestrictions",
+          "notices",
+          "supportUri"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer_path",
+          "param": "name"
+        }
+      ]
+    },
+    "chromepolicy.customers.policySchemas.list": {
+      "resource_path": [
+        "customers",
+        "policySchemas"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.policy.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "parent": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        },
+        "filter": {
+          "type": "string",
+          "location": "query"
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "policySchemas",
+        "fields": [
+          "name",
+          "schemaName",
+          "policyDescription",
+          "categoryTitle",
+          "definition",
+          "fieldDescriptions",
+          "additionalTargetKeyNames",
+          "validTargetResources",
+          "supportedPlatforms",
+          "policyApiLifecycle",
+          "accessRestrictions",
+          "notices",
+          "supportUri"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "parent",
+          "as": "name"
+        }
+      ]
+    },
+    "chromepolicy.customers.policies.resolve": {
+      "resource_path": [
+        "customers",
+        "policies"
+      ],
+      "method": "resolve",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.policy.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        }
+      },
+      "body": {
+        "policySchemaFilter": {
+          "type": "string",
+          "required": true,
+          "pattern": "^chrome(\\.[A-Za-z0-9]+)*(\\.\\*)?$"
+        },
+        "policyTargetKey": {
+          "type": "object",
+          "required": true,
+          "fields": {
+            "targetResource": {
+              "type": "string",
+              "required": true,
+              "pattern": "^(orgunits/[A-Za-z0-9_\\-]+|groups/[A-Za-z0-9]+)$"
+            },
+            "additionalTargetKeys": {
+              "type": "object",
+              "fields": {
+                "app_id": {
+                  "type": "string",
+                  "pattern": "^(chrome:[a-p]{32}|android:[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+)$"
+                }
+              }
+            }
+          }
+        },
+        "pageSize": "integer",
+        "pageToken": "string"
+      },
+      "response": {
+        "items_key": "resolvedPolicies",
+        "fields": [
+          "targetKey",
+          "sourceKey",
+          "addedSourceKey",
+          "value"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        },
+        {
+          "kind": "policy_target",
+          "field": "policyTargetKey.targetResource"
+        }
+      ]
+    },
+    "chromepolicy.customers.policies.groups.listGroupPriorityOrdering": {
+      "resource_path": [
+        "customers",
+        "policies",
+        "groups"
+      ],
+      "method": "listGroupPriorityOrdering",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.policy.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        }
+      },
+      "body": {
+        "policyTargetKey": {
+          "type": "object",
+          "required": true,
+          "fields": {
+            "additionalTargetKeys": {
+              "type": "object",
+              "required": true,
+              "fields": {
+                "app_id": {
+                  "type": "string",
+                  "pattern": "^(chrome:[a-p]{32}|android:[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+)$",
+                  "required": true
+                }
+              }
+            }
+          }
+        },
+        "policyNamespace": {
+          "type": "string",
+          "required": true,
+          "pattern": "^chrome(\\.[A-Za-z0-9]+)+$"
+        },
+        "policySchema": {
+          "type": "string",
+          "pattern": "^chrome(\\.[A-Za-z0-9]+)+$"
+        }
+      },
+      "response": {
+        "fields": [
+          "policyTargetKey",
+          "policyNamespace",
+          "policySchema",
+          "groupIds"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        }
+      ]
+    },
+    "chromepolicy.customers.policies.orgunits.batchModify": {
+      "resource_path": [
+        "customers",
+        "policies",
+        "orgunits"
+      ],
+      "method": "batchModify",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.policy"
+      ],
+      "risk": "destructive",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        }
+      },
+      "body": {
+        "requests": {
+          "type": "array",
+          "required": true,
+          "max_items": 20,
+          "items": {
+            "type": "object",
+            "fields": {
+              "policyTargetKey": {
+                "type": "object",
+                "required": true,
+                "fields": {
+                  "targetResource": {
+                    "type": "string",
+                    "required": true,
+                    "pattern": "^orgunits/[A-Za-z0-9_\\-]+$"
+                  },
+                  "additionalTargetKeys": {
+                    "type": "object",
+                    "fields": {
+                      "app_id": {
+                        "type": "string",
+                        "pattern": "^(chrome:[a-p]{32}|android:[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+)$"
+                      }
+                    }
+                  }
+                }
+              },
+              "policyValue": {
+                "type": "object",
+                "required": true,
+                "fields": {
+                  "policySchema": {
+                    "type": "string",
+                    "required": true,
+                    "pattern": "^chrome(\\.[A-Za-z0-9]+)+$"
+                  },
+                  "value": {
+                    "type": "object",
+                    "required": true
+                  }
+                }
+              },
+              "updateMask": {
+                "type": "string",
+                "required": true,
+                "pattern": "^[A-Za-z][A-Za-z0-9_]*(,[A-Za-z][A-Za-z0-9_]*)*$"
+              }
+            }
+          }
+        }
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        },
+        {
+          "kind": "policy_target",
+          "field": "requests.policyTargetKey.targetResource"
+        },
+        {
+          "kind": "policy_value",
+          "field": "requests.policyValue.policySchema",
+          "read": "chromepolicy.customers.policySchemas.get",
+          "prefix": "customers/my_customer/policySchemas/"
+        }
+      ]
+    },
+    "chromepolicy.customers.policies.orgunits.batchInherit": {
+      "resource_path": [
+        "customers",
+        "policies",
+        "orgunits"
+      ],
+      "method": "batchInherit",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.policy"
+      ],
+      "risk": "destructive",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        }
+      },
+      "body": {
+        "requests": {
+          "type": "array",
+          "required": true,
+          "max_items": 20,
+          "items": {
+            "type": "object",
+            "fields": {
+              "policyTargetKey": {
+                "type": "object",
+                "required": true,
+                "fields": {
+                  "targetResource": {
+                    "type": "string",
+                    "required": true,
+                    "pattern": "^orgunits/[A-Za-z0-9_\\-]+$"
+                  },
+                  "additionalTargetKeys": {
+                    "type": "object",
+                    "fields": {
+                      "app_id": {
+                        "type": "string",
+                        "pattern": "^(chrome:[a-p]{32}|android:[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+)$"
+                      }
+                    }
+                  }
+                }
+              },
+              "policySchema": {
+                "type": "string",
+                "required": true,
+                "pattern": "^chrome(\\.[A-Za-z0-9]+)+$"
+              }
+            }
+          }
+        }
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        },
+        {
+          "kind": "policy_target",
+          "field": "requests.policyTargetKey.targetResource"
+        }
+      ]
+    },
+    "chromepolicy.customers.policies.groups.batchModify": {
+      "resource_path": [
+        "customers",
+        "policies",
+        "groups"
+      ],
+      "method": "batchModify",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.policy"
+      ],
+      "risk": "destructive",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        }
+      },
+      "body": {
+        "requests": {
+          "type": "array",
+          "required": true,
+          "max_items": 20,
+          "items": {
+            "type": "object",
+            "fields": {
+              "policyTargetKey": {
+                "type": "object",
+                "required": true,
+                "fields": {
+                  "targetResource": {
+                    "type": "string",
+                    "required": true,
+                    "pattern": "^groups/[A-Za-z0-9]+$"
+                  },
+                  "additionalTargetKeys": {
+                    "type": "object",
+                    "fields": {
+                      "app_id": {
+                        "type": "string",
+                        "pattern": "^(chrome:[a-p]{32}|android:[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+)$"
+                      }
+                    }
+                  }
+                }
+              },
+              "policyValue": {
+                "type": "object",
+                "required": true,
+                "fields": {
+                  "policySchema": {
+                    "type": "string",
+                    "required": true,
+                    "pattern": "^chrome(\\.[A-Za-z0-9]+)+$"
+                  },
+                  "value": {
+                    "type": "object",
+                    "required": true
+                  }
+                }
+              },
+              "updateMask": {
+                "type": "string",
+                "required": true,
+                "pattern": "^[A-Za-z][A-Za-z0-9_]*(,[A-Za-z][A-Za-z0-9_]*)*$"
+              }
+            }
+          }
+        }
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        },
+        {
+          "kind": "policy_target",
+          "field": "requests.policyTargetKey.targetResource"
+        },
+        {
+          "kind": "policy_value",
+          "field": "requests.policyValue.policySchema",
+          "read": "chromepolicy.customers.policySchemas.get",
+          "prefix": "customers/my_customer/policySchemas/"
+        }
+      ]
+    },
+    "chromepolicy.customers.policies.groups.batchDelete": {
+      "resource_path": [
+        "customers",
+        "policies",
+        "groups"
+      ],
+      "method": "batchDelete",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.policy"
+      ],
+      "risk": "destructive",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        }
+      },
+      "body": {
+        "requests": {
+          "type": "array",
+          "required": true,
+          "max_items": 20,
+          "items": {
+            "type": "object",
+            "fields": {
+              "policyTargetKey": {
+                "type": "object",
+                "required": true,
+                "fields": {
+                  "targetResource": {
+                    "type": "string",
+                    "required": true,
+                    "pattern": "^groups/[A-Za-z0-9]+$"
+                  },
+                  "additionalTargetKeys": {
+                    "type": "object",
+                    "fields": {
+                      "app_id": {
+                        "type": "string",
+                        "pattern": "^(chrome:[a-p]{32}|android:[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+)$"
+                      }
+                    }
+                  }
+                }
+              },
+              "policySchema": {
+                "type": "string",
+                "required": true,
+                "pattern": "^chrome(\\.[A-Za-z0-9]+)+$"
+              }
+            }
+          }
+        }
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        },
+        {
+          "kind": "policy_target",
+          "field": "requests.policyTargetKey.targetResource"
+        }
+      ]
+    },
+    "chromepolicy.customers.policies.groups.updateGroupPriorityOrdering": {
+      "resource_path": [
+        "customers",
+        "policies",
+        "groups"
+      ],
+      "method": "updateGroupPriorityOrdering",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.policy"
+      ],
+      "risk": "destructive",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        }
+      },
+      "body": {
+        "policyTargetKey": {
+          "type": "object",
+          "required": true,
+          "fields": {
+            "additionalTargetKeys": {
+              "type": "object",
+              "required": true,
+              "fields": {
+                "app_id": {
+                  "type": "string",
+                  "pattern": "^(chrome:[a-p]{32}|android:[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+)$",
+                  "required": true
+                }
+              }
+            }
+          }
+        },
+        "policyNamespace": {
+          "type": "string",
+          "required": true,
+          "pattern": "^chrome(\\.[A-Za-z0-9]+)+$"
+        },
+        "policySchema": {
+          "type": "string",
+          "pattern": "^chrome(\\.[A-Za-z0-9]+)+$"
+        },
+        "groupIds": {
+          "type": "array",
+          "required": true,
+          "max_items": 50,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9]+$"
+          }
+        }
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        },
+        {
+          "kind": "group",
+          "field": "groupIds",
+          "as": "id"
+        }
+      ]
+    }
+  },
+  "excluded": {
+    "chromepolicy.customers.policies.networks.defineCertificate": {
+      "category": "secret-in-payload",
+      "reason": "Defines a certificate from a raw PEM value with untyped settings, which would be stored in a proposal and cannot be validated."
+    },
+    "chromepolicy.customers.policies.networks.defineNetwork": {
+      "category": "secret-in-payload",
+      "reason": "Defines a Wi-Fi or Ethernet network whose untyped settings carry passphrases and EAP credentials, which would be stored in a proposal."
+    },
+    "chromepolicy.customers.policies.networks.removeCertificate": {
+      "category": "unguarded-target",
+      "reason": "Removes a certificate named only by a caller-supplied GUID, and no registered read proves the certificate belongs to the target org unit."
+    },
+    "chromepolicy.customers.policies.networks.removeNetwork": {
+      "category": "unguarded-target",
+      "reason": "Removes a network named only by a caller-supplied GUID, and no registered read proves the network belongs to the target org unit."
+    },
+    "chromepolicy.media.upload": {
+      "category": "unvalidated-schema",
+      "reason": "Uploads arbitrary file bytes for a policy and returns a download URL; the file content cannot be validated against a schema before it is stored."
+    }
+  }
+}

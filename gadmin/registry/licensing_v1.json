@@ -1,0 +1,281 @@
+{
+  "service": "licensing",
+  "version": "v1",
+  "discovery": {
+    "url": "https://licensing.googleapis.com/$discovery/rest?version=v1",
+    "revision": "20260916",
+    "checked": "2026-09-25"
+  },
+  "operations": {
+    "licensing.licenseAssignments.get": {
+      "resource_path": [
+        "licenseAssignments"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/apps.licensing"
+      ],
+      "risk": "read",
+      "params": {
+        "productId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "skuId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "userId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "userId",
+      "response": {
+        "fields": [
+          "productId",
+          "skuId",
+          "skuName",
+          "productName",
+          "userId"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "user",
+          "as": "email",
+          "param": "userId"
+        }
+      ]
+    },
+    "licensing.licenseAssignments.listForProduct": {
+      "resource_path": [
+        "licenseAssignments"
+      ],
+      "method": "listForProduct",
+      "scopes": [
+        "https://www.googleapis.com/auth/apps.licensing"
+      ],
+      "risk": "read",
+      "params": {
+        "productId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "customerId": {
+          "type": "string",
+          "location": "query",
+          "required": true
+        },
+        "maxResults": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "items",
+        "fields": [
+          "productId",
+          "skuId",
+          "skuName",
+          "productName",
+          "userId"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customerId"
+        }
+      ]
+    },
+    "licensing.licenseAssignments.delete": {
+      "resource_path": [
+        "licenseAssignments"
+      ],
+      "method": "delete",
+      "scopes": [
+        "https://www.googleapis.com/auth/apps.licensing"
+      ],
+      "risk": "destructive",
+      "params": {
+        "productId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "skuId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "userId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "userId",
+      "boundary": [
+        {
+          "kind": "user",
+          "as": "email",
+          "param": "userId"
+        }
+      ]
+    },
+    "licensing.licenseAssignments.listForProductAndSku": {
+      "resource_path": [
+        "licenseAssignments"
+      ],
+      "method": "listForProductAndSku",
+      "scopes": [
+        "https://www.googleapis.com/auth/apps.licensing"
+      ],
+      "risk": "read",
+      "params": {
+        "customerId": {
+          "type": "string",
+          "location": "query",
+          "required": true
+        },
+        "maxResults": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        },
+        "productId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "skuId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "response": {
+        "items_key": "items",
+        "fields": [
+          "productId",
+          "skuId",
+          "skuName",
+          "productName",
+          "userId"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customerId"
+        }
+      ]
+    },
+    "licensing.licenseAssignments.insert": {
+      "resource_path": [
+        "licenseAssignments"
+      ],
+      "method": "insert",
+      "scopes": [
+        "https://www.googleapis.com/auth/apps.licensing"
+      ],
+      "risk": "manage",
+      "params": {
+        "productId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "skuId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "body": {
+        "userId": "string"
+      },
+      "response": {
+        "fields": [
+          "productId",
+          "skuId",
+          "skuName",
+          "productName",
+          "userId"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "user",
+          "as": "email",
+          "field": "userId"
+        }
+      ]
+    },
+    "licensing.licenseAssignments.patch": {
+      "resource_path": [
+        "licenseAssignments"
+      ],
+      "method": "patch",
+      "scopes": [
+        "https://www.googleapis.com/auth/apps.licensing"
+      ],
+      "risk": "manage",
+      "params": {
+        "productId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "skuId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "userId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "userId",
+      "body": {
+        "skuId": "string"
+      },
+      "response": {
+        "fields": [
+          "productId",
+          "skuId",
+          "skuName",
+          "productName",
+          "userId"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "user",
+          "as": "email",
+          "param": "userId"
+        }
+      ]
+    }
+  },
+  "excluded": {
+    "licensing.licenseAssignments.update": {
+      "category": "replacement-variant",
+      "reason": "Full-replacement (PUT) variant of the registered patch method; replacement can clear fields the caller did not send."
+    }
+  }
+}

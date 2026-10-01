@@ -1,0 +1,2673 @@
+{
+  "methods": {
+    "chromemanagement.customers.apps.android.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "name": {
+          "location": "path",
+          "pattern": "^customers/[^/]+/apps/android/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}",
+      "request": null,
+      "response": "GoogleChromeManagementV1AppDetails",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.appdetails.readonly"
+      ]
+    },
+    "chromemanagement.customers.apps.chrome.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "name": {
+          "location": "path",
+          "pattern": "^customers/[^/]+/apps/chrome/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}",
+      "request": null,
+      "response": "GoogleChromeManagementV1AppDetails",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.appdetails.readonly"
+      ]
+    },
+    "chromemanagement.customers.apps.countChromeAppRequests": {
+      "httpMethod": "GET",
+      "parameters": {
+        "customer": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        },
+        "orderBy": {
+          "location": "query",
+          "type": "string"
+        },
+        "orgUnitId": {
+          "location": "query",
+          "type": "string"
+        },
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/{+customer}/apps:countChromeAppRequests",
+      "request": null,
+      "response": "GoogleChromeManagementV1CountChromeAppRequestsResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.appdetails.readonly"
+      ]
+    },
+    "chromemanagement.customers.apps.fetchDevicesRequestingExtension": {
+      "httpMethod": "GET",
+      "parameters": {
+        "customer": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        },
+        "extensionId": {
+          "location": "query",
+          "type": "string"
+        },
+        "orgUnitId": {
+          "location": "query",
+          "type": "string"
+        },
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/{+customer}/apps:fetchDevicesRequestingExtension",
+      "request": null,
+      "response": "GoogleChromeManagementV1FetchDevicesRequestingExtensionResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.appdetails.readonly"
+      ]
+    },
+    "chromemanagement.customers.apps.fetchUsersRequestingExtension": {
+      "httpMethod": "GET",
+      "parameters": {
+        "customer": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        },
+        "extensionId": {
+          "location": "query",
+          "type": "string"
+        },
+        "orgUnitId": {
+          "location": "query",
+          "type": "string"
+        },
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/{+customer}/apps:fetchUsersRequestingExtension",
+      "request": null,
+      "response": "GoogleChromeManagementV1FetchUsersRequestingExtensionResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.appdetails.readonly"
+      ]
+    },
+    "chromemanagement.customers.apps.web.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "name": {
+          "location": "path",
+          "pattern": "^customers/[^/]+/apps/web/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}",
+      "request": null,
+      "response": "GoogleChromeManagementV1AppDetails",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.appdetails.readonly"
+      ]
+    },
+    "chromemanagement.customers.certificateProvisioningProcesses.claim": {
+      "httpMethod": "POST",
+      "parameters": {
+        "name": {
+          "location": "path",
+          "pattern": "^customers/[^/]+/certificateProvisioningProcesses/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}:claim",
+      "request": "GoogleChromeManagementVersionsV1ClaimCertificateProvisioningProcessRequest",
+      "response": "GoogleChromeManagementVersionsV1ClaimCertificateProvisioningProcessResponse",
+      "scopes": []
+    },
+    "chromemanagement.customers.certificateProvisioningProcesses.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "name": {
+          "location": "path",
+          "pattern": "^customers/[^/]+/certificateProvisioningProcesses/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}",
+      "request": null,
+      "response": "GoogleChromeManagementVersionsV1CertificateProvisioningProcess",
+      "scopes": []
+    },
+    "chromemanagement.customers.certificateProvisioningProcesses.operations.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "name": {
+          "location": "path",
+          "pattern": "^customers/[^/]+/certificateProvisioningProcesses/[^/]+/operations/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}",
+      "request": null,
+      "response": "GoogleLongrunningOperation",
+      "scopes": []
+    },
+    "chromemanagement.customers.certificateProvisioningProcesses.setFailure": {
+      "httpMethod": "POST",
+      "parameters": {
+        "name": {
+          "location": "path",
+          "pattern": "^customers/[^/]+/certificateProvisioningProcesses/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}:setFailure",
+      "request": "GoogleChromeManagementVersionsV1SetFailureRequest",
+      "response": "GoogleChromeManagementVersionsV1SetFailureResponse",
+      "scopes": []
+    },
+    "chromemanagement.customers.certificateProvisioningProcesses.signData": {
+      "httpMethod": "POST",
+      "parameters": {
+        "name": {
+          "location": "path",
+          "pattern": "^customers/[^/]+/certificateProvisioningProcesses/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}:signData",
+      "request": "GoogleChromeManagementVersionsV1SignDataRequest",
+      "response": "GoogleLongrunningOperation",
+      "scopes": []
+    },
+    "chromemanagement.customers.certificateProvisioningProcesses.uploadCertificate": {
+      "httpMethod": "POST",
+      "parameters": {
+        "name": {
+          "location": "path",
+          "pattern": "^customers/[^/]+/certificateProvisioningProcesses/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}:uploadCertificate",
+      "request": "GoogleChromeManagementVersionsV1UploadCertificateRequest",
+      "response": "GoogleChromeManagementVersionsV1UploadCertificateResponse",
+      "scopes": []
+    },
+    "chromemanagement.customers.connectorConfigs.create": {
+      "httpMethod": "POST",
+      "parameters": {
+        "connectorConfigId": {
+          "location": "query",
+          "type": "string"
+        },
+        "parent": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+parent}/connectorConfigs",
+      "request": "GoogleChromeManagementVersionsV1ConnectorConfig",
+      "response": "GoogleChromeManagementVersionsV1ConnectorConfig",
+      "scopes": []
+    },
+    "chromemanagement.customers.connectorConfigs.delete": {
+      "httpMethod": "DELETE",
+      "parameters": {
+        "name": {
+          "location": "path",
+          "pattern": "^customers/[^/]+/connectorConfigs/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}",
+      "request": null,
+      "response": "GoogleProtobufEmpty",
+      "scopes": []
+    },
+    "chromemanagement.customers.connectorConfigs.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "name": {
+          "location": "path",
+          "pattern": "^customers/[^/]+/connectorConfigs/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}",
+      "request": null,
+      "response": "GoogleChromeManagementVersionsV1ConnectorConfig",
+      "scopes": []
+    },
+    "chromemanagement.customers.connectorConfigs.list": {
+      "httpMethod": "GET",
+      "parameters": {
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        },
+        "parent": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+parent}/connectorConfigs",
+      "request": null,
+      "response": "GoogleChromeManagementVersionsV1ListConnectorConfigsResponse",
+      "scopes": []
+    },
+    "chromemanagement.customers.connectorConfigs.patch": {
+      "httpMethod": "PATCH",
+      "parameters": {
+        "name": {
+          "location": "path",
+          "pattern": "^customers/[^/]+/connectorConfigs/[^/]+$",
+          "required": true,
+          "type": "string"
+        },
+        "updateMask": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}",
+      "request": "GoogleChromeManagementVersionsV1ConnectorConfig",
+      "response": "GoogleChromeManagementVersionsV1ConnectorConfig",
+      "scopes": []
+    },
+    "chromemanagement.customers.enterprise.securityInsights.checkEnablementStatus": {
+      "httpMethod": "GET",
+      "parameters": {
+        "customer": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+customer}/enterprise/securityInsights:checkEnablementStatus",
+      "request": null,
+      "response": "GoogleChromeManagementVersionsV1CheckEnablementStatusResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.securityinsights",
+        "https://www.googleapis.com/auth/chrome.management.securityinsights.readonly"
+      ]
+    },
+    "chromemanagement.customers.enterprise.securityInsights.disable": {
+      "httpMethod": "POST",
+      "parameters": {
+        "customer": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+customer}/enterprise/securityInsights:disable",
+      "request": "GoogleChromeManagementVersionsV1DisableInsightsRequest",
+      "response": "GoogleChromeManagementVersionsV1DisableInsightsResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.securityinsights"
+      ]
+    },
+    "chromemanagement.customers.enterprise.securityInsights.enable": {
+      "httpMethod": "POST",
+      "parameters": {
+        "customer": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+customer}/enterprise/securityInsights:enable",
+      "request": "GoogleChromeManagementVersionsV1EnableInsightsRequest",
+      "response": "GoogleChromeManagementVersionsV1EnableInsightsResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.securityinsights"
+      ]
+    },
+    "chromemanagement.customers.enterprise.securityInsights.queryContentTransfers": {
+      "httpMethod": "GET",
+      "parameters": {
+        "customer": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        },
+        "filter": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/{+customer}/enterprise/securityInsights:queryContentTransfers",
+      "request": null,
+      "response": "GoogleChromeManagementVersionsV1QueryContentTransfersResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.securityinsights",
+        "https://www.googleapis.com/auth/chrome.management.securityinsights.readonly"
+      ]
+    },
+    "chromemanagement.customers.enterprise.securityInsights.queryContentTransfersBreakdowns": {
+      "httpMethod": "GET",
+      "parameters": {
+        "breakdown": {
+          "enum": [
+            "CONTENT_TRANSFERS_BREAKDOWN_DIMENSION_UNSPECIFIED",
+            "USER",
+            "EVENT_DOMAIN",
+            "CONTENT_CATEGORY"
+          ],
+          "location": "query",
+          "type": "string"
+        },
+        "customer": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        },
+        "filter": {
+          "location": "query",
+          "type": "string"
+        },
+        "fixedTimeRange": {
+          "enum": [
+            "FIXED_TIME_RANGE_UNSPECIFIED",
+            "FIXED_TIME_RANGE_FOUR_HOURS",
+            "FIXED_TIME_RANGE_ONE_DAY",
+            "FIXED_TIME_RANGE_ONE_WEEK",
+            "FIXED_TIME_RANGE_FOUR_WEEKS"
+          ],
+          "location": "query",
+          "type": "string"
+        },
+        "metric": {
+          "enum": [
+            "CONTENT_TRANSFERS_METRIC_UNSPECIFIED",
+            "CONTENT_TRANSFERS_METRIC_TOTAL_TRANSFERS",
+            "CONTENT_TRANSFERS_METRIC_TOTAL_UPLOADS",
+            "CONTENT_TRANSFERS_METRIC_TOTAL_DOWNLOADS",
+            "CONTENT_TRANSFERS_METRIC_TOTAL_PRINTS",
+            "CONTENT_TRANSFERS_METRIC_TOTAL_SENSITIVE_TRANSFERS",
+            "CONTENT_TRANSFERS_METRIC_SENSITIVE_UPLOADS",
+            "CONTENT_TRANSFERS_METRIC_SENSITIVE_DOWNLOADS",
+            "CONTENT_TRANSFERS_METRIC_SENSITIVE_PRINTS"
+          ],
+          "location": "query",
+          "type": "string"
+        },
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/{+customer}/enterprise/securityInsights:queryContentTransfersBreakdowns",
+      "request": null,
+      "response": "GoogleChromeManagementVersionsV1QueryContentTransfersBreakdownsResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.securityinsights",
+        "https://www.googleapis.com/auth/chrome.management.securityinsights.readonly"
+      ]
+    },
+    "chromemanagement.customers.enterprise.securityInsights.queryUrlVisits": {
+      "httpMethod": "GET",
+      "parameters": {
+        "customer": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        },
+        "filter": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/{+customer}/enterprise/securityInsights:queryUrlVisits",
+      "request": null,
+      "response": "GoogleChromeManagementVersionsV1QueryUrlVisitsResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.securityinsights",
+        "https://www.googleapis.com/auth/chrome.management.securityinsights.readonly"
+      ]
+    },
+    "chromemanagement.customers.enterprise.securityInsights.queryUrlVisitsBreakdowns": {
+      "httpMethod": "GET",
+      "parameters": {
+        "breakdown": {
+          "enum": [
+            "URL_VISITS_BREAKDOWN_DIMENSION_UNSPECIFIED",
+            "USER",
+            "EVENT_DOMAIN"
+          ],
+          "location": "query",
+          "type": "string"
+        },
+        "customer": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        },
+        "filter": {
+          "location": "query",
+          "type": "string"
+        },
+        "fixedTimeRange": {
+          "enum": [
+            "FIXED_TIME_RANGE_UNSPECIFIED",
+            "FIXED_TIME_RANGE_FOUR_HOURS",
+            "FIXED_TIME_RANGE_ONE_DAY",
+            "FIXED_TIME_RANGE_ONE_WEEK",
+            "FIXED_TIME_RANGE_FOUR_WEEKS"
+          ],
+          "location": "query",
+          "type": "string"
+        },
+        "metric": {
+          "enum": [
+            "URL_VISITS_METRIC_UNSPECIFIED",
+            "URL_VISITS_METRIC_TOTAL_SUSPICIOUS_URL_VISITS",
+            "URL_VISITS_METRIC_HIGH_RISK_URL_VISITS",
+            "URL_VISITS_METRIC_MEDIUM_RISK_URL_VISITS",
+            "URL_VISITS_METRIC_LOW_RISK_URL_VISITS"
+          ],
+          "location": "query",
+          "type": "string"
+        },
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/{+customer}/enterprise/securityInsights:queryUrlVisitsBreakdowns",
+      "request": null,
+      "response": "GoogleChromeManagementVersionsV1QueryUrlVisitsBreakdownsResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.securityinsights",
+        "https://www.googleapis.com/auth/chrome.management.securityinsights.readonly"
+      ]
+    },
+    "chromemanagement.customers.profiles.commands.create": {
+      "httpMethod": "POST",
+      "parameters": {
+        "parent": {
+          "location": "path",
+          "pattern": "^customers/[^/]+/profiles/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+parent}/commands",
+      "request": "GoogleChromeManagementVersionsV1ChromeBrowserProfileCommand",
+      "response": "GoogleChromeManagementVersionsV1ChromeBrowserProfileCommand",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.profiles"
+      ]
+    },
+    "chromemanagement.customers.profiles.commands.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "name": {
+          "location": "path",
+          "pattern": "^customers/[^/]+/profiles/[^/]+/commands/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}",
+      "request": null,
+      "response": "GoogleChromeManagementVersionsV1ChromeBrowserProfileCommand",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.profiles",
+        "https://www.googleapis.com/auth/chrome.management.profiles.readonly"
+      ]
+    },
+    "chromemanagement.customers.profiles.commands.list": {
+      "httpMethod": "GET",
+      "parameters": {
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        },
+        "parent": {
+          "location": "path",
+          "pattern": "^customers/[^/]+/profiles/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+parent}/commands",
+      "request": null,
+      "response": "GoogleChromeManagementVersionsV1ListChromeBrowserProfileCommandsResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.profiles",
+        "https://www.googleapis.com/auth/chrome.management.profiles.readonly"
+      ]
+    },
+    "chromemanagement.customers.profiles.delete": {
+      "httpMethod": "DELETE",
+      "parameters": {
+        "name": {
+          "location": "path",
+          "pattern": "^customers/[^/]+/profiles/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}",
+      "request": null,
+      "response": "GoogleProtobufEmpty",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.profiles"
+      ]
+    },
+    "chromemanagement.customers.profiles.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "name": {
+          "location": "path",
+          "pattern": "^customers/[^/]+/profiles/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}",
+      "request": null,
+      "response": "GoogleChromeManagementVersionsV1ChromeBrowserProfile",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.profiles",
+        "https://www.googleapis.com/auth/chrome.management.profiles.readonly"
+      ]
+    },
+    "chromemanagement.customers.profiles.list": {
+      "httpMethod": "GET",
+      "parameters": {
+        "filter": {
+          "location": "query",
+          "type": "string"
+        },
+        "orderBy": {
+          "location": "query",
+          "type": "string"
+        },
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        },
+        "parent": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+parent}/profiles",
+      "request": null,
+      "response": "GoogleChromeManagementVersionsV1ListChromeBrowserProfilesResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.profiles",
+        "https://www.googleapis.com/auth/chrome.management.profiles.readonly"
+      ]
+    },
+    "chromemanagement.customers.reports.countActiveDevices": {
+      "httpMethod": "GET",
+      "parameters": {
+        "customer": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        },
+        "date.day": {
+          "location": "query",
+          "type": "integer"
+        },
+        "date.month": {
+          "location": "query",
+          "type": "integer"
+        },
+        "date.year": {
+          "location": "query",
+          "type": "integer"
+        }
+      },
+      "path": "v1/{+customer}/reports:countActiveDevices",
+      "request": null,
+      "response": "GoogleChromeManagementV1CountActiveDevicesResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.reports.readonly"
+      ]
+    },
+    "chromemanagement.customers.reports.countChromeBrowsersNeedingAttention": {
+      "httpMethod": "GET",
+      "parameters": {
+        "customer": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        },
+        "orgUnitId": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/{+customer}/reports:countChromeBrowsersNeedingAttention",
+      "request": null,
+      "response": "GoogleChromeManagementV1CountChromeBrowsersNeedingAttentionResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.reports.readonly"
+      ]
+    },
+    "chromemanagement.customers.reports.countChromeCrashEvents": {
+      "httpMethod": "GET",
+      "parameters": {
+        "customer": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        },
+        "filter": {
+          "location": "query",
+          "type": "string"
+        },
+        "orderBy": {
+          "location": "query",
+          "type": "string"
+        },
+        "orgUnitId": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/{+customer}/reports:countChromeCrashEvents",
+      "request": null,
+      "response": "GoogleChromeManagementV1CountChromeCrashEventsResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.reports.readonly"
+      ]
+    },
+    "chromemanagement.customers.reports.countChromeDevicesReachingAutoExpirationDate": {
+      "httpMethod": "GET",
+      "parameters": {
+        "customer": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        },
+        "maxAueDate": {
+          "location": "query",
+          "type": "string"
+        },
+        "minAueDate": {
+          "location": "query",
+          "type": "string"
+        },
+        "orgUnitId": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/{+customer}/reports:countChromeDevicesReachingAutoExpirationDate",
+      "request": null,
+      "response": "GoogleChromeManagementV1CountChromeDevicesReachingAutoExpirationDateResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.reports.readonly"
+      ]
+    },
+    "chromemanagement.customers.reports.countChromeDevicesThatNeedAttention": {
+      "httpMethod": "GET",
+      "parameters": {
+        "customer": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        },
+        "orgUnitId": {
+          "location": "query",
+          "type": "string"
+        },
+        "readMask": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/{+customer}/reports:countChromeDevicesThatNeedAttention",
+      "request": null,
+      "response": "GoogleChromeManagementV1CountChromeDevicesThatNeedAttentionResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.reports.readonly"
+      ]
+    },
+    "chromemanagement.customers.reports.countChromeHardwareFleetDevices": {
+      "httpMethod": "GET",
+      "parameters": {
+        "customer": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        },
+        "orgUnitId": {
+          "location": "query",
+          "type": "string"
+        },
+        "readMask": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/{+customer}/reports:countChromeHardwareFleetDevices",
+      "request": null,
+      "response": "GoogleChromeManagementV1CountChromeHardwareFleetDevicesResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.reports.readonly"
+      ]
+    },
+    "chromemanagement.customers.reports.countChromeProfileVersions": {
+      "httpMethod": "GET",
+      "parameters": {
+        "customer": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        },
+        "filter": {
+          "location": "query",
+          "type": "string"
+        },
+        "orgUnitId": {
+          "location": "query",
+          "type": "string"
+        },
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/{+customer}/reports:countChromeProfileVersions",
+      "request": null,
+      "response": "GoogleChromeManagementV1CountChromeProfileVersionsResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.reports.readonly"
+      ]
+    },
+    "chromemanagement.customers.reports.countChromeVersions": {
+      "httpMethod": "GET",
+      "parameters": {
+        "customer": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        },
+        "filter": {
+          "location": "query",
+          "type": "string"
+        },
+        "orgUnitId": {
+          "location": "query",
+          "type": "string"
+        },
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/{+customer}/reports:countChromeVersions",
+      "request": null,
+      "response": "GoogleChromeManagementV1CountChromeVersionsResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.reports.readonly"
+      ]
+    },
+    "chromemanagement.customers.reports.countDevicesPerBootType": {
+      "httpMethod": "GET",
+      "parameters": {
+        "customer": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        },
+        "date.day": {
+          "location": "query",
+          "type": "integer"
+        },
+        "date.month": {
+          "location": "query",
+          "type": "integer"
+        },
+        "date.year": {
+          "location": "query",
+          "type": "integer"
+        }
+      },
+      "path": "v1/{+customer}/reports:countDevicesPerBootType",
+      "request": null,
+      "response": "GoogleChromeManagementV1CountDevicesPerBootTypeResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.reports.readonly"
+      ]
+    },
+    "chromemanagement.customers.reports.countDevicesPerReleaseChannel": {
+      "httpMethod": "GET",
+      "parameters": {
+        "customer": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        },
+        "date.day": {
+          "location": "query",
+          "type": "integer"
+        },
+        "date.month": {
+          "location": "query",
+          "type": "integer"
+        },
+        "date.year": {
+          "location": "query",
+          "type": "integer"
+        }
+      },
+      "path": "v1/{+customer}/reports:countDevicesPerReleaseChannel",
+      "request": null,
+      "response": "GoogleChromeManagementV1CountDevicesPerReleaseChannelResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.reports.readonly"
+      ]
+    },
+    "chromemanagement.customers.reports.countInstalledApps": {
+      "httpMethod": "GET",
+      "parameters": {
+        "customer": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        },
+        "filter": {
+          "location": "query",
+          "type": "string"
+        },
+        "orderBy": {
+          "location": "query",
+          "type": "string"
+        },
+        "orgUnitId": {
+          "location": "query",
+          "type": "string"
+        },
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/{+customer}/reports:countInstalledApps",
+      "request": null,
+      "response": "GoogleChromeManagementV1CountInstalledAppsResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.reports.readonly"
+      ]
+    },
+    "chromemanagement.customers.reports.countPrintJobsByPrinter": {
+      "httpMethod": "GET",
+      "parameters": {
+        "customer": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        },
+        "filter": {
+          "location": "query",
+          "type": "string"
+        },
+        "orderBy": {
+          "location": "query",
+          "type": "string"
+        },
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        },
+        "printerOrgUnitId": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/{+customer}/reports:countPrintJobsByPrinter",
+      "request": null,
+      "response": "GoogleChromeManagementV1CountPrintJobsByPrinterResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.reports.readonly"
+      ]
+    },
+    "chromemanagement.customers.reports.countPrintJobsByUser": {
+      "httpMethod": "GET",
+      "parameters": {
+        "customer": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        },
+        "filter": {
+          "location": "query",
+          "type": "string"
+        },
+        "orderBy": {
+          "location": "query",
+          "type": "string"
+        },
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        },
+        "printerOrgUnitId": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/{+customer}/reports:countPrintJobsByUser",
+      "request": null,
+      "response": "GoogleChromeManagementV1CountPrintJobsByUserResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.reports.readonly"
+      ]
+    },
+    "chromemanagement.customers.reports.enumeratePrintJobs": {
+      "httpMethod": "GET",
+      "parameters": {
+        "customer": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        },
+        "filter": {
+          "location": "query",
+          "type": "string"
+        },
+        "orderBy": {
+          "location": "query",
+          "type": "string"
+        },
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        },
+        "printerOrgUnitId": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/{+customer}/reports:enumeratePrintJobs",
+      "request": null,
+      "response": "GoogleChromeManagementV1EnumeratePrintJobsResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.reports.readonly"
+      ]
+    },
+    "chromemanagement.customers.reports.findInstalledAppDevices": {
+      "httpMethod": "GET",
+      "parameters": {
+        "appId": {
+          "location": "query",
+          "type": "string"
+        },
+        "appType": {
+          "enum": [
+            "APP_TYPE_UNSPECIFIED",
+            "EXTENSION",
+            "APP",
+            "THEME",
+            "HOSTED_APP",
+            "ANDROID_APP"
+          ],
+          "location": "query",
+          "type": "string"
+        },
+        "customer": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        },
+        "filter": {
+          "location": "query",
+          "type": "string"
+        },
+        "orderBy": {
+          "location": "query",
+          "type": "string"
+        },
+        "orgUnitId": {
+          "location": "query",
+          "type": "string"
+        },
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/{+customer}/reports:findInstalledAppDevices",
+      "request": null,
+      "response": "GoogleChromeManagementV1FindInstalledAppDevicesResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.reports.readonly"
+      ]
+    },
+    "chromemanagement.customers.reports.findInstalledAppProfiles": {
+      "httpMethod": "GET",
+      "parameters": {
+        "appId": {
+          "location": "query",
+          "type": "string"
+        },
+        "appType": {
+          "enum": [
+            "APP_TYPE_UNSPECIFIED",
+            "EXTENSION",
+            "APP",
+            "THEME",
+            "HOSTED_APP",
+            "ANDROID_APP"
+          ],
+          "location": "query",
+          "type": "string"
+        },
+        "customer": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        },
+        "filter": {
+          "location": "query",
+          "type": "string"
+        },
+        "orderBy": {
+          "location": "query",
+          "type": "string"
+        },
+        "orgUnitId": {
+          "location": "query",
+          "type": "string"
+        },
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/{+customer}/reports:findInstalledAppProfiles",
+      "request": null,
+      "response": "GoogleChromeManagementV1FindInstalledAppProfilesResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.reports.readonly"
+      ]
+    },
+    "chromemanagement.customers.reports.findSaasUsage": {
+      "httpMethod": "GET",
+      "parameters": {
+        "customer": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        },
+        "filter": {
+          "location": "query",
+          "type": "string"
+        },
+        "orderBy": {
+          "location": "query",
+          "type": "string"
+        },
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/{+customer}/reports:findSaasUsage",
+      "request": null,
+      "response": "GoogleChromeManagementV1FindSaasUsageReportsResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.reports.readonly"
+      ]
+    },
+    "chromemanagement.customers.reports.findSaasUsageBrowsers": {
+      "httpMethod": "GET",
+      "parameters": {
+        "app": {
+          "location": "query",
+          "type": "string"
+        },
+        "customer": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        },
+        "filter": {
+          "location": "query",
+          "type": "string"
+        },
+        "orderBy": {
+          "location": "query",
+          "type": "string"
+        },
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/{+customer}/reports:findSaasUsageBrowsers",
+      "request": null,
+      "response": "GoogleChromeManagementV1FindSaasUsageBrowsersResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.reports.readonly"
+      ]
+    },
+    "chromemanagement.customers.reports.findSaasUsageProfiles": {
+      "httpMethod": "GET",
+      "parameters": {
+        "app": {
+          "location": "query",
+          "type": "string"
+        },
+        "customer": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        },
+        "filter": {
+          "location": "query",
+          "type": "string"
+        },
+        "orderBy": {
+          "location": "query",
+          "type": "string"
+        },
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/{+customer}/reports:findSaasUsageProfiles",
+      "request": null,
+      "response": "GoogleChromeManagementV1FindSaasUsageProfilesResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.reports.readonly"
+      ]
+    },
+    "chromemanagement.customers.telemetry.devices.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "name": {
+          "location": "path",
+          "pattern": "^customers/[^/]+/telemetry/devices/[^/]+$",
+          "required": true,
+          "type": "string"
+        },
+        "readMask": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}",
+      "request": null,
+      "response": "GoogleChromeManagementV1TelemetryDevice",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.telemetry.readonly"
+      ]
+    },
+    "chromemanagement.customers.telemetry.devices.list": {
+      "httpMethod": "GET",
+      "parameters": {
+        "filter": {
+          "location": "query",
+          "type": "string"
+        },
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        },
+        "parent": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        },
+        "readMask": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/{+parent}/telemetry/devices",
+      "request": null,
+      "response": "GoogleChromeManagementV1ListTelemetryDevicesResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.telemetry.readonly"
+      ]
+    },
+    "chromemanagement.customers.telemetry.events.list": {
+      "httpMethod": "GET",
+      "parameters": {
+        "filter": {
+          "location": "query",
+          "type": "string"
+        },
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        },
+        "parent": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        },
+        "readMask": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/{+parent}/telemetry/events",
+      "request": null,
+      "response": "GoogleChromeManagementV1ListTelemetryEventsResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.telemetry.readonly"
+      ]
+    },
+    "chromemanagement.customers.telemetry.notificationConfigs.create": {
+      "httpMethod": "POST",
+      "parameters": {
+        "parent": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+parent}/telemetry/notificationConfigs",
+      "request": "GoogleChromeManagementV1TelemetryNotificationConfig",
+      "response": "GoogleChromeManagementV1TelemetryNotificationConfig",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.telemetry.readonly"
+      ]
+    },
+    "chromemanagement.customers.telemetry.notificationConfigs.delete": {
+      "httpMethod": "DELETE",
+      "parameters": {
+        "name": {
+          "location": "path",
+          "pattern": "^customers/[^/]+/telemetry/notificationConfigs/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}",
+      "request": null,
+      "response": "GoogleProtobufEmpty",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.telemetry.readonly"
+      ]
+    },
+    "chromemanagement.customers.telemetry.notificationConfigs.list": {
+      "httpMethod": "GET",
+      "parameters": {
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        },
+        "parent": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+parent}/telemetry/notificationConfigs",
+      "request": null,
+      "response": "GoogleChromeManagementV1ListTelemetryNotificationConfigsResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.telemetry.readonly"
+      ]
+    },
+    "chromemanagement.customers.telemetry.users.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "name": {
+          "location": "path",
+          "pattern": "^customers/[^/]+/telemetry/users/[^/]+$",
+          "required": true,
+          "type": "string"
+        },
+        "readMask": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}",
+      "request": null,
+      "response": "GoogleChromeManagementV1TelemetryUser",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.telemetry.readonly"
+      ]
+    },
+    "chromemanagement.customers.telemetry.users.list": {
+      "httpMethod": "GET",
+      "parameters": {
+        "filter": {
+          "location": "query",
+          "type": "string"
+        },
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        },
+        "parent": {
+          "location": "path",
+          "pattern": "^customers/[^/]+$",
+          "required": true,
+          "type": "string"
+        },
+        "readMask": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/{+parent}/telemetry/users",
+      "request": null,
+      "response": "GoogleChromeManagementV1ListTelemetryUsersResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.telemetry.readonly"
+      ]
+    },
+    "chromemanagement.customers.thirdPartyProfileUsers.move": {
+      "httpMethod": "POST",
+      "parameters": {
+        "name": {
+          "location": "path",
+          "pattern": "^customers/[^/]+/thirdPartyProfileUsers/[^/]+$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}:move",
+      "request": "GoogleChromeManagementVersionsV1MoveThirdPartyProfileUserRequest",
+      "response": "GoogleChromeManagementVersionsV1MoveThirdPartyProfileUserResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.profiles"
+      ]
+    },
+    "chromemanagement.operations.cancel": {
+      "httpMethod": "POST",
+      "parameters": {
+        "name": {
+          "location": "path",
+          "pattern": "^operations/.*$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}:cancel",
+      "request": "GoogleLongrunningCancelOperationRequest",
+      "response": "GoogleProtobufEmpty",
+      "scopes": []
+    },
+    "chromemanagement.operations.delete": {
+      "httpMethod": "DELETE",
+      "parameters": {
+        "name": {
+          "location": "path",
+          "pattern": "^operations/.*$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}",
+      "request": null,
+      "response": "GoogleProtobufEmpty",
+      "scopes": []
+    },
+    "chromemanagement.operations.list": {
+      "httpMethod": "GET",
+      "parameters": {
+        "filter": {
+          "location": "query",
+          "type": "string"
+        },
+        "name": {
+          "location": "path",
+          "pattern": "^operations$",
+          "required": true,
+          "type": "string"
+        },
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        },
+        "returnPartialSuccess": {
+          "location": "query",
+          "type": "boolean"
+        }
+      },
+      "path": "v1/{+name}",
+      "request": null,
+      "response": "GoogleLongrunningListOperationsResponse",
+      "scopes": []
+    }
+  },
+  "name": "chromemanagement",
+  "retrieved": "2026-09-26",
+  "revision": "20260924",
+  "schemas": {
+    "GoogleChromeManagementV1AndroidAppInfo": {
+      "permissions": "array:GoogleChromeManagementV1AndroidAppPermission"
+    },
+    "GoogleChromeManagementV1AndroidAppPermission": {
+      "type": "string"
+    },
+    "GoogleChromeManagementV1AppDetails": {
+      "androidAppInfo": "GoogleChromeManagementV1AndroidAppInfo",
+      "appId": "string",
+      "categoryIds": "array:string",
+      "chromeAppInfo": "GoogleChromeManagementV1ChromeAppInfo",
+      "description": "string",
+      "detailUri": "string",
+      "displayName": "string",
+      "firstPublishTime": "string",
+      "homepageUri": "string",
+      "iconUri": "string",
+      "isPaidApp": "boolean",
+      "latestPublishTime": "string",
+      "name": "string",
+      "privacyPolicyUri": "string",
+      "publisher": "string",
+      "reviewNumber": "string",
+      "reviewRating": "number",
+      "revisionId": "string",
+      "serviceError": "GoogleRpcStatus",
+      "type": "string"
+    },
+    "GoogleChromeManagementV1AppReport": {
+      "reportTime": "string",
+      "usageData": "array:GoogleChromeManagementV1AppUsageData"
+    },
+    "GoogleChromeManagementV1AppUsageData": {
+      "appId": "string",
+      "appInstanceId": "string",
+      "appType": "string",
+      "runningDuration": "string"
+    },
+    "GoogleChromeManagementV1AudioStatusReport": {
+      "inputDevice": "string",
+      "inputGain": "integer",
+      "inputMute": "boolean",
+      "outputDevice": "string",
+      "outputMute": "boolean",
+      "outputVolume": "integer",
+      "reportTime": "string"
+    },
+    "GoogleChromeManagementV1BatteryInfo": {
+      "designCapacity": "string",
+      "designMinVoltage": "integer",
+      "manufactureDate": "GoogleTypeDate",
+      "manufacturer": "string",
+      "serialNumber": "string",
+      "technology": "string"
+    },
+    "GoogleChromeManagementV1BatterySampleReport": {
+      "chargeRate": "integer",
+      "current": "string",
+      "dischargeRate": "integer",
+      "remainingCapacity": "string",
+      "reportTime": "string",
+      "status": "string",
+      "temperature": "integer",
+      "voltage": "string"
+    },
+    "GoogleChromeManagementV1BatteryStatusReport": {
+      "batteryHealth": "string",
+      "cycleCount": "integer",
+      "fullChargeCapacity": "string",
+      "reportTime": "string",
+      "sample": "array:GoogleChromeManagementV1BatterySampleReport",
+      "serialNumber": "string"
+    },
+    "GoogleChromeManagementV1BootPerformanceReport": {
+      "bootUpDuration": "string",
+      "bootUpTime": "string",
+      "reportTime": "string",
+      "shutdownDuration": "string",
+      "shutdownReason": "string",
+      "shutdownTime": "string"
+    },
+    "GoogleChromeManagementV1BrowserVersion": {
+      "channel": "string",
+      "count": "string",
+      "deviceOsVersion": "string",
+      "system": "string",
+      "version": "string"
+    },
+    "GoogleChromeManagementV1ChromeAppInfo": {
+      "googleOwned": "boolean",
+      "isCwsHosted": "boolean",
+      "isExtensionPolicySupported": "boolean",
+      "isKioskOnly": "boolean",
+      "isTheme": "boolean",
+      "kioskEnabled": "boolean",
+      "manifestVersion": "string",
+      "minUserCount": "integer",
+      "permissions": "array:GoogleChromeManagementV1ChromeAppPermission",
+      "siteAccess": "array:GoogleChromeManagementV1ChromeAppSiteAccess",
+      "supportEnabled": "boolean",
+      "type": "string"
+    },
+    "GoogleChromeManagementV1ChromeAppPermission": {
+      "accessUserData": "boolean",
+      "documentationUri": "string",
+      "type": "string"
+    },
+    "GoogleChromeManagementV1ChromeAppRequest": {
+      "appDetails": "string",
+      "appId": "string",
+      "detailUri": "string",
+      "displayName": "string",
+      "iconUri": "string",
+      "latestRequestTime": "string",
+      "requestCount": "string"
+    },
+    "GoogleChromeManagementV1ChromeAppSiteAccess": {
+      "hostMatch": "string"
+    },
+    "GoogleChromeManagementV1CountActiveDevicesResponse": {
+      "sevenDaysCount": "string",
+      "thirtyDaysCount": "string"
+    },
+    "GoogleChromeManagementV1CountChromeAppRequestsResponse": {
+      "nextPageToken": "string",
+      "requestedApps": "array:GoogleChromeManagementV1ChromeAppRequest",
+      "totalSize": "integer"
+    },
+    "GoogleChromeManagementV1CountChromeBrowsersNeedingAttentionResponse": {
+      "noRecentActivityCount": "string",
+      "pendingBrowserUpdateCount": "string",
+      "recentlyEnrolledCount": "string"
+    },
+    "GoogleChromeManagementV1CountChromeCrashEventsResponse": {
+      "crashEventCounts": "array:GoogleChromeManagementV1CountChromeCrashEventsResponseCrashEventCount"
+    },
+    "GoogleChromeManagementV1CountChromeCrashEventsResponseCrashEventCount": {
+      "browserVersion": "string",
+      "count": "string",
+      "date": "GoogleTypeDate"
+    },
+    "GoogleChromeManagementV1CountChromeDevicesReachingAutoExpirationDateResponse": {
+      "deviceAueCountReports": "array:GoogleChromeManagementV1DeviceAueCountReport"
+    },
+    "GoogleChromeManagementV1CountChromeDevicesThatNeedAttentionResponse": {
+      "noRecentPolicySyncCount": "string",
+      "noRecentUserActivityCount": "string",
+      "osVersionNotCompliantCount": "string",
+      "pendingUpdate": "string",
+      "unsupportedPolicyCount": "string"
+    },
+    "GoogleChromeManagementV1CountChromeHardwareFleetDevicesResponse": {
+      "cpuReports": "array:GoogleChromeManagementV1DeviceHardwareCountReport",
+      "memoryReports": "array:GoogleChromeManagementV1DeviceHardwareCountReport",
+      "modelReports": "array:GoogleChromeManagementV1DeviceHardwareCountReport",
+      "storageReports": "array:GoogleChromeManagementV1DeviceHardwareCountReport"
+    },
+    "GoogleChromeManagementV1CountChromeProfileVersionsResponse": {
+      "nextPageToken": "string",
+      "profileBrowserVersions": "array:GoogleChromeManagementV1BrowserVersion",
+      "totalSize": "integer"
+    },
+    "GoogleChromeManagementV1CountChromeVersionsResponse": {
+      "browserVersions": "array:GoogleChromeManagementV1BrowserVersion",
+      "nextPageToken": "string",
+      "totalSize": "integer"
+    },
+    "GoogleChromeManagementV1CountDevicesPerBootTypeResponse": {
+      "devBootTypeCount": "string",
+      "unreportedBootTypeCount": "string",
+      "verifiedBootTypeCount": "string"
+    },
+    "GoogleChromeManagementV1CountDevicesPerReleaseChannelResponse": {
+      "betaChannelCount": "string",
+      "canaryChannelCount": "string",
+      "devChannelCount": "string",
+      "ltcChannelCount": "string",
+      "ltsChannelCount": "string",
+      "stableChannelCount": "string",
+      "unreportedChannelCount": "string",
+      "unsupportedChannelCount": "string"
+    },
+    "GoogleChromeManagementV1CountInstalledAppsResponse": {
+      "installedApps": "array:GoogleChromeManagementV1InstalledApp",
+      "nextPageToken": "string",
+      "totalSize": "integer"
+    },
+    "GoogleChromeManagementV1CountPrintJobsByPrinterResponse": {
+      "nextPageToken": "string",
+      "printerReports": "array:GoogleChromeManagementV1PrinterReport",
+      "totalSize": "string"
+    },
+    "GoogleChromeManagementV1CountPrintJobsByUserResponse": {
+      "nextPageToken": "string",
+      "totalSize": "string",
+      "userPrintReports": "array:GoogleChromeManagementV1UserPrintReport"
+    },
+    "GoogleChromeManagementV1CpuInfo": {
+      "architecture": "string",
+      "keylockerConfigured": "boolean",
+      "keylockerSupported": "boolean",
+      "maxClockSpeed": "integer",
+      "model": "string"
+    },
+    "GoogleChromeManagementV1CpuStatusReport": {
+      "cpuTemperatureInfo": "array:GoogleChromeManagementV1CpuTemperatureInfo",
+      "cpuUtilizationPct": "integer",
+      "reportTime": "string",
+      "sampleFrequency": "string"
+    },
+    "GoogleChromeManagementV1CpuTemperatureInfo": {
+      "label": "string",
+      "temperatureCelsius": "integer"
+    },
+    "GoogleChromeManagementV1Device": {
+      "deviceId": "string",
+      "machine": "string"
+    },
+    "GoogleChromeManagementV1DeviceActivityReport": {
+      "deviceActivityState": "string",
+      "reportTime": "string"
+    },
+    "GoogleChromeManagementV1DeviceAueCountReport": {
+      "aueMonth": "string",
+      "aueYear": "string",
+      "count": "string",
+      "expired": "boolean",
+      "model": "string"
+    },
+    "GoogleChromeManagementV1DeviceHardwareCountReport": {
+      "bucket": "string",
+      "count": "string"
+    },
+    "GoogleChromeManagementV1DeviceRequestingExtensionDetails": {
+      "deviceName": "string",
+      "justification": "string"
+    },
+    "GoogleChromeManagementV1DiskInfo": {
+      "bytesReadThisSession": "string",
+      "bytesWrittenThisSession": "string",
+      "discardTimeThisSession": "string",
+      "health": "string",
+      "ioTimeThisSession": "string",
+      "manufacturer": "string",
+      "model": "string",
+      "readTimeThisSession": "string",
+      "serialNumber": "string",
+      "sizeBytes": "string",
+      "type": "string",
+      "volumeIds": "array:string",
+      "writeTimeThisSession": "string"
+    },
+    "GoogleChromeManagementV1DisplayDevice": {
+      "displayHeightMm": "integer",
+      "displayName": "string",
+      "displayWidthMm": "integer",
+      "edidVersion": "string",
+      "internal": "boolean",
+      "manufactureYear": "integer",
+      "manufacturerId": "string",
+      "modelId": "integer",
+      "serialNumber": "integer"
+    },
+    "GoogleChromeManagementV1DisplayInfo": {
+      "deviceId": "string",
+      "displayName": "string",
+      "edidVersion": "string",
+      "isInternal": "boolean",
+      "refreshRate": "integer",
+      "resolutionHeight": "integer",
+      "resolutionWidth": "integer",
+      "serialNumber": "integer"
+    },
+    "GoogleChromeManagementV1EnumeratePrintJobsResponse": {
+      "nextPageToken": "string",
+      "printJobs": "array:GoogleChromeManagementV1PrintJob",
+      "totalSize": "string"
+    },
+    "GoogleChromeManagementV1FetchDevicesRequestingExtensionResponse": {
+      "deviceDetails": "array:GoogleChromeManagementV1DeviceRequestingExtensionDetails",
+      "nextPageToken": "string",
+      "totalSize": "integer"
+    },
+    "GoogleChromeManagementV1FetchUsersRequestingExtensionResponse": {
+      "nextPageToken": "string",
+      "totalSize": "integer",
+      "userDetails": "array:GoogleChromeManagementV1UserRequestingExtensionDetails"
+    },
+    "GoogleChromeManagementV1FindInstalledAppDevicesResponse": {
+      "devices": "array:GoogleChromeManagementV1Device",
+      "nextPageToken": "string",
+      "totalSize": "integer"
+    },
+    "GoogleChromeManagementV1FindInstalledAppProfilesResponse": {
+      "nextPageToken": "string",
+      "profiles": "array:GoogleChromeManagementV1ProfileAppInstallInstance",
+      "totalSize": "integer"
+    },
+    "GoogleChromeManagementV1FindSaasUsageBrowsersResponse": {
+      "nextPageToken": "string",
+      "saasUsageBrowsers": "array:GoogleChromeManagementV1SaasUsageBrowser",
+      "totalSize": "string"
+    },
+    "GoogleChromeManagementV1FindSaasUsageProfilesResponse": {
+      "nextPageToken": "string",
+      "profileReports": "array:GoogleChromeManagementV1SaasUsageProfileReport",
+      "totalSize": "string"
+    },
+    "GoogleChromeManagementV1FindSaasUsageReportsResponse": {
+      "nextPageToken": "string",
+      "saasReports": "array:GoogleChromeManagementV1SaasUsageReport",
+      "totalSize": "string"
+    },
+    "GoogleChromeManagementV1GraphicsAdapterInfo": {
+      "adapter": "string",
+      "deviceId": "string",
+      "driverVersion": "string"
+    },
+    "GoogleChromeManagementV1GraphicsInfo": {
+      "adapterInfo": "GoogleChromeManagementV1GraphicsAdapterInfo",
+      "displayDevices": "array:GoogleChromeManagementV1DisplayDevice",
+      "eprivacySupported": "boolean",
+      "touchScreenInfo": "GoogleChromeManagementV1TouchScreenInfo"
+    },
+    "GoogleChromeManagementV1GraphicsStatusReport": {
+      "displays": "array:GoogleChromeManagementV1DisplayInfo",
+      "reportTime": "string"
+    },
+    "GoogleChromeManagementV1HeartbeatStatusReport": {
+      "reportTime": "string",
+      "state": "string"
+    },
+    "GoogleChromeManagementV1HttpsLatencyRoutineData": {
+      "latency": "string",
+      "problem": "string"
+    },
+    "GoogleChromeManagementV1InstalledApp": {
+      "appId": "string",
+      "appInstallType": "string",
+      "appSource": "string",
+      "appType": "string",
+      "browserDeviceCount": "string",
+      "description": "string",
+      "disabled": "boolean",
+      "displayName": "string",
+      "homepageUri": "string",
+      "osUserCount": "string",
+      "permissions": "array:string",
+      "profileCount": "string",
+      "riskAssessment": "GoogleChromeManagementV1RiskAssessmentData"
+    },
+    "GoogleChromeManagementV1KioskAppStatusReport": {
+      "appId": "string",
+      "appVersion": "string",
+      "reportTime": "string"
+    },
+    "GoogleChromeManagementV1ListTelemetryDevicesResponse": {
+      "devices": "array:GoogleChromeManagementV1TelemetryDevice",
+      "nextPageToken": "string"
+    },
+    "GoogleChromeManagementV1ListTelemetryEventsResponse": {
+      "nextPageToken": "string",
+      "telemetryEvents": "array:GoogleChromeManagementV1TelemetryEvent"
+    },
+    "GoogleChromeManagementV1ListTelemetryNotificationConfigsResponse": {
+      "nextPageToken": "string",
+      "telemetryNotificationConfigs": "array:GoogleChromeManagementV1TelemetryNotificationConfig"
+    },
+    "GoogleChromeManagementV1ListTelemetryUsersResponse": {
+      "nextPageToken": "string",
+      "telemetryUsers": "array:GoogleChromeManagementV1TelemetryUser"
+    },
+    "GoogleChromeManagementV1MemoryInfo": {
+      "availableRamBytes": "string",
+      "totalMemoryEncryption": "GoogleChromeManagementV1TotalMemoryEncryptionInfo",
+      "totalRamBytes": "string"
+    },
+    "GoogleChromeManagementV1MemoryStatusReport": {
+      "pageFaults": "integer",
+      "reportTime": "string",
+      "sampleFrequency": "string",
+      "systemRamFreeBytes": "string"
+    },
+    "GoogleChromeManagementV1NetworkBandwidthReport": {
+      "downloadSpeedKbps": "string",
+      "reportTime": "string"
+    },
+    "GoogleChromeManagementV1NetworkDevice": {
+      "iccid": "string",
+      "imei": "string",
+      "macAddress": "string",
+      "mdn": "string",
+      "meid": "string",
+      "type": "string"
+    },
+    "GoogleChromeManagementV1NetworkDiagnosticsReport": {
+      "httpsLatencyData": "GoogleChromeManagementV1HttpsLatencyRoutineData",
+      "reportTime": "string"
+    },
+    "GoogleChromeManagementV1NetworkInfo": {
+      "networkDevices": "array:GoogleChromeManagementV1NetworkDevice"
+    },
+    "GoogleChromeManagementV1NetworkStatusReport": {
+      "connectionState": "string",
+      "connectionType": "string",
+      "encryptionOn": "boolean",
+      "gatewayIpAddress": "string",
+      "gatewayIpv6Address": "string",
+      "guid": "string",
+      "ipv6Address": "array:string",
+      "lanIpAddress": "string",
+      "linkDownSpeedKbps": "string",
+      "metered": "boolean",
+      "receivingBitRateMbps": "string",
+      "reportTime": "string",
+      "sampleFrequency": "string",
+      "signalStrengthDbm": "integer",
+      "transmissionBitRateMbps": "string",
+      "transmissionPowerDbm": "integer",
+      "wifiLinkQuality": "string",
+      "wifiPowerManagementEnabled": "boolean"
+    },
+    "GoogleChromeManagementV1OsUpdateStatus": {
+      "lastRebootTime": "string",
+      "lastUpdateCheckTime": "string",
+      "lastUpdateTime": "string",
+      "newPlatformVersion": "string",
+      "newRequestedPlatformVersion": "string",
+      "updateState": "string"
+    },
+    "GoogleChromeManagementV1PeripheralsReport": {
+      "reportTime": "string",
+      "usbPeripheralReport": "array:GoogleChromeManagementV1UsbPeripheralReport"
+    },
+    "GoogleChromeManagementV1PrintJob": {
+      "colorMode": "string",
+      "completeTime": "string",
+      "copyCount": "integer",
+      "createTime": "string",
+      "documentPageCount": "integer",
+      "duplexMode": "string",
+      "id": "string",
+      "printer": "string",
+      "printerId": "string",
+      "state": "string",
+      "title": "string",
+      "userEmail": "string",
+      "userId": "string"
+    },
+    "GoogleChromeManagementV1PrinterReport": {
+      "deviceCount": "string",
+      "jobCount": "string",
+      "printer": "string",
+      "printerId": "string",
+      "printerModel": "string",
+      "userCount": "string"
+    },
+    "GoogleChromeManagementV1ProfileAppInstallInstance": {
+      "email": "string",
+      "profileId": "string",
+      "profileOrgUnitId": "string",
+      "profilePermanentId": "string"
+    },
+    "GoogleChromeManagementV1RiskAssessment": {
+      "assessment": "string",
+      "detailsUrl": "string",
+      "version": "string"
+    },
+    "GoogleChromeManagementV1RiskAssessmentData": {
+      "entries": "array:GoogleChromeManagementV1RiskAssessmentEntry",
+      "overallRiskLevel": "string"
+    },
+    "GoogleChromeManagementV1RiskAssessmentEntry": {
+      "provider": "string",
+      "riskAssessment": "GoogleChromeManagementV1RiskAssessment",
+      "riskLevel": "string"
+    },
+    "GoogleChromeManagementV1RuntimeCountersReport": {
+      "enterHibernationCount": "string",
+      "enterPoweroffCount": "string",
+      "enterSleepCount": "string",
+      "reportTime": "string",
+      "uptimeRuntimeDuration": "string"
+    },
+    "GoogleChromeManagementV1SaasUsageBrowser": {
+      "devicePermanentId": "string",
+      "firstNavigationTime": "string",
+      "lastNavigationTime": "string",
+      "machine": "string",
+      "orgUnitId": "string",
+      "osPlatform": "string",
+      "osVersion": "string"
+    },
+    "GoogleChromeManagementV1SaasUsageProfileReport": {
+      "email": "string",
+      "firstNavigationTime": "string",
+      "lastNavigationTime": "string",
+      "orgUnitId": "string",
+      "osPlatform": "string",
+      "osVersion": "string",
+      "profilePermanentId": "string"
+    },
+    "GoogleChromeManagementV1SaasUsageReport": {
+      "app": "string",
+      "category": "string",
+      "contentTransferDetails": "GoogleChromeManagementV1SaasUsageReportContentTransferDetails",
+      "distinctBrowsersCount": "string",
+      "distinctUsersCount": "string",
+      "domains": "array:string",
+      "encryptionProtocols": "array:string",
+      "firstNavigationTime": "string",
+      "foundedYear": "integer",
+      "headquarters": "string",
+      "lastNavigationTime": "string",
+      "orgUnitId": "string",
+      "organization": "string",
+      "primaryDomain": "string",
+      "visitsCount": "string"
+    },
+    "GoogleChromeManagementV1SaasUsageReportContentTransferDetails": {
+      "contentTransferCount": "string"
+    },
+    "GoogleChromeManagementV1StorageInfo": {
+      "availableDiskBytes": "string",
+      "totalDiskBytes": "string",
+      "volume": "array:GoogleChromeManagementV1StorageInfoDiskVolume"
+    },
+    "GoogleChromeManagementV1StorageInfoDiskVolume": {
+      "storageFreeBytes": "string",
+      "storageTotalBytes": "string",
+      "volumeId": "string"
+    },
+    "GoogleChromeManagementV1StorageStatusReport": {
+      "disk": "array:GoogleChromeManagementV1DiskInfo",
+      "reportTime": "string"
+    },
+    "GoogleChromeManagementV1TelemetryAppInstallEvent": {
+      "appId": "string",
+      "appInstallReason": "string",
+      "appInstallSource": "string",
+      "appInstallTime": "string",
+      "appType": "string"
+    },
+    "GoogleChromeManagementV1TelemetryAppLaunchEvent": {
+      "appId": "string",
+      "appLaunchSource": "string",
+      "appType": "string"
+    },
+    "GoogleChromeManagementV1TelemetryAppUninstallEvent": {
+      "appId": "string",
+      "appType": "string",
+      "appUninstallSource": "string"
+    },
+    "GoogleChromeManagementV1TelemetryAudioSevereUnderrunEvent": {},
+    "GoogleChromeManagementV1TelemetryDevice": {
+      "appReport": "array:GoogleChromeManagementV1AppReport",
+      "audioStatusReport": "array:GoogleChromeManagementV1AudioStatusReport",
+      "batteryInfo": "array:GoogleChromeManagementV1BatteryInfo",
+      "batteryStatusReport": "array:GoogleChromeManagementV1BatteryStatusReport",
+      "bootPerformanceReport": "array:GoogleChromeManagementV1BootPerformanceReport",
+      "cpuInfo": "array:GoogleChromeManagementV1CpuInfo",
+      "cpuStatusReport": "array:GoogleChromeManagementV1CpuStatusReport",
+      "customer": "string",
+      "deviceId": "string",
+      "graphicsInfo": "GoogleChromeManagementV1GraphicsInfo",
+      "graphicsStatusReport": "array:GoogleChromeManagementV1GraphicsStatusReport",
+      "heartbeatStatusReport": "array:GoogleChromeManagementV1HeartbeatStatusReport",
+      "kioskAppStatusReport": "array:GoogleChromeManagementV1KioskAppStatusReport",
+      "memoryInfo": "GoogleChromeManagementV1MemoryInfo",
+      "memoryStatusReport": "array:GoogleChromeManagementV1MemoryStatusReport",
+      "name": "string",
+      "networkBandwidthReport": "array:GoogleChromeManagementV1NetworkBandwidthReport",
+      "networkDiagnosticsReport": "array:GoogleChromeManagementV1NetworkDiagnosticsReport",
+      "networkInfo": "GoogleChromeManagementV1NetworkInfo",
+      "networkStatusReport": "array:GoogleChromeManagementV1NetworkStatusReport",
+      "orgUnitId": "string",
+      "osUpdateStatus": "array:GoogleChromeManagementV1OsUpdateStatus",
+      "peripheralsReport": "array:GoogleChromeManagementV1PeripheralsReport",
+      "runtimeCountersReport": "array:GoogleChromeManagementV1RuntimeCountersReport",
+      "serialNumber": "string",
+      "storageInfo": "GoogleChromeManagementV1StorageInfo",
+      "storageStatusReport": "array:GoogleChromeManagementV1StorageStatusReport",
+      "thunderboltInfo": "array:GoogleChromeManagementV1ThunderboltInfo"
+    },
+    "GoogleChromeManagementV1TelemetryDeviceInfo": {
+      "deviceId": "string",
+      "orgUnitId": "string"
+    },
+    "GoogleChromeManagementV1TelemetryEvent": {
+      "appInstallEvent": "GoogleChromeManagementV1TelemetryAppInstallEvent",
+      "appLaunchEvent": "GoogleChromeManagementV1TelemetryAppLaunchEvent",
+      "appUninstallEvent": "GoogleChromeManagementV1TelemetryAppUninstallEvent",
+      "audioSevereUnderrunEvent": "GoogleChromeManagementV1TelemetryAudioSevereUnderrunEvent",
+      "device": "GoogleChromeManagementV1TelemetryDeviceInfo",
+      "eventType": "string",
+      "externalDisplaysEvent": "GoogleChromeManagementV1TelemetryExternalDisplayEvent",
+      "httpsLatencyChangeEvent": "GoogleChromeManagementV1TelemetryHttpsLatencyChangeEvent",
+      "name": "string",
+      "networkStateChangeEvent": "GoogleChromeManagementV1TelemetryNetworkConnectionStateChangeEvent",
+      "osCrashEvent": "GoogleChromeManagementV1TelemetryOsCrashEvent",
+      "reportTime": "string",
+      "usbPeripheralsEvent": "GoogleChromeManagementV1TelemetryUsbPeripheralsEvent",
+      "user": "GoogleChromeManagementV1TelemetryUserInfo",
+      "vpnConnectionStateChangeEvent": "GoogleChromeManagementV1TelemetryNetworkConnectionStateChangeEvent",
+      "wifiSignalStrengthEvent": "GoogleChromeManagementV1TelemetryNetworkSignalStrengthEvent"
+    },
+    "GoogleChromeManagementV1TelemetryEventNotificationFilter": {
+      "eventTypes": "array:string"
+    },
+    "GoogleChromeManagementV1TelemetryExternalDisplayData": {
+      "displayName": "string",
+      "edidVersion": "string",
+      "refreshRate": "string",
+      "resolutionHorizontal": "integer",
+      "resolutionVertical": "integer",
+      "serialNumber": "integer"
+    },
+    "GoogleChromeManagementV1TelemetryExternalDisplayEvent": {
+      "externalDisplayData": "array:GoogleChromeManagementV1TelemetryExternalDisplayData"
+    },
+    "GoogleChromeManagementV1TelemetryHttpsLatencyChangeEvent": {
+      "httpsLatencyRoutineData": "GoogleChromeManagementV1HttpsLatencyRoutineData",
+      "httpsLatencyState": "string"
+    },
+    "GoogleChromeManagementV1TelemetryNetworkConnectionStateChangeEvent": {
+      "connectionState": "string",
+      "guid": "string"
+    },
+    "GoogleChromeManagementV1TelemetryNetworkSignalStrengthEvent": {
+      "guid": "string",
+      "signalStrengthDbm": "integer"
+    },
+    "GoogleChromeManagementV1TelemetryNotificationConfig": {
+      "customer": "string",
+      "filter": "GoogleChromeManagementV1TelemetryNotificationFilter",
+      "googleCloudPubsubTopic": "string",
+      "name": "string"
+    },
+    "GoogleChromeManagementV1TelemetryNotificationFilter": {
+      "deviceId": "string",
+      "deviceOrgUnitId": "string",
+      "telemetryEventNotificationFilter": "GoogleChromeManagementV1TelemetryEventNotificationFilter",
+      "userEmail": "string",
+      "userOrgUnitId": "string"
+    },
+    "GoogleChromeManagementV1TelemetryOsCrashEvent": {
+      "crashId": "string",
+      "crashType": "string",
+      "sessionType": "string"
+    },
+    "GoogleChromeManagementV1TelemetryUsbPeripheralsEvent": {
+      "usbPeripheralReport": "array:GoogleChromeManagementV1UsbPeripheralReport"
+    },
+    "GoogleChromeManagementV1TelemetryUser": {
+      "customer": "string",
+      "name": "string",
+      "orgUnitId": "string",
+      "userDevice": "array:GoogleChromeManagementV1TelemetryUserDevice",
+      "userEmail": "string",
+      "userId": "string"
+    },
+    "GoogleChromeManagementV1TelemetryUserDevice": {
+      "appReport": "array:GoogleChromeManagementV1AppReport",
+      "audioStatusReport": "array:GoogleChromeManagementV1AudioStatusReport",
+      "deviceActivityReport": "array:GoogleChromeManagementV1DeviceActivityReport",
+      "deviceId": "string",
+      "networkBandwidthReport": "array:GoogleChromeManagementV1NetworkBandwidthReport",
+      "peripheralsReport": "array:GoogleChromeManagementV1PeripheralsReport"
+    },
+    "GoogleChromeManagementV1TelemetryUserInfo": {
+      "email": "string",
+      "orgUnitId": "string"
+    },
+    "GoogleChromeManagementV1ThunderboltInfo": {
+      "securityLevel": "string"
+    },
+    "GoogleChromeManagementV1TotalMemoryEncryptionInfo": {
+      "encryptionAlgorithm": "string",
+      "encryptionState": "string",
+      "keyLength": "string",
+      "maxKeys": "string"
+    },
+    "GoogleChromeManagementV1TouchScreenDevice": {
+      "displayName": "string",
+      "stylusCapable": "boolean",
+      "touchPointCount": "integer"
+    },
+    "GoogleChromeManagementV1TouchScreenInfo": {
+      "devices": "array:GoogleChromeManagementV1TouchScreenDevice",
+      "touchpadLibrary": "string"
+    },
+    "GoogleChromeManagementV1UsbPeripheralReport": {
+      "categories": "array:string",
+      "classId": "integer",
+      "firmwareVersion": "string",
+      "name": "string",
+      "pid": "integer",
+      "subclassId": "integer",
+      "vendor": "string",
+      "vid": "integer"
+    },
+    "GoogleChromeManagementV1UserPrintReport": {
+      "deviceCount": "string",
+      "jobCount": "string",
+      "printerCount": "string",
+      "userEmail": "string",
+      "userId": "string"
+    },
+    "GoogleChromeManagementV1UserRequestingExtensionDetails": {
+      "email": "string",
+      "justification": "string"
+    },
+    "GoogleChromeManagementVersionsV1AttestationCredential": {
+      "keyRotationTime": "string",
+      "keyTrustLevel": "string",
+      "keyType": "string",
+      "publicKey": "string"
+    },
+    "GoogleChromeManagementVersionsV1CertificateProvisioningProcess": {
+      "chromeOsDevice": "GoogleChromeManagementVersionsV1ChromeOsDevice",
+      "chromeOsUserSession": "GoogleChromeManagementVersionsV1ChromeOsUserSession",
+      "failureMessage": "string",
+      "genericCaConnection": "GoogleChromeManagementVersionsV1GenericCaConnection",
+      "genericProfile": "GoogleChromeManagementVersionsV1GenericProfile",
+      "issuedCertificate": "string",
+      "name": "string",
+      "provisioningProfileId": "string",
+      "scepCaConnection": "GoogleChromeManagementVersionsV1ScepCaConnection",
+      "scepProfile": "GoogleChromeManagementVersionsV1ScepProfile",
+      "signData": "string",
+      "signature": "string",
+      "signatureAlgorithm": "string",
+      "startTime": "string",
+      "subjectPublicKeyInfo": "string"
+    },
+    "GoogleChromeManagementVersionsV1CheckEnablementStatusResponse": {
+      "insightsState": "string"
+    },
+    "GoogleChromeManagementVersionsV1ChromeBrowserProfile": {
+      "affiliationState": "string",
+      "annotatedLocation": "string",
+      "annotatedUser": "string",
+      "attestationCredential": "GoogleChromeManagementVersionsV1AttestationCredential",
+      "browserChannel": "string",
+      "browserVersion": "string",
+      "deviceInfo": "GoogleChromeManagementVersionsV1DeviceInfo",
+      "displayName": "string",
+      "etag": "string",
+      "extensionCount": "string",
+      "firstEnrollmentTime": "string",
+      "identityProvider": "string",
+      "lastActivityTime": "string",
+      "lastPolicyFetchTime": "string",
+      "lastPolicySyncTime": "string",
+      "lastStatusReportTime": "string",
+      "name": "string",
+      "osPlatformType": "string",
+      "osPlatformVersion": "string",
+      "osVersion": "string",
+      "policyCount": "string",
+      "profileId": "string",
+      "profilePermanentId": "string",
+      "reportingData": "GoogleChromeManagementVersionsV1ReportingData",
+      "supportsFcmNotifications": "boolean",
+      "userEmail": "string",
+      "userId": "string"
+    },
+    "GoogleChromeManagementVersionsV1ChromeBrowserProfileCommand": {
+      "commandResult": "GoogleChromeManagementVersionsV1ChromeBrowserProfileCommandCommandResult",
+      "commandState": "string",
+      "commandType": "string",
+      "issueTime": "string",
+      "name": "string",
+      "payload": "object",
+      "validDuration": "string"
+    },
+    "GoogleChromeManagementVersionsV1ChromeBrowserProfileCommandCommandResult": {
+      "clientExecutionTime": "string",
+      "resultCode": "string",
+      "resultType": "string"
+    },
+    "GoogleChromeManagementVersionsV1ChromeOsDevice": {
+      "deviceDirectoryApiId": "string",
+      "serialNumber": "string"
+    },
+    "GoogleChromeManagementVersionsV1ChromeOsUserSession": {
+      "chromeOsDevice": "GoogleChromeManagementVersionsV1ChromeOsDevice",
+      "userDirectoryApiId": "string",
+      "userPrimaryEmail": "string"
+    },
+    "GoogleChromeManagementVersionsV1ClaimCertificateProvisioningProcessRequest": {
+      "callerInstanceId": "string"
+    },
+    "GoogleChromeManagementVersionsV1ClaimCertificateProvisioningProcessResponse": {},
+    "GoogleChromeManagementVersionsV1ConnectorConfig": {
+      "details": "GoogleChromeManagementVersionsV1ConnectorConfigDetails",
+      "displayName": "string",
+      "name": "string",
+      "status": "GoogleChromeManagementVersionsV1ConnectorConfigStatus",
+      "type": "string"
+    },
+    "GoogleChromeManagementVersionsV1ConnectorConfigDetails": {
+      "crowdStrikeConfig": "GoogleChromeManagementVersionsV1CrowdStrikeConfig",
+      "crowdStrikeFalconNextGenConfig": "GoogleChromeManagementVersionsV1CrowdStrikeFalconNextGenConfig",
+      "crowdStrikeXdrConfig": "GoogleChromeManagementVersionsV1CrowdStrikeXdrConfig",
+      "deviceTrustConfig": "GoogleChromeManagementVersionsV1DeviceTrustConfig",
+      "googleSecOpsConfig": "GoogleChromeManagementVersionsV1GoogleSecOpsConfig",
+      "mipLabelConfig": "GoogleChromeManagementVersionsV1MipLabelConfig",
+      "paloAltoNetworksConfig": "GoogleChromeManagementVersionsV1PaloAltoNetworksConfig",
+      "pubSubConfig": "GoogleChromeManagementVersionsV1PubSubConfig",
+      "pubSubXdrConfig": "GoogleChromeManagementVersionsV1PubSubXdrConfig",
+      "secureGatewayConfig": "GoogleChromeManagementVersionsV1SecureGatewayConfig",
+      "splunkConfig": "GoogleChromeManagementVersionsV1SplunkConfig"
+    },
+    "GoogleChromeManagementVersionsV1ConnectorConfigStatus": {
+      "failureStartTime": "string",
+      "state": "string",
+      "updateTime": "string"
+    },
+    "GoogleChromeManagementVersionsV1ContentTransfersBreakdown": {
+      "contentCategory": "string",
+      "eventDomain": "string",
+      "summary": "GoogleChromeManagementVersionsV1ContentTransfersSummary",
+      "user": "string"
+    },
+    "GoogleChromeManagementVersionsV1ContentTransfersSummary": {
+      "count": "string",
+      "metric": "string"
+    },
+    "GoogleChromeManagementVersionsV1CrowdStrikeConfig": {
+      "apiKey": "string",
+      "host": "string",
+      "reportingSettings": "GoogleChromeManagementVersionsV1ReportingSettings"
+    },
+    "GoogleChromeManagementVersionsV1CrowdStrikeFalconNextGenConfig": {
+      "apiKey": "string",
+      "host": "string",
+      "reportingSettings": "GoogleChromeManagementVersionsV1ReportingSettings"
+    },
+    "GoogleChromeManagementVersionsV1CrowdStrikeXdrConfig": {
+      "apiKey": "string",
+      "host": "string",
+      "xdrSettings": "GoogleChromeManagementVersionsV1XdrSettings"
+    },
+    "GoogleChromeManagementVersionsV1DeviceInfo": {
+      "affiliatedDeviceId": "string",
+      "deviceType": "string",
+      "hostname": "string",
+      "machine": "string"
+    },
+    "GoogleChromeManagementVersionsV1DeviceTrustConfig": {
+      "scope": "string",
+      "serviceAccounts": "array:string",
+      "serviceProvider": "string",
+      "urlMatchers": "array:string"
+    },
+    "GoogleChromeManagementVersionsV1DisableInsightsRequest": {},
+    "GoogleChromeManagementVersionsV1DisableInsightsResponse": {
+      "insightsState": "string"
+    },
+    "GoogleChromeManagementVersionsV1EnableInsightsRequest": {
+      "targetOus": "array:string"
+    },
+    "GoogleChromeManagementVersionsV1EnableInsightsResponse": {
+      "insightsState": "string"
+    },
+    "GoogleChromeManagementVersionsV1GenericCaConnection": {
+      "caConnectionAdapterConfigReference": "string"
+    },
+    "GoogleChromeManagementVersionsV1GenericProfile": {
+      "profileAdapterConfigReference": "string"
+    },
+    "GoogleChromeManagementVersionsV1GoogleSecOpsConfig": {
+      "apiKey": "string",
+      "host": "string",
+      "reportingSettings": "GoogleChromeManagementVersionsV1ReportingSettings"
+    },
+    "GoogleChromeManagementVersionsV1ListChromeBrowserProfileCommandsResponse": {
+      "chromeBrowserProfileCommands": "array:GoogleChromeManagementVersionsV1ChromeBrowserProfileCommand",
+      "nextPageToken": "string",
+      "totalSize": "string"
+    },
+    "GoogleChromeManagementVersionsV1ListChromeBrowserProfilesResponse": {
+      "chromeBrowserProfiles": "array:GoogleChromeManagementVersionsV1ChromeBrowserProfile",
+      "nextPageToken": "string",
+      "totalSize": "string"
+    },
+    "GoogleChromeManagementVersionsV1ListConnectorConfigsResponse": {
+      "connectorConfigs": "array:GoogleChromeManagementVersionsV1ConnectorConfig",
+      "nextPageToken": "string"
+    },
+    "GoogleChromeManagementVersionsV1MipLabelConfig": {
+      "domains": "array:string",
+      "microsoftTenantId": "string"
+    },
+    "GoogleChromeManagementVersionsV1MoveThirdPartyProfileUserRequest": {
+      "destinationOrgUnit": "string"
+    },
+    "GoogleChromeManagementVersionsV1MoveThirdPartyProfileUserResponse": {
+      "thirdPartyProfileUser": "GoogleChromeManagementVersionsV1ThirdPartyProfileUser"
+    },
+    "GoogleChromeManagementVersionsV1PaloAltoNetworksConfig": {
+      "apiKey": "string",
+      "host": "string",
+      "reportingSettings": "GoogleChromeManagementVersionsV1ReportingSettings"
+    },
+    "GoogleChromeManagementVersionsV1PubSubConfig": {
+      "reportingSettings": "GoogleChromeManagementVersionsV1ReportingSettings",
+      "topicFullPath": "string"
+    },
+    "GoogleChromeManagementVersionsV1PubSubXdrConfig": {
+      "topicFullPath": "string",
+      "xdrSettings": "GoogleChromeManagementVersionsV1XdrSettings"
+    },
+    "GoogleChromeManagementVersionsV1QueryContentTransfersBreakdownsResponse": {
+      "contentTransfersBreakdowns": "array:GoogleChromeManagementVersionsV1ContentTransfersBreakdown",
+      "nextPageToken": "string"
+    },
+    "GoogleChromeManagementVersionsV1QueryContentTransfersResponse": {
+      "summaries": "array:GoogleChromeManagementVersionsV1ContentTransfersSummary"
+    },
+    "GoogleChromeManagementVersionsV1QueryUrlVisitsBreakdownsResponse": {
+      "nextPageToken": "string",
+      "urlVisitsBreakdowns": "array:GoogleChromeManagementVersionsV1UrlVisitsBreakdown"
+    },
+    "GoogleChromeManagementVersionsV1QueryUrlVisitsResponse": {
+      "summaries": "array:GoogleChromeManagementVersionsV1UrlVisitsSummary"
+    },
+    "GoogleChromeManagementVersionsV1ReportingData": {
+      "browserExecutablePath": "string",
+      "extensionData": "array:GoogleChromeManagementVersionsV1ReportingDataExtensionData",
+      "extensionPolicyData": "array:GoogleChromeManagementVersionsV1ReportingDataExtensionPolicyData",
+      "installedBrowserVersion": "string",
+      "policyData": "array:GoogleChromeManagementVersionsV1ReportingDataPolicyData",
+      "profilePath": "string"
+    },
+    "GoogleChromeManagementVersionsV1ReportingDataConflictingPolicyData": {
+      "source": "string"
+    },
+    "GoogleChromeManagementVersionsV1ReportingDataExtensionData": {
+      "description": "string",
+      "extensionId": "string",
+      "extensionType": "string",
+      "homepageUri": "string",
+      "installationType": "string",
+      "isDisabled": "boolean",
+      "isWebstoreExtension": "boolean",
+      "manifestVersion": "integer",
+      "name": "string",
+      "permissions": "array:string",
+      "version": "string"
+    },
+    "GoogleChromeManagementVersionsV1ReportingDataExtensionPolicyData": {
+      "extensionId": "string",
+      "extensionName": "string",
+      "policyData": "array:GoogleChromeManagementVersionsV1ReportingDataPolicyData"
+    },
+    "GoogleChromeManagementVersionsV1ReportingDataPolicyData": {
+      "conflicts": "array:GoogleChromeManagementVersionsV1ReportingDataConflictingPolicyData",
+      "error": "string",
+      "name": "string",
+      "source": "string",
+      "value": "string"
+    },
+    "GoogleChromeManagementVersionsV1ReportingSettings": {
+      "enabledDefaultEvents": "array:string",
+      "enabledDeviceEvents": "array:string",
+      "enabledOptInEvents": "array:string"
+    },
+    "GoogleChromeManagementVersionsV1ScepCaConnection": {
+      "caConnectionAdapterConfigReference": "string"
+    },
+    "GoogleChromeManagementVersionsV1ScepProfile": {
+      "certificateTemplateName": "string",
+      "country": "string",
+      "keyUsages": "array:string",
+      "locality": "string",
+      "organization": "string",
+      "organizationalUnits": "array:string",
+      "state": "string",
+      "subjectAltNames": "array:GoogleChromeManagementVersionsV1SubjectAltName",
+      "subjectCommonName": "string"
+    },
+    "GoogleChromeManagementVersionsV1SecureGatewayConfig": {
+      "enabledPlatforms": "array:string",
+      "resourceId": "string"
+    },
+    "GoogleChromeManagementVersionsV1SetFailureRequest": {
+      "errorMessage": "string"
+    },
+    "GoogleChromeManagementVersionsV1SetFailureResponse": {},
+    "GoogleChromeManagementVersionsV1SignDataMetadata": {
+      "startTime": "string"
+    },
+    "GoogleChromeManagementVersionsV1SignDataRequest": {
+      "signData": "string",
+      "signatureAlgorithm": "string"
+    },
+    "GoogleChromeManagementVersionsV1SignDataResponse": {
+      "certificateProvisioningProcess": "GoogleChromeManagementVersionsV1CertificateProvisioningProcess"
+    },
+    "GoogleChromeManagementVersionsV1SplunkConfig": {
+      "hecToken": "string",
+      "host": "string",
+      "portNumber": "integer",
+      "reportingSettings": "GoogleChromeManagementVersionsV1ReportingSettings",
+      "source": "string",
+      "unsecureScheme": "boolean"
+    },
+    "GoogleChromeManagementVersionsV1SubjectAltName": {
+      "type": "string",
+      "value": "string"
+    },
+    "GoogleChromeManagementVersionsV1ThirdPartyProfileUser": {
+      "name": "string",
+      "orgUnitId": "string"
+    },
+    "GoogleChromeManagementVersionsV1UploadCertificateRequest": {
+      "certificatePem": "string"
+    },
+    "GoogleChromeManagementVersionsV1UploadCertificateResponse": {},
+    "GoogleChromeManagementVersionsV1UrlVisitsBreakdown": {
+      "eventDomain": "string",
+      "summary": "GoogleChromeManagementVersionsV1UrlVisitsSummary",
+      "user": "string"
+    },
+    "GoogleChromeManagementVersionsV1UrlVisitsSummary": {
+      "count": "string",
+      "metric": "string"
+    },
+    "GoogleChromeManagementVersionsV1XdrSettings": {
+      "enableAllXdrEvents": "boolean"
+    },
+    "GoogleLongrunningCancelOperationRequest": {},
+    "GoogleLongrunningListOperationsResponse": {
+      "nextPageToken": "string",
+      "operations": "array:GoogleLongrunningOperation",
+      "unreachable": "array:string"
+    },
+    "GoogleLongrunningOperation": {
+      "done": "boolean",
+      "error": "GoogleRpcStatus",
+      "metadata": "object",
+      "name": "string",
+      "response": "object"
+    },
+    "GoogleProtobufEmpty": {},
+    "GoogleRpcStatus": {
+      "code": "integer",
+      "details": "array:object",
+      "message": "string"
+    },
+    "GoogleTypeDate": {
+      "day": "integer",
+      "month": "integer",
+      "year": "integer"
+    }
+  },
+  "source": "https://chromemanagement.googleapis.com/$discovery/rest?version=v1",
+  "version": "v1"
+}

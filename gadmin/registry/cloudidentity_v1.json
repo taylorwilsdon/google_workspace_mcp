@@ -1,0 +1,3004 @@
+{
+  "service": "cloudidentity",
+  "version": "v1",
+  "discovery": {
+    "url": "https://cloudidentity.googleapis.com/$discovery/rest?version=v1",
+    "revision": "20260923",
+    "checked": "2026-09-25"
+  },
+  "invitation_scopes_source": "https://cloud.google.com/identity/docs/reference/rest/v1/customers.userinvitations/list",
+  "operations": {
+    "cloudidentity.groups.list": {
+      "resource_path": [
+        "groups"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.groups.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "parent": {
+          "type": "string",
+          "location": "query",
+          "pattern": "^customers/[A-Za-z0-9]+$"
+        },
+        "view": {
+          "type": "string",
+          "location": "query",
+          "enum": [
+            "BASIC",
+            "FULL"
+          ]
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "groups",
+        "fields": [
+          "name",
+          "groupKey",
+          "parent",
+          "displayName",
+          "description",
+          "labels",
+          "additionalGroupKeys",
+          "createTime",
+          "updateTime"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "parent",
+          "as": "name"
+        },
+        {
+          "kind": "response_customer",
+          "field": "parent"
+        }
+      ]
+    },
+    "cloudidentity.groups.get": {
+      "resource_path": [
+        "groups"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.groups.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^groups/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "groupKey",
+          "parent",
+          "displayName",
+          "description",
+          "labels",
+          "additionalGroupKeys",
+          "createTime",
+          "updateTime"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "response_customer",
+          "field": "parent"
+        }
+      ]
+    },
+    "cloudidentity.groups.search": {
+      "resource_path": [
+        "groups"
+      ],
+      "method": "search",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.groups.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "query": {
+          "type": "string",
+          "location": "query"
+        },
+        "view": {
+          "type": "string",
+          "location": "query",
+          "enum": [
+            "BASIC",
+            "FULL"
+          ]
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "groups",
+        "fields": [
+          "name",
+          "groupKey",
+          "parent",
+          "displayName",
+          "description",
+          "labels",
+          "additionalGroupKeys",
+          "createTime",
+          "updateTime"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "response_customer",
+          "field": "parent"
+        }
+      ]
+    },
+    "cloudidentity.groups.lookup": {
+      "resource_path": [
+        "groups"
+      ],
+      "method": "lookup",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.groups.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "groupKey.id": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "target_param": "groupKey.id",
+      "response": {
+        "fields": [
+          "name"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "domain",
+          "param": "groupKey.id"
+        }
+      ]
+    },
+    "cloudidentity.groups.create": {
+      "resource_path": [
+        "groups"
+      ],
+      "method": "create",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.groups"
+      ],
+      "risk": "manage",
+      "params": {
+        "initialGroupConfig": {
+          "type": "string",
+          "location": "query",
+          "enum": [
+            "WITH_INITIAL_OWNER",
+            "EMPTY"
+          ]
+        }
+      },
+      "body": {
+        "parent": "string",
+        "groupKey": {
+          "type": "object",
+          "required": true,
+          "fields": {
+            "id": {
+              "type": "string",
+              "required": true
+            }
+          }
+        },
+        "displayName": "string",
+        "description": "string",
+        "labels": {
+          "type": "object",
+          "required": true,
+          "fields": {
+            "cloudidentity.googleapis.com/groups.discussion_forum": {
+              "type": "string",
+              "required": true,
+              "enum": [
+                ""
+              ]
+            },
+            "cloudidentity.googleapis.com/groups.security": {
+              "type": "string",
+              "enum": [
+                ""
+              ]
+            }
+          }
+        }
+      },
+      "response": {
+        "fields": [
+          "name",
+          "done",
+          "error"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "field": "parent",
+          "as": "name"
+        },
+        {
+          "kind": "domain",
+          "field": "groupKey.id"
+        }
+      ]
+    },
+    "cloudidentity.groups.patch": {
+      "resource_path": [
+        "groups"
+      ],
+      "method": "patch",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.groups"
+      ],
+      "risk": "manage",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^groups/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        },
+        "updateMask": {
+          "type": "string",
+          "location": "query",
+          "pattern": "^(displayName|description|display_name|description)(,(displayName|description|display_name|description))*$"
+        }
+      },
+      "body": {
+        "displayName": "string",
+        "description": "string"
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "done",
+          "error"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "resource",
+          "param": "name",
+          "read": "cloudidentity.groups.get"
+        }
+      ]
+    },
+    "cloudidentity.groups.delete": {
+      "resource_path": [
+        "groups"
+      ],
+      "method": "delete",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.groups"
+      ],
+      "risk": "destructive",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^groups/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "done",
+          "error"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "resource",
+          "param": "name",
+          "read": "cloudidentity.groups.get"
+        }
+      ]
+    },
+    "cloudidentity.groups.getSecuritySettings": {
+      "resource_path": [
+        "groups"
+      ],
+      "method": "getSecuritySettings",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.groups.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^groups/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*/securitySettings$"
+        },
+        "readMask": {
+          "type": "string",
+          "location": "query",
+          "pattern": "^(\\*|memberRestriction|member_restriction)$"
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "memberRestriction"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "resource",
+          "param": "name",
+          "read": "cloudidentity.groups.get",
+          "segments": 2
+        }
+      ]
+    },
+    "cloudidentity.groups.updateSecuritySettings": {
+      "resource_path": [
+        "groups"
+      ],
+      "method": "updateSecuritySettings",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.groups"
+      ],
+      "risk": "destructive",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^groups/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*/securitySettings$"
+        },
+        "updateMask": {
+          "type": "string",
+          "location": "query",
+          "pattern": "^(memberRestriction\\.query|member_restriction\\.query)(,(memberRestriction\\.query|member_restriction\\.query))*$"
+        }
+      },
+      "body": {
+        "memberRestriction": {
+          "type": "object",
+          "required": true,
+          "fields": {
+            "query": {
+              "type": "string",
+              "required": true
+            }
+          }
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "done",
+          "error"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "resource",
+          "param": "name",
+          "read": "cloudidentity.groups.get",
+          "segments": 2
+        }
+      ]
+    },
+    "cloudidentity.groups.memberships.list": {
+      "resource_path": [
+        "groups",
+        "memberships"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.groups.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "parent": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^groups/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        },
+        "view": {
+          "type": "string",
+          "location": "query",
+          "enum": [
+            "BASIC",
+            "FULL"
+          ]
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "target_param": "parent",
+      "response": {
+        "items_key": "memberships",
+        "fields": [
+          "name",
+          "preferredMemberKey",
+          "roles",
+          "type",
+          "deliverySetting",
+          "createTime",
+          "updateTime"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "resource",
+          "param": "parent",
+          "read": "cloudidentity.groups.get"
+        }
+      ]
+    },
+    "cloudidentity.groups.memberships.get": {
+      "resource_path": [
+        "groups",
+        "memberships"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.groups.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^groups/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*/memberships/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "preferredMemberKey",
+          "roles",
+          "type",
+          "deliverySetting",
+          "createTime",
+          "updateTime"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "resource",
+          "param": "name",
+          "read": "cloudidentity.groups.get",
+          "segments": 2
+        }
+      ]
+    },
+    "cloudidentity.groups.memberships.lookup": {
+      "resource_path": [
+        "groups",
+        "memberships"
+      ],
+      "method": "lookup",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.groups.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "parent": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^groups/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        },
+        "memberKey.id": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "target_param": "parent",
+      "response": {
+        "fields": [
+          "name"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "resource",
+          "param": "parent",
+          "read": "cloudidentity.groups.get"
+        }
+      ]
+    },
+    "cloudidentity.groups.memberships.checkTransitiveMembership": {
+      "resource_path": [
+        "groups",
+        "memberships"
+      ],
+      "method": "checkTransitiveMembership",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.groups.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "parent": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^groups/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        },
+        "query": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "target_param": "parent",
+      "response": {
+        "fields": [
+          "hasMembership"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "resource",
+          "param": "parent",
+          "read": "cloudidentity.groups.get"
+        }
+      ]
+    },
+    "cloudidentity.groups.memberships.searchTransitiveMemberships": {
+      "resource_path": [
+        "groups",
+        "memberships"
+      ],
+      "method": "searchTransitiveMemberships",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.groups.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "parent": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^groups/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "target_param": "parent",
+      "response": {
+        "items_key": "memberships",
+        "fields": [
+          "member",
+          "relationType",
+          "roles",
+          "preferredMemberKey"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "resource",
+          "param": "parent",
+          "read": "cloudidentity.groups.get"
+        }
+      ]
+    },
+    "cloudidentity.groups.memberships.create": {
+      "resource_path": [
+        "groups",
+        "memberships"
+      ],
+      "method": "create",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.groups"
+      ],
+      "risk": "manage",
+      "params": {
+        "parent": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^groups/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        }
+      },
+      "body": {
+        "preferredMemberKey": {
+          "type": "object",
+          "required": true,
+          "fields": {
+            "id": {
+              "type": "string",
+              "required": true
+            }
+          }
+        },
+        "roles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "fields": {
+              "name": {
+                "type": "string",
+                "required": true,
+                "enum": [
+                  "OWNER",
+                  "MANAGER",
+                  "MEMBER"
+                ]
+              },
+              "expiryDetail": {
+                "type": "object",
+                "fields": {
+                  "expireTime": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "target_param": "parent",
+      "response": {
+        "fields": [
+          "name",
+          "done",
+          "error"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "resource",
+          "param": "parent",
+          "read": "cloudidentity.groups.get"
+        },
+        {
+          "kind": "domain",
+          "field": "preferredMemberKey.id"
+        }
+      ]
+    },
+    "cloudidentity.groups.memberships.modifyMembershipRoles": {
+      "resource_path": [
+        "groups",
+        "memberships"
+      ],
+      "method": "modifyMembershipRoles",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.groups"
+      ],
+      "risk": "manage",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^groups/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*/memberships/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        }
+      },
+      "body": {
+        "addRoles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "fields": {
+              "name": {
+                "type": "string",
+                "required": true,
+                "enum": [
+                  "OWNER",
+                  "MANAGER",
+                  "MEMBER"
+                ]
+              },
+              "expiryDetail": {
+                "type": "object",
+                "fields": {
+                  "expireTime": "string"
+                }
+              }
+            }
+          }
+        },
+        "removeRoles": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "OWNER",
+              "MANAGER",
+              "MEMBER"
+            ]
+          }
+        },
+        "updateRolesParams": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "fields": {
+              "fieldMask": {
+                "type": "string",
+                "required": true,
+                "pattern": "^(expiryDetail\\.expireTime|expiry_detail\\.expire_time)(,(expiryDetail\\.expireTime|expiry_detail\\.expire_time))*$"
+              },
+              "membershipRole": {
+                "type": "object",
+                "fields": {
+                  "name": {
+                    "type": "string",
+                    "required": true,
+                    "enum": [
+                      "OWNER",
+                      "MANAGER",
+                      "MEMBER"
+                    ]
+                  },
+                  "expiryDetail": {
+                    "type": "object",
+                    "fields": {
+                      "expireTime": "string"
+                    }
+                  }
+                },
+                "required": true
+              }
+            }
+          }
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "membership"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "resource",
+          "param": "name",
+          "read": "cloudidentity.groups.get",
+          "segments": 2
+        }
+      ]
+    },
+    "cloudidentity.groups.memberships.delete": {
+      "resource_path": [
+        "groups",
+        "memberships"
+      ],
+      "method": "delete",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.groups"
+      ],
+      "risk": "manage",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^groups/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*/memberships/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "done",
+          "error"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "resource",
+          "param": "name",
+          "read": "cloudidentity.groups.get",
+          "segments": 2
+        }
+      ]
+    },
+    "cloudidentity.devices.list": {
+      "resource_path": [
+        "devices"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.devices.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "query",
+          "pattern": "^customers/[A-Za-z0-9]+$"
+        },
+        "filter": {
+          "type": "string",
+          "location": "query"
+        },
+        "orderBy": {
+          "type": "string",
+          "location": "query"
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        },
+        "view": {
+          "type": "string",
+          "location": "query",
+          "enum": [
+            "COMPANY_INVENTORY",
+            "USER_ASSIGNED_DEVICES"
+          ]
+        }
+      },
+      "response": {
+        "items_key": "devices",
+        "fields": [
+          "name",
+          "deviceId",
+          "deviceType",
+          "ownerType",
+          "model",
+          "manufacturer",
+          "brand",
+          "osVersion",
+          "managementState",
+          "compromisedState",
+          "encryptionState",
+          "serialNumber",
+          "assetTag",
+          "hostname",
+          "createTime",
+          "lastSyncTime"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        }
+      ]
+    },
+    "cloudidentity.devices.get": {
+      "resource_path": [
+        "devices"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.devices.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^devices/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        },
+        "customer": {
+          "type": "string",
+          "location": "query",
+          "pattern": "^customers/[A-Za-z0-9]+$"
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "deviceId",
+          "deviceType",
+          "ownerType",
+          "model",
+          "manufacturer",
+          "brand",
+          "osVersion",
+          "managementState",
+          "compromisedState",
+          "encryptionState",
+          "serialNumber",
+          "assetTag",
+          "hostname",
+          "createTime",
+          "lastSyncTime"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        }
+      ]
+    },
+    "cloudidentity.devices.create": {
+      "resource_path": [
+        "devices"
+      ],
+      "method": "create",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.devices"
+      ],
+      "risk": "manage",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "query",
+          "pattern": "^customers/[A-Za-z0-9]+$"
+        }
+      },
+      "body": {
+        "serialNumber": {
+          "type": "string",
+          "required": true
+        },
+        "assetTag": "string"
+      },
+      "response": {
+        "fields": [
+          "name",
+          "done",
+          "error"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        }
+      ]
+    },
+    "cloudidentity.devices.cancelWipe": {
+      "resource_path": [
+        "devices"
+      ],
+      "method": "cancelWipe",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.devices"
+      ],
+      "risk": "manage",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^devices/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        }
+      },
+      "body": {
+        "customer": "string"
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "done",
+          "error"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "field": "customer",
+          "as": "name"
+        },
+        {
+          "kind": "resource",
+          "param": "name",
+          "read": "cloudidentity.devices.get"
+        }
+      ]
+    },
+    "cloudidentity.devices.wipe": {
+      "resource_path": [
+        "devices"
+      ],
+      "method": "wipe",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.devices"
+      ],
+      "risk": "destructive",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^devices/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        }
+      },
+      "body": {
+        "customer": "string",
+        "removeResetLock": "boolean"
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "done",
+          "error"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "field": "customer",
+          "as": "name"
+        },
+        {
+          "kind": "resource",
+          "param": "name",
+          "read": "cloudidentity.devices.get"
+        }
+      ]
+    },
+    "cloudidentity.devices.delete": {
+      "resource_path": [
+        "devices"
+      ],
+      "method": "delete",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.devices"
+      ],
+      "risk": "destructive",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^devices/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        },
+        "customer": {
+          "type": "string",
+          "location": "query",
+          "pattern": "^customers/[A-Za-z0-9]+$"
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "done",
+          "error"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        },
+        {
+          "kind": "resource",
+          "param": "name",
+          "read": "cloudidentity.devices.get"
+        }
+      ]
+    },
+    "cloudidentity.devices.deviceUsers.list": {
+      "resource_path": [
+        "devices",
+        "deviceUsers"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.devices.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "parent": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^devices/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        },
+        "customer": {
+          "type": "string",
+          "location": "query",
+          "pattern": "^customers/[A-Za-z0-9]+$"
+        },
+        "filter": {
+          "type": "string",
+          "location": "query"
+        },
+        "orderBy": {
+          "type": "string",
+          "location": "query"
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "target_param": "parent",
+      "response": {
+        "items_key": "deviceUsers",
+        "fields": [
+          "name",
+          "userEmail",
+          "managementState",
+          "compromisedState",
+          "passwordState",
+          "languageCode",
+          "createTime",
+          "firstSyncTime",
+          "lastSyncTime"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        }
+      ]
+    },
+    "cloudidentity.devices.deviceUsers.get": {
+      "resource_path": [
+        "devices",
+        "deviceUsers"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.devices.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^devices/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*/deviceUsers/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        },
+        "customer": {
+          "type": "string",
+          "location": "query",
+          "pattern": "^customers/[A-Za-z0-9]+$"
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "userEmail",
+          "managementState",
+          "compromisedState",
+          "passwordState",
+          "languageCode",
+          "createTime",
+          "firstSyncTime",
+          "lastSyncTime"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        }
+      ]
+    },
+    "cloudidentity.devices.deviceUsers.approve": {
+      "resource_path": [
+        "devices",
+        "deviceUsers"
+      ],
+      "method": "approve",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.devices"
+      ],
+      "risk": "manage",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^devices/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*/deviceUsers/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        }
+      },
+      "body": {
+        "customer": "string"
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "done",
+          "error"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "field": "customer",
+          "as": "name"
+        },
+        {
+          "kind": "resource",
+          "param": "name",
+          "read": "cloudidentity.devices.deviceUsers.get"
+        }
+      ]
+    },
+    "cloudidentity.devices.deviceUsers.cancelWipe": {
+      "resource_path": [
+        "devices",
+        "deviceUsers"
+      ],
+      "method": "cancelWipe",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.devices"
+      ],
+      "risk": "manage",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^devices/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*/deviceUsers/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        }
+      },
+      "body": {
+        "customer": "string"
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "done",
+          "error"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "field": "customer",
+          "as": "name"
+        },
+        {
+          "kind": "resource",
+          "param": "name",
+          "read": "cloudidentity.devices.deviceUsers.get"
+        }
+      ]
+    },
+    "cloudidentity.devices.deviceUsers.block": {
+      "resource_path": [
+        "devices",
+        "deviceUsers"
+      ],
+      "method": "block",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.devices"
+      ],
+      "risk": "destructive",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^devices/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*/deviceUsers/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        }
+      },
+      "body": {
+        "customer": "string"
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "done",
+          "error"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "field": "customer",
+          "as": "name"
+        },
+        {
+          "kind": "resource",
+          "param": "name",
+          "read": "cloudidentity.devices.deviceUsers.get"
+        }
+      ]
+    },
+    "cloudidentity.devices.deviceUsers.wipe": {
+      "resource_path": [
+        "devices",
+        "deviceUsers"
+      ],
+      "method": "wipe",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.devices"
+      ],
+      "risk": "destructive",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^devices/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*/deviceUsers/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        }
+      },
+      "body": {
+        "customer": "string"
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "done",
+          "error"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "field": "customer",
+          "as": "name"
+        },
+        {
+          "kind": "resource",
+          "param": "name",
+          "read": "cloudidentity.devices.deviceUsers.get"
+        }
+      ]
+    },
+    "cloudidentity.devices.deviceUsers.delete": {
+      "resource_path": [
+        "devices",
+        "deviceUsers"
+      ],
+      "method": "delete",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.devices"
+      ],
+      "risk": "destructive",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^devices/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*/deviceUsers/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        },
+        "customer": {
+          "type": "string",
+          "location": "query",
+          "pattern": "^customers/[A-Za-z0-9]+$"
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "done",
+          "error"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        },
+        {
+          "kind": "resource",
+          "param": "name",
+          "read": "cloudidentity.devices.deviceUsers.get"
+        }
+      ]
+    },
+    "cloudidentity.devices.deviceUsers.clientStates.list": {
+      "resource_path": [
+        "devices",
+        "deviceUsers",
+        "clientStates"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.devices.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "parent": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^devices/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*/deviceUsers/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        },
+        "customer": {
+          "type": "string",
+          "location": "query",
+          "pattern": "^customers/[A-Za-z0-9]+$"
+        },
+        "filter": {
+          "type": "string",
+          "location": "query"
+        },
+        "orderBy": {
+          "type": "string",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "target_param": "parent",
+      "response": {
+        "items_key": "clientStates",
+        "fields": [
+          "name",
+          "customId",
+          "ownerType",
+          "managed",
+          "complianceState",
+          "healthScore",
+          "scoreReason",
+          "assetTags",
+          "createTime",
+          "lastUpdateTime"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        }
+      ]
+    },
+    "cloudidentity.devices.deviceUsers.clientStates.get": {
+      "resource_path": [
+        "devices",
+        "deviceUsers",
+        "clientStates"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.devices.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^devices/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*/deviceUsers/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*/clientStates/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        },
+        "customer": {
+          "type": "string",
+          "location": "query",
+          "pattern": "^customers/[A-Za-z0-9]+$"
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "customId",
+          "ownerType",
+          "managed",
+          "complianceState",
+          "healthScore",
+          "scoreReason",
+          "assetTags",
+          "createTime",
+          "lastUpdateTime"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        }
+      ]
+    },
+    "cloudidentity.inboundSamlSsoProfiles.list": {
+      "resource_path": [
+        "inboundSamlSsoProfiles"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.inboundsso.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "filter": {
+          "type": "string",
+          "location": "query"
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "inboundSamlSsoProfiles",
+        "fields": [
+          "name",
+          "customer",
+          "displayName",
+          "idpConfig",
+          "spConfig"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "deny",
+          "param": "filter"
+        },
+        {
+          "kind": "response_customer",
+          "field": "customer"
+        }
+      ]
+    },
+    "cloudidentity.inboundSamlSsoProfiles.get": {
+      "resource_path": [
+        "inboundSamlSsoProfiles"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.inboundsso.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^inboundSamlSsoProfiles/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "customer",
+          "displayName",
+          "idpConfig",
+          "spConfig"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "response_customer",
+          "field": "customer"
+        }
+      ]
+    },
+    "cloudidentity.inboundSamlSsoProfiles.create": {
+      "resource_path": [
+        "inboundSamlSsoProfiles"
+      ],
+      "method": "create",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.inboundsso"
+      ],
+      "risk": "manage",
+      "params": {},
+      "body": {
+        "customer": "string",
+        "displayName": "string",
+        "idpConfig": {
+          "type": "object",
+          "fields": {
+            "entityId": {
+              "type": "string",
+              "required": true,
+              "pattern": "^(https://[A-Za-z0-9.\\-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~%!$&'()*+,;=:@/\\-]*)?(\\?[A-Za-z0-9._~%!$&'()*+,;=:@/?\\-]*)?|urn:[A-Za-z0-9._:\\-]+)$"
+            },
+            "singleSignOnServiceUri": {
+              "type": "string",
+              "required": true,
+              "pattern": "^https://[A-Za-z0-9.\\-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~%!$&'()*+,;=:@/\\-]*)?(\\?[A-Za-z0-9._~%!$&'()*+,;=:@/?\\-]*)?$"
+            },
+            "logoutRedirectUri": {
+              "type": "string",
+              "pattern": "^https://[A-Za-z0-9.\\-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~%!$&'()*+,;=:@/\\-]*)?(\\?[A-Za-z0-9._~%!$&'()*+,;=:@/?\\-]*)?$"
+            },
+            "changePasswordUri": {
+              "type": "string",
+              "pattern": "^https://[A-Za-z0-9.\\-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~%!$&'()*+,;=:@/\\-]*)?(\\?[A-Za-z0-9._~%!$&'()*+,;=:@/?\\-]*)?$"
+            }
+          },
+          "required": true
+        }
+      },
+      "response": {
+        "fields": [
+          "name",
+          "done",
+          "error"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "field": "customer",
+          "as": "name"
+        }
+      ]
+    },
+    "cloudidentity.inboundSamlSsoProfiles.patch": {
+      "resource_path": [
+        "inboundSamlSsoProfiles"
+      ],
+      "method": "patch",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.inboundsso"
+      ],
+      "risk": "destructive",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^inboundSamlSsoProfiles/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        },
+        "updateMask": {
+          "type": "string",
+          "location": "query",
+          "pattern": "^(displayName|idpConfig\\.entityId|idpConfig\\.singleSignOnServiceUri|idpConfig\\.logoutRedirectUri|idpConfig\\.changePasswordUri|display_name|idp_config\\.entity_id|idp_config\\.single_sign_on_service_uri|idp_config\\.logout_redirect_uri|idp_config\\.change_password_uri)(,(displayName|idpConfig\\.entityId|idpConfig\\.singleSignOnServiceUri|idpConfig\\.logoutRedirectUri|idpConfig\\.changePasswordUri|display_name|idp_config\\.entity_id|idp_config\\.single_sign_on_service_uri|idp_config\\.logout_redirect_uri|idp_config\\.change_password_uri))*$"
+        }
+      },
+      "body": {
+        "displayName": "string",
+        "idpConfig": {
+          "type": "object",
+          "fields": {
+            "entityId": {
+              "type": "string",
+              "required": false,
+              "pattern": "^(https://[A-Za-z0-9.\\-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~%!$&'()*+,;=:@/\\-]*)?(\\?[A-Za-z0-9._~%!$&'()*+,;=:@/?\\-]*)?|urn:[A-Za-z0-9._:\\-]+)$"
+            },
+            "singleSignOnServiceUri": {
+              "type": "string",
+              "required": false,
+              "pattern": "^https://[A-Za-z0-9.\\-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~%!$&'()*+,;=:@/\\-]*)?(\\?[A-Za-z0-9._~%!$&'()*+,;=:@/?\\-]*)?$"
+            },
+            "logoutRedirectUri": {
+              "type": "string",
+              "pattern": "^https://[A-Za-z0-9.\\-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~%!$&'()*+,;=:@/\\-]*)?(\\?[A-Za-z0-9._~%!$&'()*+,;=:@/?\\-]*)?$"
+            },
+            "changePasswordUri": {
+              "type": "string",
+              "pattern": "^https://[A-Za-z0-9.\\-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~%!$&'()*+,;=:@/\\-]*)?(\\?[A-Za-z0-9._~%!$&'()*+,;=:@/?\\-]*)?$"
+            }
+          }
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "done",
+          "error"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "resource",
+          "param": "name",
+          "read": "cloudidentity.inboundSamlSsoProfiles.get"
+        }
+      ]
+    },
+    "cloudidentity.inboundSamlSsoProfiles.delete": {
+      "resource_path": [
+        "inboundSamlSsoProfiles"
+      ],
+      "method": "delete",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.inboundsso"
+      ],
+      "risk": "destructive",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^inboundSamlSsoProfiles/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "done",
+          "error"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "resource",
+          "param": "name",
+          "read": "cloudidentity.inboundSamlSsoProfiles.get"
+        }
+      ]
+    },
+    "cloudidentity.inboundOidcSsoProfiles.list": {
+      "resource_path": [
+        "inboundOidcSsoProfiles"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.inboundsso.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "filter": {
+          "type": "string",
+          "location": "query"
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "inboundOidcSsoProfiles",
+        "fields": [
+          "name",
+          "customer",
+          "displayName",
+          "idpConfig",
+          "rpConfig"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "deny",
+          "param": "filter"
+        },
+        {
+          "kind": "response_customer",
+          "field": "customer"
+        }
+      ]
+    },
+    "cloudidentity.inboundOidcSsoProfiles.get": {
+      "resource_path": [
+        "inboundOidcSsoProfiles"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.inboundsso.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^inboundOidcSsoProfiles/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "customer",
+          "displayName",
+          "idpConfig",
+          "rpConfig"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "response_customer",
+          "field": "customer"
+        }
+      ]
+    },
+    "cloudidentity.inboundOidcSsoProfiles.create": {
+      "resource_path": [
+        "inboundOidcSsoProfiles"
+      ],
+      "method": "create",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.inboundsso"
+      ],
+      "risk": "manage",
+      "params": {},
+      "body": {
+        "customer": "string",
+        "displayName": "string",
+        "idpConfig": {
+          "type": "object",
+          "fields": {
+            "issuerUri": {
+              "type": "string",
+              "required": true,
+              "pattern": "^https://[A-Za-z0-9.\\-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~%!$&'()*+,;=:@/\\-]*)?(\\?[A-Za-z0-9._~%!$&'()*+,;=:@/?\\-]*)?$"
+            },
+            "changePasswordUri": {
+              "type": "string",
+              "pattern": "^https://[A-Za-z0-9.\\-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~%!$&'()*+,;=:@/\\-]*)?(\\?[A-Za-z0-9._~%!$&'()*+,;=:@/?\\-]*)?$"
+            }
+          },
+          "required": true
+        },
+        "rpConfig": {
+          "type": "object",
+          "fields": {
+            "clientId": "string"
+          }
+        }
+      },
+      "response": {
+        "fields": [
+          "name",
+          "done",
+          "error"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "field": "customer",
+          "as": "name"
+        }
+      ]
+    },
+    "cloudidentity.inboundOidcSsoProfiles.patch": {
+      "resource_path": [
+        "inboundOidcSsoProfiles"
+      ],
+      "method": "patch",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.inboundsso"
+      ],
+      "risk": "destructive",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^inboundOidcSsoProfiles/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        },
+        "updateMask": {
+          "type": "string",
+          "location": "query",
+          "pattern": "^(displayName|idpConfig\\.issuerUri|idpConfig\\.changePasswordUri|rpConfig\\.clientId|display_name|idp_config\\.issuer_uri|idp_config\\.change_password_uri|rp_config\\.client_id)(,(displayName|idpConfig\\.issuerUri|idpConfig\\.changePasswordUri|rpConfig\\.clientId|display_name|idp_config\\.issuer_uri|idp_config\\.change_password_uri|rp_config\\.client_id))*$"
+        }
+      },
+      "body": {
+        "displayName": "string",
+        "idpConfig": {
+          "type": "object",
+          "fields": {
+            "issuerUri": {
+              "type": "string",
+              "required": false,
+              "pattern": "^https://[A-Za-z0-9.\\-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~%!$&'()*+,;=:@/\\-]*)?(\\?[A-Za-z0-9._~%!$&'()*+,;=:@/?\\-]*)?$"
+            },
+            "changePasswordUri": {
+              "type": "string",
+              "pattern": "^https://[A-Za-z0-9.\\-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~%!$&'()*+,;=:@/\\-]*)?(\\?[A-Za-z0-9._~%!$&'()*+,;=:@/?\\-]*)?$"
+            }
+          }
+        },
+        "rpConfig": {
+          "type": "object",
+          "fields": {
+            "clientId": "string"
+          }
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "done",
+          "error"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "resource",
+          "param": "name",
+          "read": "cloudidentity.inboundOidcSsoProfiles.get"
+        }
+      ]
+    },
+    "cloudidentity.inboundOidcSsoProfiles.delete": {
+      "resource_path": [
+        "inboundOidcSsoProfiles"
+      ],
+      "method": "delete",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.inboundsso"
+      ],
+      "risk": "destructive",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^inboundOidcSsoProfiles/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "done",
+          "error"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "resource",
+          "param": "name",
+          "read": "cloudidentity.inboundOidcSsoProfiles.get"
+        }
+      ]
+    },
+    "cloudidentity.inboundSamlSsoProfiles.idpCredentials.list": {
+      "resource_path": [
+        "inboundSamlSsoProfiles",
+        "idpCredentials"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.inboundsso.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "parent": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^inboundSamlSsoProfiles/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "target_param": "parent",
+      "response": {
+        "items_key": "idpCredentials",
+        "fields": [
+          "name",
+          "updateTime",
+          "rsaKeyInfo",
+          "dsaKeyInfo"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "resource",
+          "param": "parent",
+          "read": "cloudidentity.inboundSamlSsoProfiles.get"
+        }
+      ]
+    },
+    "cloudidentity.inboundSamlSsoProfiles.idpCredentials.get": {
+      "resource_path": [
+        "inboundSamlSsoProfiles",
+        "idpCredentials"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.inboundsso.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^inboundSamlSsoProfiles/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*/idpCredentials/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "updateTime",
+          "rsaKeyInfo",
+          "dsaKeyInfo"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "resource",
+          "param": "name",
+          "read": "cloudidentity.inboundSamlSsoProfiles.get",
+          "segments": 2
+        }
+      ]
+    },
+    "cloudidentity.inboundSamlSsoProfiles.idpCredentials.delete": {
+      "resource_path": [
+        "inboundSamlSsoProfiles",
+        "idpCredentials"
+      ],
+      "method": "delete",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.inboundsso"
+      ],
+      "risk": "destructive",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^inboundSamlSsoProfiles/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*/idpCredentials/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "done",
+          "error"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "resource",
+          "param": "name",
+          "read": "cloudidentity.inboundSamlSsoProfiles.get",
+          "segments": 2
+        }
+      ]
+    },
+    "cloudidentity.inboundSsoAssignments.list": {
+      "resource_path": [
+        "inboundSsoAssignments"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.inboundsso.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "filter": {
+          "type": "string",
+          "location": "query"
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "inboundSsoAssignments",
+        "fields": [
+          "name",
+          "customer",
+          "targetGroup",
+          "targetOrgUnit",
+          "ssoMode",
+          "samlSsoInfo",
+          "oidcSsoInfo",
+          "rank",
+          "signInBehavior"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "deny",
+          "param": "filter"
+        },
+        {
+          "kind": "response_customer",
+          "field": "customer"
+        }
+      ]
+    },
+    "cloudidentity.inboundSsoAssignments.get": {
+      "resource_path": [
+        "inboundSsoAssignments"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.inboundsso.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^inboundSsoAssignments/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "customer",
+          "targetGroup",
+          "targetOrgUnit",
+          "ssoMode",
+          "samlSsoInfo",
+          "oidcSsoInfo",
+          "rank",
+          "signInBehavior"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "response_customer",
+          "field": "customer"
+        }
+      ]
+    },
+    "cloudidentity.inboundSsoAssignments.create": {
+      "resource_path": [
+        "inboundSsoAssignments"
+      ],
+      "method": "create",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.inboundsso"
+      ],
+      "risk": "destructive",
+      "params": {},
+      "body": {
+        "customer": "string",
+        "targetOrgUnit": {
+          "type": "string",
+          "pattern": "^orgUnits/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        },
+        "targetGroup": {
+          "type": "string",
+          "pattern": "^groups/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        },
+        "ssoMode": {
+          "type": "string",
+          "enum": [
+            "SSO_OFF",
+            "SAML_SSO",
+            "OIDC_SSO",
+            "DOMAIN_WIDE_SAML_IF_ENABLED"
+          ]
+        },
+        "samlSsoInfo": {
+          "type": "object",
+          "fields": {
+            "inboundSamlSsoProfile": {
+              "type": "string",
+              "required": true,
+              "pattern": "^inboundSamlSsoProfiles/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+            }
+          }
+        },
+        "oidcSsoInfo": {
+          "type": "object",
+          "fields": {
+            "inboundOidcSsoProfile": {
+              "type": "string",
+              "required": true,
+              "pattern": "^inboundOidcSsoProfiles/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+            }
+          }
+        },
+        "rank": "integer",
+        "signInBehavior": {
+          "type": "object",
+          "fields": {
+            "redirectCondition": {
+              "type": "string",
+              "enum": [
+                "NEVER"
+              ]
+            }
+          }
+        }
+      },
+      "response": {
+        "fields": [
+          "name",
+          "done",
+          "error"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "field": "customer",
+          "as": "name"
+        },
+        {
+          "kind": "org_unit",
+          "field": "targetOrgUnit"
+        },
+        {
+          "kind": "resource",
+          "field": "targetGroup",
+          "read": "cloudidentity.groups.get"
+        },
+        {
+          "kind": "resource",
+          "field": "samlSsoInfo.inboundSamlSsoProfile",
+          "read": "cloudidentity.inboundSamlSsoProfiles.get"
+        },
+        {
+          "kind": "resource",
+          "field": "oidcSsoInfo.inboundOidcSsoProfile",
+          "read": "cloudidentity.inboundOidcSsoProfiles.get"
+        }
+      ]
+    },
+    "cloudidentity.inboundSsoAssignments.patch": {
+      "resource_path": [
+        "inboundSsoAssignments"
+      ],
+      "method": "patch",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.inboundsso"
+      ],
+      "risk": "destructive",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^inboundSsoAssignments/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        },
+        "updateMask": {
+          "type": "string",
+          "location": "query",
+          "pattern": "^(ssoMode|samlSsoInfo\\.inboundSamlSsoProfile|oidcSsoInfo\\.inboundOidcSsoProfile|rank|signInBehavior\\.redirectCondition|sso_mode|saml_sso_info\\.inbound_saml_sso_profile|oidc_sso_info\\.inbound_oidc_sso_profile|rank|sign_in_behavior\\.redirect_condition)(,(ssoMode|samlSsoInfo\\.inboundSamlSsoProfile|oidcSsoInfo\\.inboundOidcSsoProfile|rank|signInBehavior\\.redirectCondition|sso_mode|saml_sso_info\\.inbound_saml_sso_profile|oidc_sso_info\\.inbound_oidc_sso_profile|rank|sign_in_behavior\\.redirect_condition))*$"
+        }
+      },
+      "body": {
+        "ssoMode": {
+          "type": "string",
+          "enum": [
+            "SSO_OFF",
+            "SAML_SSO",
+            "OIDC_SSO",
+            "DOMAIN_WIDE_SAML_IF_ENABLED"
+          ]
+        },
+        "samlSsoInfo": {
+          "type": "object",
+          "fields": {
+            "inboundSamlSsoProfile": {
+              "type": "string",
+              "required": true,
+              "pattern": "^inboundSamlSsoProfiles/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+            }
+          }
+        },
+        "oidcSsoInfo": {
+          "type": "object",
+          "fields": {
+            "inboundOidcSsoProfile": {
+              "type": "string",
+              "required": true,
+              "pattern": "^inboundOidcSsoProfiles/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+            }
+          }
+        },
+        "rank": "integer",
+        "signInBehavior": {
+          "type": "object",
+          "fields": {
+            "redirectCondition": {
+              "type": "string",
+              "enum": [
+                "NEVER"
+              ]
+            }
+          }
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "done",
+          "error"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "resource",
+          "param": "name",
+          "read": "cloudidentity.inboundSsoAssignments.get"
+        },
+        {
+          "kind": "resource",
+          "field": "samlSsoInfo.inboundSamlSsoProfile",
+          "read": "cloudidentity.inboundSamlSsoProfiles.get"
+        },
+        {
+          "kind": "resource",
+          "field": "oidcSsoInfo.inboundOidcSsoProfile",
+          "read": "cloudidentity.inboundOidcSsoProfiles.get"
+        }
+      ]
+    },
+    "cloudidentity.inboundSsoAssignments.delete": {
+      "resource_path": [
+        "inboundSsoAssignments"
+      ],
+      "method": "delete",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.inboundsso"
+      ],
+      "risk": "destructive",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^inboundSsoAssignments/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "done",
+          "error"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "resource",
+          "param": "name",
+          "read": "cloudidentity.inboundSsoAssignments.get"
+        }
+      ]
+    },
+    "cloudidentity.policies.list": {
+      "resource_path": [
+        "policies"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.policies.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "filter": {
+          "type": "string",
+          "location": "query"
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "policies",
+        "fields": [
+          "name",
+          "customer",
+          "type",
+          "policyQuery",
+          "setting"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "response_customer",
+          "field": "customer"
+        }
+      ]
+    },
+    "cloudidentity.policies.get": {
+      "resource_path": [
+        "policies"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.policies.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^policies/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "customer",
+          "type",
+          "policyQuery",
+          "setting"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "response_customer",
+          "field": "customer"
+        }
+      ]
+    },
+    "cloudidentity.policies.create": {
+      "resource_path": [
+        "policies"
+      ],
+      "method": "create",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.policies"
+      ],
+      "risk": "destructive",
+      "params": {},
+      "body": {
+        "customer": "string",
+        "policyQuery": {
+          "type": "object",
+          "required": true,
+          "fields": {
+            "orgUnit": {
+              "type": "string",
+              "required": true,
+              "pattern": "^orgUnits/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+            },
+            "group": {
+              "type": "string",
+              "pattern": "^groups/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+            }
+          }
+        },
+        "setting": {
+          "type": "object",
+          "required": true,
+          "fields": {
+            "type": {
+              "type": "string",
+              "required": true
+            },
+            "value": {
+              "type": "object",
+              "required": true
+            }
+          }
+        }
+      },
+      "response": {
+        "fields": [
+          "name",
+          "done",
+          "error"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "field": "customer",
+          "as": "name"
+        },
+        {
+          "kind": "org_unit",
+          "field": "policyQuery.orgUnit"
+        },
+        {
+          "kind": "resource",
+          "field": "policyQuery.group",
+          "read": "cloudidentity.groups.get"
+        }
+      ]
+    },
+    "cloudidentity.policies.patch": {
+      "resource_path": [
+        "policies"
+      ],
+      "method": "patch",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.policies"
+      ],
+      "risk": "destructive",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^policies/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        }
+      },
+      "body": {
+        "setting": {
+          "type": "object",
+          "required": true,
+          "fields": {
+            "type": {
+              "type": "string",
+              "required": true
+            },
+            "value": {
+              "type": "object",
+              "required": true
+            }
+          }
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "done",
+          "error"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "resource",
+          "param": "name",
+          "read": "cloudidentity.policies.get"
+        }
+      ]
+    },
+    "cloudidentity.policies.delete": {
+      "resource_path": [
+        "policies"
+      ],
+      "method": "delete",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.policies"
+      ],
+      "risk": "destructive",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^policies/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "done",
+          "error"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "resource",
+          "param": "name",
+          "read": "cloudidentity.policies.get"
+        }
+      ]
+    },
+    "cloudidentity.allowlistedDomains.list": {
+      "resource_path": [
+        "allowlistedDomains"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.allowlisteddomains.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "filter": {
+          "type": "string",
+          "location": "query"
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "allowlistedDomains",
+        "fields": [
+          "name",
+          "domain"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "tenant"
+        }
+      ]
+    },
+    "cloudidentity.allowlistedDomains.get": {
+      "resource_path": [
+        "allowlistedDomains"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.allowlisteddomains.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^allowlistedDomains/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "domain"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "tenant"
+        }
+      ]
+    },
+    "cloudidentity.allowlistedDomains.create": {
+      "resource_path": [
+        "allowlistedDomains"
+      ],
+      "method": "create",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.allowlisteddomains"
+      ],
+      "risk": "destructive",
+      "params": {},
+      "body": {
+        "domain": {
+          "type": "string",
+          "required": true,
+          "pattern": "^[A-Za-z0-9]([A-Za-z0-9\\-]*[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9\\-]*[A-Za-z0-9])?)+$"
+        }
+      },
+      "response": {
+        "fields": [
+          "name",
+          "done",
+          "error"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "tenant"
+        }
+      ]
+    },
+    "cloudidentity.allowlistedDomains.delete": {
+      "resource_path": [
+        "allowlistedDomains"
+      ],
+      "method": "delete",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.allowlisteddomains"
+      ],
+      "risk": "destructive",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^allowlistedDomains/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "done",
+          "error"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "tenant"
+        },
+        {
+          "kind": "resource",
+          "param": "name",
+          "read": "cloudidentity.allowlistedDomains.get"
+        }
+      ]
+    },
+    "cloudidentity.customers.userinvitations.list": {
+      "resource_path": [
+        "customers",
+        "userinvitations"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.userinvitations.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "parent": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9]+$"
+        },
+        "filter": {
+          "type": "string",
+          "location": "query"
+        },
+        "orderBy": {
+          "type": "string",
+          "location": "query"
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "userInvitations",
+        "fields": [
+          "name",
+          "state",
+          "mailsSentCount",
+          "updateTime"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "parent",
+          "as": "name"
+        }
+      ]
+    },
+    "cloudidentity.customers.userinvitations.get": {
+      "resource_path": [
+        "customers",
+        "userinvitations"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.userinvitations.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*/userinvitations/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "state",
+          "mailsSentCount",
+          "updateTime"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer_path",
+          "param": "name"
+        },
+        {
+          "kind": "domain",
+          "param": "name"
+        }
+      ]
+    },
+    "cloudidentity.customers.userinvitations.isInvitableUser": {
+      "resource_path": [
+        "customers",
+        "userinvitations"
+      ],
+      "method": "isInvitableUser",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.userinvitations.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*/userinvitations/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "isInvitableUser"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer_path",
+          "param": "name"
+        },
+        {
+          "kind": "domain",
+          "param": "name"
+        }
+      ]
+    },
+    "cloudidentity.customers.userinvitations.send": {
+      "resource_path": [
+        "customers",
+        "userinvitations"
+      ],
+      "method": "send",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.userinvitations"
+      ],
+      "risk": "manage",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*/userinvitations/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "done",
+          "error"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer_path",
+          "param": "name"
+        },
+        {
+          "kind": "domain",
+          "param": "name"
+        }
+      ]
+    },
+    "cloudidentity.customers.userinvitations.cancel": {
+      "resource_path": [
+        "customers",
+        "userinvitations"
+      ],
+      "method": "cancel",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.userinvitations"
+      ],
+      "risk": "manage",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*/userinvitations/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "done",
+          "error"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer_path",
+          "param": "name"
+        },
+        {
+          "kind": "domain",
+          "param": "name"
+        }
+      ]
+    }
+  },
+  "excluded": {
+    "cloudidentity.groups.memberships.searchDirectGroups": {
+      "category": "unguarded-target",
+      "reason": "Searches every group (parent groups/-) for an arbitrary member expression; results carry no customer field, so groups of other customers could be returned."
+    },
+    "cloudidentity.groups.memberships.searchTransitiveGroups": {
+      "category": "unguarded-target",
+      "reason": "Searches every group (parent groups/-) for an arbitrary member expression; results carry no customer field, so groups of other customers could be returned."
+    },
+    "cloudidentity.groups.memberships.getMembershipGraph": {
+      "category": "unvalidated-schema",
+      "reason": "Returns an untyped long-running Operation whose response is an arbitrary membership graph across groups that cannot be bound to the customer."
+    },
+    "cloudidentity.devices.deviceUsers.lookup": {
+      "category": "unguarded-target",
+      "reason": "Resolves the calling device's own users from raw hardware and partner identifiers under the separate devices.lookup scope; it is an endpoint agent call, not an admin read of a verified device."
+    },
+    "cloudidentity.devices.deviceUsers.clientStates.patch": {
+      "category": "unguarded-target",
+      "reason": "Writes compliance and health signals that context-aware access trusts, under a partner ID embedded in the name that cannot be verified; a wrong value could grant access."
+    },
+    "cloudidentity.inboundSamlSsoProfiles.idpCredentials.add": {
+      "category": "secret-in-payload",
+      "reason": "The body carries identity provider certificate PEM data, which would be stored in the plaintext confirmation proposal and audit; add SAML certificates in the Admin console."
+    }
+  }
+}

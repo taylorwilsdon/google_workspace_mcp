@@ -1,0 +1,2118 @@
+{
+  "methods": {
+    "gmail.users.drafts.create": {
+      "httpMethod": "POST",
+      "parameters": {
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/drafts",
+      "request": "Draft",
+      "response": "Draft",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.addons.current.action.compose",
+        "https://www.googleapis.com/auth/gmail.compose",
+        "https://www.googleapis.com/auth/gmail.modify"
+      ]
+    },
+    "gmail.users.drafts.delete": {
+      "httpMethod": "DELETE",
+      "parameters": {
+        "id": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/drafts/{id}",
+      "request": null,
+      "response": null,
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.addons.current.action.compose",
+        "https://www.googleapis.com/auth/gmail.compose",
+        "https://www.googleapis.com/auth/gmail.modify"
+      ]
+    },
+    "gmail.users.drafts.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "format": {
+          "enum": [
+            "minimal",
+            "full",
+            "raw",
+            "metadata"
+          ],
+          "location": "query",
+          "type": "string"
+        },
+        "id": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/drafts/{id}",
+      "request": null,
+      "response": "Draft",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.compose",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/gmail.readonly"
+      ]
+    },
+    "gmail.users.drafts.list": {
+      "httpMethod": "GET",
+      "parameters": {
+        "includeSpamTrash": {
+          "location": "query",
+          "type": "boolean"
+        },
+        "maxResults": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        },
+        "q": {
+          "location": "query",
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/drafts",
+      "request": null,
+      "response": "ListDraftsResponse",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.compose",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/gmail.readonly"
+      ]
+    },
+    "gmail.users.drafts.send": {
+      "httpMethod": "POST",
+      "parameters": {
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/drafts/send",
+      "request": "Draft",
+      "response": "Message",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.addons.current.action.compose",
+        "https://www.googleapis.com/auth/gmail.compose",
+        "https://www.googleapis.com/auth/gmail.modify"
+      ]
+    },
+    "gmail.users.drafts.update": {
+      "httpMethod": "PUT",
+      "parameters": {
+        "id": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/drafts/{id}",
+      "request": "Draft",
+      "response": "Draft",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.addons.current.action.compose",
+        "https://www.googleapis.com/auth/gmail.compose",
+        "https://www.googleapis.com/auth/gmail.modify"
+      ]
+    },
+    "gmail.users.getProfile": {
+      "httpMethod": "GET",
+      "parameters": {
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/profile",
+      "request": null,
+      "response": "Profile",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.compose",
+        "https://www.googleapis.com/auth/gmail.metadata",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/gmail.readonly"
+      ]
+    },
+    "gmail.users.history.list": {
+      "httpMethod": "GET",
+      "parameters": {
+        "historyTypes": {
+          "enum": [
+            "messageAdded",
+            "messageDeleted",
+            "labelAdded",
+            "labelRemoved"
+          ],
+          "location": "query",
+          "type": "string"
+        },
+        "labelId": {
+          "location": "query",
+          "type": "string"
+        },
+        "maxResults": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        },
+        "startHistoryId": {
+          "location": "query",
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/history",
+      "request": null,
+      "response": "ListHistoryResponse",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.metadata",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/gmail.readonly"
+      ]
+    },
+    "gmail.users.labels.create": {
+      "httpMethod": "POST",
+      "parameters": {
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/labels",
+      "request": "Label",
+      "response": "Label",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.labels",
+        "https://www.googleapis.com/auth/gmail.modify"
+      ]
+    },
+    "gmail.users.labels.delete": {
+      "httpMethod": "DELETE",
+      "parameters": {
+        "id": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/labels/{id}",
+      "request": null,
+      "response": null,
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.labels",
+        "https://www.googleapis.com/auth/gmail.modify"
+      ]
+    },
+    "gmail.users.labels.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "id": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/labels/{id}",
+      "request": null,
+      "response": "Label",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.labels",
+        "https://www.googleapis.com/auth/gmail.metadata",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/gmail.readonly"
+      ]
+    },
+    "gmail.users.labels.list": {
+      "httpMethod": "GET",
+      "parameters": {
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/labels",
+      "request": null,
+      "response": "ListLabelsResponse",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.labels",
+        "https://www.googleapis.com/auth/gmail.metadata",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/gmail.readonly"
+      ]
+    },
+    "gmail.users.labels.patch": {
+      "httpMethod": "PATCH",
+      "parameters": {
+        "id": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/labels/{id}",
+      "request": "Label",
+      "response": "Label",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.labels",
+        "https://www.googleapis.com/auth/gmail.modify"
+      ]
+    },
+    "gmail.users.labels.update": {
+      "httpMethod": "PUT",
+      "parameters": {
+        "id": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/labels/{id}",
+      "request": "Label",
+      "response": "Label",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.labels",
+        "https://www.googleapis.com/auth/gmail.modify"
+      ]
+    },
+    "gmail.users.messages.attachments.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "id": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "messageId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/messages/{messageId}/attachments/{id}",
+      "request": null,
+      "response": "MessagePartBody",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.addons.current.message.action",
+        "https://www.googleapis.com/auth/gmail.addons.current.message.readonly",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/gmail.readonly"
+      ]
+    },
+    "gmail.users.messages.batchDelete": {
+      "httpMethod": "POST",
+      "parameters": {
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/messages/batchDelete",
+      "request": "BatchDeleteMessagesRequest",
+      "response": null,
+      "scopes": [
+        "https://mail.google.com/"
+      ]
+    },
+    "gmail.users.messages.batchModify": {
+      "httpMethod": "POST",
+      "parameters": {
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/messages/batchModify",
+      "request": "BatchModifyMessagesRequest",
+      "response": null,
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.modify"
+      ]
+    },
+    "gmail.users.messages.delete": {
+      "httpMethod": "DELETE",
+      "parameters": {
+        "id": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/messages/{id}",
+      "request": null,
+      "response": null,
+      "scopes": [
+        "https://mail.google.com/"
+      ]
+    },
+    "gmail.users.messages.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "format": {
+          "enum": [
+            "minimal",
+            "full",
+            "raw",
+            "metadata"
+          ],
+          "location": "query",
+          "type": "string"
+        },
+        "id": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "metadataHeaders": {
+          "location": "query",
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/messages/{id}",
+      "request": null,
+      "response": "Message",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.addons.current.message.action",
+        "https://www.googleapis.com/auth/gmail.addons.current.message.metadata",
+        "https://www.googleapis.com/auth/gmail.addons.current.message.readonly",
+        "https://www.googleapis.com/auth/gmail.metadata",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/gmail.readonly"
+      ]
+    },
+    "gmail.users.messages.import": {
+      "httpMethod": "POST",
+      "parameters": {
+        "deleted": {
+          "location": "query",
+          "type": "boolean"
+        },
+        "internalDateSource": {
+          "enum": [
+            "receivedTime",
+            "dateHeader"
+          ],
+          "location": "query",
+          "type": "string"
+        },
+        "neverMarkSpam": {
+          "location": "query",
+          "type": "boolean"
+        },
+        "processForCalendar": {
+          "location": "query",
+          "type": "boolean"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/messages/import",
+      "request": "Message",
+      "response": "Message",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.insert",
+        "https://www.googleapis.com/auth/gmail.modify"
+      ]
+    },
+    "gmail.users.messages.insert": {
+      "httpMethod": "POST",
+      "parameters": {
+        "deleted": {
+          "location": "query",
+          "type": "boolean"
+        },
+        "internalDateSource": {
+          "enum": [
+            "receivedTime",
+            "dateHeader"
+          ],
+          "location": "query",
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/messages",
+      "request": "Message",
+      "response": "Message",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.insert",
+        "https://www.googleapis.com/auth/gmail.modify"
+      ]
+    },
+    "gmail.users.messages.list": {
+      "httpMethod": "GET",
+      "parameters": {
+        "includeSpamTrash": {
+          "location": "query",
+          "type": "boolean"
+        },
+        "labelIds": {
+          "location": "query",
+          "type": "string"
+        },
+        "maxResults": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        },
+        "q": {
+          "location": "query",
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/messages",
+      "request": null,
+      "response": "ListMessagesResponse",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.metadata",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/gmail.readonly"
+      ]
+    },
+    "gmail.users.messages.modify": {
+      "httpMethod": "POST",
+      "parameters": {
+        "id": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/messages/{id}/modify",
+      "request": "ModifyMessageRequest",
+      "response": "Message",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.modify"
+      ]
+    },
+    "gmail.users.messages.send": {
+      "httpMethod": "POST",
+      "parameters": {
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/messages/send",
+      "request": "Message",
+      "response": "Message",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.addons.current.action.compose",
+        "https://www.googleapis.com/auth/gmail.compose",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/gmail.send"
+      ]
+    },
+    "gmail.users.messages.trash": {
+      "httpMethod": "POST",
+      "parameters": {
+        "id": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/messages/{id}/trash",
+      "request": null,
+      "response": "Message",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.modify"
+      ]
+    },
+    "gmail.users.messages.untrash": {
+      "httpMethod": "POST",
+      "parameters": {
+        "id": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/messages/{id}/untrash",
+      "request": null,
+      "response": "Message",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.modify"
+      ]
+    },
+    "gmail.users.settings.cse.identities.create": {
+      "httpMethod": "POST",
+      "parameters": {
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/cse/identities",
+      "request": "CseIdentity",
+      "response": "CseIdentity",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.settings.basic",
+        "https://www.googleapis.com/auth/gmail.settings.sharing"
+      ]
+    },
+    "gmail.users.settings.cse.identities.delete": {
+      "httpMethod": "DELETE",
+      "parameters": {
+        "cseEmailAddress": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/cse/identities/{cseEmailAddress}",
+      "request": null,
+      "response": null,
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.settings.basic",
+        "https://www.googleapis.com/auth/gmail.settings.sharing"
+      ]
+    },
+    "gmail.users.settings.cse.identities.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "cseEmailAddress": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/cse/identities/{cseEmailAddress}",
+      "request": null,
+      "response": "CseIdentity",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.settings.basic",
+        "https://www.googleapis.com/auth/gmail.settings.sharing"
+      ]
+    },
+    "gmail.users.settings.cse.identities.list": {
+      "httpMethod": "GET",
+      "parameters": {
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/cse/identities",
+      "request": null,
+      "response": "ListCseIdentitiesResponse",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.settings.basic",
+        "https://www.googleapis.com/auth/gmail.settings.sharing"
+      ]
+    },
+    "gmail.users.settings.cse.identities.patch": {
+      "httpMethod": "PATCH",
+      "parameters": {
+        "emailAddress": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/cse/identities/{emailAddress}",
+      "request": "CseIdentity",
+      "response": "CseIdentity",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.settings.basic",
+        "https://www.googleapis.com/auth/gmail.settings.sharing"
+      ]
+    },
+    "gmail.users.settings.cse.keypairs.create": {
+      "httpMethod": "POST",
+      "parameters": {
+        "chainValidation": {
+          "enum": [
+            "all",
+            "none"
+          ],
+          "location": "query",
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/cse/keypairs",
+      "request": "CseKeyPair",
+      "response": "CseKeyPair",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.settings.basic",
+        "https://www.googleapis.com/auth/gmail.settings.sharing"
+      ]
+    },
+    "gmail.users.settings.cse.keypairs.disable": {
+      "httpMethod": "POST",
+      "parameters": {
+        "keyPairId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/cse/keypairs/{keyPairId}:disable",
+      "request": "DisableCseKeyPairRequest",
+      "response": "CseKeyPair",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.settings.basic",
+        "https://www.googleapis.com/auth/gmail.settings.sharing"
+      ]
+    },
+    "gmail.users.settings.cse.keypairs.enable": {
+      "httpMethod": "POST",
+      "parameters": {
+        "keyPairId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/cse/keypairs/{keyPairId}:enable",
+      "request": "EnableCseKeyPairRequest",
+      "response": "CseKeyPair",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.settings.basic",
+        "https://www.googleapis.com/auth/gmail.settings.sharing"
+      ]
+    },
+    "gmail.users.settings.cse.keypairs.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "keyPairId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/cse/keypairs/{keyPairId}",
+      "request": null,
+      "response": "CseKeyPair",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.settings.basic",
+        "https://www.googleapis.com/auth/gmail.settings.sharing"
+      ]
+    },
+    "gmail.users.settings.cse.keypairs.list": {
+      "httpMethod": "GET",
+      "parameters": {
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/cse/keypairs",
+      "request": null,
+      "response": "ListCseKeyPairsResponse",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.settings.basic",
+        "https://www.googleapis.com/auth/gmail.settings.sharing"
+      ]
+    },
+    "gmail.users.settings.cse.keypairs.obliterate": {
+      "httpMethod": "POST",
+      "parameters": {
+        "keyPairId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/cse/keypairs/{keyPairId}:obliterate",
+      "request": "ObliterateCseKeyPairRequest",
+      "response": null,
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.settings.basic",
+        "https://www.googleapis.com/auth/gmail.settings.sharing"
+      ]
+    },
+    "gmail.users.settings.delegates.create": {
+      "httpMethod": "POST",
+      "parameters": {
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/delegates",
+      "request": "Delegate",
+      "response": "Delegate",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.settings.sharing"
+      ]
+    },
+    "gmail.users.settings.delegates.delete": {
+      "httpMethod": "DELETE",
+      "parameters": {
+        "delegateEmail": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/delegates/{delegateEmail}",
+      "request": null,
+      "response": null,
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.settings.sharing"
+      ]
+    },
+    "gmail.users.settings.delegates.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "delegateEmail": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/delegates/{delegateEmail}",
+      "request": null,
+      "response": "Delegate",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.settings.basic"
+      ]
+    },
+    "gmail.users.settings.delegates.list": {
+      "httpMethod": "GET",
+      "parameters": {
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/delegates",
+      "request": null,
+      "response": "ListDelegatesResponse",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.settings.basic"
+      ]
+    },
+    "gmail.users.settings.filters.create": {
+      "httpMethod": "POST",
+      "parameters": {
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/filters",
+      "request": "Filter",
+      "response": "Filter",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.settings.basic"
+      ]
+    },
+    "gmail.users.settings.filters.delete": {
+      "httpMethod": "DELETE",
+      "parameters": {
+        "id": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/filters/{id}",
+      "request": null,
+      "response": null,
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.settings.basic"
+      ]
+    },
+    "gmail.users.settings.filters.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "id": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/filters/{id}",
+      "request": null,
+      "response": "Filter",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.settings.basic"
+      ]
+    },
+    "gmail.users.settings.filters.list": {
+      "httpMethod": "GET",
+      "parameters": {
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/filters",
+      "request": null,
+      "response": "ListFiltersResponse",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.settings.basic"
+      ]
+    },
+    "gmail.users.settings.forwardingAddresses.create": {
+      "httpMethod": "POST",
+      "parameters": {
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/forwardingAddresses",
+      "request": "ForwardingAddress",
+      "response": "ForwardingAddress",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.settings.sharing"
+      ]
+    },
+    "gmail.users.settings.forwardingAddresses.delete": {
+      "httpMethod": "DELETE",
+      "parameters": {
+        "forwardingEmail": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/forwardingAddresses/{forwardingEmail}",
+      "request": null,
+      "response": null,
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.settings.sharing"
+      ]
+    },
+    "gmail.users.settings.forwardingAddresses.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "forwardingEmail": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/forwardingAddresses/{forwardingEmail}",
+      "request": null,
+      "response": "ForwardingAddress",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.settings.basic"
+      ]
+    },
+    "gmail.users.settings.forwardingAddresses.list": {
+      "httpMethod": "GET",
+      "parameters": {
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/forwardingAddresses",
+      "request": null,
+      "response": "ListForwardingAddressesResponse",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.settings.basic"
+      ]
+    },
+    "gmail.users.settings.getAutoForwarding": {
+      "httpMethod": "GET",
+      "parameters": {
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/autoForwarding",
+      "request": null,
+      "response": "AutoForwarding",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.settings.basic"
+      ]
+    },
+    "gmail.users.settings.getImap": {
+      "httpMethod": "GET",
+      "parameters": {
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/imap",
+      "request": null,
+      "response": "ImapSettings",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.settings.basic"
+      ]
+    },
+    "gmail.users.settings.getLanguage": {
+      "httpMethod": "GET",
+      "parameters": {
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/language",
+      "request": null,
+      "response": "LanguageSettings",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.settings.basic"
+      ]
+    },
+    "gmail.users.settings.getPop": {
+      "httpMethod": "GET",
+      "parameters": {
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/pop",
+      "request": null,
+      "response": "PopSettings",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.settings.basic"
+      ]
+    },
+    "gmail.users.settings.getVacation": {
+      "httpMethod": "GET",
+      "parameters": {
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/vacation",
+      "request": null,
+      "response": "VacationSettings",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.settings.basic"
+      ]
+    },
+    "gmail.users.settings.sendAs.create": {
+      "httpMethod": "POST",
+      "parameters": {
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/sendAs",
+      "request": "SendAs",
+      "response": "SendAs",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.settings.sharing"
+      ]
+    },
+    "gmail.users.settings.sendAs.delete": {
+      "httpMethod": "DELETE",
+      "parameters": {
+        "sendAsEmail": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/sendAs/{sendAsEmail}",
+      "request": null,
+      "response": null,
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.settings.sharing"
+      ]
+    },
+    "gmail.users.settings.sendAs.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "sendAsEmail": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/sendAs/{sendAsEmail}",
+      "request": null,
+      "response": "SendAs",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.settings.basic"
+      ]
+    },
+    "gmail.users.settings.sendAs.list": {
+      "httpMethod": "GET",
+      "parameters": {
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/sendAs",
+      "request": null,
+      "response": "ListSendAsResponse",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.settings.basic"
+      ]
+    },
+    "gmail.users.settings.sendAs.patch": {
+      "httpMethod": "PATCH",
+      "parameters": {
+        "sendAsEmail": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/sendAs/{sendAsEmail}",
+      "request": "SendAs",
+      "response": "SendAs",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.settings.basic",
+        "https://www.googleapis.com/auth/gmail.settings.sharing"
+      ]
+    },
+    "gmail.users.settings.sendAs.smimeInfo.delete": {
+      "httpMethod": "DELETE",
+      "parameters": {
+        "id": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "sendAsEmail": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/sendAs/{sendAsEmail}/smimeInfo/{id}",
+      "request": null,
+      "response": null,
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.settings.basic",
+        "https://www.googleapis.com/auth/gmail.settings.sharing"
+      ]
+    },
+    "gmail.users.settings.sendAs.smimeInfo.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "id": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "sendAsEmail": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/sendAs/{sendAsEmail}/smimeInfo/{id}",
+      "request": null,
+      "response": "SmimeInfo",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.settings.basic",
+        "https://www.googleapis.com/auth/gmail.settings.sharing"
+      ]
+    },
+    "gmail.users.settings.sendAs.smimeInfo.insert": {
+      "httpMethod": "POST",
+      "parameters": {
+        "sendAsEmail": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/sendAs/{sendAsEmail}/smimeInfo",
+      "request": "SmimeInfo",
+      "response": "SmimeInfo",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.settings.basic",
+        "https://www.googleapis.com/auth/gmail.settings.sharing"
+      ]
+    },
+    "gmail.users.settings.sendAs.smimeInfo.list": {
+      "httpMethod": "GET",
+      "parameters": {
+        "sendAsEmail": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/sendAs/{sendAsEmail}/smimeInfo",
+      "request": null,
+      "response": "ListSmimeInfoResponse",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.settings.basic",
+        "https://www.googleapis.com/auth/gmail.settings.sharing"
+      ]
+    },
+    "gmail.users.settings.sendAs.smimeInfo.setDefault": {
+      "httpMethod": "POST",
+      "parameters": {
+        "id": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "sendAsEmail": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/sendAs/{sendAsEmail}/smimeInfo/{id}/setDefault",
+      "request": null,
+      "response": null,
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.settings.basic",
+        "https://www.googleapis.com/auth/gmail.settings.sharing"
+      ]
+    },
+    "gmail.users.settings.sendAs.update": {
+      "httpMethod": "PUT",
+      "parameters": {
+        "sendAsEmail": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/sendAs/{sendAsEmail}",
+      "request": "SendAs",
+      "response": "SendAs",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.settings.basic",
+        "https://www.googleapis.com/auth/gmail.settings.sharing"
+      ]
+    },
+    "gmail.users.settings.sendAs.verify": {
+      "httpMethod": "POST",
+      "parameters": {
+        "sendAsEmail": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/sendAs/{sendAsEmail}/verify",
+      "request": null,
+      "response": null,
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.settings.sharing"
+      ]
+    },
+    "gmail.users.settings.updateAutoForwarding": {
+      "httpMethod": "PUT",
+      "parameters": {
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/autoForwarding",
+      "request": "AutoForwarding",
+      "response": "AutoForwarding",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.settings.sharing"
+      ]
+    },
+    "gmail.users.settings.updateImap": {
+      "httpMethod": "PUT",
+      "parameters": {
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/imap",
+      "request": "ImapSettings",
+      "response": "ImapSettings",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.settings.basic"
+      ]
+    },
+    "gmail.users.settings.updateLanguage": {
+      "httpMethod": "PUT",
+      "parameters": {
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/language",
+      "request": "LanguageSettings",
+      "response": "LanguageSettings",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.settings.basic"
+      ]
+    },
+    "gmail.users.settings.updatePop": {
+      "httpMethod": "PUT",
+      "parameters": {
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/pop",
+      "request": "PopSettings",
+      "response": "PopSettings",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.settings.basic"
+      ]
+    },
+    "gmail.users.settings.updateVacation": {
+      "httpMethod": "PUT",
+      "parameters": {
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/settings/vacation",
+      "request": "VacationSettings",
+      "response": "VacationSettings",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.settings.basic"
+      ]
+    },
+    "gmail.users.stop": {
+      "httpMethod": "POST",
+      "parameters": {
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/stop",
+      "request": null,
+      "response": null,
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.metadata",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/gmail.readonly"
+      ]
+    },
+    "gmail.users.threads.delete": {
+      "httpMethod": "DELETE",
+      "parameters": {
+        "id": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/threads/{id}",
+      "request": null,
+      "response": null,
+      "scopes": [
+        "https://mail.google.com/"
+      ]
+    },
+    "gmail.users.threads.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "format": {
+          "enum": [
+            "full",
+            "metadata",
+            "minimal"
+          ],
+          "location": "query",
+          "type": "string"
+        },
+        "id": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "metadataHeaders": {
+          "location": "query",
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/threads/{id}",
+      "request": null,
+      "response": "Thread",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.addons.current.message.action",
+        "https://www.googleapis.com/auth/gmail.addons.current.message.metadata",
+        "https://www.googleapis.com/auth/gmail.addons.current.message.readonly",
+        "https://www.googleapis.com/auth/gmail.metadata",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/gmail.readonly"
+      ]
+    },
+    "gmail.users.threads.list": {
+      "httpMethod": "GET",
+      "parameters": {
+        "includeSpamTrash": {
+          "location": "query",
+          "type": "boolean"
+        },
+        "labelIds": {
+          "location": "query",
+          "type": "string"
+        },
+        "maxResults": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        },
+        "q": {
+          "location": "query",
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/threads",
+      "request": null,
+      "response": "ListThreadsResponse",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.metadata",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/gmail.readonly"
+      ]
+    },
+    "gmail.users.threads.modify": {
+      "httpMethod": "POST",
+      "parameters": {
+        "id": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/threads/{id}/modify",
+      "request": "ModifyThreadRequest",
+      "response": "Thread",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.modify"
+      ]
+    },
+    "gmail.users.threads.trash": {
+      "httpMethod": "POST",
+      "parameters": {
+        "id": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/threads/{id}/trash",
+      "request": null,
+      "response": "Thread",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.modify"
+      ]
+    },
+    "gmail.users.threads.untrash": {
+      "httpMethod": "POST",
+      "parameters": {
+        "id": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/threads/{id}/untrash",
+      "request": null,
+      "response": "Thread",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.modify"
+      ]
+    },
+    "gmail.users.watch": {
+      "httpMethod": "POST",
+      "parameters": {
+        "userId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "gmail/v1/users/{userId}/watch",
+      "request": "WatchRequest",
+      "response": "WatchResponse",
+      "scopes": [
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.metadata",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/gmail.readonly"
+      ]
+    }
+  },
+  "name": "gmail",
+  "retrieved": "2026-09-26",
+  "revision": "20260921",
+  "schemas": {
+    "AutoForwarding": {
+      "disposition": "string",
+      "emailAddress": "string",
+      "enabled": "boolean"
+    },
+    "BatchDeleteMessagesRequest": {
+      "ids": "array:string"
+    },
+    "BatchModifyMessagesRequest": {
+      "addClassificationLabels": "array:ClassificationLabelValue",
+      "addLabelIds": "array:string",
+      "ids": "array:string",
+      "removeClassificationLabelIds": "array:string",
+      "removeLabelIds": "array:string"
+    },
+    "ClassificationLabelFieldValue": {
+      "fieldId": "string",
+      "selection": "string"
+    },
+    "ClassificationLabelValue": {
+      "fields": "array:ClassificationLabelFieldValue",
+      "labelId": "string"
+    },
+    "CseIdentity": {
+      "emailAddress": "string",
+      "primaryKeyPairId": "string",
+      "signAndEncryptKeyPairs": "SignAndEncryptKeyPairs"
+    },
+    "CseKeyPair": {
+      "disableTime": "string",
+      "enablementState": "string",
+      "keyPairId": "string",
+      "pem": "string",
+      "pkcs7": "string",
+      "privateKeyMetadata": "array:CsePrivateKeyMetadata",
+      "subjectEmailAddresses": "array:string"
+    },
+    "CsePrivateKeyMetadata": {
+      "hardwareKeyMetadata": "HardwareKeyMetadata",
+      "kaclsKeyMetadata": "KaclsKeyMetadata",
+      "privateKeyMetadataId": "string"
+    },
+    "Delegate": {
+      "delegateEmail": "string",
+      "verificationStatus": "string"
+    },
+    "DisableCseKeyPairRequest": {},
+    "Draft": {
+      "id": "string",
+      "message": "Message"
+    },
+    "EnableCseKeyPairRequest": {},
+    "Filter": {
+      "action": "FilterAction",
+      "criteria": "FilterCriteria",
+      "id": "string"
+    },
+    "FilterAction": {
+      "addLabelIds": "array:string",
+      "forward": "string",
+      "removeLabelIds": "array:string"
+    },
+    "FilterCriteria": {
+      "excludeChats": "boolean",
+      "from": "string",
+      "hasAttachment": "boolean",
+      "negatedQuery": "string",
+      "query": "string",
+      "size": "integer",
+      "sizeComparison": "string",
+      "subject": "string",
+      "to": "string"
+    },
+    "ForwardingAddress": {
+      "forwardingEmail": "string",
+      "verificationStatus": "string"
+    },
+    "HardwareKeyMetadata": {
+      "description": "string"
+    },
+    "History": {
+      "id": "string",
+      "labelsAdded": "array:HistoryLabelAdded",
+      "labelsRemoved": "array:HistoryLabelRemoved",
+      "messages": "array:Message",
+      "messagesAdded": "array:HistoryMessageAdded",
+      "messagesDeleted": "array:HistoryMessageDeleted"
+    },
+    "HistoryLabelAdded": {
+      "labelIds": "array:string",
+      "message": "Message"
+    },
+    "HistoryLabelRemoved": {
+      "labelIds": "array:string",
+      "message": "Message"
+    },
+    "HistoryMessageAdded": {
+      "message": "Message"
+    },
+    "HistoryMessageDeleted": {
+      "message": "Message"
+    },
+    "ImapSettings": {
+      "autoExpunge": "boolean",
+      "enabled": "boolean",
+      "expungeBehavior": "string",
+      "maxFolderSize": "integer"
+    },
+    "KaclsKeyMetadata": {
+      "kaclsData": "string",
+      "kaclsUri": "string"
+    },
+    "Label": {
+      "color": "LabelColor",
+      "id": "string",
+      "labelListVisibility": "string",
+      "messageListVisibility": "string",
+      "messagesTotal": "integer",
+      "messagesUnread": "integer",
+      "name": "string",
+      "threadsTotal": "integer",
+      "threadsUnread": "integer",
+      "type": "string"
+    },
+    "LabelColor": {
+      "backgroundColor": "string",
+      "textColor": "string"
+    },
+    "LanguageSettings": {
+      "displayLanguage": "string"
+    },
+    "ListCseIdentitiesResponse": {
+      "cseIdentities": "array:CseIdentity",
+      "nextPageToken": "string"
+    },
+    "ListCseKeyPairsResponse": {
+      "cseKeyPairs": "array:CseKeyPair",
+      "nextPageToken": "string"
+    },
+    "ListDelegatesResponse": {
+      "delegates": "array:Delegate"
+    },
+    "ListDraftsResponse": {
+      "drafts": "array:Draft",
+      "nextPageToken": "string",
+      "resultSizeEstimate": "integer"
+    },
+    "ListFiltersResponse": {
+      "filter": "array:Filter"
+    },
+    "ListForwardingAddressesResponse": {
+      "forwardingAddresses": "array:ForwardingAddress"
+    },
+    "ListHistoryResponse": {
+      "history": "array:History",
+      "historyId": "string",
+      "nextPageToken": "string"
+    },
+    "ListLabelsResponse": {
+      "labels": "array:Label"
+    },
+    "ListMessagesResponse": {
+      "messages": "array:Message",
+      "nextPageToken": "string",
+      "resultSizeEstimate": "integer"
+    },
+    "ListSendAsResponse": {
+      "sendAs": "array:SendAs"
+    },
+    "ListSmimeInfoResponse": {
+      "smimeInfo": "array:SmimeInfo"
+    },
+    "ListThreadsResponse": {
+      "nextPageToken": "string",
+      "resultSizeEstimate": "integer",
+      "threads": "array:Thread"
+    },
+    "Message": {
+      "classificationLabelValues": "array:ClassificationLabelValue",
+      "historyId": "string",
+      "id": "string",
+      "internalDate": "string",
+      "labelIds": "array:string",
+      "payload": "MessagePart",
+      "raw": "string",
+      "sizeEstimate": "integer",
+      "snippet": "string",
+      "threadId": "string"
+    },
+    "MessagePart": {
+      "body": "MessagePartBody",
+      "filename": "string",
+      "headers": "array:MessagePartHeader",
+      "mimeType": "string",
+      "partId": "string",
+      "parts": "array:MessagePart"
+    },
+    "MessagePartBody": {
+      "attachmentId": "string",
+      "data": "string",
+      "size": "integer"
+    },
+    "MessagePartHeader": {
+      "name": "string",
+      "value": "string"
+    },
+    "ModifyMessageRequest": {
+      "addClassificationLabels": "array:ClassificationLabelValue",
+      "addLabelIds": "array:string",
+      "removeClassificationLabelIds": "array:string",
+      "removeLabelIds": "array:string"
+    },
+    "ModifyThreadRequest": {
+      "addLabelIds": "array:string",
+      "removeLabelIds": "array:string"
+    },
+    "ObliterateCseKeyPairRequest": {},
+    "PopSettings": {
+      "accessWindow": "string",
+      "disposition": "string"
+    },
+    "Profile": {
+      "emailAddress": "string",
+      "historyId": "string",
+      "messagesTotal": "integer",
+      "threadsTotal": "integer"
+    },
+    "SendAs": {
+      "displayName": "string",
+      "isDefault": "boolean",
+      "isPrimary": "boolean",
+      "replyToAddress": "string",
+      "sendAsEmail": "string",
+      "signature": "string",
+      "smtpMsa": "SmtpMsa",
+      "treatAsAlias": "boolean",
+      "verificationStatus": "string"
+    },
+    "SignAndEncryptKeyPairs": {
+      "encryptionKeyPairId": "string",
+      "signingKeyPairId": "string"
+    },
+    "SmimeInfo": {
+      "encryptedKeyPassword": "string",
+      "expiration": "string",
+      "id": "string",
+      "isDefault": "boolean",
+      "issuerCn": "string",
+      "pem": "string",
+      "pkcs12": "string"
+    },
+    "SmtpMsa": {
+      "host": "string",
+      "password": "string",
+      "port": "integer",
+      "securityMode": "string",
+      "username": "string"
+    },
+    "Thread": {
+      "historyId": "string",
+      "id": "string",
+      "messages": "array:Message",
+      "snippet": "string"
+    },
+    "VacationSettings": {
+      "enableAutoReply": "boolean",
+      "endTime": "string",
+      "responseBodyHtml": "string",
+      "responseBodyPlainText": "string",
+      "responseSubject": "string",
+      "restrictToContacts": "boolean",
+      "restrictToDomain": "boolean",
+      "startTime": "string"
+    },
+    "WatchRequest": {
+      "labelFilterAction": "string",
+      "labelFilterBehavior": "string",
+      "labelIds": "array:string",
+      "topicName": "string"
+    },
+    "WatchResponse": {
+      "expiration": "string",
+      "historyId": "string"
+    }
+  },
+  "source": "https://gmail.googleapis.com/$discovery/rest?version=v1",
+  "version": "v1"
+}

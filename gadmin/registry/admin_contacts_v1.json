@@ -1,0 +1,131 @@
+{
+  "service": "admin",
+  "version": "contacts_v1",
+  "discovery": {
+    "url": "https://developers.google.com/workspace/admin/contact-delegation/reference/rest",
+    "revision": "20260926",
+    "checked": "2026-09-26"
+  },
+  "operations": {
+    "admin.contacts.v1.users.delegates.list": {
+      "resource_path": [
+        "users",
+        "delegates"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.contact.delegation.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "userId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "target_param": "userId",
+      "response": {
+        "items_key": "delegates",
+        "fields": [
+          "email"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "account",
+          "param": "userId",
+          "as": "email"
+        }
+      ]
+    },
+    "admin.contacts.v1.users.delegates.create": {
+      "resource_path": [
+        "users",
+        "delegates"
+      ],
+      "method": "create",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.contact.delegation"
+      ],
+      "risk": "manage",
+      "params": {
+        "userId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "body": {
+        "email": {
+          "type": "string",
+          "required": true
+        }
+      },
+      "target_param": "userId",
+      "response": {
+        "fields": [
+          "email"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "account",
+          "param": "userId",
+          "as": "email"
+        },
+        {
+          "kind": "account",
+          "field": "email",
+          "as": "email"
+        }
+      ]
+    },
+    "admin.contacts.v1.users.delegates.delete": {
+      "resource_path": [
+        "users",
+        "delegates"
+      ],
+      "method": "delete",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.contact.delegation"
+      ],
+      "risk": "destructive",
+      "params": {
+        "userId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "delegate": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "userId",
+      "boundary": [
+        {
+          "kind": "account",
+          "param": "userId",
+          "as": "email"
+        },
+        {
+          "kind": "listed",
+          "param": "delegate",
+          "field": "email",
+          "read": "admin.contacts.v1.users.delegates.list"
+        }
+      ]
+    }
+  },
+  "excluded": {}
+}

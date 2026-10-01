@@ -1,0 +1,2025 @@
+{
+  "service": "chromemanagement",
+  "version": "v1",
+  "discovery": {
+    "url": "https://chromemanagement.googleapis.com/$discovery/rest?version=v1",
+    "revision": "20260924",
+    "checked": "2026-09-26"
+  },
+  "operations": {
+    "chromemanagement.customers.reports.countActiveDevices": {
+      "resource_path": [
+        "customers",
+        "reports"
+      ],
+      "method": "countActiveDevices",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.reports.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        },
+        "date.day": {
+          "type": "integer",
+          "location": "query"
+        },
+        "date.month": {
+          "type": "integer",
+          "location": "query"
+        },
+        "date.year": {
+          "type": "integer",
+          "location": "query"
+        }
+      },
+      "response": {
+        "fields": [
+          "sevenDaysCount",
+          "thirtyDaysCount"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        }
+      ]
+    },
+    "chromemanagement.customers.reports.countChromeBrowsersNeedingAttention": {
+      "resource_path": [
+        "customers",
+        "reports"
+      ],
+      "method": "countChromeBrowsersNeedingAttention",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.reports.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        },
+        "orgUnitId": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "response": {
+        "fields": [
+          "noRecentActivityCount",
+          "pendingBrowserUpdateCount",
+          "recentlyEnrolledCount"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        }
+      ]
+    },
+    "chromemanagement.customers.reports.countChromeCrashEvents": {
+      "resource_path": [
+        "customers",
+        "reports"
+      ],
+      "method": "countChromeCrashEvents",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.reports.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        },
+        "filter": {
+          "type": "string",
+          "location": "query"
+        },
+        "orderBy": {
+          "type": "string",
+          "location": "query"
+        },
+        "orgUnitId": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "crashEventCounts",
+        "fields": [
+          "browserVersion",
+          "count",
+          "date"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        }
+      ]
+    },
+    "chromemanagement.customers.reports.countChromeDevicesReachingAutoExpirationDate": {
+      "resource_path": [
+        "customers",
+        "reports"
+      ],
+      "method": "countChromeDevicesReachingAutoExpirationDate",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.reports.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        },
+        "maxAueDate": {
+          "type": "string",
+          "location": "query"
+        },
+        "minAueDate": {
+          "type": "string",
+          "location": "query"
+        },
+        "orgUnitId": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "deviceAueCountReports",
+        "fields": [
+          "model",
+          "aueMonth",
+          "aueYear",
+          "expired",
+          "count"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        }
+      ]
+    },
+    "chromemanagement.customers.reports.countChromeDevicesThatNeedAttention": {
+      "resource_path": [
+        "customers",
+        "reports"
+      ],
+      "method": "countChromeDevicesThatNeedAttention",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.reports.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        },
+        "orgUnitId": {
+          "type": "string",
+          "location": "query"
+        },
+        "readMask": {
+          "type": "string",
+          "location": "query",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.]*(,[A-Za-z][A-Za-z0-9_.]*)*$"
+        }
+      },
+      "response": {
+        "fields": [
+          "noRecentPolicySyncCount",
+          "noRecentUserActivityCount",
+          "osVersionNotCompliantCount",
+          "pendingUpdate",
+          "unsupportedPolicyCount"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        }
+      ]
+    },
+    "chromemanagement.customers.reports.countChromeHardwareFleetDevices": {
+      "resource_path": [
+        "customers",
+        "reports"
+      ],
+      "method": "countChromeHardwareFleetDevices",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.reports.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        },
+        "orgUnitId": {
+          "type": "string",
+          "location": "query"
+        },
+        "readMask": {
+          "type": "string",
+          "location": "query",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.]*(,[A-Za-z][A-Za-z0-9_.]*)*$"
+        }
+      },
+      "response": {
+        "fields": [
+          "cpuReports",
+          "memoryReports",
+          "modelReports",
+          "storageReports"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        }
+      ]
+    },
+    "chromemanagement.customers.reports.countChromeProfileVersions": {
+      "resource_path": [
+        "customers",
+        "reports"
+      ],
+      "method": "countChromeProfileVersions",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.reports.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        },
+        "filter": {
+          "type": "string",
+          "location": "query"
+        },
+        "orgUnitId": {
+          "type": "string",
+          "location": "query"
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "profileBrowserVersions",
+        "fields": [
+          "version",
+          "channel",
+          "system",
+          "deviceOsVersion",
+          "count"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        }
+      ]
+    },
+    "chromemanagement.customers.reports.countChromeVersions": {
+      "resource_path": [
+        "customers",
+        "reports"
+      ],
+      "method": "countChromeVersions",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.reports.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        },
+        "filter": {
+          "type": "string",
+          "location": "query"
+        },
+        "orgUnitId": {
+          "type": "string",
+          "location": "query"
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "browserVersions",
+        "fields": [
+          "version",
+          "channel",
+          "system",
+          "deviceOsVersion",
+          "count"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        }
+      ]
+    },
+    "chromemanagement.customers.reports.countDevicesPerBootType": {
+      "resource_path": [
+        "customers",
+        "reports"
+      ],
+      "method": "countDevicesPerBootType",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.reports.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        },
+        "date.day": {
+          "type": "integer",
+          "location": "query"
+        },
+        "date.month": {
+          "type": "integer",
+          "location": "query"
+        },
+        "date.year": {
+          "type": "integer",
+          "location": "query"
+        }
+      },
+      "response": {
+        "fields": [
+          "devBootTypeCount",
+          "unreportedBootTypeCount",
+          "verifiedBootTypeCount"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        }
+      ]
+    },
+    "chromemanagement.customers.reports.countDevicesPerReleaseChannel": {
+      "resource_path": [
+        "customers",
+        "reports"
+      ],
+      "method": "countDevicesPerReleaseChannel",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.reports.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        },
+        "date.day": {
+          "type": "integer",
+          "location": "query"
+        },
+        "date.month": {
+          "type": "integer",
+          "location": "query"
+        },
+        "date.year": {
+          "type": "integer",
+          "location": "query"
+        }
+      },
+      "response": {
+        "fields": [
+          "betaChannelCount",
+          "canaryChannelCount",
+          "devChannelCount",
+          "ltcChannelCount",
+          "ltsChannelCount",
+          "stableChannelCount",
+          "unreportedChannelCount",
+          "unsupportedChannelCount"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        }
+      ]
+    },
+    "chromemanagement.customers.reports.countInstalledApps": {
+      "resource_path": [
+        "customers",
+        "reports"
+      ],
+      "method": "countInstalledApps",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.reports.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        },
+        "filter": {
+          "type": "string",
+          "location": "query"
+        },
+        "orderBy": {
+          "type": "string",
+          "location": "query"
+        },
+        "orgUnitId": {
+          "type": "string",
+          "location": "query"
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "installedApps",
+        "fields": [
+          "appId",
+          "appType",
+          "appSource",
+          "appInstallType",
+          "displayName",
+          "disabled",
+          "browserDeviceCount",
+          "osUserCount",
+          "profileCount",
+          "permissions"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        }
+      ]
+    },
+    "chromemanagement.customers.reports.countPrintJobsByPrinter": {
+      "resource_path": [
+        "customers",
+        "reports"
+      ],
+      "method": "countPrintJobsByPrinter",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.reports.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        },
+        "filter": {
+          "type": "string",
+          "location": "query"
+        },
+        "orderBy": {
+          "type": "string",
+          "location": "query"
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        },
+        "printerOrgUnitId": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "printerReports",
+        "fields": [
+          "printerId",
+          "printer",
+          "printerModel",
+          "deviceCount",
+          "jobCount",
+          "userCount"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        }
+      ]
+    },
+    "chromemanagement.customers.reports.countPrintJobsByUser": {
+      "resource_path": [
+        "customers",
+        "reports"
+      ],
+      "method": "countPrintJobsByUser",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.reports.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        },
+        "filter": {
+          "type": "string",
+          "location": "query"
+        },
+        "orderBy": {
+          "type": "string",
+          "location": "query"
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        },
+        "printerOrgUnitId": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "userPrintReports",
+        "fields": [
+          "userId",
+          "userEmail",
+          "deviceCount",
+          "jobCount",
+          "printerCount"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        }
+      ]
+    },
+    "chromemanagement.customers.reports.enumeratePrintJobs": {
+      "resource_path": [
+        "customers",
+        "reports"
+      ],
+      "method": "enumeratePrintJobs",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.reports.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        },
+        "filter": {
+          "type": "string",
+          "location": "query"
+        },
+        "orderBy": {
+          "type": "string",
+          "location": "query"
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        },
+        "printerOrgUnitId": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "printJobs",
+        "fields": [
+          "id",
+          "printerId",
+          "printer",
+          "state",
+          "createTime",
+          "completeTime",
+          "documentPageCount",
+          "copyCount",
+          "colorMode",
+          "duplexMode",
+          "userId",
+          "userEmail"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        }
+      ]
+    },
+    "chromemanagement.customers.reports.findInstalledAppDevices": {
+      "resource_path": [
+        "customers",
+        "reports"
+      ],
+      "method": "findInstalledAppDevices",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.reports.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        },
+        "appId": {
+          "type": "string",
+          "location": "query"
+        },
+        "appType": {
+          "type": "string",
+          "location": "query",
+          "enum": [
+            "APP_TYPE_UNSPECIFIED",
+            "EXTENSION",
+            "APP",
+            "THEME",
+            "HOSTED_APP",
+            "ANDROID_APP"
+          ]
+        },
+        "filter": {
+          "type": "string",
+          "location": "query"
+        },
+        "orderBy": {
+          "type": "string",
+          "location": "query"
+        },
+        "orgUnitId": {
+          "type": "string",
+          "location": "query"
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "devices",
+        "fields": [
+          "deviceId",
+          "machine"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        }
+      ]
+    },
+    "chromemanagement.customers.reports.findInstalledAppProfiles": {
+      "resource_path": [
+        "customers",
+        "reports"
+      ],
+      "method": "findInstalledAppProfiles",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.reports.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        },
+        "appId": {
+          "type": "string",
+          "location": "query"
+        },
+        "appType": {
+          "type": "string",
+          "location": "query",
+          "enum": [
+            "APP_TYPE_UNSPECIFIED",
+            "EXTENSION",
+            "APP",
+            "THEME",
+            "HOSTED_APP",
+            "ANDROID_APP"
+          ]
+        },
+        "filter": {
+          "type": "string",
+          "location": "query"
+        },
+        "orderBy": {
+          "type": "string",
+          "location": "query"
+        },
+        "orgUnitId": {
+          "type": "string",
+          "location": "query"
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "profiles",
+        "fields": [
+          "profileId",
+          "profilePermanentId",
+          "profileOrgUnitId",
+          "email"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        }
+      ]
+    },
+    "chromemanagement.customers.reports.findSaasUsage": {
+      "resource_path": [
+        "customers",
+        "reports"
+      ],
+      "method": "findSaasUsage",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.reports.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        },
+        "filter": {
+          "type": "string",
+          "location": "query"
+        },
+        "orderBy": {
+          "type": "string",
+          "location": "query"
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "saasReports",
+        "fields": [
+          "app",
+          "category",
+          "organization",
+          "primaryDomain",
+          "orgUnitId",
+          "distinctUsersCount",
+          "distinctBrowsersCount",
+          "visitsCount",
+          "firstNavigationTime",
+          "lastNavigationTime"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        }
+      ]
+    },
+    "chromemanagement.customers.apps.countChromeAppRequests": {
+      "resource_path": [
+        "customers",
+        "apps"
+      ],
+      "method": "countChromeAppRequests",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.appdetails.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        },
+        "orderBy": {
+          "type": "string",
+          "location": "query"
+        },
+        "orgUnitId": {
+          "type": "string",
+          "location": "query"
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "requestedApps",
+        "fields": [
+          "appId",
+          "displayName",
+          "requestCount",
+          "latestRequestTime"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        }
+      ]
+    },
+    "chromemanagement.customers.apps.fetchDevicesRequestingExtension": {
+      "resource_path": [
+        "customers",
+        "apps"
+      ],
+      "method": "fetchDevicesRequestingExtension",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.appdetails.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        },
+        "orgUnitId": {
+          "type": "string",
+          "location": "query"
+        },
+        "extensionId": {
+          "type": "string",
+          "location": "query",
+          "pattern": "^[a-p]{32}$"
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "deviceDetails",
+        "fields": [
+          "deviceName"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        }
+      ]
+    },
+    "chromemanagement.customers.apps.fetchUsersRequestingExtension": {
+      "resource_path": [
+        "customers",
+        "apps"
+      ],
+      "method": "fetchUsersRequestingExtension",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.appdetails.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        },
+        "orgUnitId": {
+          "type": "string",
+          "location": "query"
+        },
+        "extensionId": {
+          "type": "string",
+          "location": "query",
+          "pattern": "^[a-p]{32}$"
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "userDetails",
+        "fields": [
+          "email"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        }
+      ]
+    },
+    "chromemanagement.customers.apps.android.get": {
+      "resource_path": [
+        "customers",
+        "apps",
+        "android"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.appdetails.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+/apps/android/[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+$"
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "appId",
+          "type",
+          "displayName",
+          "description",
+          "publisher",
+          "categoryIds",
+          "isPaidApp",
+          "reviewRating",
+          "reviewNumber",
+          "firstPublishTime",
+          "latestPublishTime",
+          "revisionId"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer_path",
+          "param": "name"
+        }
+      ]
+    },
+    "chromemanagement.customers.apps.chrome.get": {
+      "resource_path": [
+        "customers",
+        "apps",
+        "chrome"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.appdetails.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+/apps/chrome/[a-p]{32}(@[0-9.]+)?$"
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "appId",
+          "type",
+          "displayName",
+          "description",
+          "publisher",
+          "categoryIds",
+          "isPaidApp",
+          "reviewRating",
+          "reviewNumber",
+          "firstPublishTime",
+          "latestPublishTime",
+          "revisionId"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer_path",
+          "param": "name"
+        }
+      ]
+    },
+    "chromemanagement.customers.telemetry.devices.get": {
+      "resource_path": [
+        "customers",
+        "telemetry",
+        "devices"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.telemetry.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+/telemetry/devices/[A-Za-z0-9_\\-]+$"
+        },
+        "readMask": {
+          "type": "string",
+          "location": "query",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.]*(,[A-Za-z][A-Za-z0-9_.]*)*$"
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "customer",
+          "orgUnitId",
+          "deviceId",
+          "serialNumber",
+          "cpuInfo",
+          "memoryInfo",
+          "storageInfo",
+          "osUpdateStatus",
+          "batteryInfo"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer_path",
+          "param": "name"
+        },
+        {
+          "kind": "response_customer",
+          "field": "customer"
+        }
+      ]
+    },
+    "chromemanagement.customers.telemetry.devices.list": {
+      "resource_path": [
+        "customers",
+        "telemetry",
+        "devices"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.telemetry.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "parent": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        },
+        "filter": {
+          "type": "string",
+          "location": "query"
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        },
+        "readMask": {
+          "type": "string",
+          "location": "query",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.]*(,[A-Za-z][A-Za-z0-9_.]*)*$"
+        }
+      },
+      "response": {
+        "items_key": "devices",
+        "fields": [
+          "name",
+          "customer",
+          "orgUnitId",
+          "deviceId",
+          "serialNumber",
+          "cpuInfo",
+          "memoryInfo",
+          "storageInfo",
+          "osUpdateStatus",
+          "batteryInfo"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "parent",
+          "as": "name"
+        },
+        {
+          "kind": "response_customer",
+          "field": "customer"
+        }
+      ]
+    },
+    "chromemanagement.customers.telemetry.users.get": {
+      "resource_path": [
+        "customers",
+        "telemetry",
+        "users"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.telemetry.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+/telemetry/users/[A-Za-z0-9_\\-]+$"
+        },
+        "readMask": {
+          "type": "string",
+          "location": "query",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.]*(,[A-Za-z][A-Za-z0-9_.]*)*$"
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "customer",
+          "orgUnitId",
+          "userId",
+          "userEmail"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer_path",
+          "param": "name"
+        },
+        {
+          "kind": "response_customer",
+          "field": "customer"
+        }
+      ]
+    },
+    "chromemanagement.customers.telemetry.users.list": {
+      "resource_path": [
+        "customers",
+        "telemetry",
+        "users"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.telemetry.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "parent": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        },
+        "filter": {
+          "type": "string",
+          "location": "query"
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        },
+        "readMask": {
+          "type": "string",
+          "location": "query",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.]*(,[A-Za-z][A-Za-z0-9_.]*)*$"
+        }
+      },
+      "response": {
+        "items_key": "telemetryUsers",
+        "fields": [
+          "name",
+          "customer",
+          "orgUnitId",
+          "userId",
+          "userEmail"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "parent",
+          "as": "name"
+        },
+        {
+          "kind": "response_customer",
+          "field": "customer"
+        }
+      ]
+    },
+    "chromemanagement.customers.telemetry.events.list": {
+      "resource_path": [
+        "customers",
+        "telemetry",
+        "events"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.telemetry.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "parent": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        },
+        "filter": {
+          "type": "string",
+          "location": "query"
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        },
+        "readMask": {
+          "type": "string",
+          "location": "query",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.]*(,[A-Za-z][A-Za-z0-9_.]*)*$"
+        }
+      },
+      "response": {
+        "items_key": "telemetryEvents",
+        "fields": [
+          "name",
+          "eventType",
+          "reportTime",
+          "device",
+          "user"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "parent",
+          "as": "name"
+        }
+      ]
+    },
+    "chromemanagement.customers.telemetry.notificationConfigs.list": {
+      "resource_path": [
+        "customers",
+        "telemetry",
+        "notificationConfigs"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.telemetry.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "parent": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "telemetryNotificationConfigs",
+        "fields": [
+          "name",
+          "customer",
+          "filter",
+          "googleCloudPubsubTopic"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "parent",
+          "as": "name"
+        },
+        {
+          "kind": "response_customer",
+          "field": "customer"
+        }
+      ]
+    },
+    "chromemanagement.customers.profiles.get": {
+      "resource_path": [
+        "customers",
+        "profiles"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.profiles.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+/profiles/[A-Za-z0-9_\\-]+$"
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "profileId",
+          "profilePermanentId",
+          "displayName",
+          "userEmail",
+          "userId",
+          "identityProvider",
+          "affiliationState",
+          "annotatedUser",
+          "annotatedLocation",
+          "browserChannel",
+          "browserVersion",
+          "osPlatformType",
+          "osPlatformVersion",
+          "osVersion",
+          "extensionCount",
+          "policyCount",
+          "supportsFcmNotifications",
+          "firstEnrollmentTime",
+          "lastActivityTime",
+          "lastPolicyFetchTime",
+          "lastPolicySyncTime",
+          "lastStatusReportTime"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer_path",
+          "param": "name"
+        }
+      ]
+    },
+    "chromemanagement.customers.profiles.list": {
+      "resource_path": [
+        "customers",
+        "profiles"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.profiles.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "parent": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        },
+        "filter": {
+          "type": "string",
+          "location": "query"
+        },
+        "orderBy": {
+          "type": "string",
+          "location": "query"
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "chromeBrowserProfiles",
+        "fields": [
+          "name",
+          "profileId",
+          "profilePermanentId",
+          "displayName",
+          "userEmail",
+          "userId",
+          "identityProvider",
+          "affiliationState",
+          "annotatedUser",
+          "annotatedLocation",
+          "browserChannel",
+          "browserVersion",
+          "osPlatformType",
+          "osPlatformVersion",
+          "osVersion",
+          "extensionCount",
+          "policyCount",
+          "supportsFcmNotifications",
+          "firstEnrollmentTime",
+          "lastActivityTime",
+          "lastPolicyFetchTime",
+          "lastPolicySyncTime",
+          "lastStatusReportTime"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "parent",
+          "as": "name"
+        }
+      ]
+    },
+    "chromemanagement.customers.profiles.delete": {
+      "resource_path": [
+        "customers",
+        "profiles"
+      ],
+      "method": "delete",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.profiles"
+      ],
+      "risk": "destructive",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+/profiles/[A-Za-z0-9_\\-]+$"
+        }
+      },
+      "target_param": "name",
+      "boundary": [
+        {
+          "kind": "customer_path",
+          "param": "name"
+        },
+        {
+          "kind": "resource",
+          "read": "chromemanagement.customers.profiles.get",
+          "param": "name"
+        }
+      ]
+    },
+    "chromemanagement.customers.profiles.commands.create": {
+      "resource_path": [
+        "customers",
+        "profiles",
+        "commands"
+      ],
+      "method": "create",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.profiles"
+      ],
+      "risk": "destructive",
+      "params": {
+        "parent": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+/profiles/[A-Za-z0-9_\\-]+$"
+        }
+      },
+      "body": {
+        "commandType": {
+          "type": "string",
+          "required": true,
+          "enum": [
+            "clearBrowsingData",
+            "extensionUpdateCheck"
+          ]
+        },
+        "payload": {
+          "type": "object",
+          "required": true,
+          "fields": {
+            "clearCache": "boolean",
+            "clearCookies": "boolean"
+          }
+        }
+      },
+      "target_param": "parent",
+      "response": {
+        "fields": [
+          "name",
+          "commandType",
+          "commandState",
+          "issueTime",
+          "validDuration",
+          "commandResult",
+          "payload"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer_path",
+          "param": "parent"
+        },
+        {
+          "kind": "resource",
+          "read": "chromemanagement.customers.profiles.get",
+          "param": "parent"
+        }
+      ]
+    },
+    "chromemanagement.customers.profiles.commands.get": {
+      "resource_path": [
+        "customers",
+        "profiles",
+        "commands"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.profiles.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+/profiles/[A-Za-z0-9_\\-]+/commands/[A-Za-z0-9_\\-]+$"
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "commandType",
+          "commandState",
+          "issueTime",
+          "validDuration",
+          "commandResult",
+          "payload"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer_path",
+          "param": "name"
+        }
+      ]
+    },
+    "chromemanagement.customers.profiles.commands.list": {
+      "resource_path": [
+        "customers",
+        "profiles",
+        "commands"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.profiles.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "parent": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+/profiles/[A-Za-z0-9_\\-]+$"
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "target_param": "parent",
+      "response": {
+        "items_key": "chromeBrowserProfileCommands",
+        "fields": [
+          "name",
+          "commandType",
+          "commandState",
+          "issueTime",
+          "validDuration",
+          "commandResult",
+          "payload"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer_path",
+          "param": "parent"
+        }
+      ]
+    },
+    "chromemanagement.customers.enterprise.securityInsights.checkEnablementStatus": {
+      "resource_path": [
+        "customers",
+        "enterprise",
+        "securityInsights"
+      ],
+      "method": "checkEnablementStatus",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.securityinsights.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        }
+      },
+      "response": {
+        "fields": [
+          "insightsState"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        }
+      ]
+    },
+    "chromemanagement.customers.enterprise.securityInsights.queryUrlVisits": {
+      "resource_path": [
+        "customers",
+        "enterprise",
+        "securityInsights"
+      ],
+      "method": "queryUrlVisits",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.securityinsights.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        },
+        "filter": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "summaries",
+        "fields": [
+          "metric",
+          "count"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        }
+      ]
+    },
+    "chromemanagement.customers.enterprise.securityInsights.queryContentTransfers": {
+      "resource_path": [
+        "customers",
+        "enterprise",
+        "securityInsights"
+      ],
+      "method": "queryContentTransfers",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.securityinsights.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        },
+        "filter": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "summaries",
+        "fields": [
+          "metric",
+          "count"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        }
+      ]
+    },
+    "chromemanagement.customers.enterprise.securityInsights.enable": {
+      "resource_path": [
+        "customers",
+        "enterprise",
+        "securityInsights"
+      ],
+      "method": "enable",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.securityinsights"
+      ],
+      "risk": "destructive",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        }
+      },
+      "target_param": "customer",
+      "response": {
+        "fields": [
+          "insightsState"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        }
+      ]
+    },
+    "chromemanagement.customers.enterprise.securityInsights.disable": {
+      "resource_path": [
+        "customers",
+        "enterprise",
+        "securityInsights"
+      ],
+      "method": "disable",
+      "scopes": [
+        "https://www.googleapis.com/auth/chrome.management.securityinsights"
+      ],
+      "risk": "destructive",
+      "params": {
+        "customer": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^customers/[A-Za-z0-9_]+$"
+        }
+      },
+      "target_param": "customer",
+      "response": {
+        "fields": [
+          "insightsState"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        }
+      ]
+    }
+  },
+  "excluded": {
+    "chromemanagement.customers.apps.web.get": {
+      "category": "caller-url",
+      "reason": "The web app ID is the app's URL, so the path would carry a caller-chosen URL; Chrome and Android app details are registered instead."
+    },
+    "chromemanagement.customers.certificateProvisioningProcesses.claim": {
+      "category": "undocumented-scope",
+      "reason": "Discovery lists no OAuth scope for this method, so no exact scope can be requested or granted at a permission level to claim a certificate provisioning process."
+    },
+    "chromemanagement.customers.certificateProvisioningProcesses.get": {
+      "category": "undocumented-scope",
+      "reason": "Discovery lists no OAuth scope for this method, so no exact scope can be requested or granted at a permission level to read a certificate provisioning process."
+    },
+    "chromemanagement.customers.certificateProvisioningProcesses.operations.get": {
+      "category": "undocumented-scope",
+      "reason": "Discovery lists no OAuth scope for this method, so no exact scope can be requested or granted at a permission level to read a provisioning operation."
+    },
+    "chromemanagement.customers.certificateProvisioningProcesses.setFailure": {
+      "category": "undocumented-scope",
+      "reason": "Discovery lists no OAuth scope for this method, so no exact scope can be requested or granted at a permission level to mark a certificate provisioning process failed."
+    },
+    "chromemanagement.customers.certificateProvisioningProcesses.signData": {
+      "category": "secret-exposure",
+      "reason": "Has a device key sign caller data and returns the signature, which is key material; Discovery also lists no scope."
+    },
+    "chromemanagement.customers.certificateProvisioningProcesses.uploadCertificate": {
+      "category": "secret-in-payload",
+      "reason": "Uploads an issued PEM certificate chain for a device key, which would be stored in a proposal; Discovery also lists no scope."
+    },
+    "chromemanagement.customers.connectorConfigs.create": {
+      "category": "secret-in-payload",
+      "reason": "Creates a connector whose body carries third-party service credentials, which would be stored in a proposal; Discovery also lists no scope."
+    },
+    "chromemanagement.customers.connectorConfigs.delete": {
+      "category": "undocumented-scope",
+      "reason": "Discovery lists no OAuth scope for this method, so no exact scope can be requested or granted at a permission level to delete a connector configuration."
+    },
+    "chromemanagement.customers.connectorConfigs.get": {
+      "category": "secret-exposure",
+      "reason": "Returns a connector configuration, including the third-party service credentials it holds; Discovery also lists no scope."
+    },
+    "chromemanagement.customers.connectorConfigs.list": {
+      "category": "secret-exposure",
+      "reason": "Lists connector configurations, including the third-party service credentials they hold; Discovery also lists no scope."
+    },
+    "chromemanagement.customers.connectorConfigs.patch": {
+      "category": "secret-in-payload",
+      "reason": "Updates a connector whose body carries third-party service credentials, which would be stored in a proposal; Discovery also lists no scope."
+    },
+    "chromemanagement.customers.enterprise.securityInsights.queryContentTransfersBreakdowns": {
+      "category": "sensitive-content",
+      "reason": "Returns per-user and per-domain breakdowns of content transfers, which is individual browsing activity; the metric totals are registered as queryContentTransfers."
+    },
+    "chromemanagement.customers.enterprise.securityInsights.queryUrlVisitsBreakdowns": {
+      "category": "sensitive-content",
+      "reason": "Returns per-user and per-domain breakdowns of URL visits, which is individual browsing activity; the metric totals are registered as queryUrlVisits."
+    },
+    "chromemanagement.customers.reports.findSaasUsageBrowsers": {
+      "category": "sensitive-content",
+      "reason": "Returns per-browser web-app visit history (first and last navigation times by browser), which is browsing activity rather than an aggregate; findSaasUsage covers the per-app totals."
+    },
+    "chromemanagement.customers.reports.findSaasUsageProfiles": {
+      "category": "sensitive-content",
+      "reason": "Returns per-user profile web-app visit history (first and last navigation times by user profile), which is browsing activity rather than an aggregate; findSaasUsage covers the per-app totals."
+    },
+    "chromemanagement.customers.telemetry.notificationConfigs.create": {
+      "category": "push-channel",
+      "reason": "Creates a notification channel that publishes device telemetry to a caller-named Pub/Sub topic, possibly in another organization's project."
+    },
+    "chromemanagement.customers.telemetry.notificationConfigs.delete": {
+      "category": "unguarded-target",
+      "reason": "No single-config read exists to prove a notification config belongs to the customer before it is deleted, and Discovery lists only a read-only scope."
+    },
+    "chromemanagement.customers.thirdPartyProfileUsers.move": {
+      "category": "unguarded-target",
+      "reason": "Moves a third-party profile user named only by an opaque ID to a caller-chosen org unit, and no registered read proves the user belongs to the customer."
+    },
+    "chromemanagement.operations.cancel": {
+      "category": "undocumented-scope",
+      "reason": "Discovery lists no OAuth scope for this method, so no exact scope can be requested or granted at a permission level to cancel untyped long-running operations."
+    },
+    "chromemanagement.operations.delete": {
+      "category": "undocumented-scope",
+      "reason": "Discovery lists no OAuth scope for this method, so no exact scope can be requested or granted at a permission level to delete untyped long-running operations."
+    },
+    "chromemanagement.operations.list": {
+      "category": "undocumented-scope",
+      "reason": "Discovery lists no OAuth scope for this method, so no exact scope can be requested or granted at a permission level to list untyped long-running operations."
+    }
+  }
+}

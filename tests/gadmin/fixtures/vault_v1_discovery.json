@@ -1,0 +1,1018 @@
+{
+  "methods": {
+    "vault.matters.addPermissions": {
+      "httpMethod": "POST",
+      "parameters": {
+        "matterId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/matters/{matterId}:addPermissions",
+      "request": "AddMatterPermissionsRequest",
+      "response": "MatterPermission",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ]
+    },
+    "vault.matters.close": {
+      "httpMethod": "POST",
+      "parameters": {
+        "matterId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/matters/{matterId}:close",
+      "request": "CloseMatterRequest",
+      "response": "CloseMatterResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ]
+    },
+    "vault.matters.count": {
+      "httpMethod": "POST",
+      "parameters": {
+        "matterId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/matters/{matterId}:count",
+      "request": "CountArtifactsRequest",
+      "response": "Operation",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ]
+    },
+    "vault.matters.create": {
+      "httpMethod": "POST",
+      "parameters": {},
+      "path": "v1/matters",
+      "request": "Matter",
+      "response": "Matter",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ]
+    },
+    "vault.matters.delete": {
+      "httpMethod": "DELETE",
+      "parameters": {
+        "matterId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/matters/{matterId}",
+      "request": null,
+      "response": "Matter",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ]
+    },
+    "vault.matters.exports.create": {
+      "httpMethod": "POST",
+      "parameters": {
+        "matterId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/matters/{matterId}/exports",
+      "request": "Export",
+      "response": "Export",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ]
+    },
+    "vault.matters.exports.delete": {
+      "httpMethod": "DELETE",
+      "parameters": {
+        "exportId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "matterId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/matters/{matterId}/exports/{exportId}",
+      "request": null,
+      "response": "Empty",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ]
+    },
+    "vault.matters.exports.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "exportId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "matterId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/matters/{matterId}/exports/{exportId}",
+      "request": null,
+      "response": "Export",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery",
+        "https://www.googleapis.com/auth/ediscovery.readonly"
+      ]
+    },
+    "vault.matters.exports.list": {
+      "httpMethod": "GET",
+      "parameters": {
+        "matterId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/matters/{matterId}/exports",
+      "request": null,
+      "response": "ListExportsResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery",
+        "https://www.googleapis.com/auth/ediscovery.readonly"
+      ]
+    },
+    "vault.matters.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "matterId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "view": {
+          "enum": [
+            "VIEW_UNSPECIFIED",
+            "BASIC",
+            "FULL"
+          ],
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/matters/{matterId}",
+      "request": null,
+      "response": "Matter",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery",
+        "https://www.googleapis.com/auth/ediscovery.readonly"
+      ]
+    },
+    "vault.matters.holds.accounts.create": {
+      "httpMethod": "POST",
+      "parameters": {
+        "holdId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "matterId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/matters/{matterId}/holds/{holdId}/accounts",
+      "request": "HeldAccount",
+      "response": "HeldAccount",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ]
+    },
+    "vault.matters.holds.accounts.delete": {
+      "httpMethod": "DELETE",
+      "parameters": {
+        "accountId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "holdId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "matterId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/matters/{matterId}/holds/{holdId}/accounts/{accountId}",
+      "request": null,
+      "response": "Empty",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ]
+    },
+    "vault.matters.holds.accounts.list": {
+      "httpMethod": "GET",
+      "parameters": {
+        "holdId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "matterId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/matters/{matterId}/holds/{holdId}/accounts",
+      "request": null,
+      "response": "ListHeldAccountsResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery",
+        "https://www.googleapis.com/auth/ediscovery.readonly"
+      ]
+    },
+    "vault.matters.holds.addHeldAccounts": {
+      "httpMethod": "POST",
+      "parameters": {
+        "holdId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "matterId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/matters/{matterId}/holds/{holdId}:addHeldAccounts",
+      "request": "AddHeldAccountsRequest",
+      "response": "AddHeldAccountsResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ]
+    },
+    "vault.matters.holds.create": {
+      "httpMethod": "POST",
+      "parameters": {
+        "matterId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/matters/{matterId}/holds",
+      "request": "Hold",
+      "response": "Hold",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ]
+    },
+    "vault.matters.holds.delete": {
+      "httpMethod": "DELETE",
+      "parameters": {
+        "holdId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "matterId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/matters/{matterId}/holds/{holdId}",
+      "request": null,
+      "response": "Empty",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ]
+    },
+    "vault.matters.holds.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "holdId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "matterId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "view": {
+          "enum": [
+            "HOLD_VIEW_UNSPECIFIED",
+            "BASIC_HOLD",
+            "FULL_HOLD"
+          ],
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/matters/{matterId}/holds/{holdId}",
+      "request": null,
+      "response": "Hold",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery",
+        "https://www.googleapis.com/auth/ediscovery.readonly"
+      ]
+    },
+    "vault.matters.holds.list": {
+      "httpMethod": "GET",
+      "parameters": {
+        "matterId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        },
+        "view": {
+          "enum": [
+            "HOLD_VIEW_UNSPECIFIED",
+            "BASIC_HOLD",
+            "FULL_HOLD"
+          ],
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/matters/{matterId}/holds",
+      "request": null,
+      "response": "ListHoldsResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery",
+        "https://www.googleapis.com/auth/ediscovery.readonly"
+      ]
+    },
+    "vault.matters.holds.removeHeldAccounts": {
+      "httpMethod": "POST",
+      "parameters": {
+        "holdId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "matterId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/matters/{matterId}/holds/{holdId}:removeHeldAccounts",
+      "request": "RemoveHeldAccountsRequest",
+      "response": "RemoveHeldAccountsResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ]
+    },
+    "vault.matters.holds.update": {
+      "httpMethod": "PUT",
+      "parameters": {
+        "holdId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "matterId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/matters/{matterId}/holds/{holdId}",
+      "request": "Hold",
+      "response": "Hold",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ]
+    },
+    "vault.matters.list": {
+      "httpMethod": "GET",
+      "parameters": {
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "STATE_UNSPECIFIED",
+            "OPEN",
+            "CLOSED",
+            "DELETED"
+          ],
+          "location": "query",
+          "type": "string"
+        },
+        "view": {
+          "enum": [
+            "VIEW_UNSPECIFIED",
+            "BASIC",
+            "FULL"
+          ],
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/matters",
+      "request": null,
+      "response": "ListMattersResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery",
+        "https://www.googleapis.com/auth/ediscovery.readonly"
+      ]
+    },
+    "vault.matters.removePermissions": {
+      "httpMethod": "POST",
+      "parameters": {
+        "matterId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/matters/{matterId}:removePermissions",
+      "request": "RemoveMatterPermissionsRequest",
+      "response": "Empty",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ]
+    },
+    "vault.matters.reopen": {
+      "httpMethod": "POST",
+      "parameters": {
+        "matterId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/matters/{matterId}:reopen",
+      "request": "ReopenMatterRequest",
+      "response": "ReopenMatterResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ]
+    },
+    "vault.matters.savedQueries.create": {
+      "httpMethod": "POST",
+      "parameters": {
+        "matterId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/matters/{matterId}/savedQueries",
+      "request": "SavedQuery",
+      "response": "SavedQuery",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ]
+    },
+    "vault.matters.savedQueries.delete": {
+      "httpMethod": "DELETE",
+      "parameters": {
+        "matterId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "savedQueryId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/matters/{matterId}/savedQueries/{savedQueryId}",
+      "request": null,
+      "response": "Empty",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ]
+    },
+    "vault.matters.savedQueries.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "matterId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "savedQueryId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/matters/{matterId}/savedQueries/{savedQueryId}",
+      "request": null,
+      "response": "SavedQuery",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery",
+        "https://www.googleapis.com/auth/ediscovery.readonly"
+      ]
+    },
+    "vault.matters.savedQueries.list": {
+      "httpMethod": "GET",
+      "parameters": {
+        "matterId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        }
+      },
+      "path": "v1/matters/{matterId}/savedQueries",
+      "request": null,
+      "response": "ListSavedQueriesResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery",
+        "https://www.googleapis.com/auth/ediscovery.readonly"
+      ]
+    },
+    "vault.matters.undelete": {
+      "httpMethod": "POST",
+      "parameters": {
+        "matterId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/matters/{matterId}:undelete",
+      "request": "UndeleteMatterRequest",
+      "response": "Matter",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ]
+    },
+    "vault.matters.update": {
+      "httpMethod": "PUT",
+      "parameters": {
+        "matterId": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/matters/{matterId}",
+      "request": "Matter",
+      "response": "Matter",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ]
+    },
+    "vault.operations.cancel": {
+      "httpMethod": "POST",
+      "parameters": {
+        "name": {
+          "location": "path",
+          "pattern": "^operations/.*$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}:cancel",
+      "request": "CancelOperationRequest",
+      "response": "Empty",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ]
+    },
+    "vault.operations.delete": {
+      "httpMethod": "DELETE",
+      "parameters": {
+        "name": {
+          "location": "path",
+          "pattern": "^operations/.*$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}",
+      "request": null,
+      "response": "Empty",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery"
+      ]
+    },
+    "vault.operations.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "name": {
+          "location": "path",
+          "pattern": "^operations/.*$",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "v1/{+name}",
+      "request": null,
+      "response": "Operation",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery",
+        "https://www.googleapis.com/auth/ediscovery.readonly"
+      ]
+    },
+    "vault.operations.list": {
+      "httpMethod": "GET",
+      "parameters": {
+        "filter": {
+          "location": "query",
+          "type": "string"
+        },
+        "name": {
+          "location": "path",
+          "pattern": "^operations$",
+          "required": true,
+          "type": "string"
+        },
+        "pageSize": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        },
+        "returnPartialSuccess": {
+          "location": "query",
+          "type": "boolean"
+        }
+      },
+      "path": "v1/{+name}",
+      "request": null,
+      "response": "ListOperationsResponse",
+      "scopes": [
+        "https://www.googleapis.com/auth/ediscovery",
+        "https://www.googleapis.com/auth/ediscovery.readonly"
+      ]
+    }
+  },
+  "name": "vault",
+  "retrieved": "2026-09-25",
+  "revision": "20260915",
+  "schemas": {
+    "AccountCount": {
+      "account": "UserInfo",
+      "count": "string"
+    },
+    "AccountCountError": {
+      "account": "UserInfo",
+      "errorType": "string"
+    },
+    "AccountInfo": {
+      "emails": "array:string"
+    },
+    "AddHeldAccountResult": {
+      "account": "HeldAccount",
+      "status": "Status"
+    },
+    "AddHeldAccountsRequest": {
+      "accountIds": "array:string",
+      "emails": "array:string"
+    },
+    "AddHeldAccountsResponse": {
+      "responses": "array:AddHeldAccountResult"
+    },
+    "AddMatterPermissionsRequest": {
+      "ccMe": "boolean",
+      "matterPermission": "MatterPermission",
+      "sendEmails": "boolean"
+    },
+    "CalendarExportOptions": {
+      "exportFormat": "string"
+    },
+    "CalendarOptions": {
+      "locationQuery": "array:string",
+      "minusWords": "array:string",
+      "peopleQuery": "array:string",
+      "responseStatuses": "array:string",
+      "versionDate": "string"
+    },
+    "CancelOperationRequest": {},
+    "CloseMatterRequest": {},
+    "CloseMatterResponse": {
+      "matter": "Matter"
+    },
+    "CloudStorageFile": {
+      "bucketName": "string",
+      "md5Hash": "string",
+      "objectName": "string",
+      "size": "string"
+    },
+    "CloudStorageSink": {
+      "files": "array:CloudStorageFile"
+    },
+    "CorpusQuery": {
+      "calendarQuery": "HeldCalendarQuery",
+      "driveQuery": "HeldDriveQuery",
+      "geminiQuery": "HeldGeminiQuery",
+      "groupsQuery": "HeldGroupsQuery",
+      "hangoutsChatQuery": "HeldHangoutsChatQuery",
+      "mailQuery": "HeldMailQuery",
+      "voiceQuery": "HeldVoiceQuery"
+    },
+    "CountArtifactsMetadata": {
+      "endTime": "string",
+      "matterId": "string",
+      "query": "Query",
+      "startTime": "string"
+    },
+    "CountArtifactsRequest": {
+      "query": "Query",
+      "view": "string"
+    },
+    "CountArtifactsResponse": {
+      "groupsCountResult": "GroupsCountResult",
+      "mailCountResult": "MailCountResult",
+      "totalCount": "string"
+    },
+    "DriveDocumentIds": {
+      "ids": "array:string"
+    },
+    "DriveDocumentInfo": {
+      "documentIds": "DriveDocumentIds"
+    },
+    "DriveExportOptions": {
+      "includeAccessInfo": "boolean"
+    },
+    "DriveOptions": {
+      "clientSideEncryptedOption": "string",
+      "includeSharedDrives": "boolean",
+      "includeTeamDrives": "boolean",
+      "sharedDrivesOption": "string",
+      "versionDate": "string"
+    },
+    "Empty": {},
+    "Export": {
+      "cloudStorageSink": "CloudStorageSink",
+      "createTime": "string",
+      "exportOptions": "ExportOptions",
+      "id": "string",
+      "matterId": "string",
+      "name": "string",
+      "parentExportId": "string",
+      "query": "Query",
+      "requester": "UserInfo",
+      "stats": "ExportStats",
+      "status": "string"
+    },
+    "ExportOptions": {
+      "calendarOptions": "CalendarExportOptions",
+      "driveOptions": "DriveExportOptions",
+      "geminiOptions": "GeminiExportOptions",
+      "groupsOptions": "GroupsExportOptions",
+      "hangoutsChatOptions": "HangoutsChatExportOptions",
+      "mailOptions": "MailExportOptions",
+      "region": "string",
+      "voiceOptions": "VoiceExportOptions"
+    },
+    "ExportStats": {
+      "exportedArtifactCount": "string",
+      "sizeInBytes": "string",
+      "totalArtifactCount": "string"
+    },
+    "GeminiExportOptions": {
+      "exportFormat": "string"
+    },
+    "GeminiOptions": {},
+    "GroupsCountResult": {
+      "accountCountErrors": "array:AccountCountError",
+      "accountCounts": "array:AccountCount",
+      "matchingAccountsCount": "string",
+      "nonQueryableAccounts": "array:string",
+      "queriedAccountsCount": "string"
+    },
+    "GroupsExportOptions": {
+      "exportFormat": "string"
+    },
+    "HangoutsChatExportOptions": {
+      "exportFormat": "string"
+    },
+    "HangoutsChatInfo": {
+      "roomId": "array:string"
+    },
+    "HangoutsChatOptions": {
+      "includeRooms": "boolean"
+    },
+    "HeldAccount": {
+      "accountId": "string",
+      "email": "string",
+      "firstName": "string",
+      "holdTime": "string",
+      "lastName": "string"
+    },
+    "HeldCalendarQuery": {},
+    "HeldDriveQuery": {
+      "includeSharedDriveFiles": "boolean",
+      "includeTeamDriveFiles": "boolean"
+    },
+    "HeldGeminiQuery": {},
+    "HeldGroupsQuery": {
+      "endTime": "string",
+      "startTime": "string",
+      "terms": "string"
+    },
+    "HeldHangoutsChatQuery": {
+      "includeRooms": "boolean"
+    },
+    "HeldMailQuery": {
+      "endTime": "string",
+      "startTime": "string",
+      "terms": "string"
+    },
+    "HeldOrgUnit": {
+      "holdTime": "string",
+      "orgUnitId": "string"
+    },
+    "HeldVoiceQuery": {
+      "coveredData": "array:string"
+    },
+    "Hold": {
+      "accounts": "array:HeldAccount",
+      "corpus": "string",
+      "holdId": "string",
+      "name": "string",
+      "orgUnit": "HeldOrgUnit",
+      "query": "CorpusQuery",
+      "updateTime": "string"
+    },
+    "ListExportsResponse": {
+      "exports": "array:Export",
+      "nextPageToken": "string"
+    },
+    "ListHeldAccountsResponse": {
+      "accounts": "array:HeldAccount"
+    },
+    "ListHoldsResponse": {
+      "holds": "array:Hold",
+      "nextPageToken": "string"
+    },
+    "ListMattersResponse": {
+      "matters": "array:Matter",
+      "nextPageToken": "string"
+    },
+    "ListOperationsResponse": {
+      "nextPageToken": "string",
+      "operations": "array:Operation",
+      "unreachable": "array:string"
+    },
+    "ListSavedQueriesResponse": {
+      "nextPageToken": "string",
+      "savedQueries": "array:SavedQuery"
+    },
+    "MailCountResult": {
+      "accountCountErrors": "array:AccountCountError",
+      "accountCounts": "array:AccountCount",
+      "matchingAccountsCount": "string",
+      "nonQueryableAccounts": "array:string",
+      "queriedAccountsCount": "string"
+    },
+    "MailExportOptions": {
+      "exportFormat": "string",
+      "exportLinkedDriveFiles": "boolean",
+      "showConfidentialModeContent": "boolean",
+      "useNewExport": "boolean"
+    },
+    "MailOptions": {
+      "clientSideEncryptedOption": "string",
+      "excludeDrafts": "boolean"
+    },
+    "Matter": {
+      "description": "string",
+      "matterId": "string",
+      "matterPermissions": "array:MatterPermission",
+      "matterRegion": "string",
+      "name": "string",
+      "state": "string"
+    },
+    "MatterPermission": {
+      "accountId": "string",
+      "role": "string"
+    },
+    "Operation": {
+      "done": "boolean",
+      "error": "Status",
+      "metadata": "object",
+      "name": "string",
+      "response": "object"
+    },
+    "OrgUnitInfo": {
+      "orgUnitId": "string"
+    },
+    "Query": {
+      "accountInfo": "AccountInfo",
+      "calendarOptions": "CalendarOptions",
+      "corpus": "string",
+      "dataScope": "string",
+      "driveDocumentInfo": "DriveDocumentInfo",
+      "driveOptions": "DriveOptions",
+      "endTime": "string",
+      "geminiOptions": "GeminiOptions",
+      "hangoutsChatInfo": "HangoutsChatInfo",
+      "hangoutsChatOptions": "HangoutsChatOptions",
+      "mailOptions": "MailOptions",
+      "method": "string",
+      "orgUnitInfo": "OrgUnitInfo",
+      "searchMethod": "string",
+      "sharedDriveInfo": "SharedDriveInfo",
+      "sitesUrlInfo": "SitesUrlInfo",
+      "startTime": "string",
+      "teamDriveInfo": "TeamDriveInfo",
+      "terms": "string",
+      "timeZone": "string",
+      "voiceOptions": "VoiceOptions"
+    },
+    "RemoveHeldAccountsRequest": {
+      "accountIds": "array:string"
+    },
+    "RemoveHeldAccountsResponse": {
+      "statuses": "array:Status"
+    },
+    "RemoveMatterPermissionsRequest": {
+      "accountId": "string"
+    },
+    "ReopenMatterRequest": {},
+    "ReopenMatterResponse": {
+      "matter": "Matter"
+    },
+    "SavedQuery": {
+      "createTime": "string",
+      "displayName": "string",
+      "matterId": "string",
+      "query": "Query",
+      "savedQueryId": "string"
+    },
+    "SharedDriveInfo": {
+      "sharedDriveIds": "array:string"
+    },
+    "SitesUrlInfo": {
+      "urls": "array:string"
+    },
+    "Status": {
+      "code": "integer",
+      "details": "array:object",
+      "message": "string"
+    },
+    "TeamDriveInfo": {
+      "teamDriveIds": "array:string"
+    },
+    "UndeleteMatterRequest": {},
+    "UserInfo": {
+      "displayName": "string",
+      "email": "string"
+    },
+    "VoiceExportOptions": {
+      "exportFormat": "string"
+    },
+    "VoiceOptions": {
+      "coveredData": "array:string"
+    }
+  },
+  "source": "https://vault.googleapis.com/$discovery/rest?version=v1",
+  "version": "v1"
+}

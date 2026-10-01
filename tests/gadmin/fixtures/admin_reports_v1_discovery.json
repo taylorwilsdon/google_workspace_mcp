@@ -1,0 +1,551 @@
+{
+  "methods": {
+    "admin.channels.stop": {
+      "httpMethod": "POST",
+      "parameters": {},
+      "path": "admin/reports_v1/channels/stop",
+      "request": "Channel",
+      "response": null,
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.reports.audit.readonly"
+      ]
+    },
+    "reports.activities.list": {
+      "httpMethod": "GET",
+      "parameters": {
+        "actorIpAddress": {
+          "location": "query",
+          "type": "string"
+        },
+        "agentInfoFilter": {
+          "location": "query",
+          "type": "string"
+        },
+        "applicationInfoFilter": {
+          "location": "query",
+          "type": "string"
+        },
+        "applicationName": {
+          "enum": [
+            "access_transparency",
+            "admin",
+            "calendar",
+            "chat",
+            "drive",
+            "gcp",
+            "gmail",
+            "gplus",
+            "groups",
+            "groups_enterprise",
+            "jamboard",
+            "login",
+            "meet",
+            "mobile",
+            "rules",
+            "saml",
+            "token",
+            "user_accounts",
+            "context_aware_access",
+            "chrome",
+            "data_studio",
+            "keep",
+            "vault",
+            "gemini_in_workspace_apps",
+            "classroom",
+            "assignments",
+            "cloud_search",
+            "tasks",
+            "data_migration",
+            "meet_hardware",
+            "directory_sync",
+            "ldap",
+            "profile",
+            "access_evaluation",
+            "admin_data_action",
+            "contacts",
+            "takeout",
+            "graduation",
+            "voice",
+            "chrome_sync",
+            "workspace_studio"
+          ],
+          "location": "path",
+          "pattern": "(access_evaluation)|(access_transparency)|(admin)|(admin_data_action)|(assignments)|(calendar)|(chat)|(chrome)|(classroom)|(cloud_search)|(contacts)|(context_aware_access)|(data_studio)|(data_migration)|(directory_sync)|(drive)|(gcp)|(gmail)|(gplus)|(graduation)|(groups)|(groups_enterprise)|(jamboard)|(keep)|(ldap)|(login)|(meet)|(meet_hardware)|(mobile)|(profile)|(rules)|(saml)|(token)|(user_accounts)|(vault)|(gemini_in_workspace_apps)|(tasks)|(takeout)|(voice)|(chrome_sync)|(workspace_studio)",
+          "required": true,
+          "type": "string"
+        },
+        "customerId": {
+          "location": "query",
+          "pattern": "C.+|my_customer",
+          "type": "string"
+        },
+        "deviceFilter": {
+          "location": "query",
+          "type": "string"
+        },
+        "endTime": {
+          "location": "query",
+          "pattern": "(\\d\\d\\d\\d)-(\\d\\d)-(\\d\\d)T(\\d\\d):(\\d\\d):(\\d\\d)(?:\\.(\\d+))?(?:(Z)|([-+])(\\d\\d):(\\d\\d))",
+          "type": "string"
+        },
+        "eventName": {
+          "location": "query",
+          "type": "string"
+        },
+        "filters": {
+          "location": "query",
+          "pattern": "(.+[<,<=,==,>=,>,<>].+,)*(.+[<,<=,==,>=,>,<>].+)",
+          "type": "string"
+        },
+        "groupIdFilter": {
+          "location": "query",
+          "pattern": "(id:[a-z0-9]+(,id:[a-z0-9]+)*)",
+          "type": "string"
+        },
+        "includeSensitiveData": {
+          "location": "query",
+          "type": "boolean"
+        },
+        "maxResults": {
+          "location": "query",
+          "type": "integer"
+        },
+        "networkInfoFilter": {
+          "location": "query",
+          "type": "string"
+        },
+        "orgUnitID": {
+          "location": "query",
+          "pattern": "(id:[a-z0-9]+)",
+          "type": "string"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        },
+        "resourceDetailsFilter": {
+          "location": "query",
+          "type": "string"
+        },
+        "startTime": {
+          "location": "query",
+          "pattern": "(\\d\\d\\d\\d)-(\\d\\d)-(\\d\\d)T(\\d\\d):(\\d\\d):(\\d\\d)(?:\\.(\\d+))?(?:(Z)|([-+])(\\d\\d):(\\d\\d))",
+          "type": "string"
+        },
+        "statusFilter": {
+          "location": "query",
+          "type": "string"
+        },
+        "userKey": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "admin/reports/v1/activity/users/{userKey}/applications/{applicationName}",
+      "request": null,
+      "response": "Activities",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.reports.audit.readonly"
+      ]
+    },
+    "reports.activities.watch": {
+      "httpMethod": "POST",
+      "parameters": {
+        "actorIpAddress": {
+          "location": "query",
+          "type": "string"
+        },
+        "applicationName": {
+          "enum": [
+            "access_transparency",
+            "admin",
+            "calendar",
+            "chat",
+            "drive",
+            "gcp",
+            "gplus",
+            "groups",
+            "groups_enterprise",
+            "jamboard",
+            "login",
+            "meet",
+            "mobile",
+            "rules",
+            "saml",
+            "token",
+            "user_accounts",
+            "context_aware_access",
+            "chrome",
+            "data_studio",
+            "keep",
+            "classroom"
+          ],
+          "location": "path",
+          "pattern": "(access_transparency)|(admin)|(calendar)|(chat)|(chrome)|(classroom)|(context_aware_access)|(data_studio)|(drive)|(gcp)|(gplus)|(groups)|(groups_enterprise)|(jamboard)|(keep)|(login)|(meet)|(mobile)|(rules)|(saml)|(token)|(user_accounts)",
+          "required": true,
+          "type": "string"
+        },
+        "customerId": {
+          "location": "query",
+          "pattern": "C.+|my_customer",
+          "type": "string"
+        },
+        "endTime": {
+          "location": "query",
+          "pattern": "(\\d\\d\\d\\d)-(\\d\\d)-(\\d\\d)T(\\d\\d):(\\d\\d):(\\d\\d)(?:\\.(\\d+))?(?:(Z)|([-+])(\\d\\d):(\\d\\d))",
+          "type": "string"
+        },
+        "eventName": {
+          "location": "query",
+          "type": "string"
+        },
+        "filters": {
+          "location": "query",
+          "pattern": "(.+[<,<=,==,>=,>,<>].+,)*(.+[<,<=,==,>=,>,<>].+)",
+          "type": "string"
+        },
+        "groupIdFilter": {
+          "location": "query",
+          "pattern": "(id:[a-z0-9]+(,id:[a-z0-9]+)*)",
+          "type": "string"
+        },
+        "maxResults": {
+          "location": "query",
+          "type": "integer"
+        },
+        "orgUnitID": {
+          "location": "query",
+          "pattern": "(id:[a-z0-9]+)",
+          "type": "string"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        },
+        "startTime": {
+          "location": "query",
+          "pattern": "(\\d\\d\\d\\d)-(\\d\\d)-(\\d\\d)T(\\d\\d):(\\d\\d):(\\d\\d)(?:\\.(\\d+))?(?:(Z)|([-+])(\\d\\d):(\\d\\d))",
+          "type": "string"
+        },
+        "userKey": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "admin/reports/v1/activity/users/{userKey}/applications/{applicationName}/watch",
+      "request": "Channel",
+      "response": "Channel",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.reports.audit.readonly"
+      ]
+    },
+    "reports.customerUsageReports.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "customerId": {
+          "location": "query",
+          "pattern": "C.+|my_customer",
+          "type": "string"
+        },
+        "date": {
+          "location": "path",
+          "pattern": "(\\d){4}-(\\d){2}-(\\d){2}",
+          "required": true,
+          "type": "string"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        },
+        "parameters": {
+          "location": "query",
+          "pattern": "(((accounts)|(app_maker)|(apps_scripts)|(chat)|(classroom)|(cros)|(gmail)|(calendar)|(docs)|(gplus)|(sites)|(device_management)|(drive)|(meet)):[^,]+,)*(((accounts)|(app_maker)|(apps_scripts)|(chat)|(classroom)|(cros)|(gmail)|(calendar)|(docs)|(gplus)|(sites)|(device_management)|(drive)|(meet)):[^,]+)",
+          "type": "string"
+        }
+      },
+      "path": "admin/reports/v1/usage/dates/{date}",
+      "request": null,
+      "response": "UsageReports",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.reports.usage.readonly"
+      ]
+    },
+    "reports.entityUsageReports.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "customerId": {
+          "location": "query",
+          "pattern": "C.+|my_customer",
+          "type": "string"
+        },
+        "date": {
+          "location": "path",
+          "pattern": "(\\d){4}-(\\d){2}-(\\d){2}",
+          "required": true,
+          "type": "string"
+        },
+        "entityKey": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        },
+        "entityType": {
+          "enum": [
+            "gplus_communities"
+          ],
+          "location": "path",
+          "pattern": "(gplus_communities)",
+          "required": true,
+          "type": "string"
+        },
+        "filters": {
+          "location": "query",
+          "pattern": "(((gplus)):[a-z0-9_]+[<,<=,==,>=,>,!=][^,]+,)*(((gplus)):[a-z0-9_]+[<,<=,==,>=,>,!=][^,]+)",
+          "type": "string"
+        },
+        "maxResults": {
+          "location": "query",
+          "type": "integer"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        },
+        "parameters": {
+          "location": "query",
+          "pattern": "(((gplus)):[^,]+,)*(((gplus)):[^,]+)",
+          "type": "string"
+        }
+      },
+      "path": "admin/reports/v1/usage/{entityType}/{entityKey}/dates/{date}",
+      "request": null,
+      "response": "UsageReports",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.reports.usage.readonly"
+      ]
+    },
+    "reports.userUsageReport.get": {
+      "httpMethod": "GET",
+      "parameters": {
+        "customerId": {
+          "location": "query",
+          "pattern": "C.+|my_customer",
+          "type": "string"
+        },
+        "date": {
+          "location": "path",
+          "pattern": "(\\d){4}-(\\d){2}-(\\d){2}",
+          "required": true,
+          "type": "string"
+        },
+        "filters": {
+          "location": "query",
+          "pattern": "(((accounts)|(chat)|(classroom)|(cros)|(gmail)|(calendar)|(docs)|(gplus)|(sites)|(device_management)|(drive)):[a-z0-9_]+[<,<=,==,>=,>,!=][^,]+,)*(((accounts)|(chat)|(classroom)|(cros)|(gmail)|(calendar)|(docs)|(gplus)|(sites)|(device_management)|(drive)):[a-z0-9_]+[<,<=,==,>=,>,!=][^,]+)",
+          "type": "string"
+        },
+        "groupIdFilter": {
+          "location": "query",
+          "pattern": "(id:[a-z0-9]+(,id:[a-z0-9]+)*)",
+          "type": "string"
+        },
+        "maxResults": {
+          "location": "query",
+          "type": "integer"
+        },
+        "orgUnitID": {
+          "location": "query",
+          "pattern": "(id:[a-z0-9]+)",
+          "type": "string"
+        },
+        "pageToken": {
+          "location": "query",
+          "type": "string"
+        },
+        "parameters": {
+          "location": "query",
+          "pattern": "(((accounts)|(chat)|(classroom)|(cros)|(gmail)|(calendar)|(docs)|(gplus)|(sites)|(device_management)|(drive)):[^,]+,)*(((accounts)|(chat)|(classroom)|(cros)|(gmail)|(calendar)|(docs)|(gplus)|(sites)|(device_management)|(drive)):[^,]+)",
+          "type": "string"
+        },
+        "userKey": {
+          "location": "path",
+          "required": true,
+          "type": "string"
+        }
+      },
+      "path": "admin/reports/v1/usage/users/{userKey}/dates/{date}",
+      "request": null,
+      "response": "UsageReports",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.reports.usage.readonly"
+      ]
+    }
+  },
+  "name": "admin",
+  "retrieved": "2026-09-25",
+  "revision": "20260917",
+  "schemas": {
+    "Activities": {
+      "etag": "string",
+      "items": "array:Activity",
+      "kind": "string",
+      "nextPageToken": "string"
+    },
+    "Activity": {
+      "actor": "object",
+      "etag": "string",
+      "events": "array:object",
+      "id": "object",
+      "ipAddress": "string",
+      "isAgenticAction": "boolean",
+      "kind": "string",
+      "networkInfo": "ActivityNetworkInfo",
+      "ownerDomain": "string",
+      "resourceDetails": "array:ResourceDetails",
+      "userDeviceInfo": "ActivityUserDeviceInfo"
+    },
+    "ActivityEventsStatus": {
+      "errorCode": "string",
+      "errorMessage": "string",
+      "eventStatus": "string",
+      "httpStatusCode": "integer"
+    },
+    "ActivityNetworkInfo": {
+      "ipAsn": "array:integer",
+      "regionCode": "string",
+      "subdivisionCode": "string"
+    },
+    "ActivityUserDeviceInfo": {
+      "deviceId": "string",
+      "deviceOsVersion": "string",
+      "deviceType": "string"
+    },
+    "AgentAttributionInfo": {
+      "agentId": "string",
+      "agentName": "string",
+      "agentOwner": "AgentAttributionInfoAgentOwner",
+      "agentType": "string"
+    },
+    "AgentAttributionInfoAgentOwner": {
+      "email": "string"
+    },
+    "AppliedLabel": {
+      "fieldValues": "array:FieldValue",
+      "id": "string",
+      "reason": "Reason",
+      "title": "string"
+    },
+    "Channel": {
+      "address": "string",
+      "expiration": "string",
+      "id": "string",
+      "kind": "string",
+      "params": "object",
+      "payload": "boolean",
+      "resourceId": "string",
+      "resourceUri": "string",
+      "token": "string",
+      "type": "string"
+    },
+    "CustomerIdentity": {
+      "id": "string"
+    },
+    "Date": {
+      "day": "integer",
+      "month": "integer",
+      "year": "integer"
+    },
+    "FieldValue": {
+      "dateValue": "Date",
+      "displayName": "string",
+      "id": "string",
+      "integerValue": "string",
+      "longTextValue": "string",
+      "reason": "Reason",
+      "selectionListValue": "FieldValueSelectionListValue",
+      "selectionValue": "FieldValueSelectionValue",
+      "textListValue": "FieldValueTextListValue",
+      "textValue": "string",
+      "type": "string",
+      "unsetValue": "boolean",
+      "userListValue": "FieldValueUserListValue",
+      "userValue": "FieldValueUserValue"
+    },
+    "FieldValueSelectionListValue": {
+      "values": "array:FieldValueSelectionValue"
+    },
+    "FieldValueSelectionValue": {
+      "badged": "boolean",
+      "displayName": "string",
+      "id": "string"
+    },
+    "FieldValueTextListValue": {
+      "values": "array:string"
+    },
+    "FieldValueUserListValue": {
+      "values": "array:FieldValueUserValue"
+    },
+    "FieldValueUserValue": {
+      "email": "string"
+    },
+    "GroupIdentity": {
+      "groupEmail": "string",
+      "id": "string"
+    },
+    "NestedParameter": {
+      "boolValue": "boolean",
+      "intValue": "string",
+      "multiBoolValue": "array:boolean",
+      "multiIntValue": "array:string",
+      "multiValue": "array:string",
+      "name": "string",
+      "value": "string"
+    },
+    "OwnerDetails": {
+      "ownerIdentity": "array:OwnerIdentity",
+      "ownerType": "string"
+    },
+    "OwnerIdentity": {
+      "customerIdentity": "CustomerIdentity",
+      "groupIdentity": "GroupIdentity",
+      "sharedDriveIdentity": "SharedDriveIdentity",
+      "userIdentity": "UserIdentity"
+    },
+    "Reason": {
+      "reasonType": "string"
+    },
+    "ResourceDetails": {
+      "appliedLabels": "array:AppliedLabel",
+      "id": "string",
+      "ownerDetails": "OwnerDetails",
+      "relation": "string",
+      "title": "string",
+      "type": "string"
+    },
+    "SharedDriveIdentity": {
+      "id": "string",
+      "sharedDriveName": "string"
+    },
+    "UsageReport": {
+      "date": "string",
+      "entity": "object",
+      "etag": "string",
+      "kind": "string",
+      "parameters": "array:object"
+    },
+    "UsageReports": {
+      "etag": "string",
+      "kind": "string",
+      "nextPageToken": "string",
+      "usageReports": "array:UsageReport",
+      "warnings": "array:object"
+    },
+    "UserIdentity": {
+      "id": "string",
+      "userEmail": "string"
+    }
+  },
+  "source": "https://admin.googleapis.com/$discovery/rest?version=reports_v1",
+  "version": "reports_v1"
+}

@@ -1,0 +1,120 @@
+{
+  "service": "cloudidentity",
+  "version": "v1beta1",
+  "discovery": {
+    "url": "https://cloudidentity.googleapis.com/$discovery/rest?version=v1beta1",
+    "revision": "20260923",
+    "checked": "2026-09-25"
+  },
+  "operations": {
+    "cloudidentity.orgUnits.memberships.list": {
+      "resource_path": [
+        "orgUnits",
+        "memberships"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.orgunits.readonly"
+      ],
+      "risk": "read",
+      "params": {
+        "parent": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^orgUnits/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        },
+        "customer": {
+          "type": "string",
+          "location": "query",
+          "pattern": "^customers/[A-Za-z0-9]+$"
+        },
+        "filter": {
+          "type": "string",
+          "location": "query",
+          "pattern": "^type ?== ?'shared_drive'$"
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "target_param": "parent",
+      "response": {
+        "items_key": "orgMemberships",
+        "fields": [
+          "name",
+          "type",
+          "member",
+          "memberUri"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "param": "customer",
+          "as": "name"
+        },
+        {
+          "kind": "org_unit",
+          "param": "parent"
+        }
+      ]
+    },
+    "cloudidentity.orgUnits.memberships.move": {
+      "resource_path": [
+        "orgUnits",
+        "memberships"
+      ],
+      "method": "move",
+      "scopes": [
+        "https://www.googleapis.com/auth/cloud-identity.orgunits"
+      ],
+      "risk": "manage",
+      "params": {
+        "name": {
+          "type": "string",
+          "location": "path",
+          "required": true,
+          "pattern": "^orgUnits/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*/memberships/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        }
+      },
+      "body": {
+        "customer": "string",
+        "destinationOrgUnit": {
+          "type": "string",
+          "required": true,
+          "pattern": "^orgUnits/[A-Za-z0-9_\\-][A-Za-z0-9._@;+=\\-]*$"
+        }
+      },
+      "target_param": "name",
+      "response": {
+        "fields": [
+          "name",
+          "done",
+          "error"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "customer",
+          "field": "customer",
+          "as": "name"
+        },
+        {
+          "kind": "org_unit",
+          "param": "name"
+        },
+        {
+          "kind": "org_unit",
+          "field": "destinationOrgUnit"
+        }
+      ]
+    }
+  },
+  "excluded": {}
+}

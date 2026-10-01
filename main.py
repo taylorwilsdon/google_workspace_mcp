@@ -9,6 +9,7 @@ from functools import partial
 from importlib import metadata, import_module
 from typing import NoReturn
 from dotenv import load_dotenv
+from auth.scopes import OPT_IN_SERVICES
 from core.startup_ui import StartupDisplay, collapse_home, wordmark_lines
 
 # Prevent any stray startup output on macOS (e.g. platform identifiers) from
@@ -226,8 +227,35 @@ SERVICE_MODULES = {
     "contacts": "gcontacts.contacts_tools",
     "search": "gsearch.search_tools",
     "appscript": "gappsscript.apps_script_tools",
+    "admin-directory": "gadmin.admin_tools",
+    "admin-directory-devices": "gadmin.admin_tools",
+    "admin-directory-resources": "gadmin.admin_tools",
+    "admin-directory-printers": "gadmin.admin_tools",
+    "admin-datatransfer": "gadmin.admin_tools",
+    "admin-licensing": "gadmin.admin_tools",
+    "admin-reports": "gadmin.admin_tools",
+    "admin-vault": "gadmin.admin_tools",
+    "admin-alertcenter": "gadmin.admin_tools",
+    "admin-groupssettings": "gadmin.admin_tools",
+    "admin-cloudidentity-groups": "gadmin.admin_tools",
+    "admin-cloudidentity-devices": "gadmin.admin_tools",
+    "admin-cloudidentity-sso": "gadmin.admin_tools",
+    "admin-cloudidentity-policies": "gadmin.admin_tools",
+    "admin-cloudidentity-invitations": "gadmin.admin_tools",
+    "admin-cloudidentity-domains": "gadmin.admin_tools",
+    "admin-cloudidentity-orgunits": "gadmin.admin_tools",
+    "admin-chrome-reports": "gadmin.admin_tools",
+    "admin-chrome-telemetry": "gadmin.admin_tools",
+    "admin-chrome-profiles": "gadmin.admin_tools",
+    "admin-chrome-insights": "gadmin.admin_tools",
+    "admin-chrome-policy": "gadmin.admin_tools",
+    "admin-access-context": "gadmin.admin_tools",
+    "admin-contact-delegation": "gadmin.admin_tools",
+    "admin-gmail-delegates": "gadmin.admin_tools",
 }
 VALID_SERVICES = frozenset(SERVICE_MODULES)
+# Loaded when no service is named. Opt-in services must be selected explicitly.
+DEFAULT_SERVICES = tuple(s for s in SERVICE_MODULES if s not in OPT_IN_SERVICES)
 
 # Every icon is a double-width emoji with no variation selector, so the startup
 # service grid stays aligned across terminals.
@@ -244,6 +272,31 @@ SERVICE_ICONS = {
     "contacts": "👤",
     "search": "🔍",
     "appscript": "📜",
+    "admin-directory": "🔐",
+    "admin-directory-devices": "💻",
+    "admin-directory-resources": "🚪",
+    "admin-directory-printers": "📠",
+    "admin-datatransfer": "📦",
+    "admin-licensing": "🎫",
+    "admin-reports": "📈",
+    "admin-vault": "🔒",
+    "admin-alertcenter": "🚨",
+    "admin-groupssettings": "👥",
+    "admin-cloudidentity-groups": "👪",
+    "admin-cloudidentity-devices": "📱",
+    "admin-cloudidentity-sso": "🔑",
+    "admin-cloudidentity-policies": "📜",
+    "admin-cloudidentity-invitations": "📨",
+    "admin-cloudidentity-domains": "🌐",
+    "admin-cloudidentity-orgunits": "🏢",
+    "admin-chrome-reports": "📉",
+    "admin-chrome-telemetry": "📡",
+    "admin-chrome-profiles": "🧭",
+    "admin-chrome-insights": "🔎",
+    "admin-chrome-policy": "🧰",
+    "admin-access-context": "🛂",
+    "admin-contact-delegation": "📇",
+    "admin-gmail-delegates": "📬",
 }
 
 
@@ -719,7 +772,8 @@ def main():
         # Use tier-based tool selection, optionally filtered by services
         try:
             tier_tools, suggested_services = resolve_tools_from_tier(
-                args.tool_tier, args.tools
+                args.tool_tier,
+                args.tools if args.tools is not None else list(DEFAULT_SERVICES),
             )
 
             # If --tools specified, use those services; otherwise use all services that have tier tools
@@ -738,8 +792,8 @@ def main():
         # Don't filter individual tools when using explicit service list only
         set_enabled_tool_names(None)
     else:
-        # Default: import all tools
-        tools_to_import = tool_imports.keys()
+        # Default: import all tools except opt-in services
+        tools_to_import = DEFAULT_SERVICES
         # Don't filter individual tools when importing all
         set_enabled_tool_names(None)
 
@@ -760,6 +814,11 @@ def main():
         except ModuleNotFoundError as exc:
             logger.error("Failed to import tool '%s': %s", tool, exc, exc_info=True)
             failed.append((tool, exc))
+
+    if not OPT_IN_SERVICES.isdisjoint(loaded):
+        from gadmin.admin_tools import hide_tools_for_unselected_services
+
+        hide_tools_for_unselected_services(loaded)
 
     # Filter tools based on tier configuration (if tier-based loading is enabled)
     tools_removed = filter_server_tools(server)

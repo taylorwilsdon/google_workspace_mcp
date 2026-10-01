@@ -1289,6 +1289,20 @@ class GoogleAuthenticationError(Exception):
         self.auth_url = auth_url
 
 
+def get_verified_account_email(credentials: Credentials) -> str:
+    """Return the account these credentials belong to, as reported by Google's
+    userinfo endpoint. Raises GoogleAuthenticationError when Google does not
+    confirm a verified email, so callers can fail closed."""
+    user_info = get_user_info(credentials) or {}
+    email = user_info.get("email")
+    if not email or user_info.get("verified_email") is not True:
+        raise GoogleAuthenticationError(
+            "Could not verify which Google account these credentials belong to. "
+            "Re-authenticate and try again."
+        )
+    return email
+
+
 async def get_authenticated_google_service(
     service_name: str,  # "gmail", "calendar", "drive", "docs"
     version: str,  # "v1", "v3"
@@ -1296,6 +1310,7 @@ async def get_authenticated_google_service(
     user_google_email: str,  # Required - no more Optional
     required_scopes: List[str],
     session_id: Optional[str] = None,  # Session context for logging
+    verify_account: bool = False,
 ) -> tuple[Any, str]:
     """
     Centralized Google service authentication for all MCP tools.
@@ -1307,6 +1322,8 @@ async def get_authenticated_google_service(
         tool_name: The name of the calling tool (for logging/debugging)
         user_google_email: The user's Google email address (required)
         required_scopes: List of required OAuth scopes
+        verify_account: Return the account Google's userinfo endpoint reports for
+            the credentials (failing closed) instead of the selected email.
 
     Returns:
         tuple[service, user_email] on success
@@ -1410,12 +1427,18 @@ async def get_authenticated_google_service(
         # Extract the auth URL from the response and raise with it
         raise GoogleAuthenticationError(auth_response)
 
+    verified_email = None
+    if verify_account:
+        verified_email = await asyncio.to_thread(
+            get_verified_account_email, credentials
+        )
+
     try:
         service = build(service_name, version, http=_build_authorized_http(credentials))
-        log_user_email = user_google_email
+        log_user_email = verified_email or user_google_email
 
         # Try to get email from credentials if needed for validation
-        if credentials and credentials.id_token:
+        if not verified_email and credentials.id_token:
             try:
                 # Decode without verification (just to get email for logging)
                 decoded_token = jwt.decode(

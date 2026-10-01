@@ -1,0 +1,442 @@
+{
+  "service": "alertcenter",
+  "version": "v1beta1",
+  "discovery": {
+    "url": "https://alertcenter.googleapis.com/$discovery/rest?version=v1beta1",
+    "revision": "20260921",
+    "checked": "2026-09-25"
+  },
+  "operations": {
+    "alertcenter.alerts.list": {
+      "resource_path": [
+        "alerts"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/apps.alerts"
+      ],
+      "risk": "read",
+      "params": {
+        "customerId": {
+          "type": "string",
+          "location": "query"
+        },
+        "filter": {
+          "type": "string",
+          "location": "query"
+        },
+        "orderBy": {
+          "type": "string",
+          "location": "query",
+          "pattern": "^(create_time|update_time)( (asc|desc))?$"
+        },
+        "pageSize": {
+          "type": "integer",
+          "location": "query"
+        },
+        "pageToken": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "response": {
+        "items_key": "alerts",
+        "fields": [
+          "alertId",
+          "customerId",
+          "type",
+          "source",
+          "createTime",
+          "startTime",
+          "endTime",
+          "updateTime",
+          "deleted",
+          "metadata",
+          "securityInvestigationToolLink"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "tenant"
+        },
+        {
+          "kind": "deny",
+          "param": "customerId"
+        },
+        {
+          "kind": "response_customer",
+          "field": "customerId"
+        }
+      ]
+    },
+    "alertcenter.alerts.get": {
+      "resource_path": [
+        "alerts"
+      ],
+      "method": "get",
+      "scopes": [
+        "https://www.googleapis.com/auth/apps.alerts"
+      ],
+      "risk": "read",
+      "params": {
+        "alertId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "customerId": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "target_param": "alertId",
+      "response": {
+        "fields": [
+          "alertId",
+          "customerId",
+          "type",
+          "source",
+          "createTime",
+          "startTime",
+          "endTime",
+          "updateTime",
+          "deleted",
+          "metadata",
+          "securityInvestigationToolLink",
+          "data"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "tenant"
+        },
+        {
+          "kind": "deny",
+          "param": "customerId"
+        },
+        {
+          "kind": "response_customer",
+          "field": "customerId"
+        }
+      ]
+    },
+    "alertcenter.alerts.getMetadata": {
+      "resource_path": [
+        "alerts"
+      ],
+      "method": "getMetadata",
+      "scopes": [
+        "https://www.googleapis.com/auth/apps.alerts"
+      ],
+      "risk": "read",
+      "params": {
+        "alertId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "customerId": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "target_param": "alertId",
+      "response": {
+        "fields": [
+          "alertId",
+          "customerId",
+          "assignee",
+          "severity",
+          "status",
+          "updateTime"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "tenant"
+        },
+        {
+          "kind": "deny",
+          "param": "customerId"
+        },
+        {
+          "kind": "response_customer",
+          "field": "customerId"
+        }
+      ]
+    },
+    "alertcenter.alerts.delete": {
+      "resource_path": [
+        "alerts"
+      ],
+      "method": "delete",
+      "scopes": [
+        "https://www.googleapis.com/auth/apps.alerts"
+      ],
+      "risk": "destructive",
+      "params": {
+        "alertId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "customerId": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "target_param": "alertId",
+      "boundary": [
+        {
+          "kind": "tenant"
+        },
+        {
+          "kind": "deny",
+          "param": "customerId"
+        }
+      ]
+    },
+    "alertcenter.alerts.undelete": {
+      "resource_path": [
+        "alerts"
+      ],
+      "method": "undelete",
+      "scopes": [
+        "https://www.googleapis.com/auth/apps.alerts"
+      ],
+      "risk": "manage",
+      "params": {
+        "alertId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        }
+      },
+      "target_param": "alertId",
+      "response": {
+        "fields": [
+          "alertId",
+          "customerId",
+          "type",
+          "source",
+          "createTime",
+          "startTime",
+          "endTime",
+          "updateTime",
+          "deleted",
+          "metadata",
+          "securityInvestigationToolLink"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "tenant"
+        }
+      ]
+    },
+    "alertcenter.alerts.batchDelete": {
+      "resource_path": [
+        "alerts"
+      ],
+      "method": "batchDelete",
+      "scopes": [
+        "https://www.googleapis.com/auth/apps.alerts"
+      ],
+      "risk": "destructive",
+      "params": {},
+      "body": {
+        "alertId": {
+          "type": "array",
+          "required": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._-]+$"
+          }
+        }
+      },
+      "response": {
+        "fields": [
+          "successAlertIds",
+          "failedAlertStatus"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "tenant"
+        }
+      ]
+    },
+    "alertcenter.alerts.batchUndelete": {
+      "resource_path": [
+        "alerts"
+      ],
+      "method": "batchUndelete",
+      "scopes": [
+        "https://www.googleapis.com/auth/apps.alerts"
+      ],
+      "risk": "manage",
+      "params": {},
+      "body": {
+        "alertId": {
+          "type": "array",
+          "required": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._-]+$"
+          }
+        }
+      },
+      "response": {
+        "fields": [
+          "successAlertIds",
+          "failedAlertStatus"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "tenant"
+        }
+      ]
+    },
+    "alertcenter.alerts.feedback.list": {
+      "resource_path": [
+        "alerts",
+        "feedback"
+      ],
+      "method": "list",
+      "scopes": [
+        "https://www.googleapis.com/auth/apps.alerts"
+      ],
+      "risk": "read",
+      "params": {
+        "alertId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "customerId": {
+          "type": "string",
+          "location": "query"
+        },
+        "filter": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "target_param": "alertId",
+      "response": {
+        "items_key": "feedback",
+        "fields": [
+          "alertId",
+          "feedbackId",
+          "type",
+          "createTime",
+          "email",
+          "customerId"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "tenant"
+        },
+        {
+          "kind": "deny",
+          "param": "customerId"
+        },
+        {
+          "kind": "response_customer",
+          "field": "customerId"
+        }
+      ]
+    },
+    "alertcenter.alerts.feedback.create": {
+      "resource_path": [
+        "alerts",
+        "feedback"
+      ],
+      "method": "create",
+      "scopes": [
+        "https://www.googleapis.com/auth/apps.alerts"
+      ],
+      "risk": "manage",
+      "params": {
+        "alertId": {
+          "type": "string",
+          "location": "path",
+          "required": true
+        },
+        "customerId": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "body": {
+        "type": {
+          "type": "string",
+          "required": true,
+          "enum": [
+            "NOT_USEFUL",
+            "SOMEWHAT_USEFUL",
+            "VERY_USEFUL"
+          ]
+        }
+      },
+      "target_param": "alertId",
+      "response": {
+        "fields": [
+          "alertId",
+          "feedbackId",
+          "type",
+          "createTime",
+          "email",
+          "customerId"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "tenant"
+        },
+        {
+          "kind": "deny",
+          "param": "customerId"
+        }
+      ]
+    },
+    "alertcenter.getSettings": {
+      "resource_path": [
+        "v1beta1"
+      ],
+      "method": "getSettings",
+      "scopes": [
+        "https://www.googleapis.com/auth/apps.alerts"
+      ],
+      "risk": "read",
+      "params": {
+        "customerId": {
+          "type": "string",
+          "location": "query"
+        }
+      },
+      "response": {
+        "fields": [
+          "notifications"
+        ]
+      },
+      "boundary": [
+        {
+          "kind": "tenant"
+        },
+        {
+          "kind": "deny",
+          "param": "customerId"
+        }
+      ]
+    }
+  },
+  "excluded": {
+    "alertcenter.updateSettings": {
+      "category": "push-channel",
+      "reason": "Points every alert for the customer at a caller-named Cloud Pub/Sub topic; the topic's Google Cloud project cannot be verified as belonging to this customer."
+    }
+  }
+}
