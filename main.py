@@ -224,6 +224,8 @@ SERVICE_MODULES = {
     "slides": "gslides.slides_tools",
     "tasks": "gtasks.tasks_tools",
     "contacts": "gcontacts.contacts_tools",
+    "other_contacts": "gother_contacts.other_contacts_tools",
+    "directory": "gdirectory.directory_tools",
     "search": "gsearch.search_tools",
     "appscript": "gappsscript.apps_script_tools",
 }
