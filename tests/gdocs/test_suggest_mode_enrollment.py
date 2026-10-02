@@ -18,6 +18,34 @@ def _unwrap(tool):
 
 DOCUMENT_ID = "a" * 25
 USER = "user@example.com"
+SNAPSHOT_DOC = {
+    "revisionId": "rev",
+    "tabs": [
+        {
+            "tabProperties": {"tabId": "t.0"},
+            "documentTab": {
+                "body": {
+                    "content": [
+                        {
+                            "startIndex": 1,
+                            "endIndex": 16,
+                            "paragraph": {
+                                "elements": [
+                                    {
+                                        "startIndex": 1,
+                                        "endIndex": 16,
+                                        "textRun": {"content": "Hi Hello world\n"},
+                                    }
+                                ],
+                                "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+                            },
+                        }
+                    ]
+                }
+            },
+        }
+    ],
+}
 DOC_LENGTH_STUB = {
     "documentId": DOCUMENT_ID,
     "commentsViewMode": "COMMENTS_VIEW_MODE_INCLUDED",
@@ -51,7 +79,7 @@ async def _run_batch(service, operations=INSERT_TEXT_OPERATIONS, suggest_mode=Tr
 
 class TestSuggestModeResponseHandling:
     @pytest.mark.asyncio
-    async def test_all_saved_is_authoritative_and_uses_one_small_read(self):
+    async def test_all_saved_is_authoritative_without_an_access_probe(self):
         service = _make_service(
             {
                 "replies": [{}],
@@ -69,17 +97,10 @@ class TestSuggestModeResponseHandling:
         assert "WARNING" not in result
         body = service.documents.return_value.batchUpdate.call_args.kwargs["body"]
         assert body["writeControl"] == {"writeMode": "SUGGEST"}
-        # Preview access is verified before mutation; the batch manager then reads
-        # the revision before and the document state after the write.
-        assert service.documents.return_value.get.call_count == 3
-        preflight_call = service.documents.return_value.get.call_args_list[0]
-        assert preflight_call.kwargs["commentsViewMode"] == (
-            "COMMENTS_VIEW_MODE_INCLUDED"
-        )
-        assert preflight_call.kwargs["fields"] == "documentId,commentsViewMode"
-        assert service.documents.return_value.get.call_args.kwargs["fields"] == (
-            "revisionId,tabs"
-        )
+        # The API is GA, so nothing probes for suggestion-thread access first;
+        # commentUpdateState is the check that matters.
+        for call in service.documents.return_value.get.call_args_list:
+            assert "commentsViewMode" not in call.kwargs
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -138,35 +159,20 @@ class TestSuggestModeResponseHandling:
         assert "WARNING" not in result
 
     @pytest.mark.asyncio
-    async def test_unenrolled_project_is_blocked_before_mutation(self):
-        service = _make_service({"replies": [{}]})
-        service.documents.return_value.get.return_value.execute.side_effect = HttpError(
-            resp=Mock(status=400),
-            content=(
-                b'{"error":{"message":"Invalid JSON payload received. Unknown '
-                b'name \\"comments_view_mode\\": Field \\"comments_view_mode\\" '
-                b'could not be found in request message."}}'
-            ),
+    @pytest.mark.parametrize("suggest_mode", [False, True])
+    async def test_affected_range_snapshot_only_for_direct_edits(self, suggest_mode):
+        service = _make_service({"replies": [{}], "commentUpdateState": "ALL_SAVED"})
+        service.documents.return_value.get.return_value.execute.return_value = (
+            SNAPSHOT_DOC
         )
 
-        result = await _run_batch(service)
+        result = await _run_batch(
+            service,
+            [{"type": "insert_text", "index": 1, "text": "Hi "}],
+            suggest_mode=suggest_mode,
+        )
 
-        assert "suggest_mode is unavailable" in result
-        assert "No document changes were made" in result
-        service.documents.return_value.batchUpdate.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_unconfirmed_preview_access_is_blocked_before_mutation(self):
-        service = _make_service({"replies": [{}]})
-        service.documents.return_value.get.return_value.execute.return_value = {
-            "documentId": DOCUMENT_ID
-        }
-
-        result = await _run_batch(service)
-
-        assert "did not confirm Developer Preview comments access" in result
-        assert "No document changes were made" in result
-        service.documents.return_value.batchUpdate.assert_not_called()
+        assert ("Affected range after edit" in result) is not suggest_mode
 
 
 class TestSuggestionResponseSummary:
@@ -259,27 +265,29 @@ class TestManageDocSuggestions:
         service.documents.return_value.batchUpdate.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_unenrolled_project_is_blocked_before_management(self):
-        service = _make_service({"commentUpdateState": "ALL_SAVED"})
-        service.documents.return_value.get.return_value.execute.side_effect = HttpError(
-            resp=Mock(status=400),
-            content=(
-                b'{"error":{"message":"Unknown name \\"comments_view_mode\\": '
-                b'Field \\"comments_view_mode\\" could not be found."}}'
-            ),
+    async def test_manage_suggestions_counts_from_api_responses(self):
+        service = _make_service(
+            {
+                "commentUpdateState": "ALL_SAVED",
+                "suggestionResponses": [
+                    {"rejectedSuggestionIds": ["suggest.one"]},
+                    {},
+                ],
+            }
         )
 
         result = await _unwrap(docs_tools.manage_doc_suggestions)(
             service=service,
             user_google_email=USER,
             document_id=DOCUMENT_ID,
-            action="accept",
-            suggestion_ids=["suggest.abc123"],
+            action="reject",
+            suggestion_ids=["suggest.one", "suggest.two"],
         )
 
-        assert "suggestion management is unavailable" in result
-        assert "No suggestion changes were made" in result
-        service.documents.return_value.batchUpdate.assert_not_called()
+        assert "Successfully" not in result
+        assert "1 of 2" in result
+        assert "suggest.two" in result
+        service.documents.return_value.get.assert_not_called()
 
 
 def _thread_payload(status="OPEN"):
@@ -314,7 +322,10 @@ class TestSuggestionThreadListing:
         assert found["suggest.thread-only"]["author"] == "Ada Lovelace"
         assert found["suggest.thread-only"]["create_time"] == ("2026-08-24T12:34:56Z")
         kwargs = service.documents.return_value.get.call_args.kwargs
+        # The API rejects COMMENTS_VIEW_MODE_INCLUDED without both of these.
         assert kwargs["commentsViewMode"] == "COMMENTS_VIEW_MODE_INCLUDED"
+        assert kwargs["includeTabsContent"] is True
+        assert kwargs["suggestionsViewMode"] == "SUGGESTIONS_INLINE"
 
     @pytest.mark.asyncio
     async def test_non_open_threads_are_not_pending(self):
@@ -346,7 +357,7 @@ class TestSuggestionThreadListing:
         assert "created: 2026-08-24T12:34:56Z" in result
 
     @pytest.mark.asyncio
-    async def test_standard_discovery_client_gets_preview_query_parameter(self):
+    async def test_bundled_discovery_client_gets_comments_query_parameter(self):
         service = Mock()
         documents = service.documents.return_value
         request = Mock()
@@ -366,7 +377,7 @@ class TestSuggestionThreadListing:
         assert "commentsViewMode=COMMENTS_VIEW_MODE_INCLUDED" in request.uri
 
     @pytest.mark.asyncio
-    async def test_unenrolled_project_falls_back_to_inline_markers(self):
+    async def test_rejected_comments_view_mode_falls_back_to_inline_markers(self):
         service = Mock()
         request = service.documents.return_value.get.return_value
         request.execute.side_effect = [
@@ -405,11 +416,10 @@ class TestSuggestionThreadListing:
             document_id=DOCUMENT_ID,
         )
 
-        assert "Developer Preview suggestion-thread metadata is unavailable" in result
+        assert "did not return suggestion-thread metadata" in result
         assert "suggest.marker" in result
         assert "Suggested text" in result
-        assert service.documents.return_value.get.call_count == 2
-        fallback_kwargs = service.documents.return_value.get.call_args_list[1].kwargs
+        fallback_kwargs = service.documents.return_value.get.call_args.kwargs
         assert "commentsViewMode" not in fallback_kwargs
 
     @pytest.mark.asyncio

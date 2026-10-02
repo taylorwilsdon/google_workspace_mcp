@@ -208,7 +208,10 @@ class BatchOperationManager:
                         ),
                     }
                     affected = self._affected_range(target_ops)
-                    if affected and segment is not None:
+                    # The snapshot reads base text and paragraph styles, so a
+                    # suggested deletion or style change would look unapplied.
+                    # list_doc_suggestions is the accurate view in suggest mode.
+                    if affected and segment is not None and not suggest_mode:
                         target["affected_range"] = self._snapshot_range(
                             content, *affected
                         )

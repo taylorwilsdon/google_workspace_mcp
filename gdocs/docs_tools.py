@@ -88,7 +88,9 @@ import json
 logger = logging.getLogger(__name__)
 HEADER_FOOTER_RUNTIME_CANARY = "docs-hf-canary-20260328b"
 
-_DEVELOPER_PREVIEW_URL = "https://developers.google.com/workspace/preview"
+_SUGGESTIONS_GUIDE_URL = (
+    "https://developers.google.com/workspace/docs/api/how-tos/suggestions"
+)
 
 # BatchUpdateDocumentResponse.commentUpdateState. A batch can partially fail:
 # the document model changes commit while the associated comment/suggestion
@@ -98,14 +100,14 @@ _COMMENT_UPDATE_ALL_SAVED = "ALL_SAVED"
 _COMMENT_UPDATE_NONE_REQUESTED = "NO_UPDATES_REQUESTED"
 _COMMENTS_VIEW_MODE_INCLUDED = "COMMENTS_VIEW_MODE_INCLUDED"
 
-# The preview API reports suggestion persistence directly in
+# The Docs API reports suggestion persistence directly in
 # BatchUpdateDocumentResponse.commentUpdateState. Do not infer it from a second
 # document read: suggestions can be updated, merged, or withdrawn without
 # creating a new ID, and collaborators can change the document between reads.
 
 
-class _DeveloperPreviewUnavailable(Exception):
-    """The active Google Cloud project cannot use Docs Preview features."""
+class _SuggestionThreadsUnavailable(Exception):
+    """The Docs API refused to return SuggestionThread data for this project."""
 
 
 # Field mask for inspect_doc_structure. It must name every field the structure
@@ -1455,19 +1457,15 @@ async def batch_update_doc(
                     All operations accept an optional 'tab_id' to target a specific tab.
         suggest_mode: If true, apply every operation in this batch as a suggested
             edit (pending approval) instead of a direct edit, equivalent to
-            enabling "Suggesting" mode in the Docs UI. Requires the requesting
-            Google Cloud project to be enrolled in the Workspace Developer
-            Preview Program. The tool verifies Preview access before sending any
-            mutation, because an unenrolled project can otherwise apply the edits
-            DIRECTLY. The response's comment_update_state is also checked after
-            the write, and carries an explicit warning unless suggestion
-            persistence is confirmed. Not every
-            operation type can be suggested - insert_doc_tab, delete_doc_tab,
-            update_doc_tab, create_named_range, delete_named_range, and
-            update_table_column_properties are rejected by the API in suggest
-            mode, as are the
-            document_mode/use_even_page_header_footer/
-            use_first_page_header_footer fields of update_document_style.
+            enabling "Suggesting" mode in the Docs UI. The response's
+            comment_update_state is checked after the write, and the result
+            carries an explicit warning unless the API confirms the suggestions
+            were saved. Not every operation type can be suggested -
+            insert_doc_tab, delete_doc_tab, update_doc_tab, create_named_range,
+            delete_named_range, and update_table_column_properties are rejected
+            by the API in suggest mode, as are the document_mode,
+            use_even_page_header_footer, and use_first_page_header_footer
+            fields of update_document_style.
 
     Returns:
         str: Confirmation message with batch results and document length for chaining
@@ -1499,15 +1497,6 @@ async def batch_update_doc(
         unsupported_error = _validate_suggest_mode_operations(normalized_operations)
         if unsupported_error:
             return f"Error: {unsupported_error}"
-        try:
-            await _require_suggest_mode_preview(service, document_id)
-        except _DeveloperPreviewUnavailable as error:
-            return (
-                "Error: suggest_mode is unavailable for this connection because "
-                f"{error}. No document changes were made. Enroll the Google Cloud "
-                "project in the Workspace Developer Preview Program and retry: "
-                f"{_DEVELOPER_PREVIEW_URL}"
-            )
 
     # Use BatchOperationManager to handle the complex logic
     batch_manager = BatchOperationManager(service)
@@ -1604,9 +1593,6 @@ async def manage_doc_suggestions(
     (the suggested edits produced by "Suggesting" mode in the Docs UI, or by
     calling batch_update_doc with suggest_mode=true).
 
-    Requires the requesting Google Cloud project to be enrolled in the
-    Workspace Developer Preview Program; otherwise the API call will fail.
-
     To find suggestion_ids, call list_doc_suggestions first - it returns each
     pending suggestion thread's ID (e.g. "suggest.vcti8ewm4mww") along with a
     text preview.
@@ -1626,24 +1612,14 @@ async def manage_doc_suggestions(
     if not suggestion_ids:
         return "Error: suggestion_ids cannot be empty"
 
-    request_key = {
-        "accept": "acceptSuggestion",
-        "reject": "rejectSuggestion",
-        "delete": "deleteSuggestion",
-    }.get(action)
+    request_key, response_field = {
+        "accept": ("acceptSuggestion", "acceptedSuggestionIds"),
+        "reject": ("rejectSuggestion", "rejectedSuggestionIds"),
+        "delete": ("deleteSuggestion", "deletedSuggestionIds"),
+    }.get(action, (None, None))
     if not request_key:
         return (
             f"Error: action must be one of 'accept', 'reject', 'delete', got '{action}'"
-        )
-
-    try:
-        await _require_suggest_mode_preview(service, document_id)
-    except _DeveloperPreviewUnavailable as error:
-        return (
-            "Error: suggestion management is unavailable for this connection "
-            f"because {error}. No suggestion changes were made. Enroll the Google "
-            "Cloud project in the Workspace Developer Preview Program and retry: "
-            f"{_DEVELOPER_PREVIEW_URL}"
         )
 
     requests = [
@@ -1665,9 +1641,20 @@ async def manage_doc_suggestions(
     comment_state = result.get("commentUpdateState")
     link = f"https://docs.google.com/document/d/{document_id}/edit"
 
-    if comment_state == _COMMENT_UPDATE_ALL_SAVED:
+    # Count from the API's per-request suggestion responses rather than from
+    # the IDs we sent, so the result reports what actually changed.
+    confirmed: set[str] = set()
+    for response in result.get("suggestionResponses", []):
+        confirmed.update(response.get(response_field, []))
+    unconfirmed = [sid for sid in suggestion_ids if sid not in confirmed]
+
+    if comment_state == _COMMENT_UPDATE_ALL_SAVED and not unconfirmed:
+        outcome = f"Successfully applied '{action}' to {len(confirmed)} suggestion(s)"
+    elif comment_state == _COMMENT_UPDATE_ALL_SAVED:
         outcome = (
-            f"Successfully applied '{action}' to {len(suggestion_ids)} suggestion(s)"
+            f"Applied '{action}' to {len(confirmed)} of {len(suggestion_ids)} "
+            f"suggestion(s); the API did not report {', '.join(unconfirmed)}. "
+            "Re-check with list_doc_suggestions"
         )
     else:
         # Only ALL_SAVED confirms the thread changes were persisted; anything
@@ -1863,7 +1850,14 @@ def _collect_suggestions_from_segment_map(
 
 
 def _build_comments_included_get_request(service: Any, **get_kwargs: Any) -> Any:
-    """Build a documents.get request that opts into Preview thread fields."""
+    """
+    Build a documents.get request that includes SuggestionThread data.
+
+    The API only accepts COMMENTS_VIEW_MODE_INCLUDED alongside tab content and
+    an explicit SUGGESTIONS_INLINE view; without them it returns 400.
+    """
+    get_kwargs.setdefault("includeTabsContent", True)
+    get_kwargs.setdefault("suggestionsViewMode", "SUGGESTIONS_INLINE")
     documents = service.documents()
     try:
         return documents.get(
@@ -1871,15 +1865,15 @@ def _build_comments_included_get_request(service: Any, **get_kwargs: Any) -> Any
             commentsViewMode=_COMMENTS_VIEW_MODE_INCLUDED,
         )
     except TypeError:
-        # A locally cached standard discovery document may not expose the new
-        # Preview parameter yet. The API still accepts it for enrolled projects,
-        # so append it to the authorized request URI in that case.
+        # The discovery document bundled with google-api-python-client can
+        # predate commentsViewMode. The live API accepts it, so append it to
+        # the authorized request URI in that case.
         request = documents.get(**get_kwargs)
         uri = getattr(request, "uri", None)
         if not isinstance(uri, str):
             raise RuntimeError(
                 "Docs client does not expose commentsViewMode and its request URI "
-                "cannot be extended for Developer Preview fields"
+                "cannot be extended with it"
             )
         separator = "&" if "?" in uri else "?"
         request.uri = f"{uri}{separator}commentsViewMode={_COMMENTS_VIEW_MODE_INCLUDED}"
@@ -1887,7 +1881,7 @@ def _build_comments_included_get_request(service: Any, **get_kwargs: Any) -> Any
 
 
 def _is_comments_view_mode_unavailable(error: HttpError) -> bool:
-    """Recognize the API response returned to projects outside Preview."""
+    """Recognize the 400 returned when commentsViewMode isn't available yet."""
     if getattr(error.resp, "status", None) != 400:
         return False
     details = str(error).lower()
@@ -1898,28 +1892,6 @@ def _is_comments_view_mode_unavailable(error: HttpError) -> bool:
     )
 
 
-async def _require_suggest_mode_preview(service: Any, document_id: str) -> None:
-    """Fail before mutation unless the API positively confirms Preview access."""
-    request = _build_comments_included_get_request(
-        service,
-        documentId=document_id,
-        fields="documentId,commentsViewMode",
-    )
-    try:
-        doc_data = await asyncio.to_thread(request.execute)
-    except HttpError as error:
-        if _is_comments_view_mode_unavailable(error):
-            raise _DeveloperPreviewUnavailable(
-                "the Docs API rejected its Developer Preview commentsViewMode field"
-            ) from error
-        raise
-
-    if doc_data.get("commentsViewMode") != _COMMENTS_VIEW_MODE_INCLUDED:
-        raise _DeveloperPreviewUnavailable(
-            "the Docs API did not confirm Developer Preview comments access"
-        )
-
-
 async def _fetch_doc_suggestions(
     service: Any, document_id: str, *, include_threads: bool = True
 ) -> dict[str, dict[str, Any]]:
@@ -1928,9 +1900,9 @@ async def _fetch_doc_suggestions(
     SuggestionThread keyed by suggestion ID. Inline markers are used only to
     enrich each thread with type, tab, and affected-text information.
 
-    When include_threads is false, use the standard API and return suggestion
-    markers only. This degraded mode remains useful when the active Cloud
-    project is not enrolled in Developer Preview.
+    When include_threads is false, omit commentsViewMode and return suggestion
+    markers only. This degraded mode covers projects the API does not yet
+    serve SuggestionThread data to.
     """
     get_kwargs = {
         "documentId": document_id,
@@ -1946,8 +1918,8 @@ async def _fetch_doc_suggestions(
         doc_data = await asyncio.to_thread(request.execute)
     except HttpError as error:
         if include_threads and _is_comments_view_mode_unavailable(error):
-            raise _DeveloperPreviewUnavailable(
-                "the Docs API rejected its Developer Preview commentsViewMode field"
+            raise _SuggestionThreadsUnavailable(
+                "the Docs API rejected the commentsViewMode parameter"
             ) from error
         raise
 
@@ -1990,12 +1962,12 @@ async def _fetch_doc_suggestions(
     threads = doc_data.get("suggestions")
     if threads is None:
         # Preserve ID-only compatibility with older discovery responses, while
-        # making the degraded result explicit to logs. Preview-enabled responses
+        # making the degraded result explicit to logs. Thread-bearing responses
         # use SuggestionThread as the source of truth and cannot miss an ID just
         # because a future marker field was added.
         logger.warning(
             "[list_doc_suggestions] SuggestionThread data was absent; falling "
-            "back to inline suggestion markers. Confirm Developer Preview enrollment."
+            "back to inline suggestion markers."
         )
         for info in marker_suggestions.values():
             info.update(
@@ -2066,13 +2038,13 @@ async def list_doc_suggestions(
         str: One line per suggestion thread ("suggestion_id | types | text
              preview"), or a message if there are no pending suggestions.
     """
-    preview_unavailable = False
+    threads_unavailable = False
     try:
         suggestions = await _fetch_doc_suggestions(service, document_id)
-    except _DeveloperPreviewUnavailable:
-        preview_unavailable = True
+    except _SuggestionThreadsUnavailable:
+        threads_unavailable = True
         logger.warning(
-            "[list_doc_suggestions] Developer Preview is unavailable; listing "
+            "[list_doc_suggestions] Suggestion threads are unavailable; listing "
             "standard inline suggestion markers only for document %s",
             document_id,
         )
@@ -2082,27 +2054,26 @@ async def list_doc_suggestions(
 
     link = f"https://docs.google.com/document/d/{document_id}/edit"
 
-    preview_warning = ""
-    if preview_unavailable:
-        preview_warning = (
-            "Developer Preview suggestion-thread metadata is unavailable for "
-            "this connection. Showing standard inline suggestion markers only; "
-            "author and creation metadata are unavailable. Creating and managing "
-            "suggestions requires Workspace Developer Preview enrollment: "
-            f"{_DEVELOPER_PREVIEW_URL}\n"
+    threads_warning = ""
+    if threads_unavailable:
+        threads_warning = (
+            "The Docs API did not return suggestion-thread metadata for this "
+            "connection. Showing inline suggestion markers only; author and "
+            "creation metadata are unavailable. See "
+            f"{_SUGGESTIONS_GUIDE_URL}\n"
         )
 
     if not suggestions:
-        if preview_unavailable:
+        if threads_unavailable:
             return (
-                f"{preview_warning}No inline pending suggestion markers found in "
+                f"{threads_warning}No inline pending suggestion markers found in "
                 f"document {document_id}. Link: {link}"
             )
         return f"No pending suggestions found in document {document_id}. Link: {link}"
 
     lines = []
-    if preview_warning:
-        lines.append(preview_warning.rstrip())
+    if threads_warning:
+        lines.append(threads_warning.rstrip())
     lines.append(f"Pending suggestions in document {document_id}:")
     for sid, info in suggestions.items():
         types = "+".join(sorted(info["types"])) or "suggestion"
@@ -2484,8 +2455,8 @@ def _describe_comment_update_state(
         " WARNING: the API did not confirm that suggestion threads were saved "
         f"(comment_update_state: {rendered_state}). The edits may be LIVE in the "
         "document rather than pending as suggestions. This can happen when the "
-        "Google Cloud project is not enrolled in the Workspace Developer Preview "
-        f"Program ({_DEVELOPER_PREVIEW_URL}) or when suggestion persistence fails. "
+        "Docs API does not support suggest mode for this project yet "
+        f"({_SUGGESTIONS_GUIDE_URL}) or when suggestion persistence fails. "
         "Verify with list_doc_suggestions and undo in the Docs UI (Edit > Undo) "
         "if they were not meant to be live."
     )
