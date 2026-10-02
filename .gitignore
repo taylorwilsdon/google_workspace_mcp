@@ -4,6 +4,7 @@ __pycache__/
 *.so
 .mcp.json
 claude.md
+.omc/
 .beads/*
 .beads/issues.jsonl
 

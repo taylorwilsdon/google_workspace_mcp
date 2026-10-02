@@ -31,6 +31,7 @@ from auth.oauth_config import (
 from core.config import (
     get_transport_mode,
     get_oauth_redirect_uri,
+    WORKSPACE_MCP_TIMEOUT,
 )
 from core.context import get_fastmcp_session_id
 
@@ -92,7 +93,7 @@ DEFAULT_CREDENTIALS_DIR = get_default_credentials_dir()
 
 
 def _build_authorized_http(
-    credentials: Credentials, timeout: int = 30
+    credentials: Credentials, timeout: int = WORKSPACE_MCP_TIMEOUT
 ) -> google_auth_httplib2.AuthorizedHttp:
     """Return credentialed HTTP with an explicit socket timeout."""
     http = httplib2.Http(timeout=timeout)

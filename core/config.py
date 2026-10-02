@@ -24,10 +24,19 @@ from auth.oauth_config import (
 # resolver (auth.port_resolver.resolve_port); consumers that do
 # `from core.config import WORKSPACE_MCP_PORT` inside a function will see the
 # late-bound port instead of a frozen-at-module-import 8000.
+#
+# WORKSPACE_MCP_TIMEOUT is the socket timeout, in seconds, applied to
+# credentialed HTTP transports talking to the Google APIs. It defaults to 300
+# rather than a conventional 30 because single requests can legitimately run
+# for minutes — uploading a large markdown file to Docs/Drive, for example,
+# streams the whole body in one request and a shorter timeout aborts an upload
+# that would otherwise have succeeded. Unlike the port, it is read once at
+# module import, so it must be set in the environment before startup.
 WORKSPACE_MCP_BASE_URI = os.getenv("WORKSPACE_MCP_BASE_URI", "http://localhost")
 WORKSPACE_EXTERNAL_URL = os.getenv("WORKSPACE_EXTERNAL_URL")
 
 if TYPE_CHECKING:
+    WORKSPACE_MCP_TIMEOUT: int
     WORKSPACE_MCP_PORT: int
 
 
@@ -36,6 +45,8 @@ def __getattr__(name: str) -> int:
         if os.getenv("WORKSPACE_MCP_RESOLVED_PORT") == "1":
             return int(os.getenv("WORKSPACE_MCP_PORT", os.getenv("PORT", "8000")))
         return int(os.getenv("PORT", os.getenv("WORKSPACE_MCP_PORT", "8000")))
+    elif name == "WORKSPACE_MCP_TIMEOUT":
+        return int(os.getenv("WORKSPACE_MCP_TIMEOUT", "300"))
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -46,6 +57,7 @@ USER_GOOGLE_EMAIL = (
 
 # Re-export OAuth functions for backward compatibility
 __all__ = [
+    "WORKSPACE_MCP_TIMEOUT",
     "WORKSPACE_MCP_PORT",
     "WORKSPACE_MCP_BASE_URI",
     "WORKSPACE_EXTERNAL_URL",

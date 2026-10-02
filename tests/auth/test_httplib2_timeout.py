@@ -6,7 +6,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from auth.google_auth import _build_authorized_http, get_authenticated_google_service
-from auth.google_auth import get_user_info
+from auth.google_auth import WORKSPACE_MCP_TIMEOUT, get_user_info
+from core import config
 
 
 def test_build_authorized_http_uses_explicit_timeout():
@@ -32,7 +33,7 @@ def test_build_authorized_http_uses_explicit_timeout():
     assert result is mock_authorized
 
 
-def test_build_authorized_http_default_timeout_is_30():
+def test_build_authorized_http_defaults_to_workspace_mcp_timeout():
     mock_credentials = MagicMock()
 
     with (
@@ -43,10 +44,22 @@ def test_build_authorized_http_default_timeout_is_30():
     ):
         _build_authorized_http(mock_credentials)
 
-    mock_http_cls.assert_called_once_with(timeout=30)
+    mock_http_cls.assert_called_once_with(timeout=WORKSPACE_MCP_TIMEOUT)
     mock_auth_http_cls.assert_called_once_with(
         mock_credentials, http=mock_http_cls.return_value
     )
+
+
+def test_workspace_mcp_timeout_defaults_to_300(monkeypatch):
+    monkeypatch.delenv("WORKSPACE_MCP_TIMEOUT", raising=False)
+
+    assert config.WORKSPACE_MCP_TIMEOUT == 300
+
+
+def test_workspace_mcp_timeout_reads_environment(monkeypatch):
+    monkeypatch.setenv("WORKSPACE_MCP_TIMEOUT", "600")
+
+    assert config.WORKSPACE_MCP_TIMEOUT == 600
 
 
 def test_get_user_info_builds_service_with_authorized_http(monkeypatch):
