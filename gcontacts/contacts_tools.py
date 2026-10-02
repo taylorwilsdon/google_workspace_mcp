@@ -21,6 +21,7 @@ from core.utils import UserInputError, handle_http_errors, StringList
 from gcontacts.contacts_helpers import (
     _format_contact,
     _merge_emails,
+    _merge_names,
     _merge_nicknames,
     _merge_organizations,
     _merge_phones,
@@ -344,13 +345,13 @@ def _build_person_body(
     if relations is not None:
         relations = [_coerce_relation_input(r) for r in relations]
 
-    if given_name or family_name:
-        body["names"] = [
-            {
-                "givenName": given_name or "",
-                "familyName": family_name or "",
-            }
-        ]
+    name = {
+        key: value
+        for key, value in (("givenName", given_name), ("familyName", family_name))
+        if value is not None
+    }
+    if name:
+        body["names"] = [name]
 
     # --- Emails ---
     if emails is not None and email is not None:
@@ -954,6 +955,11 @@ async def manage_contact(
             # Apply merge modes for array fields
             merged_body: Dict[str, Any] = dict(new_body)
 
+            if "names" in new_body:
+                merged_body["names"] = _merge_names(
+                    current.get("names", []), new_body["names"]
+                )
+
             if "phoneNumbers" in new_body:
                 merged_body["phoneNumbers"] = _merge_phones(
                     current.get("phoneNumbers", []),
@@ -1395,18 +1401,17 @@ async def manage_contacts_batch(
             service.people()
             .getBatchGet(
                 resourceNames=resource_names,
-                personFields="metadata",
+                personFields=f"metadata,{field}",
             )
             .execute
         )
 
-        etags = {}
+        current_people = {}
         for resp in batch_get_result.get("responses", []):
             person = resp.get("person", {})
             rname = person.get("resourceName")
-            etag = person.get("etag")
-            if rname and etag:
-                etags[rname] = etag
+            if rname and person.get("etag"):
+                current_people[rname] = person
 
         # Map field name to body key produced by _build_person_body
         field_to_body_key = {
@@ -1432,8 +1437,8 @@ async def manage_contacts_batch(
             if not cid.startswith("people/"):
                 cid = f"people/{cid}"
 
-            etag = etags.get(cid)
-            if not etag:
+            current = current_people.get(cid)
+            if not current:
                 logger.warning(f"No etag found for {cid}, skipping")
                 continue
 
@@ -1463,8 +1468,11 @@ async def manage_contacts_batch(
                 )
                 continue
 
+            if body_key == "names":
+                body["names"] = _merge_names(current.get("names", []), body["names"])
+
             person_body = {
-                "etag": etag,
+                "etag": current["etag"],
                 body_key: body[body_key],
             }
             contacts_map[cid] = person_body

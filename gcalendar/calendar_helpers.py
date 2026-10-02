@@ -6,6 +6,7 @@ event data for display.
 """
 
 import datetime
+import json
 import logging
 import re
 from dataclasses import dataclass
@@ -161,14 +162,28 @@ def parse_event_boundary(item: Dict[str, Any], field: str) -> Optional[EventBoun
 
 
 def _format_event_time(item: Dict[str, Any], field: str) -> str:
-    """Format one raw Google event boundary in its own timezone, with weekday evidence."""
-    parsed = parse_event_boundary(item, field)
+    """Format one event boundary, including sparse cancelled exceptions.
+
+    Google may return cancelled instances of an unexpanded recurring series as
+    tombstones with no ``start`` or ``end``. Their ``originalStartTime`` is the
+    occurrence they exclude, so use it as the start boundary instead of
+    failing or presenting an unexplained ``None``.
+    """
+    boundary_field = field
+    if (
+        not isinstance(item.get(field), dict)
+        and field == "start"
+        and item.get("status") == "cancelled"
+    ):
+        boundary_field = "originalStartTime"
+
+    parsed = parse_event_boundary(item, boundary_field)
     if parsed is None:
-        boundary = item.get(field)
+        boundary = item.get(boundary_field)
         if isinstance(boundary, dict):
             value = boundary.get("dateTime", boundary.get("date"))
-            return value if isinstance(value, str) else str(value)
-        return str(boundary)
+            return value if isinstance(value, str) else "Unavailable"
+        return "Unavailable"
     return parsed.render()
 
 
@@ -307,6 +322,18 @@ def _format_event_detail_lines(
     recurring_event_id = item.get("recurringEventId")
     if recurring_event_id:
         lines.append(f"{prefix}Recurring Event ID: {recurring_event_id}")
+
+    original_start_time = item.get("originalStartTime")
+    is_exception = item.get("status") != "confirmed" or not item.get("start")
+    if original_start_time and is_exception:
+        lines.append(f"{prefix}Original Start Time: {json.dumps(original_start_time)}")
+
+    recurrence = item.get("recurrence")
+    if recurrence:
+        # Keep the individual RFC5545 lines lossless and machine-readable. A
+        # recurring master may carry RRULE plus RDATE/EXDATE entries whose
+        # commas and semicolons make a hand-joined string ambiguous.
+        lines.append(f"{prefix}Recurrence: {json.dumps(recurrence)}")
 
     # eventType and status are omitted at their API defaults, so an ordinary
     # one-off meeting stays as compact as it was before these fields existed.

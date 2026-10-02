@@ -13,6 +13,12 @@ from dotenv import load_dotenv
 dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
 load_dotenv(dotenv_path=dotenv_path)
 
+from core.file_limits import validate_file_limit_settings
+
+# This module is itself a supported server entrypoint, so validate settings
+# here rather than relying on main.main(), which FastMCP Cloud does not call.
+validate_file_limit_settings()
+
 from auth.oauth_config import reload_oauth_config, is_stateless_mode
 from core.log_formatter import (
     EnhancedLogFormatter,

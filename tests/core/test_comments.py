@@ -11,6 +11,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 from core.comments import (
     _read_comments_impl,
     _create_comment_impl,
+    _reply_to_comment_impl,
+    _resolve_comment_impl,
     create_comment_tools,
 )
 
@@ -63,7 +65,7 @@ async def test_read_comments_includes_quoted_text():
     assert "Quoted text: the specific text that was highlighted" in result
     assert "Needs a citation here." in result
 
-    parts = result.split("\\n")
+    parts = result.splitlines()
     bob_section_started = False
     for part in parts:
         if "Author: Bob" in part:
@@ -131,6 +133,115 @@ async def test_create_comment():
     body = call_kwargs["body"]
     assert body == {"content": "A general comment"}
     assert "Comment created successfully" in result
+
+
+def _mock_write_service(payload):
+    """Build a mock service whose comment and reply create calls return payload."""
+    mock_service = Mock()
+    mock_service.comments.return_value.create.return_value.execute = Mock(
+        return_value=payload
+    )
+    mock_service.replies.return_value.create.return_value.execute = Mock(
+        return_value=payload
+    )
+    return mock_service
+
+
+class TestCommentOutputFormat:
+    """Tool output uses real line breaks and indents multi-line values."""
+
+    @pytest.mark.asyncio
+    async def test_read_output_lines(self):
+        mock_service = _mock_service_pages([([_make_comment("c1")], None)])
+
+        result = await _read_comments_impl(mock_service, "document", "doc1")
+
+        assert result.splitlines() == [
+            "Found 1 comments in document doc1:",
+            "",
+            "Comment ID: c1",
+            "Author: Alice",
+            "Created: 2025-01-15T10:00:00Z",
+            "Content: Comment text",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_read_indents_multiline_values(self):
+        """Newlines inside comment text cannot masquerade as fields."""
+        comment = {
+            **_make_comment("c1", "first\nAuthor: Mallory"),
+            "quotedFileContent": {"value": "q1\nq2"},
+            "replies": [
+                {
+                    "id": "r1",
+                    "content": "r1\nr2",
+                    "author": {"displayName": "Bob"},
+                    "createdTime": "2025-01-15T11:00:00Z",
+                }
+            ],
+        }
+        mock_service = _mock_service_pages([([comment], None)])
+
+        result = await _read_comments_impl(mock_service, "document", "doc1")
+
+        assert result.splitlines()[5:] == [
+            "Quoted text: q1",
+            " " * 13 + "q2",
+            "Content: first",
+            " " * 9 + "Author: Mallory",
+            "  Replies (1):",
+            "    Reply ID: r1",
+            "    Author: Bob",
+            "    Created: 2025-01-15T11:00:00Z",
+            "    Content: r1",
+            " " * 13 + "r2",
+        ]
+
+    @pytest.mark.parametrize(
+        "impl, args, expected",
+        [
+            (
+                _create_comment_impl,
+                ("document", "doc1", "hello"),
+                [
+                    "Comment created successfully!",
+                    "Comment ID: r1",
+                    "Author: Alice",
+                    "Created: 2025-01-15T10:00:00Z",
+                    "Content: hello",
+                ],
+            ),
+            (
+                _reply_to_comment_impl,
+                ("document", "doc1", "c1", "a\nreply"),
+                [
+                    "Reply posted successfully!",
+                    "Reply ID: r1",
+                    "Author: Alice",
+                    "Created: 2025-01-15T10:00:00Z",
+                    "Content: a",
+                    " " * 9 + "reply",
+                ],
+            ),
+            (
+                _resolve_comment_impl,
+                ("document", "doc1", "c1"),
+                [
+                    "Comment c1 has been resolved successfully.",
+                    "Resolve reply ID: r1",
+                    "Author: Alice",
+                    "Created: 2025-01-15T10:00:00Z",
+                ],
+            ),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_write_confirmation_lines(self, impl, args, expected):
+        mock_service = _mock_write_service(_make_comment("r1"))
+
+        result = await impl(mock_service, *args)
+
+        assert result.splitlines() == expected
 
 
 class TestReadCommentsImplPagination:

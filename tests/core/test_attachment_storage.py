@@ -90,6 +90,16 @@ class TestSaveAttachment:
         assert storage.get_attachment_path(first.file_id) == Path(first.path)
         assert storage.get_attachment_path(second.file_id) == Path(second.path)
 
+    def test_save_attachment_bytes_avoids_base64_round_trip(self, storage):
+        payload = bytes(range(256))
+
+        saved = storage.save_attachment_bytes(
+            payload, filename="payload.bin", mime_type="application/octet-stream"
+        )
+
+        assert Path(saved.path).read_bytes() == payload
+        assert storage.get_attachment_metadata(saved.file_id)["size"] == len(payload)
+
 
 class TestSaveAttachmentFromPath:
     """save_attachment_from_path adopts an already-downloaded file (#994)."""

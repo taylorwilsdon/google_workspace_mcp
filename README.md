@@ -14,11 +14,11 @@
 *Full natural language control over Google Calendar, Drive, Gmail, Docs, Sheets, Slides, Forms, Tasks, Contacts, and Chat through all MCP clients, AI assistants and developer tools.*
 *Includes a full featured CLI & Code Mode for use with tools like Claude Code and Codex!*
 
-**The most feature-complete Google Workspace MCP server**, it can do things that Google's own tooling and the built in integrations with Claude and ChatGPT can't come close to. With multi-user support, rich fine-grained editing tools and the most extensive coverage of any Google Workspace tool in existence, Workspace MCP is in a different class. 
+**The most feature-complete Google Workspace MCP server** is in a class of it's own: it can do things that Google's own tooling and the built in integrations with Claude and ChatGPT can't come close to with multi-user support, rich fine-grained editing tools and the most extensive coverage of any Workspace AI integration in existence. 
 
 By leveraging native OAuth 2.1, stateless deployment capability and external auth server & gateway passthrough auth support, it's also the only Workspace MCP you can host for your whole organization centrally & securely!
 
-###### Support for all free Google accounts & Google Workspace plans (Starter, Standard, Plus, Enterprise, Non Profit) with expanded app options like Chat & Spaces. <br/><br /> Interested in a private, managed cloud instance? [That can be arranged.](https://workspacemcp.com/workspace-mcp-cloud?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=hero-cloud)
+Supports all free Google accounts & Google Workspace plans with expanded app options like Chat & Spaces. <br/>Interested in a managed cloud instance? [That can be arranged](https://workspacemcp.com/workspace-mcp-cloud?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=hero-cloud) (starting at $5/mo).
 
 
 </div>
@@ -58,7 +58,7 @@ The README covers just enough to get you running, with extensive documentation o
 | **[Full&nbsp;Documentation](https://workspacemcp.com/docs?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=nav-docs)** | Every tool, parameter, and auth mode |
 | **[Advanced&nbsp;Deployment](https://workspacemcp.com/docs/deployment?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=nav-deployment)** | Reverse proxy & nginx config, origin validation, credential store backends (GCS/CMEK), [trusted-gateway identity](https://workspacemcp.com/docs/deployment/gateway-identity?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=nav-gateway-identity), and the complete environment variable reference |
 | **[Client&nbsp;Setup&nbsp;Guides](https://workspacemcp.com/guides?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=nav-guides)** | Claude Desktop/web Connectors, ChatGPT Developer Mode, and more |
-| **[FAQ&nbsp;&&nbsp;Troubleshooting](https://workspacemcp.com/welcome/faq?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=nav-faq)** | OAuth errors, redirect URIs, Google Chat setup, client quirks |
+| **[FAQ&nbsp;&&nbsp;Troubleshooting](https://workspacemcp.com/welcome/faq?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=nav-faq)** | Enabling Google APIs, OAuth errors, redirect URIs, Google Chat setup, client quirks |
 
 ## <span style="color:#adbcbc">Security & Compliance</span>
 
@@ -162,7 +162,7 @@ Each page lists every tool with its tier, parameters, required scopes, and examp
 
 > Set credentials → pick a launch command → connect your client. Full walkthrough with screenshots: **[workspacemcp.com/quick-start](https://workspacemcp.com/quick-start?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=quickstart-hero)**
 
-You'll need an OAuth client from [Google Cloud Console](https://console.cloud.google.com/) with the APIs enabled for the services you plan to use - the [quick start guide](https://workspacemcp.com/quick-start?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=quickstart-inline) walks through it in about five minutes.
+You'll need an OAuth client from [Google Cloud Console](https://console.cloud.google.com/) in a project with the Google APIs enabled for the services you plan to use. The docs have [one-click enable links for every API](https://workspacemcp.com/docs?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=quickstart-enable-apis#authentication) plus a single `gcloud services enable` command that covers them all, and the [quick start guide](https://workspacemcp.com/quick-start?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=quickstart-inline) walks through the whole setup in about five minutes.
 
 <table>
 <tr>
@@ -195,6 +195,8 @@ uvx workspace-mcp --tools gmail drive calendar
 export MCP_ENABLE_OAUTH21=true
 export GOOGLE_OAUTH_CLIENT_ID="..."
 export GOOGLE_OAUTH_CLIENT_SECRET="..."
+#    Alternatively, point GOOGLE_CLIENT_SECRET_PATH at a client_secret.json
+#    that contains the client id and secret (env vars take precedence).
 export WORKSPACE_MCP_PORT=8000
 export GOOGLE_OAUTH_REDIRECT_URI="http://localhost:${WORKSPACE_MCP_PORT}/oauth2callback"
 export OAUTHLIB_INSECURE_TRANSPORT=1
@@ -252,6 +254,23 @@ Everything you need to run this in production lives in two places. The [document
 - **Docker** - `docker build -t workspace-mcp . && docker run -p 8000:8000 workspace-mcp`
 
 The **[Advanced Deployment guide](https://workspacemcp.com/docs/deployment?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=deploy-advanced)** covers self-hosting specifics: reverse proxy setup with `WORKSPACE_EXTERNAL_URL` (including the nginx `Origin: null` consent workaround, the `WORKSPACE_MCP_ALLOW_NULL_ORIGIN_CONSENT` escape hatch, and the `Referrer-Policy` pitfall), origin validation and VS Code webview allowlisting, credential store backends (local directory or GCS with CMEK enforcement), and the **[complete environment variable reference](https://workspacemcp.com/docs/deployment?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=deploy-env-vars#environment-variables)**.
+In external OAuth provider mode every request's `ya29.*` token is checked against Google's userinfo endpoint on a dedicated worker pool, and a request that finds the pool full is rejected with `401` rather than queued. The pool is shared by every caller of the process and defaults to 4 workers, so a gateway fronting many users should raise `WORKSPACE_MCP_TOKEN_VALIDATION_WORKERS` to the number of concurrent tool calls it expects. Invalid or non-positive values fail server startup.
+
+Set `WORKSPACE_MCP_TOKEN_VALIDATION_CACHE_TTL` to a number of seconds to remember each validated token's identity for that long, so repeat calls with the same token skip the round-trip and do not occupy a validation worker. Only a hash of the token is kept, and failures are never cached. The trade-off is that a token revoked or expired within the TTL still passes this check (Google rejects it on the actual API call), so keep the TTL short; values above 300 are clamped to 300. Unset or `0` disables the cache; invalid or negative values fail server startup.
+
+For orchestrators, `/health` is the liveness probe and never touches external systems. `/health/ready` is the readiness probe: it reads a sentinel key from the OAuth proxy storage backend and returns `200 {"storage": "ok"}`, or `503 {"storage": "unavailable", ...}` when the backend errors or takes longer than `WORKSPACE_MCP_READINESS_TIMEOUT_SECONDS` (default `1`; an invalid value logs a warning and uses the default). The memory backend answers locally, so it always reports ready; the disk backend also answers locally but can still return `503` on filesystem errors (e.g. an unreadable or permission-denied storage directory) or corrupt stored data. Point readiness, not liveness, at `/health/ready`, so an unreachable Valkey takes the instance out of rotation rather than restarting it.
+
+Optional per-download payload ceiling for container deployments: set `WORKSPACE_MCP_MAX_FILE_BYTES` to a positive byte count (e.g. `5242880` for 5 MiB) to reject Drive / Gmail / Chat / Google Docs downloads that would otherwise be fully buffered in-process. Unset or `0` leaves the total size uncapped; uncapped Drive transfers still use 256 KiB transport chunks instead of the Google client's 100 MiB default. This is a file-size limit, not a process-RSS limit: leave headroom for parsing, base64/JSON representation, and concurrent tool calls. Invalid or negative values fail server startup instead of silently disabling the limit. Downloads streamed directly to disk are not subject to this in-memory payload ceiling.
+
+In stateless mode, which has no attachment storage, `get_drive_file_download_url` returns the file itself as an embedded resource. `WORKSPACE_MCP_STATELESS_INLINE_MAX_BYTES` caps that inline file (default 10 MiB; `0` disables inline returns), and it never exceeds `WORKSPACE_MCP_MAX_FILE_BYTES` when that is set. Invalid or negative values fail server startup.
+
+Hosted deployments where the server cannot see the caller's disk can set `WORKSPACE_MCP_DISABLE_LOCAL_FILES=true`. Tools then stop advertising server-side `file_path` parameters and refuse local paths with guidance to pass a URL or inline content instead. Stateless mode implies this setting. It is off by default, including for streamable HTTP, because a server on `localhost` shares the client's filesystem.
+
+On such a server uploads can bypass it entirely: `create_drive_file`, `update_drive_file` and the `import_to_google_*` tools accept `return_upload_url=true`, which opens a Google Drive resumable upload session and returns its pre-authorized URL. The client then `PUT`s the bytes straight to Google (no Authorization header), so large or binary files never pass through the MCP server or the model context. The two settings are two sides of one switch: `return_upload_url` is advertised only when `WORKSPACE_MCP_DISABLE_LOCAL_FILES` is set (or in stateless mode), and a server with local file access refuses it, since `file_path` is the route there.
+
+Office files (`.docx`, `.xlsx`, `.pptx`) are ZIP archives, so the ceiling above bounds only their compressed size. Text extraction separately applies `WORKSPACE_MCP_MAX_OFFICE_XML_BYTES` (default `26214400`, 25 MiB) as independent limits on expanded XML and extracted UTF-8 text. A file beyond either limit is reported as too large to extract. These limits bound input and output size, not process memory: the parsed XML tree measured roughly 14 to 30 times the XML size, so lower the value on small containers. `0` removes both limits; invalid or negative values fail server startup.
+
+Advanced OAuth 2.1 deployments affected by concurrent client token refreshes can tune FastMCP's early-refresh threshold and client-facing access-token lifetime, and deployments that want to bound how long per-login records stay in the OAuth proxy storage backend can shorten the client-facing refresh-token lifetime. See [`.env.oauth21`](.env.oauth21) for the bounded settings, recommended values, and security tradeoffs. The first two settings reduce how often the race occurs; they do not add a grace period to FastMCP's one-time-use refresh-token rotation.
 
 ## Security Best Practices
 

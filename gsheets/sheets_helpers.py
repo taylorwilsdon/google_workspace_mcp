@@ -9,7 +9,7 @@ import asyncio
 import json
 import logging
 import re
-from typing import List, Optional, Union
+from typing import Any, List, Optional, Union
 
 from core.utils import UserInputError
 
@@ -648,6 +648,8 @@ def _grid_range_to_a1(grid_range: dict, sheet_titles: dict[int, str]) -> str:
     Falls back to the sheet ID if the title is unknown.
     """
     sheet_id = grid_range.get("sheetId")
+    if sheet_id is None and 0 in sheet_titles:
+        sheet_id = 0
     sheet_title = sheet_titles.get(sheet_id, f"Sheet {sheet_id}")
 
     start_row = grid_range.get("startRowIndex")
@@ -670,8 +672,14 @@ def _grid_range_to_a1(grid_range: dict, sheet_titles: dict[int, str]) -> str:
     end_label = f"{col_label(end_col - 1 if end_col is not None else None)}{row_label(end_row - 1 if end_row is not None else None)}"
 
     if start_label and end_label:
+        # Collapse to a single label only for a bounded single cell (both a
+        # column and a row). Column-only (e.g. "A") or row-only (e.g. "1")
+        # ranges must keep the "start:end" form to stay valid A1 (A:A, 1:1).
+        is_single_cell = start_col is not None and start_row is not None
         range_ref = (
-            start_label if start_label == end_label else f"{start_label}:{end_label}"
+            start_label
+            if start_label == end_label and is_single_cell
+            else f"{start_label}:{end_label}"
         )
     elif start_label:
         range_ref = start_label
@@ -1147,19 +1155,20 @@ async def _fetch_grid_metadata(
     values: List[List[object]],
     include_hyperlinks: bool = False,
     include_notes: bool = False,
-) -> tuple[str, str]:
-    """Fetch hyperlinks and/or notes for a range via a single spreadsheets.get call.
+    include_smart_chips: bool = False,
+) -> tuple[str, str, str]:
+    """Fetch hyperlinks, notes, and/or smart chips for a range via a single spreadsheets.get call.
 
     Computes tight range bounds, enforces the cell-count cap, builds a combined
-    ``fields`` selector so only one API round-trip is needed when both flags are
+    ``fields`` selector so only one API round-trip is needed when multiple flags are
     ``True``, then parses the response into formatted output sections.
 
     Returns:
-        (hyperlink_section, notes_section) — each is an empty string when the
+        (hyperlink_section, notes_section, smart_chips_section) — each is an empty string when the
         corresponding flag is ``False`` or no data was found.
     """
-    if not include_hyperlinks and not include_notes:
-        return "", ""
+    if not include_hyperlinks and not include_notes and not include_smart_chips:
+        return "", "", ""
 
     tight_range = _a1_range_for_values(resolved_range, values)
     if not tight_range:
@@ -1168,7 +1177,7 @@ async def _fetch_grid_metadata(
             "unable to determine tight bounds",
             resolved_range,
         )
-        return "", ""
+        return "", "", ""
 
     cell_count = _a1_range_cell_count(tight_range) or sum(len(row) for row in values)
     if cell_count > MAX_GRID_METADATA_CELLS:
@@ -1179,7 +1188,7 @@ async def _fetch_grid_metadata(
             cell_count,
             MAX_GRID_METADATA_CELLS,
         )
-        return "", ""
+        return "", "", ""
 
     # Build a combined fields selector so we hit the API at most once.
     value_fields: list[str] = []
@@ -1187,6 +1196,8 @@ async def _fetch_grid_metadata(
         value_fields.extend(["hyperlink", "textFormatRuns(format(link(uri)))"])
     if include_notes:
         value_fields.append("note")
+    if include_smart_chips:
+        value_fields.append("chipRuns")
 
     fields = (
         "sheets(properties(title),data(startRow,startColumn,"
@@ -1210,7 +1221,7 @@ async def _fetch_grid_metadata(
             tight_range,
             exc,
         )
-        return "", ""
+        return "", "", ""
 
     hyperlink_section = ""
     if include_hyperlinks:
@@ -1226,4 +1237,391 @@ async def _fetch_grid_metadata(
             notes=notes, range_label=tight_range
         )
 
-    return hyperlink_section, notes_section
+    smart_chips_section = ""
+    if include_smart_chips:
+        smart_chips = _extract_cell_smart_chips_from_grid(response)
+        smart_chips_section = _format_sheet_smart_chips_section(
+            smart_chips=smart_chips, range_label=tight_range
+        )
+
+    return hyperlink_section, notes_section, smart_chips_section
+
+
+def _extract_cell_smart_chips_from_grid(spreadsheet: dict) -> list[dict[str, str]]:
+    """
+    Extract Drive and People smart chips from spreadsheet grid data.
+
+    Returns a list of dictionaries with:
+        - "cell": cell A1 reference
+        - "type": "drive" | "person"
+        - "value": Drive link URI or person email
+    """
+    smart_chips: list[dict[str, str]] = []
+    for sheet in spreadsheet.get("sheets", []) or []:
+        sheet_title = sheet.get("properties", {}).get("title") or "Unknown"
+        for grid in sheet.get("data", []) or []:
+            start_row = _coerce_int(grid.get("startRow"), default=0)
+            start_col = _coerce_int(grid.get("startColumn"), default=0)
+            for row_offset, row_data in enumerate(grid.get("rowData", []) or []):
+                if not row_data:
+                    continue
+                for col_offset, cell_data in enumerate(
+                    row_data.get("values", []) or []
+                ):
+                    if not cell_data:
+                        continue
+                    for chip_run in cell_data.get("chipRuns") or []:
+                        # Reads also return plain-text runs, which carry an empty chip.
+                        chip = chip_run.get("chip") or {}
+                        if "richLinkProperties" in chip:
+                            chip_type = "drive"
+                            value = chip["richLinkProperties"].get("uri")
+                        elif "personProperties" in chip:
+                            chip_type = "person"
+                            value = chip["personProperties"].get("email")
+                        else:
+                            continue
+                        smart_chips.append(
+                            {
+                                "cell": _format_a1_cell(
+                                    sheet_title,
+                                    start_row + row_offset,
+                                    start_col + col_offset,
+                                ),
+                                "type": chip_type,
+                                "value": value or "",
+                            }
+                        )
+    return smart_chips
+
+
+def _format_sheet_smart_chips_section(
+    *, smart_chips: list[dict[str, str]], range_label: str, max_details: int = 25
+) -> str:
+    """Format a list of smart chips into a human-readable section."""
+    if not smart_chips:
+        return ""
+
+    labels = {"drive": "Drive Chip", "person": "Person Chip"}
+    lines = [
+        f"- {item['cell']}: [{labels[item['type']]}] {item['value']}"
+        for item in smart_chips[:max_details]
+    ]
+    suffix = (
+        f"\n... and {len(smart_chips) - max_details} more smart chips"
+        if len(smart_chips) > max_details
+        else ""
+    )
+    return f"\n\nSmart Chips in range '{range_label}':\n" + "\n".join(lines) + suffix
+
+
+def _parse_single_chip_properties(
+    item: Any, default_type: Optional[str] = None
+) -> tuple[str, dict]:
+    """Parse a single chip item (str or dict) into (chip_type, chip_properties)."""
+    if item is None or item == "":
+        raise UserInputError("Empty chip item cannot be parsed.")
+
+    chip_type = default_type.lower() if default_type else None
+    uri = None
+    email = None
+
+    if isinstance(item, dict):
+        if "type" in item:
+            chip_type = str(item["type"]).lower()
+        uri = item.get("uri") or item.get("url")
+        email = item.get("email")
+        if not uri and not email:
+            if "folder_id" in item:
+                uri = f"https://drive.google.com/drive/folders/{item['folder_id']}"
+                chip_type = "drive"
+            elif "file_id" in item:
+                uri = f"https://drive.google.com/file/d/{item['file_id']}/view"
+                chip_type = "drive"
+            elif "id" in item:
+                uri = f"https://drive.google.com/open?id={item['id']}"
+                chip_type = "drive"
+    elif isinstance(item, str):
+        val = item.strip()
+        if not chip_type:
+            if val.startswith(("http://", "https://")) or "drive.google.com" in val:
+                chip_type = "drive"
+                uri = val
+            elif "@" in val and not val.startswith("http"):
+                chip_type = "person"
+                email = val.replace("mailto:", "").strip()
+            elif len(val) >= 20 and re.match(r"^[A-Za-z0-9_-]+$", val):
+                chip_type = "drive"
+                uri = f"https://drive.google.com/open?id={val}"
+            else:
+                raise UserInputError(
+                    f"Cannot infer chip type from '{val}'. Pass a Drive URL or ID, "
+                    "an email address, or set chip_type explicitly."
+                )
+        elif chip_type == "drive":
+            if val.startswith(("http://", "https://")):
+                uri = val
+            else:
+                uri = f"https://drive.google.com/open?id={val}"
+        elif chip_type == "person":
+            email = val.replace("mailto:", "").strip()
+    else:
+        raise UserInputError(
+            f"Unsupported chip item type: {type(item).__name__} ({item})"
+        )
+
+    if chip_type == "drive":
+        if not uri:
+            raise UserInputError(
+                f"Drive chip requires a URI or file/folder ID, got: {item}"
+            )
+        return "drive", {"richLinkProperties": {"uri": uri}}
+    elif chip_type == "person":
+        if not email:
+            raise UserInputError(f"Person chip requires an email address, got: {item}")
+        return "person", {"personProperties": {"email": email}}
+    else:
+        raise UserInputError(
+            f"Unknown chip_type '{chip_type}'. Supported types: 'drive', 'person'."
+        )
+
+
+def _create_chip_cell_data(
+    item: Any, default_type: Optional[str] = None
+) -> Optional[dict]:
+    """Construct a CellData dictionary containing smart chip(s) for Sheets API.
+
+    Args:
+        item: A single chip (str or dict), or a list of chips for a single cell.
+        default_type: Optional default chip type ("drive" or "person").
+
+    Returns:
+        A CellData dictionary with userEnteredValue and chipRuns, or None if item is empty.
+    """
+    if item is None or item == "" or item == []:
+        return None
+
+    # Multi-chips in a single cell: list or tuple of chip items
+    if isinstance(item, (list, tuple)):
+        active_items = [x for x in item if x is not None and x != ""]
+        if not active_items:
+            return None
+        chip_runs = []
+        for idx, sub_item in enumerate(active_items):
+            _, chip_props = _parse_single_chip_properties(sub_item, default_type)
+            chip_runs.append(
+                {
+                    "startIndex": idx * 2,
+                    "chip": chip_props,
+                }
+            )
+        return {
+            "userEnteredValue": {"stringValue": " ".join(["@"] * len(active_items))},
+            "chipRuns": chip_runs,
+        }
+
+    _, chip_props = _parse_single_chip_properties(item, default_type)
+    return {
+        "userEnteredValue": {"stringValue": "@"},
+        "chipRuns": [
+            {
+                "startIndex": 0,
+                "chip": chip_props,
+            }
+        ],
+    }
+
+
+def _normalize_chips_input(
+    chips: Any,
+    start_row: Optional[int],
+    end_row: Optional[int],
+    start_col: Optional[int],
+    end_col: Optional[int],
+    default_chip_type: Optional[str] = None,
+) -> list[tuple[int, int, dict]]:
+    """Parse input chips and map each chip to its (row_idx, col_idx, cell_data).
+
+    Args:
+        chips: Raw chips parameter (string, list, list of lists, dict).
+        start_row: Zero-based start row index.
+        end_row: Zero-based end row index (inclusive).
+        start_col: Zero-based start column index.
+        end_col: Zero-based end column index (inclusive).
+        default_chip_type: Optional chip type override ("drive", "person").
+
+    Returns:
+        List of (row_idx, col_idx, cell_data) tuples.
+    """
+    if isinstance(chips, str):
+        try:
+            parsed = json.loads(chips)
+            if isinstance(parsed, (list, dict, str)):
+                chips = parsed
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    start_r = start_row if start_row is not None else 0
+    start_c = start_col if start_col is not None else 0
+
+    updates: list[tuple[int, int, dict]] = []
+
+    is_single_row = (
+        start_row is not None and end_row is not None and start_row == end_row
+    )
+    is_single_col = (
+        start_col is not None and end_col is not None and start_col == end_col
+    )
+    is_single_cell = is_single_row and is_single_col
+
+    # Case 1: Single cell target (e.g. F3 or F3:F3)
+    # Any chips provided (single item, list of chips, or nested list [[c1, c2]]) go into this single cell
+    if is_single_cell:
+        if isinstance(chips, list) and len(chips) == 1 and isinstance(chips[0], list):
+            chips = chips[0]
+        cell_data = _create_chip_cell_data(chips, default_chip_type)
+        if cell_data is not None:
+            updates.append((start_r, start_c, cell_data))
+        return updates
+
+    num_cols = (end_col - start_c + 1) if end_col is not None else None
+    num_rows = (end_row - start_r + 1) if end_row is not None else None
+    is_2d_grid = (num_cols is None or num_cols > 1) and (
+        num_rows is None or num_rows > 1
+    )
+
+    # Case 2: 2D table grid (where chips is a list of rows)
+    if (
+        is_2d_grid
+        and isinstance(chips, list)
+        and len(chips) > 0
+        and isinstance(chips[0], list)
+    ):
+        if end_row is not None and (start_r + len(chips) - 1) > end_row:
+            raise UserInputError(
+                f"2D chips row count ({len(chips)}) exceeds target range row bound ({num_rows} rows)."
+            )
+        for r_offset, row in enumerate(chips):
+            r_idx = start_r + r_offset
+            if end_col is not None and (start_c + len(row) - 1) > end_col:
+                raise UserInputError(
+                    f"2D chips column count ({len(row)}) exceeds target range column bound ({num_cols} cols)."
+                )
+            for c_offset, item in enumerate(row):
+                c_idx = start_c + c_offset
+                cell_data = _create_chip_cell_data(item, default_chip_type)
+                if cell_data is not None:
+                    updates.append((r_idx, c_idx, cell_data))
+        return updates
+
+    # Case 3: 1D list of items (each item can be a single chip or a list of chips for that cell)
+    if isinstance(chips, list):
+        if is_single_row and not is_single_col:
+            # Horizontal fill (e.g. A1:C1)
+            if end_col is not None and (start_c + len(chips) - 1) > end_col:
+                raise UserInputError(
+                    f"Number of chips ({len(chips)}) exceeds horizontal range capacity ({end_col - start_c + 1} cells)."
+                )
+            for c_offset, item in enumerate(chips):
+                c_idx = start_c + c_offset
+                cell_data = _create_chip_cell_data(item, default_chip_type)
+                if cell_data is not None:
+                    updates.append((start_r, c_idx, cell_data))
+        elif is_single_col or (end_row is None and end_col is None):
+            # Vertical fill (e.g. F3:F23 or F3:F)
+            if end_row is not None and (start_r + len(chips) - 1) > end_row:
+                raise UserInputError(
+                    f"Number of chips ({len(chips)}) exceeds vertical range capacity ({end_row - start_r + 1} cells)."
+                )
+            for r_offset, item in enumerate(chips):
+                r_idx = start_r + r_offset
+                cell_data = _create_chip_cell_data(item, default_chip_type)
+                if cell_data is not None:
+                    updates.append((r_idx, start_c, cell_data))
+        else:
+            # 2D range in row-major order
+            ncols = num_cols if num_cols is not None else 1
+            nrows = num_rows if num_rows is not None else 1
+            max_capacity = ncols * nrows
+            if end_row is not None and len(chips) > max_capacity:
+                raise UserInputError(
+                    f"Number of chips ({len(chips)}) exceeds 2D range capacity ({max_capacity} cells)."
+                )
+            for i, item in enumerate(chips):
+                r_idx = start_r + (i // ncols)
+                c_idx = start_c + (i % ncols)
+                cell_data = _create_chip_cell_data(item, default_chip_type)
+                if cell_data is not None:
+                    updates.append((r_idx, c_idx, cell_data))
+        return updates
+
+    # Case 4: Single item (string or dict) for a multi-cell range -> fill all cells in range
+    single_cell_data = _create_chip_cell_data(chips, default_chip_type)
+    if single_cell_data is None:
+        return []
+
+    if end_row is not None and end_col is not None:
+        for r_idx in range(start_r, end_row + 1):
+            for c_idx in range(start_c, end_col + 1):
+                updates.append((r_idx, c_idx, single_cell_data))
+    else:
+        updates.append((start_r, start_c, single_cell_data))
+
+    return updates
+
+
+def _find_named_range(
+    named_ranges: List[dict],
+    target_id: Optional[str] = None,
+    target_name: Optional[str] = None,
+) -> Optional[dict]:
+    """Find a named range in a list of named ranges by ID or name.
+
+    Matches by target_id first if provided, then by target_name (exact match first,
+    then case-insensitive match).
+    """
+    if target_id:
+        target_id_str = str(target_id).strip()
+        for nr in named_ranges:
+            if nr.get("namedRangeId") == target_id_str:
+                return nr
+
+    if target_name:
+        name_clean = target_name.strip()
+        name_lower = name_clean.lower()
+        # Exact match
+        for nr in named_ranges:
+            if nr.get("name") == name_clean:
+                return nr
+        # Case-insensitive match fallback
+        for nr in named_ranges:
+            if (nr.get("name") or "").strip().lower() == name_lower:
+                return nr
+
+    return None
+
+
+def _format_named_ranges_list(
+    named_ranges: List[dict],
+    sheet_titles: dict[int, str],
+    spreadsheet_id: str,
+    user_google_email: str,
+) -> str:
+    """Format a list of named ranges into a human-readable markdown table."""
+    if not named_ranges:
+        return f"No named ranges found in spreadsheet '{spreadsheet_id}' for {user_google_email}."
+
+    header = (
+        f"Found {len(named_ranges)} named range(s) in spreadsheet '{spreadsheet_id}' for {user_google_email}:\n\n"
+        "| Name | Range | Named Range ID |\n"
+        "| :--- | :--- | :--- |\n"
+    )
+    rows = []
+    for nr in named_ranges:
+        nr_name = nr.get("name", "(unnamed)")
+        nr_id = nr.get("namedRangeId", "(unknown)")
+        grid_range = nr.get("range", {})
+        a1_repr = _grid_range_to_a1(grid_range, sheet_titles)
+        rows.append(f"| {nr_name} | {a1_repr} | {nr_id} |")
+
+    return header + "\n".join(rows)

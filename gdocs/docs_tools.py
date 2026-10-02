@@ -14,14 +14,21 @@ from typing import List, Any, Literal, Optional, Union
 from typing_extensions import TypedDict
 
 from googleapiclient.errors import HttpError
-from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
+from googleapiclient.http import MediaIoBaseUpload
 
 from mcp.types import ToolAnnotations
 
 # Auth & server utilities
 from auth.service_decorator import require_google_service, require_multiple_services
+from core.file_limits import (
+    FileTooLargeError,
+    download_media_bytes,
+    ensure_within_file_size_limit,
+)
 from core.utils import (
     GOOGLE_API_WRITE_RETRIES,
+    OfficeXmlExtractionError,
+    OfficeXmlTooLargeError,
     extract_office_xml_text,
     handle_http_errors,
     UserInputError,
@@ -39,11 +46,14 @@ from gdocs.docs_helpers import (
     create_insert_page_break_request,
     create_insert_image_request,
     create_bullet_list_request,
+    create_delete_bullet_list_request,
     create_insert_doc_tab_request,
     create_update_doc_tab_request,
     create_delete_doc_tab_request,
     validate_suggestions_view_mode,
     create_update_paragraph_style_request,
+    extract_text_from_elements,
+    process_tab_hierarchy,
 )
 
 # Import document structure and table utilities
@@ -51,6 +61,8 @@ from gdocs.docs_structure import (
     parse_document_structure,
     find_tables,
     analyze_document_complexity,
+    summarize_paragraph_layout,
+    truncate_preview,
 )
 from gdocs.docs_tables import extract_table_as_data
 from gdocs.docs_markdown import (
@@ -60,6 +72,7 @@ from gdocs.docs_markdown import (
     parse_drive_comments,
 )
 from gdocs.docs_markdown_writer import markdown_to_docs_requests
+from gdocs.docs_plain_text import render_doc_to_plain_text
 from gdocs.operation_schemas import BatchDocOperations, ParagraphBorderEdge
 
 # Import operation managers for complex business logic
@@ -69,6 +82,7 @@ from gdocs.managers import (
     ValidationManager,
     BatchOperationManager,
 )
+from gdrive.drive_helpers import flag_incomplete_search, move_new_file_to_folder
 import json
 
 logger = logging.getLogger(__name__)
@@ -94,6 +108,46 @@ class _DeveloperPreviewUnavailable(Exception):
     """The active Google Cloud project cannot use Docs Preview features."""
 
 
+# Field mask for inspect_doc_structure. It must name every field the structure
+# parser reads and nothing more: dropping per-run textStyle and the suggestion
+# bookkeeping stops a summary call from paying to serialize the whole document
+# (issue #1052). Keep in sync with gdocs/docs_structure.py.
+_STRUCTURE_CONTENT_FIELDS = (
+    "content("
+    "startIndex,endIndex,"
+    "paragraph(elements(startIndex,endIndex,textRun/content),paragraphStyle,bullet,"
+    "positionedObjectIds,suggestedPositionedObjectIds),"
+    "table(tableRows/tableCells(startIndex,endIndex,content),tableStyle),"
+    "sectionBreak/sectionStyle,"
+    "tableOfContents"
+    ")"
+)
+# headers/footers are maps and childTabs is recursive, so neither is sub-masked:
+# both stay whole, which costs little and cannot silently drop content.
+# With includeTabsContent=True the API rejects legacy top-level text fields in
+# the mask (issue #1108), so everything but the title is read from tabs.
+_STRUCTURE_FIELDS = (
+    f"title,tabs(tabProperties,childTabs,documentTab("
+    f"documentStyle,namedRanges,headers,footers,body({_STRUCTURE_CONTENT_FIELDS})))"
+)
+
+
+def _find_tab(tabs: list, target_tab_id: str) -> Optional[dict]:
+    """Find a tab by ID anywhere in the document's tab tree."""
+    for tab in tabs:
+        if tab.get("tabProperties", {}).get("tabId") == target_tab_id:
+            return tab
+        found = _find_tab(tab.get("childTabs", []), target_tab_id)
+        if found:
+            return found
+    return None
+
+
+def _tab_title(tab: dict) -> str:
+    """Human-readable title for a tab, for use in output headers."""
+    return tab.get("tabProperties", {}).get("title", "Untitled Tab")
+
+
 @server.tool(
     title="Search Docs",
     annotations=ToolAnnotations(
@@ -110,12 +164,26 @@ async def search_docs(
     user_google_email: str,
     query: str,
     page_size: int = 10,
+    page_token: Optional[str] = None,
+    corpora: Optional[str] = None,
+    drive_id: Optional[str] = None,
 ) -> str:
     """
     Searches for Google Docs by name using Drive API (mimeType filter).
 
+    Args:
+        user_google_email: The user's Google email address.
+        query: Text to search for in document names.
+        page_size: Maximum number of documents to return. Defaults to 10.
+        page_token: Page token from a previous response's nextPageToken to
+            retrieve the next page of results.
+        corpora: Corpus to search ('user', 'domain', 'drive', 'allDrives').
+            Defaults to 'drive' when drive_id is set, otherwise 'allDrives'.
+        drive_id: Optional shared drive ID to search.
+
     Returns:
         str: A formatted list of Google Docs matching the search query.
+            Includes a nextPageToken line when more results are available.
     """
     logger.info(f"[search_docs] Email={user_google_email}, query_len={len(query)}")
     logger.debug(f"[search_docs] Query='{query}'")
@@ -127,22 +195,30 @@ async def search_docs(
         .list(
             q=f"name contains '{escaped_query}' and mimeType='application/vnd.google-apps.document' and trashed=false",
             pageSize=page_size,
-            fields="files(id, name, createdTime, modifiedTime, webViewLink)",
+            pageToken=page_token,
+            fields="nextPageToken, incompleteSearch, files(id, name, createdTime, modifiedTime, webViewLink)",
             supportsAllDrives=True,
             includeItemsFromAllDrives=True,
+            corpora=corpora or ("drive" if drive_id else "allDrives"),
+            driveId=drive_id,
         )
         .execute
     )
     files = response.get("files", [])
-    if not files:
-        return f"No Google Docs found matching '{query}'."
+    next_token = response.get("nextPageToken")
+    if not files and not next_token:
+        return flag_incomplete_search(
+            f"No Google Docs found matching '{query}'.", response
+        )
 
     output = [f"Found {len(files)} Google Docs matching '{query}':"]
     for f in files:
         output.append(
             f"- {f['name']} (ID: {f['id']}) Modified: {f.get('modifiedTime')} Link: {f.get('webViewLink')}"
         )
-    return "\n".join(output)
+    if next_token:
+        output.append(f"nextPageToken: {next_token}")
+    return flag_incomplete_search("\n".join(output), response)
 
 
 @server.tool(
@@ -171,11 +247,29 @@ async def get_doc_content(
     user_google_email: str,
     document_id: str,
     suggestions_view_mode: str = "DEFAULT_FOR_CURRENT_ACCESS",
+    tab_id: Optional[str] = None,
+    preserve_context: bool = False,
 ) -> str:
     """
     Retrieves content of a Google Doc or a Drive file (like .docx) identified by document_id.
     - Native Google Docs: Fetches content via Docs API.
     - Office files (.docx, etc.) stored in Drive: Downloads via Drive API and extracts text.
+
+    By default, native Google Docs text is index-aligned with the document:
+    empty paragraphs are preserved and every non-text element that occupies an
+    index (inline object, page break, footnote reference, ...) is rendered as one
+    U+FFFC placeholder per index. The document body starts at index 1, so an
+    offset n into the text that follows "--- CONTENT ---" is document index n + 1,
+    and that index can be passed straight to format_text or delete_text. Tables
+    and multi-tab documents interleave separators, so alignment holds up to the
+    first table or tab header.
+
+    Set preserve_context=True for readable link destinations, internal targets,
+    smart-chip values, table boundaries, headers, footers, footnotes, and object
+    context exposed by the Docs API. This output is plain text, not Markdown,
+    and its offsets must not be used as document editing indices. Comments,
+    revision history, exact visual layout, and chip details hidden by the API
+    are not included. Use get_doc_as_markdown for formatting or comments.
 
     Args:
         user_google_email: User's Google email address
@@ -185,6 +279,13 @@ async def get_doc_content(
             - "SUGGESTIONS_INLINE": Suggested changes appear inline in the document
             - "PREVIEW_SUGGESTIONS_ACCEPTED": Preview as if all suggestions were accepted
             - "PREVIEW_WITHOUT_SUGGESTIONS": Preview as if all suggestions were rejected
+        tab_id: Optional ID of a single tab to read (from inspect_doc_structure).
+            When given, only that tab's content is returned with no tab separator,
+            so the default output stays index-aligned with that tab. When
+            omitted, every tab is returned with "--- TAB: ... ---" markers.
+        preserve_context: Include readable semantic annotations for native Docs.
+            Defaults to False to retain index alignment. Office extraction is
+            unaffected. With tab_id, only the selected tab is rendered.
 
     Returns:
         str: The document content with metadata header.
@@ -200,7 +301,7 @@ async def get_doc_content(
         drive_service.files()
         .get(
             fileId=document_id,
-            fields="id, name, mimeType, webViewLink",
+            fields="id, name, mimeType, webViewLink, size",
             supportsAllDrives=True,
         )
         .execute
@@ -226,77 +327,40 @@ async def get_doc_content(
             )
             .execute
         )
-        TAB_HEADER_FORMAT = "\n--- TAB: {tab_name} (ID: {tab_id}) ---\n"
-
-        def extract_text_from_elements(elements, tab_name=None, tab_id=None, depth=0):
-            """Extract text from document elements (paragraphs, tables, etc.)"""
-            if depth > 5:
-                return ""
-            text_lines = []
-            if tab_name:
-                text_lines.append(
-                    TAB_HEADER_FORMAT.format(tab_name=tab_name, tab_id=tab_id)
+        if tab_id:
+            tab = _find_tab(doc_data.get("tabs", []), tab_id)
+            if tab is None:
+                return f"Error: Tab {tab_id} not found in document."
+            if "documentTab" not in tab:
+                return f"Error: Tab {tab_id} is not a document tab and has no body content."
+            # No tab separator: the caller named one tab. The default output
+            # stays index-aligned; context annotations are opt-in.
+            file_name = f"{file_name} [tab: {_tab_title(tab)}]"
+            if preserve_context:
+                body_text = render_doc_to_plain_text(tab["documentTab"], tab_id)
+            else:
+                body_text = extract_text_from_elements(
+                    tab["documentTab"].get("body", {}).get("content", [])
                 )
+        elif preserve_context:
+            body_text = render_doc_to_plain_text(doc_data)
+        else:
+            processed_text_lines = []
 
-            for element in elements:
-                if "paragraph" in element:
-                    paragraph = element.get("paragraph", {})
-                    para_elements = paragraph.get("elements", [])
-                    current_line_text = ""
-                    for pe in para_elements:
-                        text_run = pe.get("textRun", {})
-                        if text_run and "content" in text_run:
-                            current_line_text += text_run["content"]
-                    if current_line_text.strip():
-                        text_lines.append(current_line_text)
-                elif "table" in element:
-                    # Handle table content
-                    table = element.get("table", {})
-                    table_rows = table.get("tableRows", [])
-                    for row in table_rows:
-                        row_cells = row.get("tableCells", [])
-                        for cell in row_cells:
-                            cell_content = cell.get("content", [])
-                            cell_text = extract_text_from_elements(
-                                cell_content, depth=depth + 1
-                            )
-                            if cell_text.strip():
-                                text_lines.append(cell_text)
-            return "".join(text_lines)
+            # Truthiness, not .strip(): a body or tab made up entirely of empty
+            # paragraphs still occupies indices, so dropping it would reintroduce
+            # the drift this alignment exists to prevent.
+            body_elements = doc_data.get("body", {}).get("content", [])
+            main_content = extract_text_from_elements(body_elements)
+            if main_content:
+                processed_text_lines.append(main_content)
 
-        def process_tab_hierarchy(tab, level=0):
-            """Process a tab and its nested child tabs recursively"""
-            tab_text = ""
+            for tab in doc_data.get("tabs", []):
+                tab_content = process_tab_hierarchy(tab)
+                if tab_content:
+                    processed_text_lines.append(tab_content)
 
-            if "documentTab" in tab:
-                props = tab.get("tabProperties", {})
-                tab_title = props.get("title", "Untitled Tab")
-                tab_id = props.get("tabId", "Unknown ID")
-                if level > 0:
-                    tab_title = "    " * level + f"{tab_title}"
-                tab_body = tab.get("documentTab", {}).get("body", {}).get("content", [])
-                tab_text += extract_text_from_elements(tab_body, tab_title, tab_id)
-
-            child_tabs = tab.get("childTabs", [])
-            for child_tab in child_tabs:
-                tab_text += process_tab_hierarchy(child_tab, level + 1)
-
-            return tab_text
-
-        processed_text_lines = []
-
-        body_elements = doc_data.get("body", {}).get("content", [])
-        main_content = extract_text_from_elements(body_elements)
-        if main_content.strip():
-            processed_text_lines.append(main_content)
-
-        tabs = doc_data.get("tabs", [])
-        for tab in tabs:
-            tab_content = process_tab_hierarchy(tab)
-            if tab_content.strip():
-                processed_text_lines.append(tab_content)
-
-        body_text = "".join(processed_text_lines)
+            body_text = "".join(processed_text_lines)
     else:
         logger.info(
             f"[get_doc_content] Processing as Drive file (e.g., .docx, other). MimeType: {mime_type}"
@@ -308,6 +372,18 @@ async def get_doc_content(
             # was intended to export them. For .docx, direct download is used.
         }
         effective_export_mime = export_mime_type_map.get(mime_type)
+
+        # Declared Drive size applies to binary downloads (not GSuite exports).
+        if not effective_export_mime:
+            try:
+                ensure_within_file_size_limit(
+                    file_metadata.get("size"),
+                    file_name=file_name,
+                    file_id=document_id,
+                    web_view_link=web_view_link,
+                )
+            except FileTooLargeError as e:
+                return str(e)
 
         request_obj = (
             drive_service.files().export_media(
@@ -321,16 +397,26 @@ async def get_doc_content(
             )
         )
 
-        fh = io.BytesIO()
-        downloader = MediaIoBaseDownload(fh, request_obj)
-        loop = asyncio.get_event_loop()
-        done = False
-        while not done:
-            status, done = await loop.run_in_executor(None, downloader.next_chunk)
+        try:
+            file_content_bytes = await download_media_bytes(
+                request_obj,
+                file_name=file_name,
+                file_id=document_id,
+                web_view_link=web_view_link,
+            )
+        except FileTooLargeError as e:
+            return str(e)
 
-        file_content_bytes = fh.getvalue()
-
-        office_text = extract_office_xml_text(file_content_bytes, mime_type)
+        try:
+            office_text = extract_office_xml_text(file_content_bytes, mime_type)
+        except OfficeXmlTooLargeError as e:
+            # Not damaged, and not to be retried as raw text: say what happened.
+            office_text = f"[Could not read '{mime_type}' file - {e}]"
+        except OfficeXmlExtractionError as e:
+            office_text = (
+                f"[Could not read '{mime_type}' file - it appears damaged or is "
+                f"not a valid Office document: {e}]"
+            )
         if office_text:
             body_text = office_text
         else:
@@ -361,13 +447,25 @@ async def get_doc_content(
 @handle_http_errors("list_docs_in_folder", is_read_only=True, service_type="docs")
 @require_google_service("drive", "drive_read")
 async def list_docs_in_folder(
-    service: Any, user_google_email: str, folder_id: str = "root", page_size: int = 100
+    service: Any,
+    user_google_email: str,
+    folder_id: str = "root",
+    page_size: int = 100,
+    page_token: Optional[str] = None,
 ) -> str:
     """
     Lists Google Docs within a specific Drive folder.
 
+    Args:
+        user_google_email: The user's Google email address.
+        folder_id: ID of the Drive folder to list. Defaults to 'root'.
+        page_size: Maximum number of documents to return. Defaults to 100.
+        page_token: Page token from a previous response's nextPageToken to
+            retrieve the next page of results.
+
     Returns:
         str: A formatted list of Google Docs in the specified folder.
+            Includes a nextPageToken line when more results are available.
     """
     logger.info(
         f"[list_docs_in_folder] Invoked. Email: '{user_google_email}', Folder ID: '{folder_id}'"
@@ -378,20 +476,24 @@ async def list_docs_in_folder(
         .list(
             q=f"'{folder_id}' in parents and mimeType='application/vnd.google-apps.document' and trashed=false",
             pageSize=page_size,
-            fields="files(id, name, modifiedTime, webViewLink)",
+            pageToken=page_token,
+            fields="nextPageToken, files(id, name, modifiedTime, webViewLink)",
             supportsAllDrives=True,
             includeItemsFromAllDrives=True,
         )
         .execute
     )
     items = rsp.get("files", [])
-    if not items:
+    next_token = rsp.get("nextPageToken")
+    if not items and not next_token:
         return f"No Google Docs found in folder '{folder_id}'."
     out = [f"Found {len(items)} Docs in folder '{folder_id}':"]
     for f in items:
         out.append(
             f"- {f['name']} (ID: {f['id']}) Modified: {f.get('modifiedTime')} Link: {f.get('webViewLink')}"
         )
+    if next_token:
+        out.append(f"nextPageToken: {next_token}")
     return "\n".join(out)
 
 
@@ -411,6 +513,7 @@ async def create_doc(
     user_google_email: str,
     title: str,
     content: str = "",
+    folder_id: str = "root",
 ) -> str:
     """
     Creates a new Google Doc and optionally inserts initial content.
@@ -427,18 +530,26 @@ async def create_doc(
         user_google_email: User's Google email address
         title: Title of the new document
         content: Optional initial plain text content to insert
+        folder_id: The ID of the parent folder. Defaults to 'root'. For shared
+            drives, this must be a folder ID within the shared drive.
 
     Returns:
         str: Confirmation message with document ID, link, and initial document state.
     """
     logger.info(
-        f"[create_doc] Invoked. Email: '{user_google_email}', title_len={len(title)}"
+        f"[create_doc] Invoked. Email: '{user_google_email}', title_len={len(title)}, "
+        f"folder_id='{folder_id}'"
     )
 
     doc = await asyncio.to_thread(
         service.documents().create(body={"title": title}).execute
     )
     doc_id = doc.get("documentId")
+
+    placement_note = await move_new_file_to_folder(
+        user_google_email, doc_id, folder_id, "create_doc"
+    )
+
     if content:
         requests = [{"insertText": {"location": {"index": 1}, "text": content}}]
         await asyncio.to_thread(
@@ -452,7 +563,8 @@ async def create_doc(
     else:
         content_note = "Document is empty (body starts at index 1, total length 2)."
     msg = (
-        f"Created Google Doc '{title}' (ID: {doc_id}) for {user_google_email}. "
+        f"Created Google Doc '{title}' (ID: {doc_id}) for {user_google_email}."
+        f"{placement_note} "
         f"{content_note} "
         f"Use batch_update_doc with end_of_segment=true to append content. "
         f"Link: {link}"
@@ -1150,6 +1262,19 @@ async def batch_update_doc(
         {"type": "find_replace", "find_text": "{{BODY}}", "replace_text": "The results show..."}
       ]
 
+    ALTERNATIVE - SEMANTIC ANCHORS (target existing structure without indices):
+      Insertion operations accept after_heading, before_heading, or anchor_text with
+      anchor_position instead of index. Each is resolved against the document at
+      execution time, so it cannot go stale the way a pre-computed index can, and
+      an anchor matching zero or several places is refused rather than guessed.
+      Submit anchored insertions in their own batch; they execute from highest
+      index to lowest to keep targets stable. [
+        {"type": "insert_text", "after_heading": "Results",
+         "text": "Revenue grew 15%.\\n"},
+        {"type": "insert_text", "anchor_text": "Conclusion",
+         "anchor_position": "before", "text": "See appendix.\\n"}
+      ]
+
     WARNING - AVOID THIS ANTI-PATTERN:
       Do NOT pre-compute sequential indices for multiple insert_text operations.
       Each insertion shifts all subsequent indices and manual calculation is error-prone.
@@ -1396,23 +1521,62 @@ async def batch_update_doc(
         replies_count = metadata.get("replies_count", 0)
         doc_length = metadata.get("document_length")
         length_info = f" Document length: {doc_length}." if doc_length else ""
-        suggest_info = ""
+
+        parts = [
+            f"{message} on document {document_id}. ",
+            f"API replies: {replies_count}.{length_info}",
+        ]
+
+        revision_before = metadata.get("revision_before")
+        revision_after = metadata.get("revision_after")
+        if revision_before or revision_after:
+            parts.append(
+                f" Revision: {revision_before or 'unknown'} -> "
+                f"{revision_after or 'unknown'}."
+            )
+
+        # Reporting what the edited range now looks like lets the caller confirm
+        # styles and list membership landed without a second round trip.
+        for target in metadata.get("target_ranges", [metadata]):
+            if (
+                target.get("tab_id")
+                or target.get("segment_id")
+                or len(metadata.get("target_ranges", [])) > 1
+            ):
+                parts.append(
+                    f"\nTarget tab: {target.get('tab_id') or 'first'}, "
+                    f"segment: {target.get('segment_id') or 'body'}. "
+                    f"Document length: {target.get('document_length')}."
+                )
+            affected = target.get("affected_range")
+            if affected:
+                parts.append("\nAffected range after edit:")
+                for entry in affected:
+                    bullet = ", in list" if entry["in_list"] else ""
+                    preview = entry["text_preview"].replace("\n", " ").strip()
+                    parts.append(
+                        f"\n  [{entry['start_index']}-{entry['end_index']}] "
+                        f'{entry["named_style"] or "UNKNOWN"}{bullet}: "{preview}"'
+                    )
+                parts.append("\n")
+
         if suggest_mode:
-            suggest_info = _describe_comment_update_state(
-                metadata.get("comment_update_state"),
-                normalized_operations,
-                metadata,
+            parts.append(
+                _describe_comment_update_state(
+                    metadata.get("comment_update_state"),
+                    normalized_operations,
+                    metadata,
+                )
             )
-            suggest_info += _describe_suggestion_responses(
-                metadata.get("suggestion_responses", [])
+            parts.append(
+                _describe_suggestion_responses(metadata.get("suggestion_responses", []))
             )
-        return (
-            f"{message} on document {document_id}. "
-            f"API replies: {replies_count}.{length_info}{suggest_info}"
-            " "
-            f"To apply formatting, call inspect_doc_structure to get exact text positions. "
+
+        parts.append(
+            f" To apply formatting, call inspect_doc_structure to get exact text positions. "
             f"Link: {link}"
         )
+        return "".join(parts)
     else:
         return f"Error: {message}"
 
@@ -1978,6 +2142,7 @@ async def inspect_doc_structure(
     document_id: str,
     detailed: bool = False,
     tab_id: str = None,
+    preview_chars: Optional[int] = 100,
 ) -> str:
     """
     Essential tool for finding safe insertion points and understanding document structure.
@@ -1999,6 +2164,17 @@ async def inspect_doc_structure(
     - table_details: Position and dimensions of each table
     - headers / footers: Real segment IDs and previews for header/footer editing
     - tabs: List of available tabs in the document (if no tab_id specified)
+    - empty_paragraphs: newline-only count, excluding existing/suggested object anchors
+    - empty_paragraph_ranges: start/end extents, capped at 100
+    - empty_paragraph_ranges_truncated: whether ranges were omitted
+    - last_paragraph: is_list_item and is_empty, or null if no body paragraphs
+
+    Paragraph statistics cover top-level body paragraphs and appear at the top
+    level in basic mode or under "statistics" in detailed mode.
+    Ranges can include required empty paragraphs. Before cleanup, use detailed=true
+    to check adjacent elements, formatting, and object anchors. Preserve the final
+    newline and newlines before tables, tables of contents, or section breaks.
+    The final range has end == total_length and may be omitted by truncation.
 
     WORKFLOW FOR TABLE INSERTION:
     Step 1: Call this function
@@ -2021,39 +2197,47 @@ async def inspect_doc_structure(
     with text_preview for each paragraph, making it easy to identify which
     ranges to format.
 
+    SUB-PARAGRAPH FORMATTING:
+    text_preview is truncated to 100 characters by default. To compute the index
+    of a token inside a longer paragraph, pass preview_chars=0 or None for untruncated
+    text, then add the token's UTF-16 offset within that text to the paragraph's
+    start_index (non-BMP characters such as emoji occupy two UTF-16 units).
+
     Args:
         user_google_email: User's Google email address
         document_id: ID of the document to inspect
         detailed: Whether to return detailed structure information
         tab_id: Optional ID of the tab to inspect. If not provided, inspects main document.
+        preview_chars: Maximum characters of paragraph, header and footer text
+            preview. Pass 0 or None for the full text, needed to locate a token inside a
+            paragraph longer than the default 100 characters.
 
     Returns:
         str: JSON string containing document structure and safe insertion indices
     """
     logger.debug(
-        f"[inspect_doc_structure] Doc={document_id}, detailed={detailed}, tab_id={tab_id}"
+        f"[inspect_doc_structure] Doc={document_id}, detailed={detailed}, "
+        f"tab_id={tab_id}, preview_chars={preview_chars}"
     )
 
-    # Get the document
+    # Get the document. The field mask keeps this summary call from paying to
+    # serialize every text run's styling, which made inspecting a document cost
+    # the same as reading it.
     doc = await asyncio.to_thread(
-        service.documents().get(documentId=document_id, includeTabsContent=True).execute
+        service.documents()
+        .get(
+            documentId=document_id,
+            includeTabsContent=True,
+            fields=_STRUCTURE_FIELDS,
+        )
+        .execute
     )
 
     # If tab_id is specified, find the tab and use its content
     target_content = doc.get("body", {})
 
-    def find_tab(tabs, target_id):
-        for tab in tabs:
-            if tab.get("tabProperties", {}).get("tabId") == target_id:
-                return tab
-            if "childTabs" in tab:
-                found = find_tab(tab["childTabs"], target_id)
-                if found:
-                    return found
-        return None
-
     if tab_id:
-        tab = find_tab(doc.get("tabs", []), tab_id)
+        tab = _find_tab(doc.get("tabs", []), tab_id)
         if tab and "documentTab" in tab:
             document_tab = tab["documentTab"]
             target_content = document_tab.get("body", {})
@@ -2093,7 +2277,7 @@ async def inspect_doc_structure(
             analysis_doc["footers"] = first_tab_doc.get("footers", {})
             analysis_doc["documentStyle"] = first_tab_doc.get("documentStyle", {})
 
-    structure = parse_document_structure(analysis_doc)
+    structure = parse_document_structure(analysis_doc, preview_chars)
 
     if detailed:
         # Return full parsed structure
@@ -2111,6 +2295,7 @@ async def inspect_doc_structure(
                 "named_ranges": len(structure["named_ranges"]),
                 "has_headers": bool(structure["headers"]),
                 "has_footers": bool(structure["footers"]),
+                **summarize_paragraph_layout(structure),
             },
             "elements": [],
         }
@@ -2128,7 +2313,13 @@ async def inspect_doc_structure(
                 elem_summary["columns"] = element["columns"]
                 elem_summary["cell_count"] = len(element.get("cells", []))
             elif element["type"] == "paragraph":
-                elem_summary["text_preview"] = element.get("text", "")[:100]
+                elem_summary["text_preview"] = truncate_preview(
+                    element.get("text", ""), preview_chars
+                )
+                elem_summary["is_list_item"] = bool(element.get("is_list_item"))
+                for key in ("positioned_object_ids", "suggested_positioned_object_ids"):
+                    if key in element:
+                        elem_summary[key] = element[key]
 
             result["elements"].append(elem_summary)
 
@@ -2185,17 +2376,25 @@ async def inspect_doc_structure(
                 )
 
     if structure["headers"]:
-        result["headers"] = _build_segment_inspection_entries(doc, structure, "header")
+        result["headers"] = _build_segment_inspection_entries(
+            analysis_doc, structure, "header"
+        )
 
     else:
-        header_entries = _build_segment_inspection_entries(doc, structure, "header")
+        header_entries = _build_segment_inspection_entries(
+            analysis_doc, structure, "header"
+        )
         if header_entries:
             result["headers"] = header_entries
 
     if structure["footers"]:
-        result["footers"] = _build_segment_inspection_entries(doc, structure, "footer")
+        result["footers"] = _build_segment_inspection_entries(
+            analysis_doc, structure, "footer"
+        )
     else:
-        footer_entries = _build_segment_inspection_entries(doc, structure, "footer")
+        footer_entries = _build_segment_inspection_entries(
+            analysis_doc, structure, "footer"
+        )
         if footer_entries:
             result["footers"] = footer_entries
 
@@ -2762,15 +2961,18 @@ async def export_doc_to_pdf(
             fileId=document_id, mimeType="application/pdf"
         )
 
-        fh = io.BytesIO()
-        downloader = MediaIoBaseDownload(fh, request_obj)
+        try:
+            pdf_content = await download_media_bytes(
+                request_obj,
+                file_name=original_name,
+                file_id=document_id,
+                web_view_link=web_view_link,
+            )
+        except FileTooLargeError as e:
+            return str(e)
 
-        done = False
-        while not done:
-            _, done = await asyncio.to_thread(downloader.next_chunk)
-
-        pdf_content = fh.getvalue()
         pdf_size = len(pdf_content)
+        fh = io.BytesIO(pdf_content)
 
     except Exception as e:
         return f"Error: Failed to export document to PDF: {str(e)}"
@@ -2783,8 +2985,6 @@ async def export_doc_to_pdf(
 
     # Upload PDF to Drive
     try:
-        # Reuse the existing BytesIO object by resetting to the beginning
-        fh.seek(0)
         # Create media upload object
         media = MediaIoBaseUpload(fh, mimetype="application/pdf", resumable=True)
 
@@ -2947,7 +3147,7 @@ async def update_paragraph_style(
         border_width: Border width in points (defaults to 1)
         border_padding: Border padding in points (defaults to 4)
         border_dash: Border dash style ('SOLID', 'DOT', or 'DASH'; defaults to 'SOLID')
-        list_type: Create a list from existing paragraphs ('UNORDERED' for bullets, 'ORDERED' for numbers, 'CHECKBOX' for checklists)
+        list_type: Create a list from existing paragraphs ('UNORDERED' for bullets, 'ORDERED' for numbers, 'CHECKBOX' for checklists), or 'NONE' to remove existing list formatting from the range. Use 'NONE' when text inserted after a list has inherited its bullets: setting named_style_type or heading_level does not clear list membership, only 'NONE' does.
         list_nesting_level: Nesting level for lists (0-8, where 0 is top level, default is 0)
                            Use higher levels for nested/indented list items
         bullet_preset: Optional explicit Google Docs bullet preset
@@ -2991,7 +3191,7 @@ async def update_paragraph_style(
         # Coerce non-string inputs to string before normalization to avoid AttributeError
         if not isinstance(list_type_value, str):
             list_type_value = str(list_type_value)
-        valid_list_types = ["UNORDERED", "ORDERED", "CHECKBOX"]
+        valid_list_types = ["UNORDERED", "ORDERED", "CHECKBOX", "NONE"]
         normalized_list_type = list_type_value.upper()
         if normalized_list_type not in valid_list_types:
             return f"Error: list_type must be one of: {', '.join(valid_list_types)}"
@@ -3001,6 +3201,8 @@ async def update_paragraph_style(
     if list_nesting_level is not None:
         if list_type_value is None:
             return "Error: list_nesting_level requires list_type parameter"
+        if list_type_value == "NONE":
+            return "Error: list_nesting_level cannot be used with list_type='NONE'"
         if not isinstance(list_nesting_level, int):
             return "Error: list_nesting_level must be an integer"
         if list_nesting_level < 0 or list_nesting_level > 8:
@@ -3096,8 +3298,16 @@ async def update_paragraph_style(
     if paragraph_style_request:
         requests.append(paragraph_style_request)
 
-    # Add list creation if requested
-    if list_type_value is not None:
+    # Add list creation or removal if requested
+    if list_type_value == "NONE":
+        # Docs continues list membership into text inserted after a list, and a
+        # named-style change does not clear it. Only deleteParagraphBullets does.
+        requests.append(
+            create_delete_bullet_list_request(
+                start_index, end_index, tab_id, segment_id=segment_id
+            )
+        )
+    elif list_type_value is not None:
         # Default to level 0 if not specified
         nesting_level = list_nesting_level if list_nesting_level is not None else 0
         try:
@@ -3206,6 +3416,7 @@ async def get_doc_as_markdown(
     comment_mode: str = "inline",
     include_resolved: bool = False,
     suggestions_view_mode: str = "DEFAULT_FOR_CURRENT_ACCESS",
+    tab_id: Optional[str] = None,
 ) -> str:
     """
     Reads a Google Doc and returns it as clean Markdown with optional comment context.
@@ -3231,6 +3442,9 @@ async def get_doc_as_markdown(
             - "SUGGESTIONS_INLINE": Suggested changes appear inline in the document
             - "PREVIEW_SUGGESTIONS_ACCEPTED": Preview as if all suggestions were accepted
             - "PREVIEW_WITHOUT_SUGGESTIONS": Preview as if all suggestions were rejected
+        tab_id: Optional ID of a single tab to read (from inspect_doc_structure).
+            When given, only that tab's content is rendered, without its child tabs
+            and without a tab heading. When omitted, every tab is rendered.
 
     Returns:
         str: The document content as Markdown, optionally with comments
@@ -3271,6 +3485,16 @@ async def get_doc_as_markdown(
             f"Error: Timed out fetching document {document_id} from Google Docs API. "
             "The document may be too large or there may be a network issue. Please try again."
         )
+
+    if tab_id:
+        tab = _find_tab(doc.get("tabs", []), tab_id)
+        if tab is None:
+            return f"Error: Tab {tab_id} not found in document."
+        if "documentTab" not in tab:
+            return f"Error: Tab {tab_id} is not a document tab and has no body content."
+        # Drop childTabs so only the named tab renders, and leave it as the sole
+        # tab so it renders without a tab heading.
+        doc = {**doc, "tabs": [{k: v for k, v in tab.items() if k != "childTabs"}]}
 
     markdown = convert_doc_to_markdown(doc)
 

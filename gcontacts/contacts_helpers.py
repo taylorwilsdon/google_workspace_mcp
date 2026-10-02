@@ -12,7 +12,18 @@ import logging
 import re
 from typing import Any, Dict, List
 
+from core.utils import UserInputError
+
 logger = logging.getLogger(__name__)
+
+# Name fields the People API derives from the structured parts. Sending them
+# back alongside an edited part would conflict with (or override) the edit.
+_DERIVED_NAME_FIELDS = (
+    "metadata",
+    "displayName",
+    "displayNameLastFirst",
+    "unstructuredName",
+)
 
 
 def _parse_birthday(s: str) -> Dict[str, Any]:
@@ -512,3 +523,39 @@ def _merge_relations(
             result.append(r)
             existing_keys.add(rk)
     return result
+
+
+def _merge_names(
+    existing: List[Dict[str, Any]],
+    new_names: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """
+    Overlay the provided name parts onto the contact's existing name, so changing
+    one part (e.g. givenName) keeps the rest (familyName, middleName, suffix...).
+    """
+    current = next(
+        (
+            name
+            for name in existing
+            if name.get("metadata", {}).get("source", {}).get("type") == "CONTACT"
+        ),
+        {},
+    )
+    unstructured = current.get("unstructuredName")
+    if unstructured and unstructured != " ".join(
+        current[part]
+        for part in (
+            "honorificPrefix",
+            "givenName",
+            "middleName",
+            "familyName",
+            "honorificSuffix",
+        )
+        if current.get(part)
+    ):
+        raise UserInputError(
+            "Cannot partially update a name with an unstructuredName that "
+            "cannot be represented by its structured parts."
+        )
+    kept = {k: v for k, v in current.items() if k not in _DERIVED_NAME_FIELDS}
+    return [{**kept, **new_names[0]}]

@@ -1,4 +1,5 @@
 import os
+import subprocess
 import sys
 from types import SimpleNamespace
 
@@ -12,6 +13,51 @@ os.environ["MCP_ENABLE_OAUTH21"] = "false"
 os.environ["WORKSPACE_MCP_STATELESS_MODE"] = "false"
 
 import main
+
+
+def test_main_rejects_invalid_max_file_bytes_at_startup(monkeypatch, capsys):
+    monkeypatch.setenv("WORKSPACE_MCP_MAX_FILE_BYTES", "5MB")
+    monkeypatch.setattr(sys, "argv", ["main.py"])
+    monkeypatch.setattr(main, "configure_safe_logging", lambda: None)
+    monkeypatch.setattr("core.telemetry.configure_telemetry", lambda: None)
+
+    with pytest.raises(SystemExit) as exc:
+        main.main()
+
+    assert exc.value.code == 2
+    assert "WORKSPACE_MCP_MAX_FILE_BYTES" in capsys.readouterr().err
+
+
+def test_main_rejects_invalid_max_office_xml_bytes_at_startup(monkeypatch, capsys):
+    monkeypatch.delenv("WORKSPACE_MCP_MAX_FILE_BYTES", raising=False)
+    monkeypatch.setenv("WORKSPACE_MCP_MAX_OFFICE_XML_BYTES", "5MB")
+    monkeypatch.setattr(sys, "argv", ["main.py"])
+    monkeypatch.setattr(main, "configure_safe_logging", lambda: None)
+    monkeypatch.setattr("core.telemetry.configure_telemetry", lambda: None)
+
+    with pytest.raises(SystemExit) as exc:
+        main.main()
+
+    assert exc.value.code == 2
+    assert "WORKSPACE_MCP_MAX_OFFICE_XML_BYTES" in capsys.readouterr().err
+
+
+def test_fastmcp_entrypoint_rejects_invalid_file_limits_at_startup():
+    env = os.environ.copy()
+    env["WORKSPACE_MCP_MAX_FILE_BYTES"] = "0"
+    env["WORKSPACE_MCP_MAX_OFFICE_XML_BYTES"] = "5MB"
+
+    result = subprocess.run(
+        [sys.executable, "-c", "import fastmcp_server"],
+        cwd=os.path.dirname(os.path.dirname(__file__)),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "WORKSPACE_MCP_MAX_OFFICE_XML_BYTES" in result.stderr
 
 
 def test_resolve_permissions_mode_selection_without_tier():
@@ -202,6 +248,8 @@ def test_main_skips_gcs_store_initialization_in_service_account_mode(monkeypatch
         lambda: SimpleNamespace(
             service_account_key_file=None,
             service_account_key_json=service_account_json,
+            client_secret=None,
+            client_secrets_file=None,
         ),
     )
     monkeypatch.setattr(main.server, "run", fake_run)

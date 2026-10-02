@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "workspace-mcp"
-version = "1.25.0"
+version = "1.30.1"
 description = "Comprehensive, highly performant Google Workspace Streamable HTTP & SSE MCP Server for Calendar, Gmail, Docs, Sheets, Slides & Drive"
 readme = "README.md"
 keywords = [ "mcp", "google", "workspace", "llm", "ai", "claude", "model", "context", "protocol", "server"]
@@ -17,15 +17,15 @@ dependencies = [
  "google-auth-httplib2>=0.2.0",
  "google-auth-oauthlib>=1.2.2",
  "httpx>=0.28.1",
- "urllib3>=2.7.0",
+ "urllib3>=2.8.0",
  "py-key-value-aio>=0.3.0",
- "pyjwt>=2.12.0",
+ "pyjwt>=2.15.0",
  "python-dotenv>=1.1.0",
  "pyyaml>=6.0.2",
  "cryptography>=50.0.0",
  "defusedxml>=0.7.1",
  "email-validator>=2.0.0",
- "pypdf>=6.15.0",
+ "pypdf>=6.19.0",
  "pytz>=2026.1.post1",
  "tzdata>=2026.1",
  "markdown-it-py>=3.0.0",
@@ -73,6 +73,7 @@ disk = [
 ]
 valkey = [
     "py-key-value-aio[valkey]>=0.3.0",
+    "valkey-glide>=2.3.0",
 ]
 otel = [
     "opentelemetry-sdk>=1.20.0",
@@ -85,7 +86,7 @@ test = [
     "opentelemetry-sdk>=1.20.0",
     "opentelemetry-exporter-otlp>=1.20.0",
     "requests>=2.32.3",
-    "httpx2>=2.0.0",
+    "httpx2>=2.12.0",
 ]
 release = [
     "tomlkit>=0.13.3",
@@ -98,7 +99,7 @@ dev = [
     "opentelemetry-sdk>=1.20.0",
     "opentelemetry-exporter-otlp>=1.20.0",
     "requests>=2.32.3",
-    "httpx2>=2.0.0",
+    "httpx2>=2.12.0",
     "ruff>=0.15.22,<0.16",
     "tomlkit>=0.13.3",
     "twine>=5.0.0",
@@ -110,6 +111,7 @@ disk = [
 ]
 valkey = [
     "py-key-value-aio[valkey]>=0.3.0",
+    "valkey-glide>=2.3.0",
 ]
 test = [
     "pytest>=8.3.0",
@@ -118,7 +120,7 @@ test = [
     "opentelemetry-sdk>=1.20.0",
     "opentelemetry-exporter-otlp>=1.20.0",
     "requests>=2.32.3",
-    "httpx2>=2.0.0",
+    "httpx2>=2.12.0",
 ]
 release = [
     "tomlkit>=0.13.3",
@@ -131,7 +133,7 @@ dev = [
     "opentelemetry-sdk>=1.20.0",
     "opentelemetry-exporter-otlp>=1.20.0",
     "requests>=2.32.3",
-    "httpx2>=2.0.0",
+    "httpx2>=2.12.0",
     "ruff>=0.15.22,<0.16",
     "tomlkit>=0.13.3",
     "twine>=5.0.0",
@@ -161,9 +163,11 @@ core = ["tool_tiers.yaml"]
 [tool.uv]
 # Security floors for transitively-pulled deps (not direct dependencies).
 # These are constraints only: they force a patched version *if* the package is
-# pulled in (mcp via fastmcp, pyasn1 via google-auth/pyasn1-modules) without
+# pulled in (mcp via fastmcp, pyasn1 via google-auth/pyasn1-modules,
+# oauthlib via google-auth-oauthlib/requests-oauthlib) without
 # adding it as a direct dependency. Remove once upstream floors cover the CVEs.
 constraint-dependencies = [
     "mcp>=1.28.1",    # GHSA: HTTP principal verification, WS Host/Origin, cross-client tasks
     "pyasn1>=0.6.4",  # GHSA: REAL-decode resource consumption, quadratic OID DoS
+    "oauthlib>=4.0.0", # GHSA-hj66-6f7g-4r5v: revocation endpoint JSONP injection
 ]

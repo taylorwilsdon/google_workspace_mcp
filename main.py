@@ -7,6 +7,7 @@ import socket
 import sys
 from functools import partial
 from importlib import metadata, import_module
+from typing import NoReturn
 from dotenv import load_dotenv
 from core.startup_ui import StartupDisplay, collapse_home, wordmark_lines
 
@@ -261,6 +262,22 @@ def safe_print(text):
         print(text.encode("ascii", errors="replace").decode(), file=sys.stderr)
 
 
+def fatal(ui: StartupDisplay, text: str, *details: str) -> NoReturn:
+    """Report an unrecoverable startup problem on every channel, then exit.
+
+    The startup screen is discarded when stderr is not a TTY (see safe_print),
+    which is exactly how an MCP client runs the server. Logging the same text at
+    ERROR keeps the reason on stderr for the client log and in
+    mcp_server_debug.log, so a failed launch is never indistinguishable from a
+    server that simply stopped talking.
+    """
+    ui.step(text, state="fail")
+    for detail in details:
+        ui.detail(detail)
+    logger.error("Startup aborted: %s", ". ".join([text, *details]))
+    sys.exit(1)
+
+
 def configure_safe_logging():
     """Replace console handlers with ASCII-safe formatters for Windows compatibility."""
 
@@ -347,6 +364,11 @@ def _client_secret_field() -> tuple[str, str, str]:
     name = "GOOGLE_OAUTH_CLIENT_SECRET"
     secret = os.getenv(name)
     if not secret:
+        # Report the resolved configuration rather than re-reading the file, so
+        # the banner cannot claim a secret the OAuth config declined to use.
+        config = get_oauth_config()
+        if config.client_secret and config.client_secrets_file:
+            return name, f"set · via {collapse_home(config.client_secrets_file)}", "on"
         return name, "not set", "off"
     if len(secret) <= 8:
         return name, "set · unexpectedly short", "warn"
@@ -480,6 +502,16 @@ def main():
         ),
     )
     args = parser.parse_args()
+
+    # Validate the memory-safety settings once at startup. Tool helpers parse them
+    # defensively as well, but a deployment typo must not silently disable the
+    # configured limit.
+    from core.file_limits import validate_file_limit_settings
+
+    try:
+        validate_file_limit_settings()
+    except ValueError as exc:
+        parser.error(str(exc))
 
     # Env var fallbacks for plugin users who configure via userConfig.
     # Non-empty but invalid values fail closed to prevent silent access widening.
@@ -699,8 +731,7 @@ def main():
             # Set the specific tools that should be registered
             set_enabled_tool_names(set(tier_tools))
         except Exception as e:
-            safe_print(f"❌ Error loading tools for tier '{args.tool_tier}': {e}")
-            sys.exit(1)
+            fatal(ui, f"Error loading tools for tier '{args.tool_tier}'", str(e))
     elif args.tools is not None:
         # Use explicit tool list without tier filtering
         tools_to_import = args.tools
@@ -764,29 +795,28 @@ def main():
     if args.single_user:
         # Check for incompatible OAuth 2.1 mode
         if os.getenv("MCP_ENABLE_OAUTH21", "false").lower() == "true":
-            ui.step(
-                "Single-user mode is incompatible with OAuth 2.1 mode", state="fail"
+            fatal(
+                ui,
+                "Single-user mode is incompatible with OAuth 2.1 mode",
+                "Single-user mode is for legacy clients that pass user emails",
+                "OAuth 2.1 mode is for multi-user scenarios with bearer tokens",
+                "Choose one: --single-user OR MCP_ENABLE_OAUTH21=true",
             )
-            ui.detail("Single-user mode is for legacy clients that pass user emails")
-            ui.detail("OAuth 2.1 mode is for multi-user scenarios with bearer tokens")
-            ui.detail("Choose one: --single-user OR MCP_ENABLE_OAUTH21=true")
-            sys.exit(1)
 
         if is_stateless_mode():
-            ui.step(
-                "Single-user mode is incompatible with stateless mode", state="fail"
+            fatal(
+                ui,
+                "Single-user mode is incompatible with stateless mode",
+                "Stateless mode requires OAuth 2.1, which is multi-user",
             )
-            ui.detail("Stateless mode requires OAuth 2.1, which is multi-user")
-            sys.exit(1)
 
         if is_service_account_enabled():
-            ui.step(
+            fatal(
+                ui,
                 "Single-user mode is incompatible with service account mode",
-                state="fail",
+                "Service account mode handles auth via domain-wide delegation",
+                "Choose one: --single-user OR GOOGLE_SERVICE_ACCOUNT_KEY_FILE",
             )
-            ui.detail("Service account mode handles auth via domain-wide delegation")
-            ui.detail("Choose one: --single-user OR GOOGLE_SERVICE_ACCOUNT_KEY_FILE")
-            sys.exit(1)
 
         os.environ["MCP_SINGLE_USER_MODE"] = "1"
         ui.step("Single-user mode enabled")
@@ -795,9 +825,11 @@ def main():
     if is_service_account_enabled():
         user_email = os.getenv("USER_GOOGLE_EMAIL")
         if not user_email:
-            ui.step("Service account mode requires USER_GOOGLE_EMAIL", state="fail")
-            ui.detail("Set USER_GOOGLE_EMAIL to the domain user to impersonate")
-            sys.exit(1)
+            fatal(
+                ui,
+                "Service account mode requires USER_GOOGLE_EMAIL",
+                "Set USER_GOOGLE_EMAIL to the domain user to impersonate",
+            )
         # Validate service account key material before advertising readiness
         sa_config = get_oauth_config()
         try:
@@ -809,25 +841,23 @@ def main():
             required_fields = {"type", "project_id", "private_key", "client_email"}
             missing = required_fields - set(key_data.keys())
             if missing:
-                ui.step("Service account key is missing required fields", state="fail")
-                ui.detail(", ".join(sorted(missing)))
-                sys.exit(1)
+                fatal(
+                    ui,
+                    "Service account key is missing required fields",
+                    ", ".join(sorted(missing)),
+                )
             if key_data.get("type") != "service_account":
-                ui.step("Service account key has unexpected type", state="fail")
-                ui.detail(repr(key_data.get("type")))
-                sys.exit(1)
+                fatal(
+                    ui,
+                    "Service account key has unexpected type",
+                    repr(key_data.get("type")),
+                )
         except FileNotFoundError as e:
-            ui.step("Service account key file not found", state="fail")
-            ui.detail(str(e))
-            sys.exit(1)
+            fatal(ui, "Service account key file not found", str(e))
         except json.JSONDecodeError as e:
-            ui.step("Service account key contains invalid JSON", state="fail")
-            ui.detail(str(e))
-            sys.exit(1)
+            fatal(ui, "Service account key contains invalid JSON", str(e))
         except (IOError, OSError) as e:
-            ui.step("Failed to read service account key", state="fail")
-            ui.detail(str(e))
-            sys.exit(1)
+            fatal(ui, "Failed to read service account key", str(e))
         ui.step("Service account mode enabled", "domain-wide delegation")
         ui.detail(f"impersonating {user_email}")
 
@@ -843,13 +873,12 @@ def main():
             check_credentials_directory_permissions()
             ui.step("Credentials directory verified")
         except (PermissionError, OSError) as e:
-            ui.step("Credentials directory permission check failed", state="fail")
-            ui.detail(str(e))
-            ui.detail(
-                "Ensure the service can create and write to the credentials directory"
+            fatal(
+                ui,
+                "Credentials directory permission check failed",
+                str(e),
+                "Ensure the service can create and write to the credentials directory",
             )
-            logger.error(f"Failed credentials directory permission check: {e}")
-            sys.exit(1)
     else:
         if is_stateless_mode():
             skip_reason = "stateless mode"
@@ -883,9 +912,7 @@ def main():
                     state="skip",
                 )
         except Exception as e:
-            ui.step("GCS credential store verification failed", state="fail")
-            ui.detail(str(e))
-            sys.exit(1)
+            fatal(ui, "GCS credential store verification failed", str(e))
 
     try:
         # Set transport mode for OAuth callback handling
@@ -932,11 +959,11 @@ def main():
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                     s.bind((host, port))
             except OSError as e:
-                safe_print(f"Socket error: {e}")
-                safe_print(
-                    f"❌ Port {port} is already in use. Cannot start HTTP server."
+                fatal(
+                    ui,
+                    f"Port {port} is already in use. Cannot start HTTP server.",
+                    str(e),
                 )
-                sys.exit(1)
 
             server.run(
                 transport="streamable-http",
@@ -1027,6 +1054,12 @@ def main():
 
         cleanup_oauth_callback_server()
         sys.exit(1)
+    finally:
+        # External OAuth owns a bounded validation executor. Close it on every
+        # server exit path, including normal uvicorn shutdown and startup failure.
+        from core.server import close_auth_provider
+
+        close_auth_provider()
 
 
 if __name__ == "__main__":

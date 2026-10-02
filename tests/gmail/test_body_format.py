@@ -1,6 +1,7 @@
 """Tests for Gmail body_format support across helper and public tool APIs."""
 
 import base64
+import inspect
 from email import message_from_bytes
 from email.policy import SMTP
 from pathlib import Path
@@ -29,6 +30,17 @@ def _unwrap(tool):
     while hasattr(fn, "__wrapped__"):
         fn = fn.__wrapped__
     return fn
+
+
+def test_get_gmail_message_content_preserves_existing_positional_arguments():
+    signature = inspect.signature(_unwrap(get_gmail_message_content))
+    bound = signature.bind(
+        Mock(), "msg-1", "user@example.com", "html", True, "metadata"
+    )
+
+    assert bound.arguments["body_format"] == "html"
+    assert bound.arguments["full"] is True
+    assert bound.arguments["format"] == "metadata"
 
 
 def _encode(text: str) -> str:
@@ -498,6 +510,48 @@ async def test_get_gmail_messages_content_batch_rejects_metadata_with_body_forma
 
 
 @pytest.mark.asyncio
+async def test_get_gmail_message_content_metadata_format_returns_headers_only():
+    """The singular tool accepts the batch tool's format argument (#1152)."""
+    service = _build_service(
+        message_responses={
+            ("msg-1", "metadata"): _metadata_response("msg-1"),
+        }
+    )
+
+    result = await _unwrap(get_gmail_message_content)(
+        service=service,
+        message_id="msg-1",
+        user_google_email="user@example.com",
+        format="metadata",
+    )
+
+    assert "From: sender@example.com" in result
+    assert "--- BODY ---" not in result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("options", "error"),
+    [
+        ({"body_format": "html"}, "require format='full'"),
+        ({"body_format": "raw"}, "require format='full'"),
+        ({"full": True}, "full=True requires format='full'"),
+    ],
+)
+async def test_get_gmail_message_content_rejects_metadata_with_body_options(
+    options, error
+):
+    with pytest.raises(UserInputError, match=error):
+        await _unwrap(get_gmail_message_content)(
+            service=_build_service(),
+            message_id="msg-1",
+            user_google_email="user@example.com",
+            format="metadata",
+            **options,
+        )
+
+
+@pytest.mark.asyncio
 async def test_get_gmail_thread_content_supports_raw_format():
     service = _build_service(
         message_responses={
@@ -641,6 +695,34 @@ async def test_full_export_raw_saves_complete_eml(stdio_storage):
     # The saved file must hold the complete, decoded message.
     with open(_saved_path(result), "rb") as fh:
         assert fh.read().decode() == raw_mime
+
+
+@pytest.mark.asyncio
+async def test_full_export_rejects_size_estimate_before_fetch(monkeypatch):
+    monkeypatch.setenv("WORKSPACE_MCP_MAX_FILE_BYTES", "100")
+    metadata = _metadata_response("msg-large")
+    metadata["sizeEstimate"] = 500
+    service = _build_service(
+        message_responses={
+            ("msg-large", "metadata"): metadata,
+            ("msg-large", "raw"): {"raw": _encode("should not be fetched")},
+        }
+    )
+
+    result = await _unwrap(get_gmail_message_content)(
+        service=service,
+        message_id="msg-large",
+        user_google_email="user@example.com",
+        body_format="raw",
+        full=True,
+    )
+
+    assert result.startswith("Error:")
+    assert "WORKSPACE_MCP_MAX_FILE_BYTES" in result
+    request_formats = [
+        call.kwargs["format"] for call in service.users().messages().get.call_args_list
+    ]
+    assert request_formats == ["metadata"]
 
 
 @pytest.mark.asyncio

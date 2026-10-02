@@ -130,6 +130,10 @@ Then download and read the PDF to check:
 - Heading hierarchy is correct (H1 > H2 > H3)
 - No stray empty paragraphs or list items
 
+Before exporting, check `empty_paragraphs` and `last_paragraph.is_list_item` with
+`inspect_doc_structure`. Some empty paragraphs are required; see the
+[cleanup constraints](docs.md#inspect_doc_structure) before deleting them.
+
 ---
 
 ## Common Pitfalls & Fixes

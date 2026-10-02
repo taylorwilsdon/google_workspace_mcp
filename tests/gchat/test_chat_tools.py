@@ -3,7 +3,6 @@ Unit tests for Google Chat MCP tools — attachment support
 """
 
 import asyncio
-import base64
 import inspect
 import ssl
 from urllib.parse import urlparse
@@ -237,7 +236,6 @@ async def test_search_messages_shows_attachment_indicator(mock_resolve):
 
     att = _make_attachment(content_name="report.pdf", content_type="application/pdf")
     msg = _make_message(text="Here is the report", attachments=[att])
-    msg["_space_name"] = "General"
 
     chat_service = Mock()
     chat_service.spaces().list().execute.return_value = {
@@ -266,7 +264,6 @@ async def test_search_messages_combines_filters_and_uses_page_size(mock_resolve)
     mock_resolve.return_value = "Test User"
 
     msg = _make_message(text="Deploy finished")
-    msg["_space_name"] = "General"
 
     chat_service = Mock()
     chat_service.spaces().list().execute.return_value = {
@@ -293,6 +290,76 @@ async def test_search_messages_combines_filters_and_uses_page_size(mock_resolve)
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("space_id", [None, "spaces/S"])
+@patch("gchat.chat_tools._resolve_sender", new_callable=AsyncMock)
+async def test_search_messages_fetches_newest_messages_first(mock_resolve, space_id):
+    """search_messages should fetch the newest messages, like get_messages does."""
+    mock_resolve.return_value = "Test User"
+
+    chat_service = Mock()
+    space = {"name": "spaces/S", "displayName": "General"}
+    chat_service.spaces().list().execute.return_value = {"spaces": [space]}
+    chat_service.spaces().get().execute.return_value = space
+    chat_service.spaces().messages().list().execute.return_value = {
+        "messages": [_make_message(text="Deploy finished")]
+    }
+    people_service = Mock()
+
+    from gchat.chat_tools import search_messages
+
+    await _unwrap(search_messages)(
+        chat_service=chat_service,
+        people_service=people_service,
+        user_google_email="test@example.com",
+        query="deploy",
+        space_id=space_id,
+    )
+
+    list_kwargs = chat_service.spaces().messages().list.call_args.kwargs
+    assert list_kwargs["orderBy"] == "createTime desc"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "space_count, list_extra, expected",
+    [
+        (3, {}, "the first 2 accessible spaces"),
+        (2, {"nextPageToken": "next"}, "the first 2 accessible spaces"),
+        (2, {}, "all accessible spaces"),
+    ],
+)
+@patch("gchat.chat_tools._resolve_sender", new_callable=AsyncMock)
+async def test_search_messages_reports_how_many_spaces_it_searched(
+    mock_resolve, space_count, list_extra, expected
+):
+    """search_messages should not claim all spaces when max_spaces cut the list."""
+    mock_resolve.return_value = "Test User"
+
+    chat_service = Mock()
+    chat_service.spaces().list().execute.return_value = {
+        "spaces": [
+            {"name": f"spaces/S{i}", "displayName": f"Space {i}"}
+            for i in range(space_count)
+        ],
+        **list_extra,
+    }
+    chat_service.spaces().messages().list().execute.return_value = {"messages": []}
+    people_service = Mock()
+
+    from gchat.chat_tools import search_messages
+
+    result = await _unwrap(search_messages)(
+        chat_service=chat_service,
+        people_service=people_service,
+        user_google_email="test@example.com",
+        query="deploy",
+        max_spaces=2,
+    )
+
+    assert f"in {expected}." in result
+
+
+@pytest.mark.asyncio
 @patch("gchat.chat_tools._resolve_sender", new_callable=AsyncMock)
 async def test_search_messages_query_only_filters_client_side_without_api_filter(
     mock_resolve,
@@ -301,9 +368,7 @@ async def test_search_messages_query_only_filters_client_side_without_api_filter
     mock_resolve.return_value = "Test User"
 
     matching = _make_message(text="Deploy finished")
-    matching["_space_name"] = "General"
     non_matching = _make_message(text="Lunch plans")
-    non_matching["_space_name"] = "General"
 
     chat_service = Mock()
     chat_service.spaces().list().execute.return_value = {
@@ -537,17 +602,17 @@ async def test_download_uses_api_media_endpoint():
     mock_response.status_code = 200
 
     mock_client = AsyncMock()
-    mock_client.get.return_value = mock_response
+    mock_client.request.return_value = mock_response
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
     with (
-        patch("gchat.chat_tools.httpx.AsyncClient", return_value=mock_client),
+        patch("core.file_limits.httpx.AsyncClient", return_value=mock_client),
         patch("auth.oauth_config.is_stateless_mode", return_value=False),
         patch("core.config.get_transport_mode", return_value="stdio"),
         patch("core.attachment_storage.get_attachment_storage") as mock_get_storage,
     ):
-        mock_get_storage.return_value.save_attachment.return_value = saved
+        mock_get_storage.return_value.save_attachment_bytes.return_value = saved
 
         result = await _unwrap(download_chat_attachment)(
             service=service,
@@ -561,9 +626,10 @@ async def test_download_uses_api_media_endpoint():
     assert "Saved to:" in result
 
     # Verify we used the API endpoint with attachmentDataRef.resourceName
-    call_args = mock_client.get.call_args
-    url_used = call_args.args[0]
+    call_args = mock_client.request.call_args
+    url_used = call_args.args[1]
     parsed = urlparse(url_used)
+    assert call_args.args[0] == "GET"
     assert parsed.scheme == "https"
     assert parsed.hostname == "chat.googleapis.com"
     assert "alt=media" in url_used
@@ -573,12 +639,11 @@ async def test_download_uses_api_media_endpoint():
     # Verify Bearer token
     assert call_args.kwargs["headers"]["Authorization"] == "Bearer fake-access-token"
 
-    # Verify save_attachment was called with correct base64 data
-    save_args = mock_get_storage.return_value.save_attachment.call_args
+    # Verify decoded bytes are written directly without a base64 round trip.
+    save_args = mock_get_storage.return_value.save_attachment_bytes.call_args
     assert save_args.kwargs["filename"] == "image.png"
     assert save_args.kwargs["mime_type"] == "image/png"
-    decoded = base64.urlsafe_b64decode(save_args.kwargs["base64_data"])
-    assert decoded == fake_bytes
+    assert save_args.kwargs["file_bytes"] == fake_bytes
 
 
 @pytest.mark.asyncio
@@ -601,19 +666,19 @@ async def test_download_falls_back_to_att_name():
     mock_response.status_code = 200
 
     mock_client = AsyncMock()
-    mock_client.get.return_value = mock_response
+    mock_client.request.return_value = mock_response
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
     from gchat.chat_tools import download_chat_attachment
 
     with (
-        patch("gchat.chat_tools.httpx.AsyncClient", return_value=mock_client),
+        patch("core.file_limits.httpx.AsyncClient", return_value=mock_client),
         patch("auth.oauth_config.is_stateless_mode", return_value=False),
         patch("core.config.get_transport_mode", return_value="stdio"),
         patch("core.attachment_storage.get_attachment_storage") as mock_get_storage,
     ):
-        mock_get_storage.return_value.save_attachment.return_value = saved
+        mock_get_storage.return_value.save_attachment_bytes.return_value = saved
 
         result = await _unwrap(download_chat_attachment)(
             service=service,
@@ -626,8 +691,8 @@ async def test_download_falls_back_to_att_name():
     assert "/tmp/image_fetched.png" in result
 
     # Falls back to attachment name when no attachmentDataRef
-    call_args = mock_client.get.call_args
-    assert "spaces/S/messages/M/attachments/A" in call_args.args[0]
+    call_args = mock_client.request.call_args
+    assert "spaces/S/messages/M/attachments/A" in call_args.args[1]
 
 
 @pytest.mark.asyncio
@@ -646,7 +711,7 @@ async def test_download_http_mode_returns_url():
     mock_response.status_code = 200
 
     mock_client = AsyncMock()
-    mock_client.get.return_value = mock_response
+    mock_client.request.return_value = mock_response
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
@@ -657,7 +722,7 @@ async def test_download_http_mode_returns_url():
     from gchat.chat_tools import download_chat_attachment
 
     with (
-        patch("gchat.chat_tools.httpx.AsyncClient", return_value=mock_client),
+        patch("core.file_limits.httpx.AsyncClient", return_value=mock_client),
         patch("auth.oauth_config.is_stateless_mode", return_value=False),
         patch("core.config.get_transport_mode", return_value="http"),
         patch("core.attachment_storage.get_attachment_storage") as mock_get_storage,
@@ -666,7 +731,7 @@ async def test_download_http_mode_returns_url():
             return_value="http://localhost:8005/attachments/alt1",
         ),
     ):
-        mock_get_storage.return_value.save_attachment.return_value = saved
+        mock_get_storage.return_value.save_attachment_bytes.return_value = saved
 
         result = await _unwrap(download_chat_attachment)(
             service=service,
@@ -691,13 +756,13 @@ async def test_download_returns_error_on_failure():
     service._http.credentials.token = "fake-token"
 
     mock_client = AsyncMock()
-    mock_client.get.side_effect = Exception("connection refused")
+    mock_client.request.side_effect = Exception("connection refused")
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
     from gchat.chat_tools import download_chat_attachment
 
-    with patch("gchat.chat_tools.httpx.AsyncClient", return_value=mock_client):
+    with patch("core.file_limits.httpx.AsyncClient", return_value=mock_client):
         result = await _unwrap(download_chat_attachment)(
             service=service,
             user_google_email="test@example.com",
@@ -707,3 +772,217 @@ async def test_download_returns_error_on_failure():
 
     assert "Failed to download" in result
     assert "connection refused" in result
+
+
+@pytest.mark.asyncio
+async def test_download_rejects_oversized_when_capped(monkeypatch):
+    """With WORKSPACE_MCP_MAX_FILE_BYTES set, oversized Chat downloads abort."""
+    monkeypatch.setenv("WORKSPACE_MCP_MAX_FILE_BYTES", "10")
+    att = _make_attachment()
+    msg = _make_message(attachments=[att])
+
+    service = Mock()
+    service.spaces().messages().get().execute.return_value = msg
+    service._http.credentials.token = "fake-token"
+
+    from core.file_limits import FileTooLargeError
+    from gchat.chat_tools import download_chat_attachment
+
+    with patch(
+        "gchat.chat_tools.download_http_url_bytes",
+        side_effect=FileTooLargeError(
+            'Error: "image.png" is too large to load into this MCP server '
+            "(50 bytes; limit is 10 bytes via WORKSPACE_MCP_MAX_FILE_BYTES)."
+        ),
+    ):
+        result = await _unwrap(download_chat_attachment)(
+            service=service,
+            user_google_email="test@example.com",
+            message_id="spaces/S/messages/M",
+            attachment_index=0,
+        )
+
+    assert result.startswith("Error:")
+    assert "WORKSPACE_MCP_MAX_FILE_BYTES" in result
+    assert "image.png" in result
+
+
+# ---------------------------------------------------------------------------
+# send_message: editing an existing message in place
+# ---------------------------------------------------------------------------
+
+
+def _mock_chat_service():
+    """Chat service mock exposing a stable spaces().messages() resource."""
+    service = Mock()
+    messages = Mock()
+    service.spaces.return_value.messages.return_value = messages
+    return service, messages
+
+
+@pytest.mark.asyncio
+async def test_send_message_exposes_message_name_param():
+    """send_message should expose message_name for in-place edits."""
+    from gchat.chat_tools import send_message
+
+    public_fn = getattr(send_message, "fn", send_message)
+    params = inspect.signature(public_fn).parameters
+
+    assert "message_name" in params
+    assert params["message_name"].default is None
+
+
+@pytest.mark.asyncio
+async def test_send_message_edits_existing_message_instead_of_creating():
+    """With message_name set, send_message should patch the message, not create one."""
+    service, messages = _mock_chat_service()
+    messages.patch.return_value.execute.return_value = {
+        "name": "spaces/S/messages/M",
+        "lastUpdateTime": "2025-01-01T00:00:00Z",
+    }
+
+    from gchat.chat_tools import send_message
+
+    result = await _unwrap(send_message)(
+        service=service,
+        user_google_email="test@example.com",
+        space_id="spaces/S",
+        message_text="corrected text",
+        message_name="spaces/S/messages/M",
+    )
+
+    assert messages.create.call_count == 0
+    patch_kwargs = messages.patch.call_args.kwargs
+    assert patch_kwargs["name"] == "spaces/S/messages/M"
+    assert patch_kwargs["updateMask"] == "text"
+    assert patch_kwargs["body"] == {"text": "corrected text"}
+    assert "updated" in result.lower()
+    assert "spaces/S/messages/M" in result
+
+
+@pytest.mark.asyncio
+async def test_send_message_without_message_name_still_creates():
+    """The default path must stay a create, untouched by the edit support."""
+    service, messages = _mock_chat_service()
+    messages.create.return_value.execute.return_value = {
+        "name": "spaces/S/messages/NEW",
+        "createTime": "2025-01-01T00:00:00Z",
+    }
+
+    from gchat.chat_tools import send_message
+
+    result = await _unwrap(send_message)(
+        service=service,
+        user_google_email="test@example.com",
+        space_id="spaces/S",
+        message_text="hello",
+    )
+
+    assert messages.patch.call_count == 0
+    assert messages.create.call_args.kwargs["parent"] == "spaces/S"
+    assert "sent" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_send_message_rejects_message_name_with_thread_reply():
+    """An edit cannot also be a thread reply — the thread of a message is fixed."""
+    service, messages = _mock_chat_service()
+
+    from gchat.chat_tools import send_message
+    from core.utils import UserInputError
+
+    with pytest.raises(UserInputError):
+        await _unwrap(send_message)(
+            service=service,
+            user_google_email="test@example.com",
+            space_id="spaces/S",
+            message_text="corrected text",
+            message_name="spaces/S/messages/M",
+            thread_name="spaces/S/threads/T",
+        )
+
+    assert messages.patch.call_count == 0
+    assert messages.create.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_send_message_rejects_message_name_outside_the_space():
+    """A message_name from another space would silently report the wrong space."""
+    service, messages = _mock_chat_service()
+
+    from gchat.chat_tools import send_message
+    from core.utils import UserInputError
+
+    with pytest.raises(UserInputError):
+        await _unwrap(send_message)(
+            service=service,
+            user_google_email="test@example.com",
+            space_id="spaces/S",
+            message_text="corrected text",
+            message_name="spaces/OTHER/messages/M",
+        )
+
+    assert messages.patch.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_send_message_rejects_malformed_message_name():
+    """A bare message id cannot be patched — fail before the API does."""
+    service, messages = _mock_chat_service()
+
+    from gchat.chat_tools import send_message
+    from core.utils import UserInputError
+
+    with pytest.raises(UserInputError):
+        await _unwrap(send_message)(
+            service=service,
+            user_google_email="test@example.com",
+            space_id="spaces/S",
+            message_text="corrected text",
+            message_name="M",
+        )
+
+    assert messages.patch.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_send_message_edit_falls_back_to_create_time():
+    """Older API responses omit lastUpdateTime; the confirmation must stay readable."""
+    service, messages = _mock_chat_service()
+    messages.patch.return_value.execute.return_value = {
+        "name": "spaces/S/messages/M",
+        "createTime": "2025-01-01T00:00:00Z",
+    }
+
+    from gchat.chat_tools import send_message
+
+    result = await _unwrap(send_message)(
+        service=service,
+        user_google_email="test@example.com",
+        space_id="spaces/S",
+        message_text="corrected text",
+        message_name="spaces/S/messages/M",
+    )
+
+    assert "2025-01-01T00:00:00Z" in result
+
+
+@pytest.mark.asyncio
+async def test_send_message_rejects_empty_message_name():
+    """An empty message_name is a failed edit, not a request to post a new message."""
+    service, messages = _mock_chat_service()
+
+    from gchat.chat_tools import send_message
+    from core.utils import UserInputError
+
+    with pytest.raises(UserInputError):
+        await _unwrap(send_message)(
+            service=service,
+            user_google_email="test@example.com",
+            space_id="spaces/S",
+            message_text="corrected text",
+            message_name="",
+        )
+
+    assert messages.create.call_count == 0
+    assert messages.patch.call_count == 0

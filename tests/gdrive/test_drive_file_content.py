@@ -7,7 +7,14 @@ from unittest.mock import Mock, patch
 import pytest
 
 from tests.helpers import _make_minimal_pdf
-from gdrive.drive_tools import _download_file_bytes, get_drive_file_content
+from gdrive.drive_helpers import _download_file_bytes
+from gdrive.drive_tools import get_drive_file_content
+
+
+@pytest.fixture(autouse=True)
+def _no_ambient_office_xml_limit(monkeypatch):
+    """The expansion limit is read from the environment on every extraction."""
+    monkeypatch.delenv("WORKSPACE_MCP_MAX_OFFICE_XML_BYTES", raising=False)
 
 
 def _unwrap(tool):
@@ -57,8 +64,8 @@ class _FakeDownloader:
 def _patch_downloader(content_bytes):
     """Patch MediaIoBaseDownload to write content_bytes into the BytesIO handle."""
     return patch(
-        "gdrive.drive_tools.MediaIoBaseDownload",
-        side_effect=lambda fh, req: _FakeDownloader(fh, content_bytes),
+        "core.file_limits.MediaIoBaseDownload",
+        side_effect=lambda fh, req, chunksize=None: _FakeDownloader(fh, content_bytes),
     )
 
 
@@ -134,6 +141,57 @@ async def test_get_drive_file_content_pdf_empty(mock_resolve):
         )
 
     assert "get_drive_file_download_url" in result
+
+
+@pytest.mark.asyncio
+async def test_get_drive_file_content_reports_invalid_docx(mock_resolve):
+    mime_type = (
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+    mock_resolve.return_value[1]["mimeType"] = mime_type
+    mock_service = Mock()
+    mock_service.files().get_media.return_value = "req"
+
+    with _patch_downloader(b"not a zip"):
+        result = await _unwrap(get_drive_file_content)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            file_id="file123",
+        )
+
+    assert "appears damaged" in result
+    assert "unsupported text encoding" not in result
+
+
+@pytest.mark.asyncio
+async def test_get_drive_file_content_reports_oversized_expansion(
+    mock_resolve, monkeypatch
+):
+    """A file that expands past the limit is reported as that — not as damaged,
+    and not handed on to the raw-bytes fallback."""
+    import zipfile
+
+    mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    mock_resolve.return_value[1]["mimeType"] = mime_type
+    monkeypatch.setenv("WORKSPACE_MCP_MAX_OFFICE_XML_BYTES", "1000")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("xl/workbook.xml", "<workbook>" + " " * 20_000 + "</workbook>")
+    mock_service = Mock()
+    mock_service.files().get_media.return_value = "req"
+
+    with _patch_downloader(buf.getvalue()):
+        result = await _unwrap(get_drive_file_content)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            file_id="file123",
+        )
+
+    assert "expands beyond the extraction limit" in result
+    assert "WORKSPACE_MCP_MAX_OFFICE_XML_BYTES" in result
+    assert "convert it to a native Google file" in result
+    assert "appears damaged" not in result
+    assert "unsupported text encoding" not in result
 
 
 # ---------------------------------------------------------------------------

@@ -69,10 +69,10 @@ def test_boundary_pairs_datetime_with_its_zone():
     }
 
 
-def test_boundary_strips_offset_when_zone_given():
-    """An explicit offset would override the IANA zone and defeat DST resolution."""
+def test_boundary_converts_offset_when_zone_given():
+    """Changing the zone preserves the instant, including its DST offset."""
     assert _build_time_boundary("2026-08-21T17:50:00+03:00", "Europe/Amsterdam") == {
-        "dateTime": "2026-08-21T17:50:00",
+        "dateTime": "2026-08-21T16:50:00+02:00",
         "timeZone": "Europe/Amsterdam",
     }
 
@@ -81,6 +81,11 @@ def test_boundary_keeps_offset_when_no_zone_given():
     assert _build_time_boundary("2026-08-21T17:50:00+02:00", None) == {
         "dateTime": "2026-08-21T17:50:00+02:00"
     }
+
+
+def test_boundary_without_zone_rejects_invalid_timestamp():
+    with pytest.raises(ValueError, match="Invalid RFC3339 timestamp"):
+        _build_time_boundary("2026-08-21T25:00:00", None)
 
 
 def test_boundary_handles_all_day_dates():

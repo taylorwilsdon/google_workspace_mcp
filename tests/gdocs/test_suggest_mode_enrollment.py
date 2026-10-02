@@ -69,15 +69,16 @@ class TestSuggestModeResponseHandling:
         assert "WARNING" not in result
         body = service.documents.return_value.batchUpdate.call_args.kwargs["body"]
         assert body["writeControl"] == {"writeMode": "SUGGEST"}
-        # Preview access is verified before mutation, then document length is read.
-        assert service.documents.return_value.get.call_count == 2
+        # Preview access is verified before mutation; the batch manager then reads
+        # the revision before and the document state after the write.
+        assert service.documents.return_value.get.call_count == 3
         preflight_call = service.documents.return_value.get.call_args_list[0]
         assert preflight_call.kwargs["commentsViewMode"] == (
             "COMMENTS_VIEW_MODE_INCLUDED"
         )
         assert preflight_call.kwargs["fields"] == "documentId,commentsViewMode"
         assert service.documents.return_value.get.call_args.kwargs["fields"] == (
-            "body/content(endIndex)"
+            "revisionId,tabs"
         )
 
     @pytest.mark.asyncio
