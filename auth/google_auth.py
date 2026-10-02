@@ -91,6 +91,49 @@ def get_default_credentials_dir():
 DEFAULT_CREDENTIALS_DIR = get_default_credentials_dir()
 
 
+def _bridge_ca_bundle_env() -> None:
+    """Make httplib2 honor the standard SSL_CERT_FILE / REQUESTS_CA_BUNDLE env vars.
+
+    Google API clients here are backed by ``httplib2`` (directly via
+    ``_build_authorized_http`` and internally when ``build(..., credentials=...)``
+    is used). ``httplib2`` resolves its trust store from its own
+    ``HTTPLIB2_CA_CERTS`` env var, falling back to ``certifi`` — it does NOT read
+    ``SSL_CERT_FILE`` / ``REQUESTS_CA_BUNDLE`` like ``requests``/``urllib`` do.
+
+    In environments with a TLS-inspecting proxy (Zscaler, Netskope, corporate
+    MITM), the proxy presents a certificate signed by a private root that is not
+    in ``certifi``. Users conventionally point ``SSL_CERT_FILE`` /
+    ``REQUESTS_CA_BUNDLE`` at a bundle that includes that root — but httplib2
+    ignores them, so every Google API call fails with
+    ``CERTIFICATE_VERIFY_FAILED``.
+
+    This bridges those standard vars to ``HTTPLIB2_CA_CERTS`` when the latter is
+    not already set, so a single, conventional configuration works. Explicit
+    ``HTTPLIB2_CA_CERTS`` always wins; non-existent paths are ignored.
+    """
+    if os.environ.get("HTTPLIB2_CA_CERTS"):
+        return
+    for var in ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE"):
+        path = os.environ.get(var)
+        if path and os.path.isfile(path):
+            os.environ["HTTPLIB2_CA_CERTS"] = path
+            logger.info(
+                "Bridging %s -> HTTPLIB2_CA_CERTS=%s so httplib2 trusts the "
+                "configured CA bundle.",
+                var,
+                path,
+            )
+            return
+
+
+# Apply as early as possible so httplib2 freezes the right CA path. httplib2
+# caches ``CA_CERTS = certs.where()`` at import time, so the bridge is also
+# invoked from main.py before Google/httplib2 imports; calling it here as well
+# is a harmless, idempotent safety net for entry points that import this module
+# directly.
+_bridge_ca_bundle_env()
+
+
 def _build_authorized_http(
     credentials: Credentials, timeout: int = 30
 ) -> google_auth_httplib2.AuthorizedHttp:
