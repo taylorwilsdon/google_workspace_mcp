@@ -2670,6 +2670,11 @@
         },
         "type": "array",
         "description": "List of operation dicts. Each operation MUST have a 'type' field.\n        All operations accept an optional 'tab_id' to target a specific tab."
+      },
+      "suggest_mode": {
+        "default": false,
+        "type": "boolean",
+        "description": "If true, apply every operation in this batch as a suggested\nedit (pending approval) instead of a direct edit, equivalent to\nenabling \"Suggesting\" mode in the Docs UI. The response's\ncomment_update_state is checked after the write, and the result\ncarries an explicit warning unless the API confirms the suggestions\nwere saved. Not every operation type can be suggested -\ninsert_doc_tab, delete_doc_tab, update_doc_tab, create_named_range,\ndelete_named_range, and update_table_column_properties are rejected\nby the API in suggest mode, as are the document_mode,\nuse_even_page_header_footer, and use_first_page_header_footer\nfields of update_document_style."
       }
     },
     "required": [
