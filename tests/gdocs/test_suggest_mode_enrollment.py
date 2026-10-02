@@ -121,10 +121,15 @@ class TestSuggestModeResponseHandling:
         assert f"comment_update_state: {rendered_state}" in result
 
     @pytest.mark.asyncio
-    async def test_zero_match_find_replace_is_the_only_benign_no_update(self):
+    @pytest.mark.parametrize(
+        "reply",
+        # The live API omits the zero-valued field; accept an explicit 0 too.
+        [{}, {"occurrencesChanged": 0}],
+    )
+    async def test_zero_match_find_replace_is_the_only_benign_no_update(self, reply):
         service = _make_service(
             {
-                "replies": [{"replaceAllText": {"occurrencesChanged": 0}}],
+                "replies": [{"replaceAllText": reply}],
                 "commentUpdateState": "NO_UPDATES_REQUESTED",
             }
         )

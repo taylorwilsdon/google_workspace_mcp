@@ -166,12 +166,12 @@ class BatchOperationManager:
                 # when find_replace's search text isn't present - that's not
                 # evidence suggest mode failed, just that there was nothing to
                 # suggest. Surface these so callers can tell "no match" apart
-                # from "match silently applied as a direct edit."
+                # from "match silently applied as a direct edit." The API omits
+                # occurrencesChanged when it is zero, replying {"replaceAllText": {}}.
                 metadata["replace_all_text_occurrences"] = [
-                    reply["replaceAllText"]["occurrencesChanged"]
+                    reply["replaceAllText"].get("occurrencesChanged", 0)
                     for reply in result.get("replies", [])
                     if "replaceAllText" in reply
-                    and "occurrencesChanged" in reply["replaceAllText"]
                 ]
 
             metadata["revision_before"] = revision_before
