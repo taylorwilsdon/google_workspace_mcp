@@ -41,6 +41,8 @@ from core.config import (
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastmcp import FastMCP
 from fastmcp.server.auth.providers.google import GoogleProvider
+from mcp.server.auth.provider import AuthorizationParams
+from mcp.shared.auth import OAuthClientInformationFull
 from mcp.types import ToolAnnotations, Icon
 from starlette.applications import Starlette
 from starlette.datastructures import MutableHeaders
@@ -50,6 +52,34 @@ from starlette.types import ASGIApp, Scope, Receive, Send
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+class WorkspaceGoogleProvider(GoogleProvider):
+    """GoogleProvider that defaults an omitted ``scope`` to the registered scopes.
+
+    RFC 6749 section 3.3 lets a client omit ``scope`` from an authorization
+    request. The OAuth proxy then falls back to ``required_scopes``, which hold
+    only the identity scopes (#733), so the client obtains a token that no tool
+    can use (#1195). Use the scopes the client registered with instead (every
+    tool scope unless it registered fewer), limited to the scopes this server
+    offers, plus the identity scopes.
+    """
+
+    async def authorize(
+        self, client: OAuthClientInformationFull, params: AuthorizationParams
+    ) -> str:
+        if not params.scopes:
+            registered = set((client.scope or "").split())
+            required = set(self.required_scopes)
+            default_scopes = [
+                scope
+                for scope in self.client_registration_options.valid_scopes or []
+                if scope in registered or scope in required
+            ]
+            if default_scopes:
+                params = params.model_copy(update={"scopes": default_scopes})
+        return await super().authorize(client, params)
+
 
 _auth_provider: Optional[GoogleProvider] = None
 _oauth_client_storage = None
@@ -654,7 +684,7 @@ def configure_server_for_http():
                         "OAuth 2.1: restricting DCR client redirect URIs to allowlist: %s",
                         allowed_client_redirect_uris,
                     )
-                provider = GoogleProvider(
+                provider = WorkspaceGoogleProvider(
                     client_id=config.client_id,
                     client_secret=config.client_secret,
                     base_url=config.get_oauth_base_url(),
