@@ -42,6 +42,21 @@ def test_main_rejects_invalid_max_office_xml_bytes_at_startup(monkeypatch, capsy
     assert "WORKSPACE_MCP_MAX_OFFICE_XML_BYTES" in capsys.readouterr().err
 
 
+def test_main_rejects_invalid_gmail_body_max_chars_at_startup(monkeypatch, capsys):
+    monkeypatch.delenv("WORKSPACE_MCP_MAX_FILE_BYTES", raising=False)
+    monkeypatch.delenv("WORKSPACE_MCP_MAX_OFFICE_XML_BYTES", raising=False)
+    monkeypatch.setenv("WORKSPACE_MCP_GMAIL_BODY_MAX_CHARS", "-1")
+    monkeypatch.setattr(sys, "argv", ["main.py"])
+    monkeypatch.setattr(main, "configure_safe_logging", lambda: None)
+    monkeypatch.setattr("core.telemetry.configure_telemetry", lambda: None)
+
+    with pytest.raises(SystemExit) as exc:
+        main.main()
+
+    assert exc.value.code == 2
+    assert "WORKSPACE_MCP_GMAIL_BODY_MAX_CHARS" in capsys.readouterr().err
+
+
 def test_fastmcp_entrypoint_rejects_invalid_file_limits_at_startup():
     env = os.environ.copy()
     env["WORKSPACE_MCP_MAX_FILE_BYTES"] = "0"

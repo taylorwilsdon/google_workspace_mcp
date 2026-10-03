@@ -8,12 +8,14 @@ import httpx
 import pytest
 
 from core.file_limits import (
+    DEFAULT_GMAIL_BODY_MAX_CHARS,
     DEFAULT_MAX_OFFICE_XML_BYTES,
     DEFAULT_STATELESS_INLINE_MAX_BYTES,
     FileTooLargeError,
     download_http_url_bytes,
     download_media_bytes,
     ensure_within_file_size_limit,
+    get_gmail_body_max_chars,
     get_max_file_bytes,
     get_max_office_xml_bytes,
     get_stateless_inline_max_bytes,
@@ -327,4 +329,32 @@ def test_get_stateless_inline_max_bytes_rejects_invalid(monkeypatch, raw):
     with pytest.raises(ValueError, match="WORKSPACE_MCP_STATELESS_INLINE_MAX_BYTES"):
         get_stateless_inline_max_bytes()
     with pytest.raises(ValueError, match="WORKSPACE_MCP_STATELESS_INLINE_MAX_BYTES"):
+        validate_file_limit_settings()
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (None, DEFAULT_GMAIL_BODY_MAX_CHARS),
+        ("", DEFAULT_GMAIL_BODY_MAX_CHARS),
+        ("0", None),
+        (" 50000 ", 50000),
+    ],
+)
+def test_get_gmail_body_max_chars(monkeypatch, raw, expected):
+    """Unset keeps the historical 20,000-character cap; 0 disables truncation."""
+    if raw is None:
+        monkeypatch.delenv("WORKSPACE_MCP_GMAIL_BODY_MAX_CHARS", raising=False)
+    else:
+        monkeypatch.setenv("WORKSPACE_MCP_GMAIL_BODY_MAX_CHARS", raw)
+    assert DEFAULT_GMAIL_BODY_MAX_CHARS == 20000
+    assert get_gmail_body_max_chars() == expected
+
+
+@pytest.mark.parametrize("raw", ["-1", "ten", "1.5", "20k"])
+def test_get_gmail_body_max_chars_rejects_invalid(monkeypatch, raw):
+    monkeypatch.setenv("WORKSPACE_MCP_GMAIL_BODY_MAX_CHARS", raw)
+    with pytest.raises(ValueError, match="WORKSPACE_MCP_GMAIL_BODY_MAX_CHARS"):
+        get_gmail_body_max_chars()
+    with pytest.raises(ValueError, match="WORKSPACE_MCP_GMAIL_BODY_MAX_CHARS"):
         validate_file_limit_settings()
