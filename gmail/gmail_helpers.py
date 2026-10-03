@@ -18,7 +18,6 @@ from googleapiclient.errors import HttpError
 
 logger = logging.getLogger(__name__)
 
-RAW_BODY_TRUNCATE_LIMIT = 20000
 GMAIL_QUOTA_ERROR_MARKERS = (
     "dailyLimitExceeded",
     "quotaExceeded",

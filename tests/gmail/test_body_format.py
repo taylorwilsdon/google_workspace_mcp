@@ -306,6 +306,49 @@ class TestFormatBodyContentHtmlMode:
         assert result == "Fallback text"
 
 
+class TestGmailBodyMaxChars:
+    """WORKSPACE_MCP_GMAIL_BODY_MAX_CHARS governs every body truncation site."""
+
+    MARKER = "\n\n[Content truncated...]"
+
+    def test_default_truncates_at_20000_characters(self, monkeypatch):
+        monkeypatch.delenv("WORKSPACE_MCP_GMAIL_BODY_MAX_CHARS", raising=False)
+        html = "x" * 25000
+        result = _format_body_content("text", html, body_format="html")
+        assert result == "x" * 20000 + self.MARKER
+
+    def test_html_format_honours_configured_limit(self, monkeypatch):
+        monkeypatch.setenv("WORKSPACE_MCP_GMAIL_BODY_MAX_CHARS", "10")
+        result = _format_body_content("text", "<b>" + "x" * 50 + "</b>", "html")
+        assert result == "<b>xxxxxxx" + self.MARKER
+
+    def test_html_format_zero_disables_truncation(self, monkeypatch):
+        monkeypatch.setenv("WORKSPACE_MCP_GMAIL_BODY_MAX_CHARS", "0")
+        html = "<div>" + "x" * 25000 + "</div>"
+        result = _format_body_content("text", html, body_format="html")
+        assert result == html
+
+    def test_text_from_html_fallback_honours_configured_limit(self, monkeypatch):
+        monkeypatch.setenv("WORKSPACE_MCP_GMAIL_BODY_MAX_CHARS", "10")
+        result = _format_body_content("", "<p>" + "y" * 50 + "</p>")
+        assert result == "y" * 10 + self.MARKER
+
+    def test_text_from_html_fallback_zero_disables_truncation(self, monkeypatch):
+        monkeypatch.setenv("WORKSPACE_MCP_GMAIL_BODY_MAX_CHARS", "0")
+        result = _format_body_content("", "<p>" + "y" * 25000 + "</p>")
+        assert result == "y" * 25000
+
+    def test_raw_mime_honours_configured_limit(self, monkeypatch):
+        monkeypatch.setenv("WORKSPACE_MCP_GMAIL_BODY_MAX_CHARS", "10")
+        result = gmail_tools._decode_raw_mime_content(_encode("z" * 50))
+        assert result == "z" * 10 + self.MARKER
+
+    def test_raw_mime_zero_disables_truncation(self, monkeypatch):
+        monkeypatch.setenv("WORKSPACE_MCP_GMAIL_BODY_MAX_CHARS", "0")
+        result = gmail_tools._decode_raw_mime_content(_encode("z" * 25000))
+        assert result == "z" * 25000
+
+
 class TestExtractMessageBodies:
     """Verify _extract_message_bodies extracts both text and HTML parts."""
 
@@ -420,7 +463,7 @@ async def test_get_gmail_message_content_reports_raw_decode_errors():
 
 @pytest.mark.asyncio
 async def test_get_gmail_message_content_truncates_raw_mime(monkeypatch):
-    monkeypatch.setattr(gmail_tools, "RAW_BODY_TRUNCATE_LIMIT", 12)
+    monkeypatch.setenv("WORKSPACE_MCP_GMAIL_BODY_MAX_CHARS", "12")
     service = _build_service(
         message_responses={
             ("msg-1", "metadata"): _metadata_response("msg-1"),

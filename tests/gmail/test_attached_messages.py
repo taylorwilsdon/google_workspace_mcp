@@ -234,6 +234,18 @@ class TestRenderAttachedMessages:
         assert "[Content truncated...]" in out
         assert len(out) < 25_000
 
+    def test_wrapped_body_honours_configured_limit(self, monkeypatch):
+        monkeypatch.setenv("WORKSPACE_MCP_GMAIL_BODY_MAX_CHARS", "10")
+        out = _render_attached_messages(_wrapper(_rfc822(_wrapped(body="x" * 50))))
+        assert "\n" + "x" * 10 + "\n\n[Content truncated...]" in out
+        assert "x" * 11 not in out
+
+    def test_wrapped_body_zero_disables_truncation(self, monkeypatch):
+        monkeypatch.setenv("WORKSPACE_MCP_GMAIL_BODY_MAX_CHARS", "0")
+        out = _render_attached_messages(_wrapper(_rfc822(_wrapped(body="x" * 60_000))))
+        assert "[Content truncated...]" not in out
+        assert "x" * 60_000 in out
+
     def test_a_huge_wrapped_header_is_truncated(self):
         inner = _wrapped()
         inner["headers"] = _hdrs(

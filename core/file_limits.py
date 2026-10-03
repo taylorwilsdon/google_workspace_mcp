@@ -13,6 +13,10 @@ from one Office file and the text extracted from it. It is on by default;
 ``WORKSPACE_MCP_STATELESS_INLINE_MAX_BYTES`` caps the file a stateless-mode
 download returns inline. It defaults to 10 MiB and never exceeds
 ``WORKSPACE_MCP_MAX_FILE_BYTES``.
+
+``WORKSPACE_MCP_GMAIL_BODY_MAX_CHARS`` caps the characters of one Gmail message
+body (HTML, text converted from HTML, or raw MIME) a tool returns before
+truncating it. It defaults to 20,000; ``0`` disables truncation.
 """
 
 from __future__ import annotations
@@ -30,6 +34,7 @@ from googleapiclient.http import MediaIoBaseDownload
 _ENV_NAME = "WORKSPACE_MCP_MAX_FILE_BYTES"
 _OFFICE_XML_ENV_NAME = "WORKSPACE_MCP_MAX_OFFICE_XML_BYTES"
 _STATELESS_INLINE_ENV_NAME = "WORKSPACE_MCP_STATELESS_INLINE_MAX_BYTES"
+_GMAIL_BODY_ENV_NAME = "WORKSPACE_MCP_GMAIL_BODY_MAX_CHARS"
 
 # Office files are ZIP archives, so the download cap above bounds only the
 # COMPRESSED size, and XML compresses by orders of magnitude. Unlike the
@@ -46,6 +51,10 @@ DEFAULT_MAX_OFFICE_XML_BYTES = 25 * 1024 * 1024  # 25 MiB
 
 # Base64 inflates an inline payload by a third, so this is ~13.4 MiB on the wire.
 DEFAULT_STATELESS_INLINE_MAX_BYTES = 10 * 1024 * 1024  # 10 MiB
+
+# Bounds what one message body contributes to a tool response. Long HTML
+# messages such as multi-page receipts can exceed it; raise it or set ``0``.
+DEFAULT_GMAIL_BODY_MAX_CHARS = 20000
 
 # Keep the uncapped path from asking httplib2 to materialize its 100 MiB
 # default response chunk. This does not impose a total-size limit; it only
@@ -111,15 +120,31 @@ def get_stateless_inline_max_bytes() -> int:
     return min(value, max_file_bytes) if max_file_bytes else value
 
 
+def get_gmail_body_max_chars() -> Optional[int]:
+    """Return the cap on characters of one Gmail message body, or ``None``.
+
+    Parsing rules:
+    - unset or empty → ``DEFAULT_GMAIL_BODY_MAX_CHARS``
+    - ``0`` → no truncation (``None``)
+    - positive int → that many characters
+    - invalid or negative value → raise ``ValueError``
+    """
+    value = _byte_count_from_env(_GMAIL_BODY_ENV_NAME, unit="character count")
+    if value is None:
+        return DEFAULT_GMAIL_BODY_MAX_CHARS
+    return value or None
+
+
 def validate_file_limit_settings() -> None:
     """Raise ``ValueError`` if any file-limit environment setting is invalid."""
     get_max_file_bytes()
     get_max_office_xml_bytes()
     get_stateless_inline_max_bytes()
+    get_gmail_body_max_chars()
 
 
-def _byte_count_from_env(name: str) -> Optional[int]:
-    """Parse a non-negative byte count from ``name``; ``None`` when unset or empty."""
+def _byte_count_from_env(name: str, *, unit: str = "byte count") -> Optional[int]:
+    """Parse a non-negative count from ``name``; ``None`` when unset or empty."""
     raw = os.getenv(name)
     if raw is None or raw.strip() == "":
         return None
@@ -127,11 +152,11 @@ def _byte_count_from_env(name: str) -> Optional[int]:
         value = int(raw.strip())
     except ValueError as exc:
         raise ValueError(
-            f"Invalid {name}={raw!r}; expected a non-negative integer byte count."
+            f"Invalid {name}={raw!r}; expected a non-negative integer {unit}."
         ) from exc
     if value < 0:
         raise ValueError(
-            f"Invalid {name}={raw!r}; expected a non-negative integer byte count."
+            f"Invalid {name}={raw!r}; expected a non-negative integer {unit}."
         )
     return value
 
