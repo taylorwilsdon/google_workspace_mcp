@@ -3,12 +3,21 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import html
 import logging
 import re
 import ssl
 from collections import Counter
 from datetime import datetime, timezone
+from email import message_from_bytes
+from email.errors import (
+    CloseBoundaryNotFoundDefect,
+    MissingHeaderBodySeparatorDefect,
+    MultipartInvariantViolationDefect,
+    StartBoundaryNotFoundDefect,
+)
+from email.policy import SMTP
 from email.utils import getaddresses, parseaddr, parsedate_to_datetime
 from html.parser import HTMLParser
 from typing import Any, Callable, Dict, Iterable, List, Literal, Mapping, Optional
@@ -16,7 +25,20 @@ from typing import Any, Callable, Dict, Iterable, List, Literal, Mapping, Option
 from fastmcp.exceptions import ToolError as ToolExecutionError
 from googleapiclient.errors import HttpError
 
+from core.file_limits import (
+    FileTooLargeError,
+    ensure_within_file_size_limit,
+    get_max_file_bytes,
+)
+from core.utils import GOOGLE_API_WRITE_RETRIES, UserInputError
+
 logger = logging.getLogger(__name__)
+
+# Smaller chunks for search-result header fetches: the batch endpoint executes
+# every get in a chunk concurrently server-side, and chunks of 25 metadata gets
+# trip Gmail's per-user concurrency limit ("Too many concurrent requests").
+GMAIL_SEARCH_HEADER_BATCH_SIZE = 10
+GMAIL_REQUEST_DELAY = 0.1
 
 RAW_BODY_TRUNCATE_LIMIT = 20000
 GMAIL_QUOTA_ERROR_MARKERS = (
@@ -1224,3 +1246,655 @@ def format_filter_apply_result(result: Mapping[str, Any], dry_run: bool) -> str:
             "Stopped at max_messages; raise it to process the remaining matches."
         )
     return "\n".join(lines)
+
+
+def _extract_attachments(payload: dict) -> List[Dict[str, Any]]:
+    """
+    Extract attachment metadata from a Gmail message payload.
+
+    Args:
+        payload: The message payload from Gmail API
+
+    Returns:
+        List of attachment dictionaries with filename, mimeType, size, and attachmentId
+    """
+    attachments = []
+
+    pending = [(payload, False)]
+    while pending:
+        part, in_attached_message = pending.pop()
+        # Check if this part is an attachment
+        if part.get("filename") and part.get("body", {}).get("attachmentId"):
+            # Files inside a wrapped message (message/rfc822) are fetched with the
+            # outer message's ID, so keep them listed but flag their origin.
+            attachments.append(
+                {
+                    "filename": part["filename"],
+                    "mimeType": part.get("mimeType", "application/octet-stream"),
+                    "size": part.get("body", {}).get("size", 0),
+                    "attachmentId": part["body"]["attachmentId"],
+                    "inAttachedMessage": in_attached_message,
+                }
+            )
+
+        # Reverse the push order to preserve depth-first attachment ordering.
+        if "parts" in part:
+            nested = in_attached_message or (
+                (part.get("mimeType") or "").lower() == "message/rfc822"
+            )
+            pending.extend((subpart, nested) for subpart in reversed(part["parts"]))
+
+    return attachments
+
+
+def _extract_message_bodies(payload):
+    """
+    Helper function to extract both plain text and HTML bodies from a Gmail message payload.
+
+    Args:
+        payload (dict): The message payload from Gmail API
+
+    Returns:
+        dict: Dictionary with 'text' and 'html' keys containing body content
+    """
+    text_body = ""
+    html_body = ""
+    parts = [payload] if "parts" not in payload else payload.get("parts", [])
+
+    part_queue = list(parts)  # Use a queue for BFS traversal of parts
+    while part_queue:
+        part = part_queue.pop(0)
+        mime_type = part.get("mimeType", "")
+        body_data = part.get("body", {}).get("data")
+
+        if body_data:
+            try:
+                decoded_data = base64.urlsafe_b64decode(body_data).decode(
+                    "utf-8", errors="ignore"
+                )
+                if mime_type == "text/plain" and not text_body:
+                    text_body = decoded_data
+                elif mime_type == "text/html" and not html_body:
+                    html_body = decoded_data
+            except Exception as e:
+                logger.warning(f"Failed to decode body part: {e}")
+
+        # Add sub-parts to queue for multipart messages
+        if mime_type.startswith("multipart/") and "parts" in part:
+            part_queue.extend(part.get("parts", []))
+
+    # Check the main payload if it has body data directly
+    if payload.get("body", {}).get("data"):
+        try:
+            decoded_data = base64.urlsafe_b64decode(payload["body"]["data"]).decode(
+                "utf-8", errors="ignore"
+            )
+            mime_type = payload.get("mimeType", "")
+            if mime_type == "text/plain" and not text_body:
+                text_body = decoded_data
+            elif mime_type == "text/html" and not html_body:
+                html_body = decoded_data
+        except Exception as e:
+            logger.warning(f"Failed to decode main payload body: {e}")
+
+    return {"text": text_body, "html": html_body}
+
+
+def _extract_headers(payload: dict, header_names: List[str]) -> Dict[str, str]:
+    """
+    Extract specified headers from a Gmail message payload.
+
+    Args:
+        payload: The message payload from Gmail API
+        header_names: List of header names to extract
+
+    Returns:
+        Dict mapping header names to their values
+    """
+    headers = {}
+    target_headers = {name.lower(): name for name in header_names}
+    for header in payload.get("headers", []):
+        header_name_lower = header["name"].lower()
+        if header_name_lower in target_headers:
+            # Store using the original requested casing
+            target_name = target_headers[header_name_lower]
+            value = header["value"]
+            if header_name_lower in {"to", "cc", "bcc"} and target_name in headers:
+                headers[target_name] = ", ".join(
+                    part for part in (headers[target_name], value) if part
+                )
+            else:
+                headers[target_name] = value
+    return headers
+
+
+async def _download_message_attachments(
+    service, message_id: str, payload: dict
+) -> List[Dict[str, Any]]:
+    """Download a message's attachments as standard-base64 ``content`` dicts.
+
+    Raises UserInputError if any attachment exceeds the size cap or cannot be
+    downloaded, so a caller never builds a message that silently lost a file.
+    """
+    attachments: List[Dict[str, Any]] = []
+    failed_attachments = []
+    for att in _extract_attachments(payload):
+        try:
+            ensure_within_file_size_limit(
+                att.get("size"),
+                file_name=att.get("filename"),
+                file_id=att.get("attachmentId"),
+                kind="attachment",
+            )
+        except FileTooLargeError as exc:
+            raise UserInputError(str(exc)) from exc
+        try:
+            attachment_data = await asyncio.to_thread(
+                service.users()
+                .messages()
+                .attachments()
+                .get(userId="me", messageId=message_id, id=att["attachmentId"])
+                .execute
+            )
+            # Re-check the size Gmail reports for the downloaded data, in case it
+            # differs from the message metadata.
+            ensure_within_file_size_limit(
+                attachment_data.get("size"),
+                file_name=att.get("filename"),
+                file_id=att.get("attachmentId"),
+                kind="attachment",
+            )
+            # Gmail returns unpadded URL-safe base64; _prepare_gmail_message
+            # expects standard padded base64.
+            urlsafe_data = attachment_data.get("data", "")
+            padded = urlsafe_data + "=" * (-len(urlsafe_data) % 4)
+            standard_b64 = base64.b64encode(base64.urlsafe_b64decode(padded)).decode()
+            attachments.append(
+                {
+                    "content": standard_b64,
+                    "filename": att["filename"],
+                    "mime_type": att["mimeType"],
+                }
+            )
+            logger.info(f"[gmail] Downloaded attachment: {att['filename']}")
+        except FileTooLargeError as exc:
+            raise UserInputError(str(exc)) from exc
+        except Exception as e:
+            logger.warning(
+                f"[gmail] Failed to download attachment {att['filename']}: {e}"
+            )
+            failed_attachments.append(att["filename"])
+
+    if failed_attachments:
+        raise UserInputError(
+            "Failed to include requested attachment(s): "
+            + ", ".join(failed_attachments)
+        )
+    return attachments
+
+
+async def _build_forward_message(
+    service,
+    message_id: str,
+    *,
+    subject: Optional[str] = None,
+    forward_message: Optional[str] = None,
+    forward_message_format: Literal["plain", "html"] = "plain",
+    include_attachments: bool = True,
+) -> tuple[str, str, str, List[Dict[str, Any]]]:
+    """Fetch a message and build a forward of it.
+
+    Returns ``(subject, body, body_format, attachments)``, with attachments
+    ready for ``_prepare_gmail_message``. An explicit ``subject`` overrides the
+    derived 'Fwd: <original subject>'.
+    """
+    original_message = await asyncio.to_thread(
+        service.users()
+        .messages()
+        .get(userId="me", id=message_id, format="full")
+        .execute
+    )
+    payload = original_message.get("payload", {})
+
+    forward_subject, forward_body, body_format = _build_forward_content(
+        headers=_extract_headers(payload, ["Subject", "From", "Date", "To"]),
+        bodies=_extract_message_bodies(payload),
+        forward_message=forward_message,
+        forward_message_format=forward_message_format,
+        subject_override=subject,
+    )
+
+    attachments = (
+        await _download_message_attachments(service, message_id, payload)
+        if include_attachments
+        else []
+    )
+    return forward_subject, forward_body, body_format, attachments
+
+
+# Draft lifecycle
+
+# drafts.list returns only IDs, so each listed draft costs a second read.
+DRAFT_LIST_DEFAULT_PAGE_SIZE = 25
+DRAFT_LIST_MAX_PAGE_SIZE = 100
+
+# Search tools return Message and Thread IDs, which drafts.* calls reject, so
+# drafts.list is the only way to recover a Draft ID.
+_RECOVER_DRAFT_ID = (
+    "Use draft_gmail_message(action='list') to find the live Draft ID; it is "
+    "the only way to look one up, and it also finds drafts created outside "
+    "this conversation."
+)
+
+_REBUILD_INSTEAD_HINT = (
+    "Nothing was written. To change this draft anyway, re-pass the body along "
+    "with the addressing to rebuild it; add clear_fields=['attachments'] to drop "
+    "large attachments."
+)
+
+# Gmail has no conditional write for drafts, and a Gmail tab that already loaded
+# a draft autosaves its stale copy over any API update.
+_STALE_GMAIL_TAB_WARNING = (
+    " If this draft is open in Gmail, refresh before touching it: a Gmail tab "
+    "that already loaded this draft may keep its old copy, and typing in it can "
+    "silently overwrite this update."
+)
+
+# The only headers an addressing-only update rewrites.
+_PATCHABLE_ADDRESS_HEADERS = ("To", "Cc", "Bcc", "Subject")
+
+# Write untouched headers back verbatim. Plain SMTP refolds long source headers,
+# which turns a long In-Reply-To/References Message-ID into an RFC 2047
+# encoded-word and breaks threading.
+_PATCH_POLICY = SMTP.clone(refold_source="none")
+
+# Gmail adds a Received header on every draft write; drop transport headers so
+# repeated patches do not accumulate them.
+_TRANSPORT_ADDED_HEADERS = ("Received", "X-Received", "Return-Path", "Delivered-To")
+
+# Defects meaning the header/body split or multipart structure was guessed, so
+# re-serialising could move or drop content.
+_STRUCTURAL_MIME_DEFECTS = (
+    MissingHeaderBodySeparatorDefect,
+    StartBoundaryNotFoundDefect,
+    CloseBoundaryNotFoundDefect,
+    MultipartInvariantViolationDefect,
+)
+
+
+def _draft_not_found(draft_id: str) -> UserInputError:
+    """Actionable error for a 404 from any drafts.* call."""
+    return UserInputError(
+        f"Draft '{draft_id}' was not found. It may have already been sent or "
+        "deleted, or its ID rotated after being discarded and recreated in the "
+        "Gmail UI. " + _RECOVER_DRAFT_ID
+    )
+
+
+async def _execute_draft_request(request, draft_id: str) -> Dict[str, Any]:
+    """Execute a drafts.* request, turning a 404 into recovery guidance."""
+    try:
+        return await asyncio.to_thread(
+            request.execute, num_retries=GOOGLE_API_WRITE_RETRIES
+        )
+    except HttpError as exc:
+        if _http_error_status(exc) == 404:
+            raise _draft_not_found(draft_id) from exc
+        raise
+
+
+def _unfold_header(value: Optional[str]) -> Optional[str]:
+    """Join a folded header onto one line; header assignment rejects linefeeds."""
+    return re.sub(r"\r?\n[ \t]+", " ", value) if value else value
+
+
+async def _fetch_draft_metadata(service, draft_id: str) -> Dict[str, Any]:
+    """Read the threading, addressing and payload of an existing draft.
+
+    drafts.update replaces the whole message, so a rebuild carries these values
+    forward for anything the caller did not re-supply. The threading keys are
+    None unless the draft has reply headers: Gmail gives every draft a threadId,
+    and restating it without In-Reply-To/References is rejected.
+    """
+    draft = await _execute_draft_request(
+        service.users().drafts().get(userId="me", id=draft_id, format="full"),
+        draft_id,
+    )
+    message = draft.get("message", {}) or {}
+    payload = message.get("payload", {}) or {}
+    headers = {
+        name: _unfold_header(value)
+        for name, value in _extract_headers(
+            payload,
+            ["In-Reply-To", "References", "To", "Cc", "Bcc", "Subject", "From"],
+        ).items()
+    }
+    threaded = bool(headers.get("In-Reply-To") or headers.get("References"))
+    return {
+        "thread_id": message.get("threadId") if threaded else None,
+        "in_reply_to": headers.get("In-Reply-To") if threaded else None,
+        "references": headers.get("References") if threaded else None,
+        "to": headers.get("To"),
+        "cc": headers.get("Cc"),
+        "bcc": headers.get("Bcc"),
+        "subject": headers.get("Subject"),
+        "from": headers.get("From"),
+        "message_id": message.get("id"),
+        "payload": payload,
+    }
+
+
+async def _fetch_draft_header_summaries(
+    service, draft_ids: List[str]
+) -> Dict[str, Dict[str, str]]:
+    """Read Subject, To and snippet for each draft ID, batched.
+
+    drafts.get does not accept metadataHeaders, so format="metadata" returns
+    every header and the filtering happens here. Best effort: a draft whose
+    metadata cannot be read is omitted from the result.
+    """
+    summaries: Dict[str, Dict[str, str]] = {}
+
+    for chunk_start in range(0, len(draft_ids), GMAIL_SEARCH_HEADER_BATCH_SIZE):
+        if chunk_start:
+            await asyncio.sleep(GMAIL_REQUEST_DELAY)
+        chunk = draft_ids[chunk_start : chunk_start + GMAIL_SEARCH_HEADER_BATCH_SIZE]
+        results: Dict[str, Dict[str, Any]] = {}
+
+        def _batch_callback(request_id, response, exception):
+            results[request_id] = {"data": response, "error": exception}
+
+        try:
+            batch = service.new_batch_http_request(callback=_batch_callback)
+            for did in chunk:
+                batch.add(
+                    service.users()
+                    .drafts()
+                    .get(userId="me", id=did, format="metadata"),
+                    request_id=did,
+                )
+            await asyncio.to_thread(batch.execute)
+        except Exception as batch_error:
+            logger.warning(
+                f"[draft_gmail_message] Batch draft metadata fetch failed, "
+                f"falling back to sequential: {batch_error}"
+            )
+            for did in chunk:
+                try:
+                    data = await asyncio.to_thread(
+                        service.users()
+                        .drafts()
+                        .get(userId="me", id=did, format="metadata")
+                        .execute
+                    )
+                    results[did] = {"data": data, "error": None}
+                except Exception as exc:
+                    results[did] = {"data": None, "error": exc}
+                await asyncio.sleep(GMAIL_REQUEST_DELAY)
+
+        for did in chunk:
+            data = (results.get(did) or {}).get("data")
+            if not data:
+                continue
+            message = data.get("message", {}) or {}
+            headers = _extract_headers(
+                message.get("payload", {}) or {}, ["Subject", "To"]
+            )
+            summaries[did] = {
+                "subject": headers.get("Subject") or "(no subject)",
+                "to": headers.get("To") or "(no recipient)",
+                # Gmail returns snippets HTML-escaped.
+                "snippet": html.unescape(message.get("snippet") or "").strip(),
+            }
+
+    return summaries
+
+
+async def _list_drafts_summary(
+    service, *, page_size: int, page_token: Optional[str]
+) -> str:
+    """Render the user's drafts with the IDs needed to act on them."""
+    listing = await asyncio.to_thread(
+        service.users()
+        .drafts()
+        # Some clients send "" for unset arguments; never page with an empty cursor.
+        .list(userId="me", maxResults=page_size, pageToken=page_token or None)
+        .execute
+    )
+    drafts = listing.get("drafts", []) or []
+    if not drafts:
+        return (
+            "No drafts found. A draft ID is returned by "
+            "draft_gmail_message(action='create')."
+        )
+
+    draft_ids = [d.get("id") for d in drafts if d.get("id")]
+    summaries = await _fetch_draft_header_summaries(service, draft_ids)
+
+    lines = [f"Found {len(drafts)} draft(s):"]
+    for draft in drafts:
+        draft_id = draft.get("id")
+        message = draft.get("message", {}) or {}
+        summary = summaries.get(draft_id, {})
+        lines.append(
+            f"- Draft ID: {draft_id} | Message ID: {message.get('id') or '(unknown)'} "
+            f"| Thread ID: {message.get('threadId') or '(none)'}"
+        )
+        lines.append(
+            f"    To: {summary.get('to', '(metadata unavailable)')} "
+            f"| Subject: {summary.get('subject', '(metadata unavailable)')}"
+        )
+        if summary.get("snippet"):
+            lines.append(f"    {summary['snippet'][:140]}")
+
+    next_token = listing.get("nextPageToken")
+    if next_token:
+        lines.append(
+            f"\nMore drafts available; pass page_token='{next_token}' "
+            f"for the next page."
+        )
+    lines.append(
+        "\nTo revise one: draft_gmail_message(action='update', "
+        "draft_id='<Draft ID>', ...). "
+        "To send: send_gmail_message(draft_id='<Draft ID>')."
+    )
+    return "\n".join(lines)
+
+
+def _format_draft_ids(saved_draft: Dict[str, Any]) -> str:
+    """Render a saved draft's Draft, Message and Thread IDs."""
+    message = saved_draft.get("message", {}) or {}
+    parts = [f"Draft ID: {saved_draft.get('id')}"]
+    if message.get("id"):
+        parts.append(f"Message ID: {message['id']}")
+    if message.get("threadId"):
+        parts.append(f"Thread ID: {message['threadId']}")
+    return ", ".join(parts)
+
+
+def _update_rebuild_reasons(
+    *,
+    attachments: Optional[List[Any]],
+    body_format: str,
+    quote_original: bool,
+    from_name: Optional[str],
+    from_email: Optional[str],
+    thread_id: Optional[str],
+    in_reply_to: Optional[str],
+    references: Optional[str],
+) -> List[str]:
+    """Names of supplied update arguments that a header-only patch cannot apply."""
+    candidates = (
+        ("attachments", attachments is not None),
+        ("body_format", body_format != "plain"),
+        ("quote_original", bool(quote_original)),
+        ("from_name", from_name is not None),
+        ("from_email", from_email is not None),
+        ("thread_id", thread_id is not None),
+        ("in_reply_to", in_reply_to is not None),
+        ("references", references is not None),
+    )
+    return [name for name, supplied in candidates if supplied]
+
+
+async def _fetch_draft_raw(service, draft_id: str) -> tuple[bytes, Dict[str, Any]]:
+    """Fetch a draft's RFC 2822 bytes and its message resource.
+
+    When WORKSPACE_MCP_MAX_FILE_BYTES is set, the draft's sizeEstimate is
+    checked first so an oversized message is never buffered. A missing size is
+    refused rather than treated as within the cap.
+    """
+    drafts = service.users().drafts()
+    if get_max_file_bytes() is not None:
+        probe = await _execute_draft_request(
+            drafts.get(userId="me", id=draft_id, format="metadata"), draft_id
+        )
+        size_estimate = (probe.get("message", {}) or {}).get("sizeEstimate")
+        if not isinstance(size_estimate, int) or isinstance(size_estimate, bool):
+            raise UserInputError(
+                f"Draft '{draft_id}' did not report a size, so it cannot be "
+                "checked against WORKSPACE_MCP_MAX_FILE_BYTES. " + _REBUILD_INSTEAD_HINT
+            )
+        try:
+            ensure_within_file_size_limit(size_estimate, file_id=draft_id, kind="draft")
+        except FileTooLargeError as exc:
+            raise UserInputError(f"{exc} {_REBUILD_INSTEAD_HINT}") from exc
+
+    draft = await _execute_draft_request(
+        drafts.get(userId="me", id=draft_id, format="raw"), draft_id
+    )
+    message = draft.get("message", {}) or {}
+    raw = message.get("raw")
+    if not raw:
+        raise UserInputError(
+            f"Draft '{draft_id}' returned no message content, so its recipients "
+            "cannot be changed without rebuilding it. Re-send the draft's body "
+            "along with the addressing you want."
+        )
+    return base64.urlsafe_b64decode(raw), message
+
+
+def _patch_draft_addressing(
+    raw_bytes: bytes,
+    *,
+    to: Optional[str],
+    cc: Optional[str],
+    bcc: Optional[str],
+    subject: Optional[str],
+) -> tuple[bytes, bool]:
+    """Rewrite To/Cc/Bcc/Subject on a stored message, leaving the rest intact.
+
+    Per header, None leaves it untouched, "" deletes it and a value replaces
+    it. Part payloads are never re-encoded, so the body and attachments
+    survive. Returns the new bytes and whether the message carries reply
+    headers, which decides if threadId may be restated.
+    """
+    try:
+        message = message_from_bytes(raw_bytes, policy=_PATCH_POLICY)
+    except Exception as exc:
+        raise UserInputError(
+            "The stored draft could not be parsed as an email message, so its "
+            f"recipients cannot be changed in place ({exc}). Re-send the body "
+            "along with the addressing to rebuild the draft instead."
+        ) from exc
+
+    structural = {
+        type(defect).__name__
+        for part in message.walk()
+        for defect in part.defects
+        if isinstance(defect, _STRUCTURAL_MIME_DEFECTS)
+    }
+    if structural:
+        raise UserInputError(
+            f"The stored draft did not parse cleanly as an email message "
+            f"({', '.join(sorted(structural))}), so rewriting its headers could "
+            "move or drop content. Nothing was written. Re-send the body along "
+            "with the addressing to rebuild the draft instead."
+        )
+
+    # `del` removes every occurrence and is a no-op for an absent header.
+    for transport_header in _TRANSPORT_ADDED_HEADERS:
+        del message[transport_header]
+
+    for name, value in zip(_PATCHABLE_ADDRESS_HEADERS, (to, cc, bcc, subject)):
+        if value is None:
+            continue
+        del message[name]
+        if value:
+            message[name] = value
+
+    is_threaded = bool(message["In-Reply-To"] or message["References"])
+
+    try:
+        return message.as_bytes(), is_threaded
+    except Exception as exc:
+        raise UserInputError(
+            "The stored draft could not be re-encoded after changing its "
+            f"addressing ({exc}), so nothing was written. Re-send the body "
+            "along with the addressing to rebuild the draft instead."
+        ) from exc
+
+
+async def _update_draft_addressing(
+    service,
+    draft_id: str,
+    *,
+    to: Optional[str],
+    cc: Optional[str],
+    bcc: Optional[str],
+    subject: Optional[str],
+) -> Dict[str, Any]:
+    """Patch a draft's addressing in place, keeping its body and attachments."""
+    raw_bytes, stored_message = await _fetch_draft_raw(service, draft_id)
+    patched_bytes, is_threaded = _patch_draft_addressing(
+        raw_bytes, to=to, cc=cc, bcc=bcc, subject=subject
+    )
+    message = {"raw": base64.urlsafe_b64encode(patched_bytes).decode("ascii")}
+    # threadId is not a header, so it does not ride along in the raw bytes.
+    if stored_message.get("threadId") and is_threaded:
+        message["threadId"] = stored_message["threadId"]
+    return await _execute_draft_request(
+        service.users()
+        .drafts()
+        .update(userId="me", id=draft_id, body={"message": message}),
+        draft_id,
+    )
+
+
+async def _send_existing_draft(service, draft_id: str) -> Dict[str, Any]:
+    """Send a stored draft via drafts.send, mapping errors to their remedy."""
+    try:
+        return await _execute_draft_request(
+            service.users().drafts().send(userId="me", body={"id": draft_id}),
+            draft_id,
+        )
+    except HttpError as exc:
+        status = _http_error_status(exc)
+        if status == 400:
+            # Gmail uses 400 both for a malformed ID and for an unsendable draft
+            # (e.g. no recipient), so report Google's reason and both remedies.
+            raise UserInputError(
+                f"Gmail rejected sending draft '{draft_id}'. Google reported: "
+                f"{exc}. If the draft is missing something it needs to be sent, "
+                "such as a recipient, fix it with "
+                "draft_gmail_message(action='update') and send again. If the "
+                "Draft ID itself is malformed or stale: " + _RECOVER_DRAFT_ID
+            ) from exc
+        if status == 403:
+            # handle_http_errors maps every 403 to re-auth guidance, which is
+            # wrong for quota errors, so classify here.
+            if _is_quota_or_rate_limit_error(exc):
+                raise UserInputError(
+                    f"Gmail refused to send draft '{draft_id}' because of a "
+                    "quota or rate limit, not a permissions problem; "
+                    "re-authenticating will not help. Retry after a pause. "
+                    f"Google reported: {exc}"
+                ) from exc
+            raise UserInputError(
+                f"Sending draft '{draft_id}' uses drafts.send, which needs the "
+                "gmail.compose scope, and this account's stored credential does "
+                "not include it. Re-authenticate this account to add it; "
+                "drafting with draft_gmail_message grants it as part of the same "
+                f"consent. Google reported: {exc}"
+            ) from exc
+        raise
