@@ -35,6 +35,7 @@ from core.file_limits import (
     ensure_within_file_size_limit,
     get_stateless_inline_max_bytes,
 )
+from core.gcs_attachment_storage import gcs_files_enabled
 from core.utils import (
     GOOGLE_API_WRITE_RETRIES,
     IMAGE_MIME_TYPES,
@@ -557,7 +558,14 @@ async def get_drive_file_download_url(
 
     # Stateless mode has no attachment storage to hand out a URL from, so the
     # file itself goes back as an embedded resource, up to inline_max_bytes.
-    inline_max_bytes = get_stateless_inline_max_bytes() if is_stateless_mode() else None
+    # With GCS file staging configured (WORKSPACE_MCP_FILES_GCS_BUCKET) the bytes
+    # live in GCS and the client fetches them via a signed URL, so the stateless
+    # inline path is not needed: fall through to attachment storage instead.
+    inline_max_bytes = (
+        get_stateless_inline_max_bytes()
+        if is_stateless_mode() and not gcs_files_enabled()
+        else None
+    )
     if inline_max_bytes == 0:
         return _stateless_inline_disabled_message(file_name, file_id, output_mime_type)
     # Drive's declared size is the download size only for binary files; an

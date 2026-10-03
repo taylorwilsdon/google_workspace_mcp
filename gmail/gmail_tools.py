@@ -2395,10 +2395,12 @@ async def get_gmail_attachment_content(
         base64_data = ""
         return str(e)
 
-    # Check if we're in stateless mode (can't save files)
+    # Check if we're in stateless mode (can't save files).
+    # With GCS file staging configured, files can be staged even in stateless mode.
     from auth.oauth_config import is_stateless_mode
+    from core.gcs_attachment_storage import gcs_files_enabled
 
-    if is_stateless_mode():
+    if is_stateless_mode() and not gcs_files_enabled():
         result_lines = [
             "Attachment downloaded successfully!",
             f"Message ID: {message_id}",

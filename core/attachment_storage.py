@@ -383,7 +383,19 @@ _attachment_storage: Optional[AttachmentStorage] = None
 
 
 def get_attachment_storage() -> AttachmentStorage:
-    """Get the global attachment storage instance."""
+    """Get the global attachment storage instance.
+
+    When GCS file staging is configured (``WORKSPACE_MCP_FILES_GCS_BUCKET``),
+    the GCS-backed storage is returned instead of local disk — suitable for
+    horizontally scaled / scale-to-zero deployments (e.g. Cloud Run).
+    """
+    from core.gcs_attachment_storage import gcs_files_enabled
+
+    if gcs_files_enabled():
+        from core.gcs_attachment_storage import get_gcs_attachment_storage
+
+        return get_gcs_attachment_storage()
+
     global _attachment_storage
     if _attachment_storage is None:
         _attachment_storage = AttachmentStorage()
@@ -401,6 +413,15 @@ def get_attachment_url(file_id: str) -> str:
     Returns:
         Full URL to access the attachment
     """
+    # GCS-staged attachments are downloaded straight from GCS via signed URL —
+    # no server-side attachment route involved.
+    from core.gcs_attachment_storage import gcs_files_enabled
+
+    if gcs_files_enabled():
+        from core.gcs_attachment_storage import get_gcs_attachment_storage
+
+        return get_gcs_attachment_storage().get_signed_url(file_id)
+
     from core.config import WORKSPACE_MCP_PORT, WORKSPACE_MCP_BASE_URI
 
     # In stdio mode the attachment route is served by the lazily-started callback

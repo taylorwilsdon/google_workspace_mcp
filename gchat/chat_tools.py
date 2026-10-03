@@ -692,10 +692,12 @@ async def download_chat_attachment(
     size_bytes = len(file_bytes)
     size_kb = size_bytes / 1024
 
-    # Check if we're in stateless mode (can't save files)
+    # Check if we're in stateless mode (can't save files).
+    # With GCS file staging configured, files can be staged even in stateless mode.
     from auth.oauth_config import is_stateless_mode
+    from core.gcs_attachment_storage import gcs_files_enabled
 
-    if is_stateless_mode():
+    if is_stateless_mode() and not gcs_files_enabled():
         # 75 input bytes encode to at most 100 base64 characters; do not encode
         # the entire attachment merely to return a short preview.
         b64_preview = base64.urlsafe_b64encode(file_bytes[:75]).decode("utf-8")[:100]
