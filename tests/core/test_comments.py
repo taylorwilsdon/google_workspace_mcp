@@ -79,6 +79,33 @@ async def test_read_comments_includes_quoted_text():
 
 
 @pytest.mark.asyncio
+async def test_read_comments_includes_anchor():
+    """Verify that the Drive `anchor` is requested and surfaced when present."""
+    # Real Google Slides anchor: the comment is attached to the shape "box_1".
+    slides_anchor = (
+        '{"type":"shape","subtype":"text","uid":1790843227146,'
+        '"page":"p","targets":["box_1"]}'
+    )
+    anchored = {
+        **_make_comment("c1", "Fix this box."),
+        "anchor": slides_anchor,
+    }
+    plain = _make_comment("c2", "General comment.", "Bob")
+    mock_service = _mock_service_pages([([anchored, plain], None)])
+
+    result = await _read_comments_impl(mock_service, "presentation", "pres123")
+
+    requested_fields = mock_service.comments.return_value.list.call_args.kwargs[
+        "fields"
+    ]
+    assert "anchor" in requested_fields
+    assert f"Anchor: {slides_anchor}" in result
+    assert '"targets":["box_1"]' in result
+    # A comment without an anchor must not print an empty Anchor line.
+    assert result.count("Anchor:") == 1
+
+
+@pytest.mark.asyncio
 async def test_read_comments_empty():
     """Verify empty comments returns appropriate message."""
     mock_service = _mock_service_pages([([], None)])
