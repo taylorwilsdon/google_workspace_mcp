@@ -1625,3 +1625,61 @@ def _format_named_ranges_list(
         rows.append(f"| {nr_name} | {a1_repr} | {nr_id} |")
 
     return header + "\n".join(rows)
+
+
+def _build_insert_comment_request(
+    cell: str, sheets: List[dict], comment_content: str
+) -> dict:
+    """Build an insertComment request anchored to a single A1 cell."""
+    grid_range = _parse_a1_range(cell, sheets)
+    start_row = grid_range.get("startRowIndex")
+    start_col = grid_range.get("startColumnIndex")
+    is_single_cell = (
+        start_row is not None
+        and start_col is not None
+        and grid_range.get("endRowIndex") == start_row + 1
+        and grid_range.get("endColumnIndex") == start_col + 1
+    )
+    if not is_single_cell:
+        raise UserInputError(
+            f"cell must reference a single cell (e.g., 'Sheet1!B2'), got '{cell}'."
+        )
+    return {
+        "insertComment": {
+            "content": comment_content,
+            "coordinate": {
+                "sheetId": grid_range["sheetId"],
+                "rowIndex": start_row,
+                "columnIndex": start_col,
+            },
+        }
+    }
+
+
+async def _insert_cell_comment(
+    sheets_service, spreadsheet_id: str, cell: str, comment_content: str
+) -> str:
+    """Create a comment anchored to a cell via the Sheets API; return its ID."""
+    metadata = await asyncio.to_thread(
+        sheets_service.spreadsheets()
+        .get(spreadsheetId=spreadsheet_id, fields="sheets(properties(sheetId,title))")
+        .execute
+    )
+    request = _build_insert_comment_request(
+        cell, metadata.get("sheets", []), comment_content
+    )
+
+    response = await asyncio.to_thread(
+        sheets_service.spreadsheets()
+        .batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": [request]})
+        .execute
+    )
+
+    replies = response.get("replies") or [{}]
+    thread = replies[0].get("insertComment", {}).get("commentThread", {})
+    comment_id = thread.get("commentId")
+    if not comment_id:
+        raise RuntimeError(
+            f"Sheets API did not return a comment ID for {cell}; the comment may not have been created."
+        )
+    return comment_id

@@ -35,6 +35,7 @@ from gsheets.sheets_helpers import (
     _format_conditional_rules_section,
     _format_named_ranges_list,
     _format_sheet_error_section,
+    _insert_cell_comment,
     _normalize_chips_input,
     _parse_a1_range,
     _parse_condition_values,
@@ -3043,7 +3044,9 @@ async def manage_named_range(
 
 
 # Create comment management tools for sheets
-_comment_tools = create_comment_tools("spreadsheet", "spreadsheet_id")
+_comment_tools = create_comment_tools(
+    "spreadsheet", "spreadsheet_id", insert_cell_comment=_insert_cell_comment
+)
 
 # Extract and register the functions
 list_spreadsheet_comments = _comment_tools["list_comments"]

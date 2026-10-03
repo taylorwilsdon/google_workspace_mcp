@@ -186,6 +186,7 @@ Create, reply to, or resolve a comment.
 | action | string | yes | | `create`, `reply`, or `resolve` |
 | comment_content | string | for create/reply | | Comment text |
 | comment_id | string | for reply/resolve | | Target comment ID |
+| cell | string | no | | Single cell in A1 notation (e.g. `Sheet1!B2`) to anchor a `create` comment to. Omit for a file-level comment |
 
 ---
 
