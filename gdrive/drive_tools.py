@@ -86,6 +86,7 @@ from gdrive.drive_helpers import (
     has_explicit_trashed_clause,
     initiate_resumable_upload_session,
     native_replace_format_map,
+    normalize_drive_query_v2_compat,
     reject_sources_with_upload_url,
     resolve_drive_item,
     resolve_file_type_mime,
@@ -220,6 +221,16 @@ async def search_drive_files(
         logger.debug(
             f"[search_drive_files] Reformatting free text query '{query}' to '{final_query}'"
         )
+
+    # Drive API v3 uses `name`, not v2 `title` (and `Time` suffix, not `Date`).
+    # Normalize v2 field names outside quoted literals so
+    # `title contains 'test'` becomes `name contains 'test'`.
+    normalized_query = normalize_drive_query_v2_compat(final_query)
+    if normalized_query != final_query:
+        logger.info(
+            "[search_drive_files] Normalized v2 query field names to v3 equivalents"
+        )
+        final_query = normalized_query
 
     # Drive's files.list returns trashed items unless told otherwise. Hide them by
     # default so search agrees with list_drive_items and the Drive web UI, but never
