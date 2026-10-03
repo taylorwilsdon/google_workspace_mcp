@@ -12,7 +12,15 @@ import os
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-from gsheets.sheets_tools import _format_sheet_range_impl
+from core.utils import UserInputError
+from gsheets.sheets_tools import _format_sheet_range_impl, format_sheet_range
+
+
+def _unwrap(fn):
+    """Unwrap decorated function to access the underlying coroutine."""
+    while hasattr(fn, "__wrapped__"):
+        fn = fn.__wrapped__
+    return fn
 
 
 def create_mock_service():
@@ -434,3 +442,225 @@ async def test_format_confirmation_message_includes_new_params():
 
     assert result["spreadsheet_id"] == "test_spreadsheet_123"
     assert result["range_name"] == "A1:C10"
+
+
+@pytest.mark.asyncio
+async def test_format_merge_cells_default_all():
+    """Test merge_cells=True defaults to MERGE_ALL."""
+    mock_service = create_mock_service()
+
+    result = await _format_sheet_range_impl(
+        service=mock_service,
+        spreadsheet_id="test_spreadsheet_123",
+        range_name="J3:L3",
+        merge_cells=True,
+    )
+
+    assert result["spreadsheet_id"] == "test_spreadsheet_123"
+    assert result["range_name"] == "J3:L3"
+    assert "merged cells (MERGE_ALL)" in result["summary"]
+
+    call_args = mock_service.spreadsheets().batchUpdate.call_args
+    request_body = call_args[1]["body"]
+    requests = request_body["requests"]
+    assert len(requests) == 1
+    assert "mergeCells" in requests[0]
+    assert requests[0]["mergeCells"]["mergeType"] == "MERGE_ALL"
+    assert requests[0]["mergeCells"]["range"]["startColumnIndex"] == 9
+    assert requests[0]["mergeCells"]["range"]["endColumnIndex"] == 12
+    assert requests[0]["mergeCells"]["range"]["startRowIndex"] == 2
+    assert requests[0]["mergeCells"]["range"]["endRowIndex"] == 3
+
+
+@pytest.mark.asyncio
+async def test_format_merge_cells_columns():
+    """Test merge_cells=True with merge_type='MERGE_COLUMNS'."""
+    mock_service = create_mock_service()
+
+    result = await _format_sheet_range_impl(
+        service=mock_service,
+        spreadsheet_id="test_spreadsheet_123",
+        range_name="A1:B5",
+        merge_cells=True,
+        merge_type="MERGE_COLUMNS",
+    )
+
+    assert "merged cells (MERGE_COLUMNS)" in result["summary"]
+    call_args = mock_service.spreadsheets().batchUpdate.call_args
+    request_body = call_args[1]["body"]
+    assert request_body["requests"][0]["mergeCells"]["mergeType"] == "MERGE_COLUMNS"
+
+
+@pytest.mark.asyncio
+async def test_format_merge_cells_rows():
+    """Test merge_cells=True with merge_type='MERGE_ROWS'."""
+    mock_service = create_mock_service()
+
+    result = await _format_sheet_range_impl(
+        service=mock_service,
+        spreadsheet_id="test_spreadsheet_123",
+        range_name="A1:C2",
+        merge_cells=True,
+        merge_type="MERGE_ROWS",
+    )
+
+    assert "merged cells (MERGE_ROWS)" in result["summary"]
+    call_args = mock_service.spreadsheets().batchUpdate.call_args
+    request_body = call_args[1]["body"]
+    assert request_body["requests"][0]["mergeCells"]["mergeType"] == "MERGE_ROWS"
+
+
+@pytest.mark.asyncio
+async def test_format_merge_type_only():
+    """Test specifying merge_type without merge_cells automatically triggers merge."""
+    mock_service = create_mock_service()
+
+    result = await _format_sheet_range_impl(
+        service=mock_service,
+        spreadsheet_id="test_spreadsheet_123",
+        range_name="J3:L3",
+        merge_type="MERGE_ALL",
+    )
+
+    assert "merged cells (MERGE_ALL)" in result["summary"]
+    call_args = mock_service.spreadsheets().batchUpdate.call_args
+    assert "mergeCells" in call_args[1]["body"]["requests"][0]
+
+
+@pytest.mark.asyncio
+async def test_format_unmerge_cells():
+    """Test merge_cells=False creates unmergeCells request."""
+    mock_service = create_mock_service()
+
+    result = await _format_sheet_range_impl(
+        service=mock_service,
+        spreadsheet_id="test_spreadsheet_123",
+        range_name="J3:L3",
+        merge_cells=False,
+    )
+
+    assert "unmerged cells" in result["summary"]
+
+    call_args = mock_service.spreadsheets().batchUpdate.call_args
+    request_body = call_args[1]["body"]
+    requests = request_body["requests"]
+    assert len(requests) == 1
+    assert "unmergeCells" in requests[0]
+    assert requests[0]["unmergeCells"]["range"]["startColumnIndex"] == 9
+    assert requests[0]["unmergeCells"]["range"]["endColumnIndex"] == 12
+
+
+@pytest.mark.asyncio
+async def test_format_combined_formatting_and_merge():
+    """Test applying text formatting and merging together in a single request."""
+    mock_service = create_mock_service()
+
+    result = await _format_sheet_range_impl(
+        service=mock_service,
+        spreadsheet_id="test_spreadsheet_123",
+        range_name="J3:L3",
+        bold=True,
+        horizontal_alignment="CENTER",
+        vertical_alignment="MIDDLE",
+        merge_cells=True,
+    )
+
+    assert "bold" in result["summary"]
+    assert "horizontal align CENTER" in result["summary"]
+    assert "vertical align MIDDLE" in result["summary"]
+    assert "merged cells (MERGE_ALL)" in result["summary"]
+
+    call_args = mock_service.spreadsheets().batchUpdate.call_args
+    requests = call_args[1]["body"]["requests"]
+    assert len(requests) == 2
+    assert "repeatCell" in requests[0]
+    assert "mergeCells" in requests[1]
+
+
+@pytest.mark.asyncio
+async def test_format_merge_single_cell_raises():
+    """Test attempting to merge a single cell raises UserInputError."""
+    mock_service = create_mock_service()
+
+    with pytest.raises(UserInputError) as exc_info:
+        await _format_sheet_range_impl(
+            service=mock_service,
+            spreadsheet_id="test_spreadsheet_123",
+            range_name="A1:A1",
+            merge_cells=True,
+        )
+
+    assert "Cannot merge single cell" in str(exc_info.value)
+    assert "spanning at least 2 cells" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_format_invalid_merge_type_raises():
+    """Test invalid merge_type raises UserInputError."""
+    mock_service = create_mock_service()
+
+    with pytest.raises(UserInputError) as exc_info:
+        await _format_sheet_range_impl(
+            service=mock_service,
+            spreadsheet_id="test_spreadsheet_123",
+            range_name="A1:B2",
+            merge_cells=True,
+            merge_type="INVALID_TYPE",
+        )
+
+    assert "merge_type must be one of" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_format_unmerge_with_merge_type_raises():
+    """Test specifying merge_type when unmerging raises UserInputError."""
+    mock_service = create_mock_service()
+
+    with pytest.raises(UserInputError) as exc_info:
+        await _format_sheet_range_impl(
+            service=mock_service,
+            spreadsheet_id="test_spreadsheet_123",
+            range_name="A1:B2",
+            merge_cells=False,
+            merge_type="MERGE_ALL",
+        )
+
+    assert "Cannot specify merge_type when merge_cells is False" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_format_merge_case_insensitive():
+    """Test merge_type is case-insensitive."""
+    mock_service = create_mock_service()
+
+    result = await _format_sheet_range_impl(
+        service=mock_service,
+        spreadsheet_id="test_spreadsheet_123",
+        range_name="A1:B2",
+        merge_cells=True,
+        merge_type="merge_rows",
+    )
+
+    assert "merged cells (MERGE_ROWS)" in result["summary"]
+    call_args = mock_service.spreadsheets().batchUpdate.call_args
+    request_body = call_args[1]["body"]
+    assert request_body["requests"][0]["mergeCells"]["mergeType"] == "MERGE_ROWS"
+
+
+@pytest.mark.asyncio
+async def test_format_sheet_range_tool_wrapper_merge():
+    """Test format_sheet_range server tool wrapper with merge."""
+    mock_service = create_mock_service()
+
+    output = await _unwrap(format_sheet_range)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        spreadsheet_id="test_spreadsheet_123",
+        range_name="J3:L3",
+        bold=True,
+        merge_cells=True,
+    )
+
+    assert "Applied formatting to range 'J3:L3'" in output
+    assert "merged cells (MERGE_ALL)" in output
+    assert "user@example.com" in output
