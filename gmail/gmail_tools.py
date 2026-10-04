@@ -38,6 +38,7 @@ from core.attachment_storage import (
 from core.file_limits import (
     FileTooLargeError,
     ensure_within_file_size_limit,
+    get_gmail_body_max_chars,
     get_max_file_bytes,
 )
 from core.config import (
@@ -67,7 +68,6 @@ from auth.scopes import (
 from gmail.gmail_helpers import (
     FILTER_APPLY_DEFAULT_MAX_MESSAGES,
     GMAIL_METADATA_HEADERS,
-    RAW_BODY_TRUNCATE_LIMIT,
     THREAD_REPLY_CONTEXT_FIELDS,
     _analyze_thread_ownership_impl,
     _build_forward_content,
@@ -98,7 +98,6 @@ GMAIL_BATCH_SIZE = 25
 GMAIL_SEARCH_HEADER_BATCH_SIZE = 10
 GMAIL_REQUEST_DELAY = 0.1
 GMAIL_RATE_LIMIT_BACKOFF = 2.0
-HTML_BODY_TRUNCATE_LIMIT = 20000
 
 # Keep ``None`` valid at runtime without publishing it as an ``anyOf`` branch.
 # Cowork needs a top-level array schema, while Moonshot rejects the previous
@@ -247,12 +246,7 @@ def _format_body_content(
     if body_format == "html":
         html_stripped = html_body.strip()
         if html_stripped:
-            if len(html_stripped) > HTML_BODY_TRUNCATE_LIMIT:
-                return (
-                    html_stripped[:HTML_BODY_TRUNCATE_LIMIT]
-                    + "\n\n[Content truncated...]"
-                )
-            return html_stripped
+            return _truncate_content(html_stripped, get_gmail_body_max_chars())
         # Fall back to text body when no HTML is available
         text_stripped = text_body.strip()
         return text_stripped if text_stripped else "[No readable content found]"
@@ -281,19 +275,19 @@ def _format_body_content(
     )
 
     if use_html:
-        content = html_text
-        if len(content) > HTML_BODY_TRUNCATE_LIMIT:
-            content = content[:HTML_BODY_TRUNCATE_LIMIT] + "\n\n[Content truncated...]"
-        return content
+        return _truncate_content(html_text, get_gmail_body_max_chars())
     elif text_stripped:
         return text_body
     else:
         return "[No readable content found]"
 
 
-def _truncate_content(content: str, limit: int) -> str:
-    """Truncate content to a readable length for tool responses."""
-    if len(content) <= limit:
+def _truncate_content(content: str, limit: Optional[int]) -> str:
+    """Truncate content to a readable length for tool responses.
+
+    ``limit`` of ``None`` returns ``content`` unchanged.
+    """
+    if limit is None or len(content) <= limit:
         return content
     return content[:limit] + "\n\n[Content truncated...]"
 
@@ -311,7 +305,7 @@ def _decode_raw_mime_content(raw_data: str) -> str:
     except (binascii.Error, ValueError) as exc:
         return f"[Failed to decode raw MIME: {exc}]"
 
-    return _truncate_content(decoded_raw, RAW_BODY_TRUNCATE_LIMIT)
+    return _truncate_content(decoded_raw, get_gmail_body_max_chars())
 
 
 def _format_message_header_lines(
@@ -903,7 +897,7 @@ def _render_attached_messages(
                     if len(value) > ATTACHED_MESSAGE_HEADER_LIMIT:
                         value = value[:ATTACHED_MESSAGE_HEADER_LIMIT] + " [truncated]"
                     lines.append(f"{name}: {value}")
-            lines += ["", _truncate_content(body, HTML_BODY_TRUNCATE_LIMIT)]
+            lines += ["", _truncate_content(body, get_gmail_body_max_chars())]
             blocks.append("\n".join(lines))
             child = inner
             depth += 1
@@ -1880,12 +1874,12 @@ async def get_gmail_message_content(
     """
     Retrieves the full content (subject, sender, recipients, body) of a specific Gmail message.
 
-    Bodies are returned inline and truncated at 20,000 characters. Set full=True to
-    get the complete, untruncated message instead: it is exported to disk and the
-    response carries a short-lived download URL (HTTP transport) or file path (stdio
-    transport) rather than the body, so large messages never stream through the model
-    context. Stateless deployments have no file storage, so there full=True returns the
-    untruncated body inline.
+    Bodies are returned inline and truncated at the server's limit (20,000 characters
+    by default). Set full=True to get the complete, untruncated message instead: it is
+    exported to disk and the response carries a short-lived download URL (HTTP
+    transport) or file path (stdio transport) rather than the body, so large messages
+    never stream through the model context. Stateless deployments have no file storage,
+    so there full=True returns the untruncated body inline.
 
     Args:
         message_id (str): The unique ID of the Gmail message to retrieve.
