@@ -44,6 +44,10 @@ __pycache__/
 .venv/
 venv/
 
+# Cloudflare Worker package. The image is the Python server only.
+cloudflare/node_modules/
+cloudflare/.wrangler/
+
 # IDE files
 .vscode/
 .idea/

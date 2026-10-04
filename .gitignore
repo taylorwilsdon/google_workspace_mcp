@@ -1,3 +1,4 @@
+cloudflare/node_modules
 # ---- Python artefacts --------------------------------------------------
 __pycache__/
 *.py[cod]
@@ -11,6 +12,10 @@ claude.md
 *.egg-info/
 build/
 dist/
+
+# ---- Node (Cloudflare Worker in cloudflare/) --------------------------
+node_modules/
+.wrangler/
 
 # ---- Environments & tooling -------------------------------------------
 .env
