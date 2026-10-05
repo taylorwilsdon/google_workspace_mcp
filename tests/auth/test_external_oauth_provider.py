@@ -1,9 +1,11 @@
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
+import json
 import threading
 
 import pytest
+from google.oauth2.credentials import Credentials
 
 import auth.external_oauth_provider as provider_module
 from auth.external_oauth_provider import (
@@ -11,6 +13,18 @@ from auth.external_oauth_provider import (
     get_token_validation_cache_ttl,
     get_token_validation_workers,
 )
+from auth.google_auth import inspect_access_token
+
+
+def _described(email="user@example.com", sub="user-id", scopes=None):
+    return {
+        "email": email,
+        "sub": sub,
+        "id": sub,
+        "scopes": scopes
+        or ["openid", "https://www.googleapis.com/auth/userinfo.email"],
+        "expires_at": 2_000_000_000,
+    }
 
 
 def _make_provider(*, workers: int = 1, cache_ttl: int = 0) -> ExternalOAuthProvider:
@@ -46,9 +60,9 @@ async def test_external_token_validation_uses_isolated_executor(monkeypatch):
         observed["skip_valid_check"] = skip_valid_check
         validation_started.set()
         assert release_validation.wait(timeout=2)
-        return {"email": "user@example.com", "id": "user-id"}
+        return _described()
 
-    monkeypatch.setattr("auth.google_auth.get_user_info", blocking_get_user_info)
+    monkeypatch.setattr("auth.google_auth.inspect_access_token", blocking_get_user_info)
     asyncio.get_running_loop().set_default_executor(default_executor)
 
     validation_task = asyncio.create_task(provider.verify_token("ya29.test-token"))
@@ -73,7 +87,9 @@ async def test_external_token_validation_uses_isolated_executor(monkeypatch):
     assert access_token is not None
     assert access_token.email == "user@example.com"
     assert access_token.sub == "user-id"
-    assert observed == {"token": "ya29.test-token", "skip_valid_check": True}
+    assert observed["token"] == "ya29.test-token"
+    assert "https://www.googleapis.com/auth/userinfo.email" in access_token.scopes
+    assert access_token.expires_at == 2_000_000_000
 
 
 @pytest.mark.asyncio
@@ -88,9 +104,9 @@ async def test_external_token_validation_rejects_work_above_capacity(monkeypatch
         call_count += 1
         validation_started.set()
         assert release_validation.wait(timeout=2)
-        return {"email": "user@example.com", "id": "user-id"}
+        return _described()
 
-    monkeypatch.setattr("auth.google_auth.get_user_info", blocking_get_user_info)
+    monkeypatch.setattr("auth.google_auth.inspect_access_token", blocking_get_user_info)
 
     first_validation = asyncio.create_task(provider.verify_token("ya29.first"))
     try:
@@ -121,9 +137,9 @@ async def test_cancelled_validation_holds_capacity_until_worker_finishes(monkeyp
             validation_started.set()
             assert release_validation.wait(timeout=2)
             validation_finished.set()
-        return {"email": "user@example.com", "id": "user-id"}
+        return _described()
 
-    monkeypatch.setattr("auth.google_auth.get_user_info", blocking_get_user_info)
+    monkeypatch.setattr("auth.google_auth.inspect_access_token", blocking_get_user_info)
 
     cancelled_validation = asyncio.create_task(provider.verify_token("ya29.cancelled"))
     try:
@@ -167,7 +183,7 @@ async def test_closed_provider_rejects_new_validation_work(monkeypatch):
         called = True
         return {"email": "user@example.com"}
 
-    monkeypatch.setattr("auth.google_auth.get_user_info", get_user_info)
+    monkeypatch.setattr("auth.google_auth.inspect_access_token", get_user_info)
     provider.close()
 
     assert await provider.verify_token("ya29.after-close") is None
@@ -177,12 +193,12 @@ async def test_closed_provider_rejects_new_validation_work(monkeypatch):
 @pytest.mark.asyncio
 async def test_validation_failure_returns_none_and_releases_capacity(monkeypatch):
     provider = _make_provider()
-    results = iter([None, {"email": "user@example.com", "id": "user-id"}])
+    results = iter([None, _described()])
 
     def get_user_info(credentials, *, skip_valid_check=False):
         return next(results)
 
-    monkeypatch.setattr("auth.google_auth.get_user_info", get_user_info)
+    monkeypatch.setattr("auth.google_auth.inspect_access_token", get_user_info)
 
     try:
         assert await provider.verify_token("ya29.invalid") is None
@@ -226,9 +242,9 @@ async def test_configured_workers_admit_that_many_concurrent_validations(
     def blocking_get_user_info(credentials, *, skip_valid_check=False):
         all_started.wait(timeout=2)
         assert release_validation.wait(timeout=2)
-        return {"email": "user@example.com", "id": "user-id"}
+        return _described()
 
-    monkeypatch.setattr("auth.google_auth.get_user_info", blocking_get_user_info)
+    monkeypatch.setattr("auth.google_auth.inspect_access_token", blocking_get_user_info)
 
     validations = [
         asyncio.create_task(provider.verify_token(f"ya29.concurrent-{i}"))
@@ -255,9 +271,11 @@ def _counting_user_info(monkeypatch):
 
     def get_user_info(credentials, *, skip_valid_check=False):
         calls.append(credentials.token)
-        return {"email": f"{credentials.token}@example.com", "id": credentials.token}
+        return _described(
+            email=f"{credentials.token}@example.com", sub=credentials.token
+        )
 
-    monkeypatch.setattr("auth.google_auth.get_user_info", get_user_info)
+    monkeypatch.setattr("auth.google_auth.inspect_access_token", get_user_info)
     return calls
 
 
@@ -307,9 +325,9 @@ async def test_cached_token_bypasses_exhausted_validation_capacity(monkeypatch):
         if credentials.token == "ya29.slow":
             validation_started.set()
             assert release_validation.wait(timeout=2)
-        return {"email": "user@example.com", "id": "user-id"}
+        return _described()
 
-    monkeypatch.setattr("auth.google_auth.get_user_info", get_user_info)
+    monkeypatch.setattr("auth.google_auth.inspect_access_token", get_user_info)
 
     await provider.verify_token("ya29.cached")
     slow_validation = asyncio.create_task(provider.verify_token("ya29.slow"))
@@ -348,12 +366,12 @@ async def test_cached_token_is_revalidated_after_ttl(monkeypatch):
 @pytest.mark.asyncio
 async def test_failed_validation_is_not_cached(monkeypatch):
     provider = _make_provider(cache_ttl=60)
-    results = iter([None, {"email": "user@example.com", "id": "user-id"}])
+    results = iter([None, _described()])
 
     def get_user_info(credentials, *, skip_valid_check=False):
         return next(results)
 
-    monkeypatch.setattr("auth.google_auth.get_user_info", get_user_info)
+    monkeypatch.setattr("auth.google_auth.inspect_access_token", get_user_info)
 
     try:
         assert await provider.verify_token("ya29.flaky") is None
@@ -422,9 +440,9 @@ async def test_validation_finishing_after_close_does_not_repopulate_cache(monkey
     def get_user_info(credentials, *, skip_valid_check=False):
         validation_started.set()
         assert release_validation.wait(timeout=2)
-        return {"email": "user@example.com", "id": "user-id"}
+        return _described()
 
-    monkeypatch.setattr("auth.google_auth.get_user_info", get_user_info)
+    monkeypatch.setattr("auth.google_auth.inspect_access_token", get_user_info)
     validation = asyncio.create_task(provider.verify_token("ya29.in-flight"))
     try:
         await _wait_for_thread_event(validation_started)
@@ -447,15 +465,15 @@ async def test_invalid_identity_is_not_cached(monkeypatch):
     provider = _make_provider(cache_ttl=60)
     results = iter(
         [
-            {"email": "user@example.com", "id": {"unexpected": "object"}},
-            {"email": "user@example.com", "id": "user-id"},
+            {"email": "user@example.com", "id": {"unexpected": "object"}, "scopes": ["openid"], "expires_at": 2_000_000_000},
+            _described(),
         ]
     )
 
     def get_user_info(credentials, *, skip_valid_check=False):
         return next(results)
 
-    monkeypatch.setattr("auth.google_auth.get_user_info", get_user_info)
+    monkeypatch.setattr("auth.google_auth.inspect_access_token", get_user_info)
     try:
         assert await provider.verify_token("ya29.retry") is None
         result = await provider.verify_token("ya29.retry")
@@ -463,3 +481,62 @@ async def test_invalid_identity_is_not_cached(monkeypatch):
         assert result.sub == "user-id"
     finally:
         provider.close()
+
+
+class _TokenInfoResponse:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def read(self):
+        return json.dumps(self._payload).encode()
+
+
+def test_inspect_access_token_accepts_this_client_and_rejects_another(monkeypatch):
+    payloads = iter(
+        [
+            {
+                "aud": "test-client",
+                "azp": "test-client",
+                "email": "user@example.com",
+                "email_verified": "true",
+                "scope": "openid https://www.googleapis.com/auth/gmail.readonly",
+                "exp": "2000000000",
+                "sub": "user-sub",
+            },
+            {
+                "aud": "other-client",
+                "azp": "other-client",
+                "email": "user@example.com",
+                "email_verified": "true",
+                "scope": "openid",
+                "exp": "2000000000",
+            },
+        ]
+    )
+
+    def fake_urlopen(request, timeout=10):
+        assert request.full_url == "https://oauth2.googleapis.com/tokeninfo"
+        assert request.get_method() == "POST"
+        assert b"access_token=" in request.data
+        return _TokenInfoResponse(next(payloads))
+
+    monkeypatch.setattr("auth.google_auth.urlopen", fake_urlopen)
+    accepted = inspect_access_token(
+        Credentials(token="ya29.secret", client_id="test-client")
+    )
+    assert accepted == {
+        "email": "user@example.com",
+        "sub": "user-sub",
+        "scopes": ["openid", "https://www.googleapis.com/auth/gmail.readonly"],
+        "expires_at": 2000000000,
+    }
+    assert (
+        inspect_access_token(Credentials(token="ya29.secret", client_id="test-client"))
+        is None
+    )

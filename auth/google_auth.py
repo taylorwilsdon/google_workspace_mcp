@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+import json
 import jwt
 import logging
 import os
@@ -11,7 +12,9 @@ import webbrowser
 from collections import deque
 from contextlib import contextmanager
 from typing import List, Optional, Tuple, Dict, Any, Iterator
-from urllib.parse import parse_qs, urlparse
+from urllib.error import HTTPError, URLError
+from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.request import Request as UrlRequest, urlopen
 
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
@@ -774,8 +777,12 @@ async def handle_auth_callback(
                 "The 'client_secrets_path' parameter is deprecated. Use GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET environment variables instead."
             )
 
-        # Allow HTTP for localhost in development
-        if "OAUTHLIB_INSECURE_TRANSPORT" not in os.environ:
+        # oauthlib refuses an http redirect unless this is set. Only a loopback
+        # callback needs it, and the flag is process-wide, so a public https
+        # callback must not turn it on.
+        if "OAUTHLIB_INSECURE_TRANSPORT" not in os.environ and (
+            "localhost" in redirect_uri or "127.0.0.1" in redirect_uri
+        ):
             logger.warning(
                 "OAUTHLIB_INSECURE_TRANSPORT not set. Setting it for localhost development."
             )
@@ -1361,6 +1368,88 @@ def get_credentials(
         f"[get_credentials] Credentials have sufficient scopes. User: '{user_google_email}', Session: '{session_id}'"
     )
     return credentials
+
+
+_TOKENINFO_URL = "https://oauth2.googleapis.com/tokeninfo"
+
+
+def _tokeninfo_matches_client(payload: Dict[str, Any], client_id: str) -> bool:
+    """True when Google says this access token was minted for client_id."""
+    aud = payload.get("aud")
+    azp = payload.get("azp")
+    if not isinstance(aud, str) and not isinstance(azp, str):
+        return False
+    return aud == client_id or azp == client_id
+
+
+def inspect_access_token(credentials: Credentials) -> Optional[Dict[str, Any]]:
+    """Describe a Google access token using tokeninfo.
+
+    Returns email, sub, scopes, and expires_at only when the token was issued
+    to this process's OAuth client. A token minted for another client, or one
+    that does not say which scopes it carries, is rejected.
+    """
+    token = getattr(credentials, "token", None)
+    client_id = getattr(credentials, "client_id", None)
+    if not token or not client_id:
+        logger.error("Cannot inspect access token: missing token or client id.")
+        return None
+
+    request = UrlRequest(
+        _TOKENINFO_URL,
+        data=urlencode({"access_token": token}).encode(),
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=10) as response:
+            payload = json.loads(response.read().decode())
+    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError, ValueError) as e:
+        logger.info("Google tokeninfo rejected the access token: %s", type(e).__name__)
+        return None
+    except Exception as e:
+        logger.error("Unexpected error inspecting access token: %s", type(e).__name__)
+        return None
+
+    if not isinstance(payload, dict) or not _tokeninfo_matches_client(payload, client_id):
+        logger.warning("Access token was not issued to this OAuth client")
+        return None
+
+    email = payload.get("email")
+    if not isinstance(email, str) or not email:
+        logger.error("Access token did not include an email address")
+        return None
+    verified = payload.get("email_verified")
+    if verified is not None and str(verified).lower() != "true":
+        logger.warning("Access token email is not verified")
+        return None
+
+    raw_scope = payload.get("scope")
+    scopes = raw_scope.split() if isinstance(raw_scope, str) else []
+    if not scopes:
+        logger.warning("Access token did not include a scope list")
+        return None
+
+    expires_at = None
+    raw_exp = payload.get("exp")
+    try:
+        if raw_exp is not None:
+            expires_at = int(raw_exp)
+    except (TypeError, ValueError):
+        expires_at = None
+    if expires_at is None:
+        try:
+            expires_at = int(time.time()) + int(payload.get("expires_in"))
+        except (TypeError, ValueError):
+            logger.warning("Access token did not include an expiry")
+            return None
+
+    sub = payload.get("sub")
+    return {
+        "email": email,
+        "sub": sub if isinstance(sub, str) else None,
+        "scopes": scopes,
+        "expires_at": expires_at,
+    }
 
 
 def get_user_info(

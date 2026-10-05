@@ -171,44 +171,62 @@ class ExternalOAuthProvider(GoogleProvider):
         # than can run immediately so overload fails closed instead of accumulating.
         self._token_validation_slots = asyncio.Semaphore(token_validation_workers)
         # Only touched from the event loop, so no lock is needed. Values are
-        # (monotonic expiry, email, sub); the token itself is never stored.
+        # (monotonic expiry, email, sub, scopes, token expiry). The token itself
+        # is never stored.
         self._token_validation_cache_ttl = token_validation_cache_ttl
-        self._validated_identities: dict[str, tuple[float, str, Optional[str]]] = {}
+        self._validated_identities: dict[
+            str, tuple[float, str, Optional[str], tuple[str, ...], int]
+        ] = {}
 
-    def _cached_identity(self, cache_key: str) -> Optional[tuple[str, Optional[str]]]:
+    def _cached_identity(
+        self, cache_key: str
+    ) -> Optional[tuple[str, Optional[str], tuple[str, ...], int]]:
         entry = self._validated_identities.get(cache_key)
         if entry is None:
             return None
-        expires_at, email, sub = entry
+        expires_at, email, sub, scopes, token_expires_at = entry
         if expires_at <= time.monotonic():
             del self._validated_identities[cache_key]
             return None
-        return email, sub
+        return email, sub, scopes, token_expires_at
 
     def _remember_identity(
-        self, cache_key: str, email: str, sub: Optional[str]
+        self,
+        cache_key: str,
+        email: str,
+        sub: Optional[str],
+        scopes: tuple[str, ...],
+        token_expires_at: int,
     ) -> None:
         if not self._token_validation_cache_ttl:
             return
         now = time.monotonic()
         cache = self._validated_identities
         if len(cache) >= _TOKEN_VALIDATION_CACHE_MAX_ENTRIES:
-            for key in [
-                k for k, (expires_at, _, _) in cache.items() if expires_at <= now
-            ]:
+            for key in [k for k, entry in cache.items() if entry[0] <= now]:
                 del cache[key]
         if len(cache) >= _TOKEN_VALIDATION_CACHE_MAX_ENTRIES:
             del cache[next(iter(cache))]
-        cache[cache_key] = (now + self._token_validation_cache_ttl, email, sub)
+        cache[cache_key] = (
+            now + self._token_validation_cache_ttl,
+            email,
+            sub,
+            scopes,
+            token_expires_at,
+        )
 
     def _build_access_token(
-        self, token: str, email: str, sub: Optional[str]
+        self,
+        token: str,
+        email: str,
+        sub: Optional[str],
+        scopes: tuple[str, ...],
+        expires_at: int,
     ) -> WorkspaceAccessToken:
-        scope_list = list(getattr(self, "required_scopes", []) or [])
         return WorkspaceAccessToken(
             token=token,
-            scopes=scope_list,
-            expires_at=int(time.time()) + get_session_time(),
+            scopes=list(scopes),
+            expires_at=expires_at,
             claims={"email": email, "sub": sub},
             client_id=self._client_id,
             email=email,
@@ -228,8 +246,9 @@ class ExternalOAuthProvider(GoogleProvider):
         """
         Verify a token - supports both JWT ID tokens and ya29.* access tokens.
 
-        For ya29.* access tokens (issued externally), validates by calling
-        Google's userinfo API. For JWT tokens, delegates to parent class.
+        For ya29.* access tokens (issued externally), asks Google tokeninfo
+        which client minted the token and which scopes it carries. For JWT
+        tokens, delegates to parent class.
 
         Args:
             token: Token string to verify (JWT or ya29.* access token)
@@ -247,17 +266,17 @@ class ExternalOAuthProvider(GoogleProvider):
                 return self._build_access_token(token, *cached)
 
             try:
-                from auth.google_auth import get_user_info
+                from auth.google_auth import inspect_access_token
 
-                # Create minimal Credentials object for userinfo API call
+                # client_id is what tokeninfo's aud/azp must match. The secret
+                # is not sent to tokeninfo.
                 credentials = Credentials(
                     token=token,
                     token_uri="https://oauth2.googleapis.com/token",
                     client_id=self._client_id,
-                    client_secret=self._client_secret,
                 )
 
-                # Validate token by calling userinfo API. This is deliberately
+                # Validate the token off the event loop. This is deliberately
                 # isolated from asyncio's default executor, which handles the
                 # authenticated Google Workspace API calls throughout the server.
                 if self._token_validation_slots.locked():
@@ -278,9 +297,7 @@ class ExternalOAuthProvider(GoogleProvider):
                 try:
                     validation_future = asyncio.get_running_loop().run_in_executor(
                         executor,
-                        functools.partial(
-                            get_user_info, credentials, skip_valid_check=True
-                        ),
+                        functools.partial(inspect_access_token, credentials),
                     )
                 except Exception:
                     self._token_validation_slots.release()
@@ -291,7 +308,7 @@ class ExternalOAuthProvider(GoogleProvider):
                 # Release inline once the worker is done rather than relying on the
                 # event loop running a done callback before this coroutine resumes.
                 try:
-                    user_info = await asyncio.shield(validation_future)
+                    described = await asyncio.shield(validation_future)
                 finally:
                     if validation_future.done():
                         self._token_validation_slots.release()
@@ -299,22 +316,42 @@ class ExternalOAuthProvider(GoogleProvider):
                         validation_future.add_done_callback(
                             lambda _: self._token_validation_slots.release()
                         )
-
-                if user_info and user_info.get("email"):
-                    logger.info(
-                        f"Validated external access token for: {user_info['email']}"
-                    )
-                    access_token = self._build_access_token(
-                        token, user_info["email"], user_info.get("id")
-                    )
-                    if self._token_validation_executor is not None:
-                        self._remember_identity(
-                            cache_key, access_token.email, access_token.sub
-                        )
-                    return access_token
-                else:
-                    logger.error("Could not get user info from access token")
+                email = described.get("email") if described else None
+                raw_scopes = described.get("scopes") if described else None
+                raw_sub = None
+                if described:
+                    raw_sub = described.get("sub", described.get("id"))
+                expires_at = described.get("expires_at") if described else None
+                scopes = (
+                    tuple(scope for scope in raw_scopes if isinstance(scope, str))
+                    if isinstance(raw_scopes, (list, tuple))
+                    else ()
+                )
+                sub = raw_sub if isinstance(raw_sub, str) else None
+                if raw_sub is not None and sub is None:
+                    logger.error("Google access token identity was not a string")
                     return None
+                if (
+                    not email
+                    or not isinstance(email, str)
+                    or not scopes
+                    or not isinstance(expires_at, int)
+                ):
+                    logger.error(
+                        "Google access token was not issued to this client "
+                        "or did not include an identity and scopes"
+                    )
+                    return None
+
+                logger.info(f"Validated external access token for: {email}")
+                access_token = self._build_access_token(
+                    token, email, sub, scopes, expires_at
+                )
+                if self._token_validation_executor is not None:
+                    self._remember_identity(
+                        cache_key, access_token.email, access_token.sub, scopes, expires_at
+                    )
+                return access_token
 
             except Exception as e:
                 logger.error(f"Error validating external access token: {e}")

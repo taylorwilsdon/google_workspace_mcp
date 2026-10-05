@@ -6,6 +6,8 @@ Files are automatically cleaned up after expiration (default 1 hour).
 """
 
 import base64
+import hashlib
+import hmac
 import logging
 import os
 import re
@@ -16,6 +18,7 @@ import uuid
 from pathlib import Path
 from typing import NamedTuple, Optional, Dict
 from datetime import datetime, timedelta
+from urllib.parse import urlencode
 
 logger = logging.getLogger(__name__)
 
@@ -412,6 +415,65 @@ def get_attachment_storage() -> AttachmentStorage:
     return _attachment_storage
 
 
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def _attachment_secret() -> Optional[str]:
+    """Secret that signs download URLs. Absent on a loopback-only process."""
+    for name in ("WORKSPACE_MCP_ATTACHMENT_SECRET", "GOOGLE_OAUTH_CLIENT_SECRET"):
+        value = os.getenv(name, "").strip()
+        if value:
+            return value
+    return None
+
+
+def _attachment_signature(file_id: str, expires_at: int, secret: str) -> str:
+    message = f"{file_id}.{expires_at}".encode()
+    return hmac.new(secret.encode(), message, hashlib.sha256).hexdigest()
+
+
+def attachment_download_query(file_id: str, ttl_seconds: int = DEFAULT_EXPIRATION_SECONDS) -> str:
+    """Query string that authorizes one download, or empty when unsigned loopback is enough."""
+    secret = _attachment_secret()
+    if not secret:
+        return ""
+    expires_at = int(time.time()) + ttl_seconds
+    return urlencode(
+        {"exp": expires_at, "sig": _attachment_signature(file_id, expires_at, secret)}
+    )
+
+
+def attachment_download_authorized(
+    file_id: str,
+    *,
+    exp: Optional[str],
+    sig: Optional[str],
+    client_host: Optional[str],
+) -> bool:
+    """True when this request may read the file.
+
+    A configured secret requires a matching unexpired signature, on every host.
+    With no secret, only a loopback client may read the file: the id alone is
+    not a credential once the route is reachable from somewhere else.
+    """
+    secret = _attachment_secret()
+    if secret:
+        if not exp or not sig:
+            return False
+        try:
+            expires_at = int(exp)
+        except (TypeError, ValueError):
+            return False
+        if expires_at < int(time.time()):
+            return False
+        expected = _attachment_signature(file_id, expires_at, secret)
+        try:
+            return hmac.compare_digest(expected, sig)
+        except (TypeError, ValueError):
+            return False
+    return client_host in _LOOPBACK_HOSTS
+
+
 def get_attachment_url(file_id: str) -> str:
     """
     Generate a URL for accessing an attachment.
@@ -453,4 +515,6 @@ def get_attachment_url(file_id: str) -> str:
     else:
         base_url = f"{WORKSPACE_MCP_BASE_URI}:{WORKSPACE_MCP_PORT}"
 
-    return f"{base_url}/attachments/{file_id}"
+    query = attachment_download_query(file_id)
+    suffix = f"?{query}" if query else ""
+    return f"{base_url}/attachments/{file_id}{suffix}"

@@ -122,6 +122,19 @@ class MinimalOAuthServer:
         @self.app.get("/attachments/{file_id}")
         async def serve_attachment(file_id: str, request: Request):
             """Serve a stored attachment file."""
+            from core.attachment_storage import attachment_download_authorized
+
+            client_host = request.client.host if request.client else None
+            if not attachment_download_authorized(
+                file_id,
+                exp=request.query_params.get("exp"),
+                sig=request.query_params.get("sig"),
+                client_host=client_host,
+            ):
+                return JSONResponse(
+                    {"error": "Attachment not found or expired"}, status_code=404
+                )
+
             storage = get_attachment_storage()
             metadata = storage.get_attachment_metadata(file_id)
 

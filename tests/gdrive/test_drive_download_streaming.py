@@ -42,6 +42,7 @@ def _attachment_request(file_id):
         "headers": [],
         "query_string": b"",
         "path_params": {"file_id": file_id},
+        "client": ("127.0.0.1", 12345),
     }
     return Request(scope)
 
