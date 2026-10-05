@@ -395,7 +395,7 @@ class ExternalOAuthProvider(GoogleProvider):
         protected_routes = create_protected_resource_routes(
             resource_url=resource_url,
             authorization_servers=[GOOGLE_ISSUER_URL],
-            scopes_supported=self.required_scopes,
+            scopes_supported=self.scopes_supported,
             resource_name="Google Workspace MCP",
             resource_documentation=None,
         )

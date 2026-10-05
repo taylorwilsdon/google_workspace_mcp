@@ -802,7 +802,13 @@ def configure_server_for_http():
                     client_secret=config.client_secret,
                     base_url=config.get_oauth_base_url(),
                     redirect_path=config.redirect_path,
-                    required_scopes=provider_valid_scopes,
+                    # The HTTP gate runs before any tool call and matches scopes
+                    # as exact strings. Requiring every enabled-tool scope here
+                    # rejects a token that only carries the broader scopes Google
+                    # actually granted (calendar does not satisfy calendar.events).
+                    # Tool calls still check their own scopes.
+                    required_scopes=provider_required_scopes,
+                    valid_scopes=provider_valid_scopes,
                     resource_server_url=config.get_oauth_base_url(),
                     jwt_signing_key=jwt_signing_key,
                     token_validation_workers=get_token_validation_workers(),

@@ -277,6 +277,60 @@ def test_configure_server_for_http_rejects_external_provider_without_jwt_key(
         server_module.configure_server_for_http()
 
 
+def test_configure_server_for_http_limits_external_provider_to_protocol_scopes(
+    monkeypatch,
+):
+    """External mode must not require every tool scope before tools/list.
+
+    A token granted the broad Google scopes (calendar, drive) does not list
+    the narrower ones (calendar.events, drive.readonly). Those belong on
+    valid_scopes, which are advertised but not enforced on POST /mcp.
+    """
+    captured = {}
+
+    class FakeExternalOAuthProvider:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    tool_scopes = [
+        "https://www.googleapis.com/auth/calendar",
+        "https://www.googleapis.com/auth/calendar.events",
+        "https://www.googleapis.com/auth/userinfo.email",
+        "openid",
+    ]
+    monkeypatch.setenv(
+        "FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY",
+        "this-is-a-long-enough-jwt-signing-key",
+    )
+    monkeypatch.setattr(server_module, "get_transport_mode", lambda: "streamable-http")
+    monkeypatch.setattr(server_module, "set_auth_provider", lambda provider: None)
+    monkeypatch.setattr(server_module, "get_oauth_proxy_expiry_kwargs", lambda: {})
+    monkeypatch.setattr(server_module, "_auth_provider", server_module._auth_provider)
+    monkeypatch.setattr(server_module.server, "auth", server_module.server.auth)
+    monkeypatch.setattr(server_module, "get_current_scopes", lambda: tool_scopes)
+    monkeypatch.setattr(
+        "auth.external_oauth_provider.ExternalOAuthProvider",
+        FakeExternalOAuthProvider,
+    )
+    monkeypatch.setattr(
+        "auth.oauth_config.get_oauth_config",
+        lambda: SimpleNamespace(
+            is_oauth21_enabled=lambda: True,
+            is_configured=lambda: True,
+            is_external_oauth21_provider=lambda: True,
+            client_id="client-id",
+            client_secret="client-secret",
+            get_oauth_base_url=lambda: "https://workspace-mcp.example.test",
+            redirect_path="/oauth2callback",
+        ),
+    )
+
+    server_module.configure_server_for_http()
+
+    assert captured["required_scopes"] == sorted(server_module.PROTOCOL_AUTH_SCOPES)
+    assert captured["valid_scopes"] == sorted(tool_scopes)
+
+
 def test_configure_server_for_http_passes_jwt_key_to_external_provider(monkeypatch):
     """ExternalOAuthProvider must receive the derived jwt_signing_key.
 
