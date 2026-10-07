@@ -87,18 +87,24 @@ Send an email. Supports new messages, replies, HTML, attachments, CC/BCC, and Se
 | in_reply_to | string | no | | RFC Message-ID of a specific reply target; omit to reply to the latest eligible message |
 | references | string | no | | Optional Message-ID ancestry chain; normally derived from thread_id |
 | attachments | array | no | | See attachment format below |
+| draft_id | string | no | | Send an existing draft as-is; pass no other content arguments |
 
 **Attachment format** (each item is an object):
 - **File path**: `{"path": "path/to/file.pdf"}` -- optionally add `"filename"` and `"mime_type"`. Use forward slashes on all platforms
 - **Base64 content**: `{"content": "base64data", "filename": "doc.pdf"}` -- optionally add `"mime_type"` (must be standard base64, not urlsafe)
 
 ### draft_gmail_message
-Create a draft. Same capabilities as send but with additional signature/quoting options.
+Create, update, delete, or list drafts. Same compose capabilities as send, plus signature/quoting options.
 
 | Parameter | Type | Required | Default | Notes |
 |-----------|------|----------|---------|-------|
-| subject | string | yes | | |
-| body | string | yes | | |
+| action | string | no | "create" | "create", "update", "delete", or "list" |
+| draft_id | string | for update/delete | | Stable across updates; find it with action="list" |
+| clear_fields | array | no | | update only: any of "to", "cc", "bcc", "subject", "attachments" to empty |
+| page_size | integer | no | 25 | list only, max 100 |
+| page_token | string | no | | list only |
+| subject | string | no | | Omit on update to keep the stored value |
+| body | string | no | | On update, passing a body rebuilds the message with the new body |
 | body_format | string | no | "plain" | "plain" or "html" |
 | user_google_email | string | yes | | |
 | to | string | no | | Can be empty for drafts |
@@ -112,6 +118,10 @@ Create a draft. Same capabilities as send but with additional signature/quoting 
 | attachments | array | no | | Same format as send |
 | include_signature | boolean | no | true | Append Gmail signature if available |
 | quote_original | boolean | no | false | Include original message as quoted reply (requires thread_id) |
+| forward_message_id | string | no | | Draft a forward of this message |
+| include_forwarded_attachments | boolean | no | true | When forwarding, carry over the original's attachments |
+
+On `action="update"`, omitted or blank to/cc/bcc/subject/From/attachments are kept; passing `attachments` replaces the stored ones. An update that changes only to/cc/bcc/subject patches the stored message in place. `action="delete"` is permanent (no Trash).
 
 Operational Gmail settings errors such as rate limits abort draft creation instead of silently falling back to a potentially unintended sender.
 
@@ -225,7 +235,8 @@ Create or delete a filter.
 
 ### Drafts vs Send
 - Use `draft_gmail_message` when you want the user to review before sending. It supports `include_signature` (auto-appends Gmail signature) and `quote_original` (includes quoted reply text).
-- Use `send_gmail_message` for immediate delivery.
+- Use `send_gmail_message` for immediate delivery, or `send_gmail_message(draft_id=...)` to send a reviewed draft exactly as it stands.
+- To revise a draft, use `draft_gmail_message(action="update", draft_id=...)` instead of creating a second draft.
 
 ### Attachments
 - To find attachments, read the message with `get_gmail_message_content` -- attachment IDs are listed in the response.
