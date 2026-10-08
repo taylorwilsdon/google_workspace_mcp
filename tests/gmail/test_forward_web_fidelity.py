@@ -165,6 +165,45 @@ async def test_forward_with_attachment_mime_shape():
     assert attach["disposition"] == "attachment"
 
 
+@pytest.mark.asyncio
+async def test_forward_refuses_to_send_when_builder_drops_an_attachment(monkeypatch):
+    """A downloaded attachment the MIME builder could not include must fail the
+    forward instead of sending an incomplete message reported as complete."""
+    import gmail.gmail_tools as gt
+    from core.utils import UserInputError
+
+    att_b64 = base64.urlsafe_b64encode(b"%PDF-1.4 fake content").decode()
+    msg = _create_mock_message(
+        text_body="See attached.",
+        attachments=[
+            {
+                "filename": "report.pdf",
+                "mimeType": "application/pdf",
+                "attachmentId": "att1",
+            }
+        ],
+    )
+    svc = _create_mock_service(msg, attachments_data=[{"data": att_b64}])
+    real_prepare = gt._prepare_gmail_message_web
+
+    def dropping_prepare(**kwargs):
+        raw, _count, _errors = real_prepare(**kwargs)
+        return raw, 0, ["report.pdf: boom"]
+
+    monkeypatch.setattr(gt, "_prepare_gmail_message_web", dropping_prepare)
+
+    with pytest.raises(UserInputError, match="0/1 attached.*report.pdf: boom"):
+        await _forward_gmail_message_impl(
+            service=svc,
+            message_id="msg_drop",
+            to="recipient@example.com",
+            include_attachments=True,
+            user_google_email="me@example.com",
+        )
+    send_calls = svc.users.return_value.messages.return_value.send.call_args_list
+    assert not [c for c in send_calls if "body" in c.kwargs]
+
+
 # ---------------------------------------------------------------------------
 # HTML probe tests
 # ---------------------------------------------------------------------------

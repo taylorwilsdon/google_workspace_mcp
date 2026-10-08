@@ -3947,7 +3947,7 @@ async def _forward_gmail_message_impl(
         resolve_effective_transport, user_google_email
     )
 
-    raw_message, _fwd_count, _fwd_errors = _prepare_gmail_message_web(
+    raw_message, attached_count, attachment_errors = _prepare_gmail_message_web(
         subject=forward_subject,
         plain_body=forward_plain,
         html_body=forward_html,
@@ -3960,8 +3960,17 @@ async def _forward_gmail_message_impl(
         include_bcc_header=(effective == "api"),
     )
 
+    if attachments_to_send and attached_count != len(attachments_to_send):
+        details = (
+            f" Details: {'; '.join(attachment_errors)}" if attachment_errors else ""
+        )
+        raise UserInputError(
+            "Failed to include requested attachment(s): "
+            f"{attached_count}/{len(attachments_to_send)} attached.{details}"
+        )
+
     attachment_info = (
-        _format_attachment_result(len(attachments_to_send), len(attachments_to_send))
+        _format_attachment_result(attached_count, len(attachments_to_send))
         if attachments_to_send
         else ""
     )
