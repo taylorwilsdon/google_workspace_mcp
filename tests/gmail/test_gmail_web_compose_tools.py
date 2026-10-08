@@ -846,3 +846,51 @@ async def test_send_reply_inherited_subject_does_not_double_re_or_strip_tags():
     raw = _raw_sent(gmail)
     assert f"Subject: {parent}" in raw
     assert "Subject: Re: [list]" not in raw
+
+
+def _plain_part(raw: str) -> str:
+    from email import message_from_string
+
+    parsed = message_from_string(raw)
+    return "".join(
+        part.get_payload(decode=True).decode("utf-8")
+        for part in parsed.walk()
+        if part.get_content_type() == "text/plain"
+    )
+
+
+@pytest.mark.asyncio
+async def test_send_html_body_plain_part_keeps_paragraph_breaks():
+    """<p>First.</p><p>Second.</p> must not flatten to 'First.Second.'."""
+    gmail = _gmail_service()
+
+    await _unwrap(send_gmail_message)(
+        service=gmail,
+        people_service=_people_service_empty(),
+        user_google_email="grace@example.org",
+        to="ada@example.com",
+        subject="Paragraphs",
+        body="<p>First.</p><p>Second.</p>",
+        body_format="html",
+        include_signature=False,
+    )
+
+    plain = _plain_part(_raw_sent(gmail))
+    assert "First.Second." not in plain
+    assert "First.\nSecond." in plain.replace("\r\n", "\n")
+
+
+def test_prepare_web_html_body_plain_part_keeps_paragraph_breaks():
+    from gmail.gmail_tools import _prepare_gmail_message
+
+    raw_b64, *_ = _prepare_gmail_message(
+        subject="Paragraphs",
+        body="<p>First.</p><p>Second.</p>",
+        to="ada@example.com",
+        body_format="html",
+        from_email="grace@example.org",
+        web_compose=True,
+    )
+    plain = _plain_part(base64.urlsafe_b64decode(raw_b64).decode("utf-8"))
+    assert "First.Second." not in plain
+    assert "First.\nSecond." in plain.replace("\r\n", "\n")

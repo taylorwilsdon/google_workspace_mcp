@@ -1344,7 +1344,7 @@ async def _build_web_compose_raw(
             if body.lstrip().startswith("<div dir=")
             else new_message_html(body, resolved_dir)
         )
-        new_plain = _html_to_text(body).strip()
+        new_plain = html_to_text_preserving_breaks(body).strip()
     else:
         new_plain = body
         resolved_dir = base_text_direction(body) if direction == "auto" else direction
@@ -2147,7 +2147,7 @@ def _prepare_gmail_message(
                 if body.lstrip().startswith("<div dir=")
                 else new_message_html(body, resolved_dir)
             )
-            plain_part = _html_to_text(body).strip()
+            plain_part = html_to_text_preserving_breaks(body).strip()
         else:
             plain_part = body
             resolved_dir = (
@@ -3895,10 +3895,8 @@ async def _forward_gmail_message_impl(
 
     # Plain-text note from the user (if any).
     if forward_message and forward_message_format == "html":
-        # Strip tags for the plain note portion.
-        _extractor = _HTMLTextExtractor()
-        _extractor.feed(forward_message)
-        note_plain = _extractor.get_text()
+        # Strip tags for the plain note portion, keeping block boundaries.
+        note_plain = html_to_text_preserving_breaks(forward_message).strip()
         note_html = html_newlines_to_br(forward_message)
     else:
         note_plain = forward_message or ""

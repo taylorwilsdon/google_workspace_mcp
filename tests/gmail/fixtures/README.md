@@ -39,7 +39,7 @@ drifts.
   [`multipart/alternative`] + attachment part(s) (`Content-Disposition: attachment`,
   base64) when attachments are carried. The forwarded content sits directly inside
   the `gmail_quote_container` after the `gmail_attr` header — **no `blockquote`**,
-  and the plain-text forwarded block is **not** `> `-quoted. The forward header
+  and the plain-text forwarded block is **not** prefixed with `>`. The forward header
   uses `<strong class="gmail_sendername" dir="auto">{name}</strong>` for the From
   line (current Gmail; older samples lacked `gmail_sendername`).
 - **Content-Transfer-Encoding is content/part-dependent:** quoted-printable for

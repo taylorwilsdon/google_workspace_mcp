@@ -478,6 +478,21 @@ def _mime_filename_params(filename: str) -> Tuple[str, str]:
     return f'name="{esc}"', f'filename="{esc}"'
 
 
+_MIME_TYPE_RE = re.compile(
+    r"[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*"
+)
+
+
+def _safe_mime_type(mime_type: Optional[str]) -> str:
+    """Return *mime_type* trimmed if it is a bare ``type/subtype`` token.
+
+    Anything else (empty, parameters, CR/LF header injection) becomes
+    ``application/octet-stream`` so a caller value cannot add header lines.
+    """
+    value = (mime_type or "").strip()
+    return value if _MIME_TYPE_RE.fullmatch(value) else "application/octet-stream"
+
+
 def _b64_crlf(data: bytes) -> str:
     """Base64-encode *data* with CRLF line breaks and no trailing newline."""
     crlf = "\r\n"
@@ -496,7 +511,7 @@ def _attachment_part(
     return crlf.join(
         [
             f"--{outer_boundary}",
-            f"Content-Type: {mime_type}; {name_param}",
+            f"Content-Type: {_safe_mime_type(mime_type)}; {name_param}",
             "Content-Transfer-Encoding: base64",
             f"Content-Disposition: attachment; {filename_param}",
             "",
@@ -518,7 +533,7 @@ def _inline_part(
     return crlf.join(
         [
             f"--{outer_boundary}",
-            f"Content-Type: {mime_type}; {name_param}",
+            f"Content-Type: {_safe_mime_type(mime_type)}; {name_param}",
             "Content-Transfer-Encoding: base64",
             f"Content-ID: {cid}",
             f"Content-Disposition: inline; {filename_param}",

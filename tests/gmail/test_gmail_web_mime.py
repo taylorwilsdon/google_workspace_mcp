@@ -790,3 +790,47 @@ class TestNormalizeReplySubject:
         ]:
             once = normalize_reply_subject(s)
             assert normalize_reply_subject(once) == once
+
+
+class TestPartMimeTypeSanitization:
+    """A caller-supplied mime_type must not inject headers into a MIME part."""
+
+    INJECTED = "application/pdf\r\nContent-Disposition: inline\r\n\r\nINJECTED"
+
+    def test_attachment_part_rejects_crlf_mime_type(self):
+        from gmail.gmail_web_mime import _attachment_part
+
+        part = _attachment_part("b", "a.pdf", self.INJECTED, b"x")
+        assert "INJECTED" not in part
+        assert 'Content-Type: application/octet-stream; name="a.pdf"' in part
+
+    def test_inline_part_rejects_crlf_mime_type(self):
+        from gmail.gmail_web_mime import _inline_part
+
+        part = _inline_part("b", "a.png", self.INJECTED, b"x", "img1")
+        assert "INJECTED" not in part
+        assert 'Content-Type: application/octet-stream; name="a.png"' in part
+
+    def test_valid_mime_type_kept_and_trimmed(self):
+        from gmail.gmail_web_mime import _attachment_part
+
+        part = _attachment_part("b", "a.pdf", "  application/pdf ", b"x")
+        assert 'Content-Type: application/pdf; name="a.pdf"' in part
+
+    def test_end_to_end_web_message_has_no_injected_headers(self):
+        from gmail.gmail_tools import _prepare_gmail_message_web
+
+        raw_b64, count, errors = _prepare_gmail_message_web(
+            subject="s",
+            plain_body="p",
+            html_body="<div>p</div>",
+            to="r@example.com",
+            from_email="s@example.com",
+            attachments=[
+                {"filename": "a.pdf", "mime_type": self.INJECTED, "data": b"x"}
+            ],
+        )
+        raw = base64.urlsafe_b64decode(raw_b64).decode()
+        assert count == 1 and not errors
+        assert "INJECTED" not in raw
+        assert "Content-Disposition: inline" not in raw

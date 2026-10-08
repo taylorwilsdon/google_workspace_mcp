@@ -617,3 +617,33 @@ async def test_forward_no_note_plain_only_original():
     assert html_payload.startswith('<div dir="ltr"><br>'), (
         f"Expected no-note HTML to start with outer wrapper + bare <br>, got: {html_payload[:80]!r}"
     )
+
+
+@pytest.mark.asyncio
+async def test_forward_html_note_plain_keeps_paragraph_breaks():
+    """An HTML note's text/plain rendering keeps block boundaries."""
+    from email import message_from_bytes
+
+    msg = _create_mock_message(
+        text_body="Lorem ipsum original plain.",
+        html_body="<div>Lorem ipsum original html.</div>",
+    )
+    svc = _create_mock_service(msg)
+
+    await _forward_gmail_message_impl(
+        service=svc,
+        message_id="msg_note_paras",
+        to="recipient@example.com",
+        forward_message="<p>First.</p><p>Second.</p>",
+        forward_message_format="html",
+        user_google_email="me@example.com",
+    )
+
+    parsed = message_from_bytes(_decode_sent_raw(svc))
+    plain = next(
+        p.get_payload(decode=True).decode("utf-8")
+        for p in parsed.walk()
+        if p.get_content_type() == "text/plain"
+    ).replace("\r\n", "\n")
+    assert "First.Second." not in plain
+    assert "First.\nSecond." in plain
