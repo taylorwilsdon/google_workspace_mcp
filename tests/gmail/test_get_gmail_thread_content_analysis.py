@@ -39,6 +39,7 @@ def _fake_thread_response() -> dict:
                 "payload": {
                     "headers": [
                         {"name": "From", "value": "Alex <alex@alexreynolds.com>"},
+                        {"name": "Reply-To", "value": "alex-support@alexreynolds.com"},
                         {"name": "To", "value": "vendor@example.com"},
                         {"name": "Date", "value": "Mon, 14 Apr 2026 09:00:00 -0400"},
                         {"name": "Subject", "value": "Test thread"},
@@ -93,6 +94,7 @@ async def test_default_returns_string_unchanged_behavior():
     assert isinstance(result, str)
     assert "Thread ID: t1" in result
     assert "alex@alexreynolds.com" in result or "Alex" in result
+    assert "Reply-To: alex-support@alexreynolds.com" in result
     assert "To: vendor@example.com" in result
     assert "Cc: [not present in Gmail response]" in result
 

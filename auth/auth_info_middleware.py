@@ -268,13 +268,8 @@ class AuthInfoMiddleware(Middleware):
                 # This is ONLY safe in stdio mode because it's single-user
                 logger.debug("Checking for stdio mode authentication")
 
-                # Get the requested user from the context if available
-                requested_user = None
-                if hasattr(context, "request") and hasattr(context.request, "params"):
-                    requested_user = context.request.params.get("user_google_email")
-                elif hasattr(context, "arguments"):
-                    # FastMCP may store arguments differently
-                    requested_user = context.arguments.get("user_google_email")
+                arguments = getattr(context.message, "arguments", None) or {}
+                requested_user = arguments.get("user_google_email")
 
                 if requested_user:
                     try:

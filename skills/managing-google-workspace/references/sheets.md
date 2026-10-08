@@ -7,6 +7,7 @@ MCP tools for reading, writing, formatting, and managing Google Sheets. All tool
 - Read & Write: read_sheet_values, modify_sheet_values
 - Create: create_spreadsheet, create_sheet, move_sheet_rows
 - Formatting: format_sheet_range, manage_conditional_formatting
+- Named Ranges: manage_named_range
 - Comments: list_spreadsheet_comments, manage_spreadsheet_comment
 - Tips
 
@@ -51,18 +52,24 @@ Google Sheets can resolve them as named ranges.
 | range_name | string | no | A1:Z1000 | A1 notation, e.g. `Sheet1!A1:D10`. Caps at 1000 rows |
 | include_hyperlinks | boolean | no | false | Fetch hyperlink metadata (slower) |
 | include_notes | boolean | no | false | Fetch cell notes (slower) |
+| include_formulas | boolean | no | false | Fetch raw formula strings |
+| include_smart_chips | boolean | no | false | Fetch smart chips metadata (Drive files/folders & People) |
 
 ### modify_sheet_values
-Write, update, or clear values in a range.
+Write, update, or clear values in a range, or insert Smart Chips (Drive files/folders or People). Chip writes are chunked into batches of <=8 chips to respect Google Sheets API limits.
+
+When providing `chips`, omit `values` and leave `clear_values=false`. `value_input_option` applies only to ordinary value writes.
 
 | Parameter | Type | Required | Default | Notes |
 |-----------|------|----------|---------|-------|
 | user_google_email | string | yes | | |
 | spreadsheet_id | string | yes | | |
 | range_name | string | yes | | A1 notation |
-| values | array or string | conditional | | 2D array of values. Required unless `clear_values=true`. Accepts a JSON string or a list |
+| values | array or string | conditional | | 2D array of values. Required unless `clear_values=true` or `chips` is set. Accepts a JSON string or a list |
 | value_input_option | string | no | USER_ENTERED | `RAW` or `USER_ENTERED` |
 | clear_values | boolean | no | false | Clear the range instead of writing |
+| chips | array, object, or string | conditional | | Smart chips instead of `values`: single URL/email, 1D/2D array of URLs/emails, or dict(s) with `type`, `uri`/`email` |
+| chip_type | string | no | null | Optional override for `chips`: `drive` or `person` (auto-detected if omitted) |
 
 ---
 
@@ -76,6 +83,7 @@ Create a new Google Spreadsheet.
 | user_google_email | string | yes | | |
 | title | string | yes | | Spreadsheet title |
 | sheet_names | array of strings | no | | Sheet names to create. Defaults to one sheet with the default name |
+| folder_id | string | no | root | Parent folder. Accepts a folder ID or shortcut; for shared drives, a folder inside that drive. If the move fails, the spreadsheet is still created in My Drive root and the reply reports why |
 
 ### create_sheet
 Add a new sheet (tab) to an existing spreadsheet.
@@ -140,6 +148,24 @@ Add, update, or delete conditional formatting rules.
 
 ---
 
+## Named Ranges
+
+### manage_named_range
+List, create, update, or delete named ranges in a spreadsheet.
+
+| Parameter | Type | Required | Default | Notes |
+|-----------|------|----------|---------|-------|
+| user_google_email | string | yes | | |
+| spreadsheet_id | string | yes | | Spreadsheet ID or URL |
+| action | string | yes | | `list`, `create`, `update`, or `delete` |
+| name | string | for create | | Name of the named range (required for `create`; optional identifier for `update`/`delete`) |
+| range_name | string | for create | | Target cell or range in A1 notation, e.g. `Sheet1!A1:D10`, `A1:B5` (required for `create`) |
+| named_range_id | string | no | | ID of the named range (optional identifier for `update`/`delete`) |
+| new_name | string | no | | New name for the named range (action `update`) |
+| new_range | string | no | | New A1-style range for the named range (action `update`) |
+
+---
+
 ## Comments
 
 ### list_spreadsheet_comments
@@ -160,6 +186,7 @@ Create, reply to, or resolve a comment.
 | action | string | yes | | `create`, `reply`, or `resolve` |
 | comment_content | string | for create/reply | | Comment text |
 | comment_id | string | for reply/resolve | | Target comment ID |
+| cell | string | no | | Single cell in A1 notation (e.g. `Sheet1!B2`) to anchor a `create` comment to. Omit for a file-level comment |
 
 ---
 

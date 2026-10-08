@@ -1,73 +1,54 @@
 # Google Apps Script Tools Reference
 
-MCP tools for Google Apps Script via the Google Workspace MCP server. All tools require `user_google_email` (string, required) except `generate_trigger_code`.
+MCP tools for Google Apps Script via the Google Workspace MCP server. All tools require `user_google_email` (string, required) except `generate_trigger_code`. Most tools take an `action` argument that selects the operation.
 
 ## Contents
-- Projects: list_script_projects, get_script_project, create_script_project, delete_script_project
-- File Content: get_script_content, update_script_content
-- Execution: run_script_function, generate_trigger_code
-- Deployments: manage_deployment, list_deployments
-- Versions: list_versions, create_version, get_version
-- Monitoring: list_script_processes, get_script_metrics
+- Project/file reads: `get_script_project` (list, get)
+- Project mutations: `manage_script_project` (create, delete)
+- File updates: `manage_script_content` (update)
+- Execution: `run_script_function`, `generate_trigger_code`
+- Deployments: `list_script_deployments`; `manage_deployment` (create, update, delete)
+- Versions: `get_script_version` (list, get); `manage_script_version` (create)
+- Activity: `get_script_activity` (processes, metrics)
+- Triggers: `manage_script_trigger` (list, delete)
 - Tips
 
 ---
 
 ## Projects
 
-### list_script_projects
-Lists Apps Script projects accessible to the user (via Drive API).
-
-| Parameter | Type | Required | Default | Notes |
-|-----------|------|----------|---------|-------|
-| user_google_email | string | yes | | |
-| page_size | integer | no | 50 | |
-| page_token | any | no | | Pagination token |
-
 ### get_script_project
-Retrieves complete project details including all source files.
+List projects, get a project's metadata and file overview, or retrieve one complete source file.
 
 | Parameter | Type | Required | Default | Notes |
 |-----------|------|----------|---------|-------|
 | user_google_email | string | yes | | |
-| script_id | string | yes | | |
+| action | string | yes | | `list` or `get` |
+| script_id | string | for get | | |
+| file_name | string | no | | Complete source file to return (get only) |
+| page_size | integer | no | 50 | list only |
+| page_token | any | no | | Pagination token (list only) |
 
-### create_script_project
-Creates a new Apps Script project.
-
-| Parameter | Type | Required | Default | Notes |
-|-----------|------|----------|---------|-------|
-| user_google_email | string | yes | | |
-| title | string | yes | | Project title |
-| parent_id | any | no | | Drive folder ID or bound container ID |
-
-### delete_script_project
-Permanently deletes an Apps Script project. Cannot be undone.
+### manage_script_project
+Create or permanently delete a project.
 
 | Parameter | Type | Required | Default | Notes |
 |-----------|------|----------|---------|-------|
 | user_google_email | string | yes | | |
-| script_id | string | yes | | |
-
----
+| action | string | yes | | `create` or `delete` |
+| script_id | string | for delete | | |
+| title | string | for create | | Project title |
+| parent_id | any | no | | Drive folder ID or bound container ID (create only) |
 
 ## File Content
 
-### get_script_content
-Retrieves content of a specific file within a project.
+### manage_script_content
+Update source files. The update defaults to merging supplied files by `(name, type)`; set `merge=false` to replace the full project (omitted files are deleted).
 
 | Parameter | Type | Required | Default | Notes |
 |-----------|------|----------|---------|-------|
 | user_google_email | string | yes | | |
-| script_id | string | yes | | |
-| file_name | string | yes | | |
-
-### update_script_content
-Merge or replace files in a script project. Defaults to merging supplied files by name into the existing project; set `merge=false` to replace the full project (omitted files are deleted).
-
-| Parameter | Type | Required | Default | Notes |
-|-----------|------|----------|---------|-------|
-| user_google_email | string | yes | | |
+| action | string | yes | | `update` |
 | script_id | string | yes | | |
 | files | array | yes | | Objects with `name`, `type`, and `source` |
 | merge | boolean | no | true | `true` overlays updates; `false` replaces the entire project |
@@ -86,9 +67,10 @@ Executes a function in a deployed script.
 | function_name | string | yes | | |
 | parameters | any | no | | List of parameters to pass |
 | dev_mode | boolean | no | false | true = run latest code; false = run deployed version |
+| deployment_id | any | no | | API Executable deployment to use; omit to auto-select the highest-versioned one |
 
 ### generate_trigger_code
-Generates Apps Script code for creating triggers. The API cannot create triggers directly -- they must be created from within Apps Script.
+Generates Apps Script code for creating triggers. The API cannot create triggers directly -- the generated setup code must be added to the project and run once.
 
 | Parameter | Type | Required | Default | Notes |
 |-----------|------|----------|---------|-------|
@@ -100,8 +82,13 @@ Generates Apps Script code for creating triggers. The API cannot create triggers
 
 ## Deployments
 
+### list_script_deployments
+List deployments and their bound version numbers.
+
+Required parameters: `user_google_email`, `script_id`.
+
 ### manage_deployment
-Creates, updates, or deletes a deployment.
+Create, update, or delete deployments.
 
 | Parameter | Type | Required | Default | Notes |
 |-----------|------|----------|---------|-------|
@@ -109,75 +96,77 @@ Creates, updates, or deletes a deployment.
 | action | string | yes | | `create`, `update`, or `delete` |
 | script_id | string | yes | | |
 | deployment_id | any | no | | Required for `update` and `delete` |
-| description | any | no | | Required for `create` and `update` |
+| description | any | no | | Required for `create`; optional for `update` when `version_number` is set |
 | version_description | any | no | | For `create` only |
-
-### list_deployments
-Lists all deployments for a script project.
-
-| Parameter | Type | Required | Default | Notes |
-|-----------|------|----------|---------|-------|
-| user_google_email | string | yes | | |
-| script_id | string | yes | | |
+| version_number | integer | no | | Repoint a deployment at a version (`update` only) |
 
 ---
 
 ## Versions
 
-### list_versions
-Lists all immutable version snapshots of a script project.
+### get_script_version
+List or retrieve immutable version snapshots.
 
 | Parameter | Type | Required | Default | Notes |
 |-----------|------|----------|---------|-------|
 | user_google_email | string | yes | | |
+| action | string | yes | | `list` or `get` |
 | script_id | string | yes | | |
+| version_number | integer | for get | | Version to retrieve |
 
-### create_version
-Creates a new immutable version snapshot of the current script code.
+### manage_script_version
+Create an immutable version snapshot.
 
 | Parameter | Type | Required | Default | Notes |
 |-----------|------|----------|---------|-------|
 | user_google_email | string | yes | | |
+| action | string | yes | | `create` |
 | script_id | string | yes | | |
-| description | any | no | | Version description |
-
-### get_version
-Gets details of a specific version.
-
-| Parameter | Type | Required | Default | Notes |
-|-----------|------|----------|---------|-------|
-| user_google_email | string | yes | | |
-| script_id | string | yes | | |
-| version_number | integer | yes | | |
+| description | any | no | | Version description (create only) |
 
 ---
 
-## Monitoring
+## Activity
 
-### list_script_processes
-Lists recent execution processes for the user's scripts.
+### get_script_activity
+Read execution activity: recent processes or aggregate metrics.
 
-| Parameter | Type | Required | Default | Notes |
-|-----------|------|----------|---------|-------|
-| user_google_email | string | yes | | |
-| page_size | integer | no | 50 | |
-| script_id | any | no | | Filter by script ID |
-
-### get_script_metrics
-Gets execution metrics (active users, total executions, failures) for a script project.
+- `action="processes"`: without `script_id`, lists the user's own recent runs; with `script_id`, lists all processes for that script visible to the user.
+- `action="metrics"`: aggregate execution metrics (active users, total and failed executions) for one script.
 
 | Parameter | Type | Required | Default | Notes |
 |-----------|------|----------|---------|-------|
 | user_google_email | string | yes | | |
+| action | string | yes | | `processes` or `metrics` |
+| script_id | string | for metrics | | Optional filter for `processes`; required for `metrics` |
+| page_size | integer | no | 50 | processes only |
+| metrics_granularity | string | no | "DAILY" | `DAILY` or `WEEKLY` (metrics only) |
+
+---
+
+## Triggers
+
+### manage_script_trigger
+List or delete the current user's installable triggers on a project. The Apps Script REST API has no triggers resource, so both actions provision a collision-protected helper file and run it through an API Executable deployment; neither action is read-only. Requires the `script.scriptapp` scope.
+
+| Parameter | Type | Required | Default | Notes |
+|-----------|------|----------|---------|-------|
+| user_google_email | string | yes | | |
+| action | string | yes | | `list` or `delete` |
 | script_id | string | yes | | |
-| metrics_granularity | string | no | "DAILY" | `DAILY` or `WEEKLY` |
+| trigger_id | any | no | | Delete a specific trigger by unique ID (delete only) |
+| handler_function | any | no | | Delete every trigger calling this function (delete only) |
+| dev_mode | boolean | no | true | Latest saved code; Google restricts development mode to the project owner |
+| deployment_id | any | no | | API Executable deployment; omit to auto-select the highest version |
+
+For `delete`, provide `trigger_id` and/or `handler_function` (at least one); when both are given, a trigger must match both to be deleted. Run `action="list"` first to find a trigger's unique ID.
 
 ---
 
 ## Tips
 
-**Triggers**: The Apps Script API cannot create triggers directly. Use `generate_trigger_code` to produce the code, then paste it into the script editor and run it once manually to install the trigger.
+**Triggers**: The Apps Script API cannot create triggers directly. To create one: generate the setup code with `generate_trigger_code`, add it with `manage_script_content(action="update")`, then run it once with `run_script_function`. To inspect or remove existing triggers, use `manage_script_trigger`.
 
 **Development mode**: Set `dev_mode: true` in `run_script_function` to execute the latest saved code instead of the last deployed version. This is useful during development and testing.
 
-**Deploy workflow**: `manage_deployment` (create action) creates a version internally, so a separate `create_version` call is not required. Use `create_version` explicitly if you want a named version snapshot independent of deployment.
+**Deploy workflow**: `manage_deployment(action="create")` creates a version internally, so a separate `manage_script_version(action="create")` call is not required. Create a version explicitly if you want a named snapshot independent of deployment.

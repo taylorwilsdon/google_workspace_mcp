@@ -1,5 +1,8 @@
+from types import SimpleNamespace
+
 import pytest
 
+import auth.google_auth as google_auth
 import auth.service_decorator as service_decorator
 
 
@@ -7,9 +10,14 @@ class _FakeService:
     def __init__(self, name: str, events: list[str]):
         self.name = name
         self._events = events
+        self._http = SimpleNamespace(http=f"http:{name}")
 
     def close(self) -> None:
         self._events.append(f"close:{self.name}")
+
+
+def _pooled(events: list[str]) -> None:
+    events.extend(f"pool:{http}" for _, http in google_auth._idle_http)
 
 
 def _patch_common_decorator_state(monkeypatch):
@@ -37,7 +45,7 @@ def _patch_common_decorator_state(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_require_google_service_releases_cycles_after_close(monkeypatch):
+async def test_require_google_service_recycles_connection_on_success(monkeypatch):
     _patch_common_decorator_state(monkeypatch)
     events = []
     fake_service = _FakeService("gmail", events)
@@ -62,13 +70,43 @@ async def test_require_google_service_releases_cycles_after_close(monkeypatch):
         return "ok"
 
     result = await sample_tool(user_google_email="user@example.com")
+    _pooled(events)
 
     assert result == "ok"
-    assert events == ["func", "close:gmail", "collect"]
+    assert events == ["func", "collect", "pool:http:gmail"]
 
 
 @pytest.mark.asyncio
-async def test_require_multiple_services_releases_cycles_after_exit_stack(
+async def test_require_google_service_closes_connection_on_error(monkeypatch):
+    _patch_common_decorator_state(monkeypatch)
+    events = []
+    fake_service = _FakeService("gmail", events)
+
+    async def fake_authenticate_service(*args, **kwargs):
+        return fake_service, "user@example.com"
+
+    monkeypatch.setattr(
+        service_decorator, "_authenticate_service", fake_authenticate_service
+    )
+    monkeypatch.setattr(
+        service_decorator,
+        "_release_google_service_cycles",
+        lambda: events.append("collect"),
+    )
+
+    @service_decorator.require_google_service("gmail", "gmail_read")
+    async def sample_tool(service, user_google_email: str):
+        raise ValueError("boom")
+
+    with pytest.raises(ValueError, match="boom"):
+        await sample_tool(user_google_email="user@example.com")
+    _pooled(events)
+
+    assert events == ["close:gmail", "collect"]
+
+
+@pytest.mark.asyncio
+async def test_require_multiple_services_recycles_connections_on_success(
     monkeypatch,
 ):
     _patch_common_decorator_state(monkeypatch)
@@ -121,9 +159,10 @@ async def test_require_multiple_services_releases_cycles_after_exit_stack(
         return "ok"
 
     result = await sample_tool(user_google_email="user@example.com")
+    _pooled(events)
 
     assert result == "ok"
-    assert events == ["func", "close:docs", "close:drive", "collect"]
+    assert events == ["func", "collect", "pool:http:docs", "pool:http:drive"]
 
 
 @pytest.mark.asyncio
@@ -178,6 +217,7 @@ async def test_require_multiple_services_collects_after_partial_auth_failure(
         service_decorator.GoogleAuthenticationError, match="docs auth failed"
     ):
         await sample_tool(user_google_email="user@example.com")
+    _pooled(events)
 
     assert events == ["close:drive", "collect"]
 
@@ -237,10 +277,11 @@ async def test_require_multiple_services_optional_failure_injects_none(monkeypat
         return "ran"
 
     result = await sample_tool(user_google_email="user@example.com")
+    _pooled(events)
 
     assert result == "ran"
-    # Tool ran; only the gmail service was created/closed.
-    assert events == ["func", "close:gmail", "collect"]
+    # Tool ran; only the gmail service was created and recycled.
+    assert events == ["func", "collect", "pool:http:gmail"]
 
 
 @pytest.mark.asyncio

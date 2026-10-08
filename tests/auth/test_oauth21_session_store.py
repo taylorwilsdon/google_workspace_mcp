@@ -184,6 +184,30 @@ def test_store_session_rejects_mcp_session_rebind_by_default(tmp_path):
         )
 
 
+def test_store_session_stays_bounded_for_sessionless_clients(tmp_path):
+    # Sessionless (2026-07-28) clients get a fresh MCP session ID per request.
+    store = OAuth21SessionStore(oauth_state_file=str(tmp_path / "oauth_states.json"))
+
+    for call in range(50):
+        store.store_session(
+            user_email="user@example.com",
+            access_token="token",
+            mcp_session_id=f"per-request-{call}",
+        )
+
+    stats = store.get_stats()
+    assert stats["mcp_session_mappings"] == 1
+    assert len(store._session_auth_binding) == 1
+    assert store.get_user_by_mcp_session("per-request-49") == "user@example.com"
+    # Access is authorized by the verified token's email, not session continuity.
+    credentials = store.get_credentials_with_validation(
+        "user@example.com",
+        session_id="per-request-0",
+        auth_token_email="user@example.com",
+    )
+    assert credentials.token == "token"
+
+
 def test_store_session_skips_mcp_binding_in_single_user_mode(tmp_path, monkeypatch):
     monkeypatch.setenv("MCP_SINGLE_USER_MODE", "1")
 
@@ -206,7 +230,7 @@ def test_store_session_skips_mcp_binding_in_single_user_mode(tmp_path, monkeypat
 
 
 # ---------------------------------------------------------------------------
-# _build_credentials_from_provider — fastmcp 3.x jti -> upstream token lookup
+# _build_credentials_from_provider: fastmcp jti -> upstream token lookup
 # (regression coverage for #886: refresh_token must be populated)
 # ---------------------------------------------------------------------------
 

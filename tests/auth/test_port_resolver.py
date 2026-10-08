@@ -5,9 +5,9 @@ raise-when-all-held, OAuthConfig redirect_uri integration, and PEP 562
 lazy-evaluation of core.config.WORKSPACE_MCP_PORT.
 """
 
+import importlib
 import os
 import socket
-import sys
 from contextlib import contextmanager
 
 import pytest
@@ -41,9 +41,9 @@ def _free_port() -> int:
 
 
 def _import_fresh(modname: str):
-    if modname in sys.modules:
-        del sys.modules[modname]
-    return __import__(modname, fromlist=["*"])
+    # Reload in place: deleting the module from sys.modules would leave modules
+    # that imported from the original reading a stale copy for the rest of the run.
+    return importlib.reload(importlib.import_module(modname))
 
 
 def test_resolves_preferred_when_free():

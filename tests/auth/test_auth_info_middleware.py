@@ -1,7 +1,9 @@
 import logging
 from types import SimpleNamespace
 
+import mcp.types as mt
 import pytest
+from fastmcp.server.middleware import MiddlewareContext
 
 from auth.auth_info_middleware import AuthInfoMiddleware
 from auth.gateway_identity import GatewayIdentityError
@@ -30,6 +32,14 @@ class _FakeFastMCPContext:
         self.deleted_state.append(key)
         self.state.pop(key, None)
         self.state_serializable.pop(key, None)
+
+
+def _tool_call_context(fastmcp_context, **arguments):
+    """Build the middleware context FastMCP passes for a tools/call request."""
+    return MiddlewareContext(
+        message=mt.CallToolRequestParams(name="some_tool", arguments=arguments),
+        fastmcp_context=fastmcp_context,
+    )
 
 
 def assert_request_scoped_identity(ctx, *, email, via):
@@ -239,10 +249,7 @@ async def test_gateway_identity_failure_does_not_fall_back(
 async def test_stdio_requested_user_identity_is_request_scoped(monkeypatch):
     middleware = AuthInfoMiddleware()
     fastmcp_context = _FakeFastMCPContext()
-    context = SimpleNamespace(
-        fastmcp_context=fastmcp_context,
-        request=SimpleNamespace(params={"user_google_email": "stdio@example.com"}),
-    )
+    context = _tool_call_context(fastmcp_context, user_google_email="stdio@example.com")
 
     monkeypatch.setattr("auth.auth_info_middleware.get_access_token", lambda: None)
     monkeypatch.setattr(
@@ -264,7 +271,7 @@ async def test_stdio_requested_user_identity_is_request_scoped(monkeypatch):
 async def test_stdio_single_session_identity_is_request_scoped(monkeypatch):
     middleware = AuthInfoMiddleware()
     fastmcp_context = _FakeFastMCPContext()
-    context = SimpleNamespace(fastmcp_context=fastmcp_context)
+    context = _tool_call_context(fastmcp_context)
 
     monkeypatch.setattr("auth.auth_info_middleware.get_access_token", lambda: None)
     monkeypatch.setattr(
@@ -415,7 +422,7 @@ async def test_unresolved_auth_warning_is_suppressed_only_for_legacy_http_no_bea
     middleware = AuthInfoMiddleware()
     fastmcp_context = _FakeFastMCPContext()
     fastmcp_context.session_id = None
-    context = SimpleNamespace(fastmcp_context=fastmcp_context)
+    context = _tool_call_context(fastmcp_context)
 
     monkeypatch.setattr("auth.auth_info_middleware.get_access_token", lambda: None)
     monkeypatch.setattr(

@@ -109,6 +109,15 @@ class TestGetScopesForPermission:
         assert DRIVE_READONLY_SCOPE in scopes
         assert DRIVE_SCOPE in scopes
 
+    def test_sheets_full_includes_drive_file(self):
+        """Without drive.file the registry filter hides create_spreadsheet."""
+        scopes = get_scopes_for_permission("sheets", "full")
+        assert DRIVE_FILE_SCOPE in scopes
+
+    def test_sheets_readonly_excludes_drive_file(self):
+        scopes = get_scopes_for_permission("sheets", "readonly")
+        assert DRIVE_FILE_SCOPE not in scopes
+
     def test_unknown_service_raises(self):
         with pytest.raises(ValueError, match="Unknown service"):
             get_scopes_for_permission("nonexistent", "readonly")

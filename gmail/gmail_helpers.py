@@ -10,7 +10,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from email.utils import getaddresses, parseaddr, parsedate_to_datetime
 from html.parser import HTMLParser
-from typing import Any, Callable, Iterable, Mapping, Optional
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
 
 from fastmcp.exceptions import ToolError as ToolExecutionError
 from googleapiclient.errors import HttpError
@@ -33,6 +33,7 @@ GMAIL_METADATA_HEADERS = [
     "From",
     "To",
     "Cc",
+    "Reply-To",
     "Message-ID",
     "In-Reply-To",
     "References",
@@ -41,6 +42,175 @@ GMAIL_METADATA_HEADERS = [
     "Precedence",
     "List-Id",
 ]
+
+EMAIL_REACTION_MIME_TYPE = "text/vnd.google.email-reaction+json"
+# Reactions require MIME types, which format=metadata omits. Exclude bodies at
+# the root and first two part levels, then retain complete deeper parts (and
+# their bodies) so recursive inspection can reach every MIME type.
+THREAD_REPLY_CONTEXT_FIELDS = (
+    "messages(labelIds,payload(headers,mimeType,parts(mimeType,parts(mimeType,parts))))"
+)
+
+# Gmail accepts label colors only from a fixed palette, and rejects anything else
+# with an opaque 400. Both backgroundColor and textColor draw from this same set.
+# https://developers.google.com/gmail/api/reference/rest/v1/users.labels#Label
+# Synchronized with Gmail v1 discovery revision 20260824. When Gmail changes the
+# LabelColor schema, update this set and its exact fingerprint test together.
+GMAIL_LABEL_COLORS = frozenset(
+    {
+        "#000000",
+        "#007286",
+        "#04502e",
+        "#076239",
+        "#083018",
+        "#094228",
+        "#0b4f30",
+        "#0b804b",
+        "#0d3472",
+        "#0d3b44",
+        "#149e60",
+        "#16a765",
+        "#16a766",
+        "#1a764d",
+        "#1c4587",
+        "#1e53b8",
+        "#202124",
+        "#285bac",
+        "#2a9c68",
+        "#2da2bb",
+        "#3c78d8",
+        "#3d188e",
+        "#3dc789",
+        "#41236d",
+        "#42d692",
+        "#434343",
+        "#43d692",
+        "#44b984",
+        "#464646",
+        "#4986e7",
+        "#4a86e8",
+        "#521d28",
+        "#54240e",
+        "#594c05",
+        "#633e04",
+        "#653e9b",
+        "#662e37",
+        "#666666",
+        "#684e07",
+        "#68dfa9",
+        "#6d9eeb",
+        "#711a36",
+        "#757575",
+        "#7858c3",
+        "#7a2e0b",
+        "#7a4706",
+        "#822111",
+        "#83334c",
+        "#89d3b2",
+        "#8a1c0a",
+        "#8e63ce",
+        "#98d7e4",
+        "#994a64",
+        "#999999",
+        "#a0eac9",
+        "#a2dcc1",
+        "#a46a21",
+        "#a479e2",
+        "#a4c2f4",
+        "#aa8831",
+        "#ac2b16",
+        "#b3efd3",
+        "#b65775",
+        "#b694e8",
+        "#b6cff5",
+        "#b99aff",
+        "#b9e4d0",
+        "#c2185b",
+        "#c2c2c2",
+        "#c6f3de",
+        "#c9daf8",
+        "#cc3a21",
+        "#cca6ac",
+        "#cccccc",
+        "#cf8933",
+        "#d0bcf1",
+        "#d5ae49",
+        "#d93025",
+        "#e07798",
+        "#e3d7ff",
+        "#e4d7f5",
+        "#e66550",
+        "#e7e7e7",
+        "#eaa041",
+        "#ebdbde",
+        "#efa093",
+        "#efefef",
+        "#f2b2a8",
+        "#f2c960",
+        "#f3f3f3",
+        "#f691b2",
+        "#f691b3",
+        "#f6c5be",
+        "#f7a7c0",
+        "#fad165",
+        "#fb4c2f",
+        "#fbc8d9",
+        "#fbd3e0",
+        "#fbe983",
+        "#fcda83",
+        "#fcdee8",
+        "#fce8b3",
+        "#fdedc1",
+        "#fef1d1",
+        "#ff7537",
+        "#ffad46",
+        "#ffad47",
+        "#ffbc6b",
+        "#ffc8af",
+        "#ffd6a2",
+        "#ffdeb5",
+        "#ffe6c7",
+        "#ffffff",
+    }
+)
+
+
+def _validate_label_color(field: str, value: str) -> str:
+    """Normalize one label color and check it against Gmail's fixed palette.
+
+    Gmail answers an unsupported color with a bare 400, so the check happens here
+    to tell the caller which value was wrong and what is allowed.
+    """
+    normalized = value.strip().lower()
+    if normalized not in GMAIL_LABEL_COLORS:
+        raise ToolExecutionError(
+            f"{field} '{value}' is not a Gmail label color. Gmail accepts only its "
+            f"own palette of {len(GMAIL_LABEL_COLORS)} colors, listed at "
+            "https://developers.google.com/gmail/api/reference/rest/v1/users.labels#Label"
+        )
+    return normalized
+
+
+def build_label_color(
+    background_color: Optional[str] = None,
+    text_color: Optional[str] = None,
+) -> Optional[Dict[str, str]]:
+    """Build the `color` object for a Gmail label, or None when no color is given.
+
+    Gmail requires both halves whenever `color` is set, so a half-specified color
+    is rejected here rather than sent and refused.
+    """
+    if background_color is None and text_color is None:
+        return None
+    if background_color is None or text_color is None:
+        raise ToolExecutionError(
+            "background_color and text_color must be set together. Gmail requires "
+            "both when a label color is set."
+        )
+    return {
+        "backgroundColor": _validate_label_color("background_color", background_color),
+        "textColor": _validate_label_color("text_color", text_color),
+    }
 
 
 def _normalize_email(address: str) -> str:
@@ -197,37 +367,56 @@ def _parse_date_header(
 
 
 def _parse_message_id_chain(header_value: Optional[str]) -> list[str]:
-    """Extract Message-IDs from a reply header value."""
+    """Extract RFC Message-IDs from a reply header value."""
     if not header_value:
         return []
 
     message_ids = re.findall(r"<[^>]+>", header_value)
-    if message_ids:
-        return message_ids
+    return message_ids or header_value.split()
 
-    return header_value.split()
+
+def _is_email_reaction(payload: Mapping[str, Any]) -> bool:
+    """Return True if a message payload is a Gmail emoji reaction."""
+    return payload.get("mimeType") == EMAIL_REACTION_MIME_TYPE or any(
+        _is_email_reaction(part) for part in payload.get("parts") or []
+    )
 
 
 def _derive_reply_headers(
     thread_message_ids: list[str],
     in_reply_to: Optional[str],
     references: Optional[str],
+    target: Optional[Mapping[str, Any]] = None,
 ) -> tuple[Optional[str], Optional[str]]:
-    """Fill missing reply headers while preserving caller intent."""
+    """Fill reply headers, defaulting to the latest automatically eligible message.
+
+    Automatic targets are non-draft, non-trash messages with an RFC Message-ID.
+    """
     derived_in_reply_to = in_reply_to
     derived_references = references
 
-    if not thread_message_ids:
+    if not thread_message_ids and not target:
         return derived_in_reply_to, derived_references
 
+    target_message_id = target.get("message_id") if target else None
     if not derived_in_reply_to:
-        reference_chain = _parse_message_id_chain(derived_references)
-        derived_in_reply_to = (
-            reference_chain[-1] if reference_chain else thread_message_ids[-1]
-        )
+        # References describe ancestry; only In-Reply-To explicitly selects an
+        # older reply parent. Without one, rebuild both headers from the latest
+        # eligible message in the thread.
+        derived_in_reply_to = target_message_id or thread_message_ids[-1]
+        derived_references = None
 
     if not derived_references:
-        if derived_in_reply_to and derived_in_reply_to in thread_message_ids:
+        if target_message_id and derived_in_reply_to == target_message_id:
+            reference_chain = _parse_message_id_chain(target.get("references"))
+            if not reference_chain:
+                parent_ids = _parse_message_id_chain(target.get("in_reply_to"))
+                if len(parent_ids) == 1:
+                    reference_chain = parent_ids
+            if target_message_id not in reference_chain:
+                reference_chain.append(target_message_id)
+            derived_references = " ".join(reference_chain)
+        elif derived_in_reply_to and derived_in_reply_to in thread_message_ids:
             reply_index = thread_message_ids.index(derived_in_reply_to)
             derived_references = " ".join(thread_message_ids[: reply_index + 1])
         elif derived_in_reply_to:
@@ -558,6 +747,413 @@ def html_to_text_preserving_breaks(html_content: str) -> str:
         return html_content
 
 
+_HTML_BLOCK_TAGS = frozenset(
+    {
+        "address",
+        "aside",
+        "fieldset",
+        "figure",
+        "footer",
+        "header",
+        "main",
+        "nav",
+        "p",
+        "div",
+        "br",
+        "hr",
+        "ul",
+        "ol",
+        "li",
+        "dl",
+        "dt",
+        "dd",
+        "table",
+        "thead",
+        "tbody",
+        "tfoot",
+        "tr",
+        "td",
+        "th",
+        "blockquote",
+        "pre",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "html",
+        "head",
+        "title",
+        "meta",
+        "link",
+        "body",
+        "center",
+        "section",
+        "article",
+    }
+)
+_HTML_VOID_TAGS = frozenset(
+    {"area", "br", "col", "embed", "hr", "img", "input", "link", "meta", "wbr"}
+)
+_HTML_TAG_RE = re.compile(
+    r"<\s*(/?)\s*([a-zA-Z][a-zA-Z0-9]*)(?:\"[^\"]*\"|'[^']*'|[^'\">])*>"
+)
+# Elements whose contents are not rendered as flowing text; a <br> inside them
+# would corrupt CSS/JS or show up literally.
+_HTML_RAW_TEXT_RE = re.compile(r"<\s*(?:pre|style|script|textarea)\b", re.IGNORECASE)
+_NEWLINE_RUN_RE = re.compile(r"((?:\r?\n)+)")
+
+
+def html_newlines_to_br(html_body: str) -> str:
+    """Turn bare newlines inside an HTML body into ``<br>`` tags.
+
+    LLM callers routinely pass ``body_format="html"`` with paragraphs separated
+    by ``\\n`` and no block markup at all. Browsers collapse that whitespace, so
+    the recipient gets one run-on paragraph. Only newlines that separate
+    *content* (text or inline tags such as ``<b>``/``<a>``) become ``<br>``;
+    newlines that merely sit next to a block-level tag (``<p>``, ``<li>``,
+    ``<div>``...), just inside an inline element, before indentation, or at
+    either end of the body are formatting whitespace and are left alone, so a
+    well-formed HTML body -- including an appended Gmail signature -- comes
+    back byte-identical. Bodies containing ``<pre>``, ``<style>``, ``<script>``
+    or ``<textarea>`` are never touched.
+
+    Apply this only to caller-authored HTML, never to a composed body that
+    embeds third-party markup such as a quoted or forwarded message.
+    """
+    if not html_body or "\n" not in html_body:
+        return html_body
+    if _HTML_RAW_TEXT_RE.search(html_body):
+        return html_body
+
+    # Each token is (is_tag, raw, edge_after, edge_before): whether whitespace
+    # right after / right before the tag is formatting rather than content.
+    tokens: List[tuple] = []
+    pos = 0
+    for match in _HTML_TAG_RE.finditer(html_body):
+        if match.start() > pos:
+            tokens.append((False, html_body[pos : match.start()], False, False))
+        closing, name = bool(match.group(1)), match.group(2).lower()
+        block = name in _HTML_BLOCK_TAGS
+        opens_inline = not closing and name not in _HTML_VOID_TAGS
+        tokens.append((True, match.group(0), block or opens_inline, block or closing))
+        pos = match.end()
+    if pos < len(html_body):
+        tokens.append((False, html_body[pos:], False, False))
+
+    out: List[str] = []
+    for index, (is_tag, text, _, _) in enumerate(tokens):
+        if is_tag:
+            out.append(text)
+            continue
+        prev_is_edge = index == 0 or tokens[index - 1][2]
+        next_is_edge = index + 1 == len(tokens) or tokens[index + 1][3]
+        pieces = _NEWLINE_RUN_RE.split(text)
+        content = [i for i, piece in enumerate(pieces) if piece.strip()]
+        first_content = content[0] if content else len(pieces)
+        last_content = content[-1] if content else -1
+        rebuilt: List[str] = []
+        for piece_index, piece in enumerate(pieces):
+            # re.split with one capture group puts newline runs at odd indices.
+            if piece_index % 2 == 0:
+                rebuilt.append(piece)
+                continue
+            indented = bool(pieces[piece_index + 1])
+            if (piece_index < first_content and prev_is_edge) or (
+                piece_index > last_content and (next_is_edge or indented)
+            ):
+                # Whitespace at a block or element edge, or indentation before
+                # the next tag: formatting, not content.
+                rebuilt.append(piece)
+                continue
+            rebuilt.append("<br>" * min(piece.count("\n"), 2) + "\n")
+        out.append("".join(rebuilt))
+    return "".join(out)
+
+
 def _signature_html_to_text(signature_html: str) -> str:
     """Convert Gmail signature HTML to plain text, preserving line breaks."""
     return html_to_text_preserving_breaks(signature_html)
+
+
+def _wrap_signature_html(signature_html: str) -> str:
+    """Wrap signature HTML in the marker Gmail clients use to detect a signed draft."""
+    return (
+        '<div data-smartmail="gmail_signature">'
+        f'<div dir="ltr">{signature_html}</div></div>'
+    )
+
+
+async def _get_send_as_entries(service) -> List[Dict[str, Any]]:
+    """Fetch the account's Gmail send-as settings."""
+    try:
+        response = await asyncio.to_thread(
+            service.users().settings().sendAs().list(userId="me").execute
+        )
+    except HttpError as e:
+        if _is_benign_signature_http_error(e):
+            logger.info(
+                "Skipping Gmail send-as lookup: missing auth/scope for settings endpoint."
+            )
+            return []
+        logger.error(f"Failed to fetch Gmail send-as settings: {e}", exc_info=True)
+        raise _signature_fetch_tool_error(e) from e
+    except Exception as e:
+        logger.error(f"Failed to fetch Gmail send-as settings: {e}", exc_info=True)
+        raise _signature_fetch_tool_error(e) from e
+
+    if not isinstance(response, dict):
+        return []
+    return response.get("sendAs", [])
+
+
+def _find_send_as_entry(
+    send_as_entries: List[Dict[str, Any]], from_email: str
+) -> Optional[Dict[str, Any]]:
+    """Find a send-as entry by email address, case-insensitively."""
+    from_email_normalized = from_email.strip().lower()
+    return next(
+        (
+            entry
+            for entry in send_as_entries
+            if entry.get("sendAsEmail", "").strip().lower() == from_email_normalized
+        ),
+        None,
+    )
+
+
+async def _get_send_as_signature_html(service, from_email: Optional[str] = None) -> str:
+    """
+    Fetch signature HTML from Gmail send-as settings.
+
+    Returns empty string when the account has no signature configured or when
+    auth/scope errors mean the settings endpoint is unavailable.
+    """
+    send_as_entries = await _get_send_as_entries(service)
+    if not send_as_entries:
+        return ""
+
+    if from_email:
+        entry = _find_send_as_entry(send_as_entries, from_email)
+        if entry:
+            return entry.get("signature", "") or ""
+
+    for entry in send_as_entries:
+        if entry.get("isPrimary"):
+            return entry.get("signature", "") or ""
+
+    return send_as_entries[0].get("signature", "") or ""
+
+
+async def _get_send_as_identity_and_signature(
+    service,
+    from_email: Optional[str],
+    fallback_email: str,
+) -> tuple[str, str, Optional[str]]:
+    """Resolve the requested or default Gmail send-as identity.
+
+    Returns ``(sender_email, signature_html, display_name)``. ``display_name`` is
+    the name Gmail web renders in the From line, or None when unset.
+    """
+    send_as_entries = await _get_send_as_entries(service)
+    selected_entry = None
+
+    if from_email:
+        selected_entry = _find_send_as_entry(send_as_entries, from_email)
+    else:
+        selected_entry = next(
+            (entry for entry in send_as_entries if entry.get("isDefault")), None
+        )
+        if selected_entry is None:
+            selected_entry = next(
+                (entry for entry in send_as_entries if entry.get("isPrimary")), None
+            )
+        if selected_entry is None and send_as_entries:
+            selected_entry = send_as_entries[0]
+
+    sender_email = from_email or fallback_email
+    signature_html = ""
+    display_name = None
+    if selected_entry:
+        if not from_email:
+            sender_email = selected_entry.get("sendAsEmail") or fallback_email
+        signature_html = selected_entry.get("signature", "") or ""
+        display_name = (selected_entry.get("displayName") or "").strip() or None
+
+    return sender_email, signature_html, display_name
+
+
+async def _get_send_as_signature_html_for_tool(
+    service, from_email: Optional[str] = None
+) -> str:
+    """Fetch signature HTML and convert non-benign failures to tool errors."""
+    return await _get_send_as_signature_html(service, from_email=from_email)
+
+
+# users.messages.batchModify accepts at most 1000 IDs per call.
+GMAIL_BATCH_MODIFY_LIMIT = 1000
+FILTER_APPLY_DEFAULT_MAX_MESSAGES = 5000
+
+
+def _quote_search_term(value: Any) -> str:
+    """Group a multi-word value so Gmail search treats it as one operand."""
+    text = str(value).strip()
+    if " " in text:
+        return f"({text})"
+    return text
+
+
+def filter_criteria_to_query(criteria: Mapping[str, Any]) -> str:
+    """Translate Gmail filter criteria into the equivalent search query.
+
+    Covers from, to, subject, query, negatedQuery, hasAttachment and size.
+    ``excludeChats`` has no search operator and is ignored (callers report it).
+    Raises ValueError for ``size`` without an explicit ``sizeComparison``.
+    """
+    parts: List[str] = []
+    if criteria.get("from"):
+        parts.append(f"from:{_quote_search_term(criteria['from'])}")
+    if criteria.get("to"):
+        parts.append(f"to:{_quote_search_term(criteria['to'])}")
+    if criteria.get("subject"):
+        parts.append(f"subject:{_quote_search_term(criteria['subject'])}")
+    if criteria.get("query"):
+        parts.append(f"({criteria['query']})")
+    if criteria.get("negatedQuery"):
+        parts.append(f"-({criteria['negatedQuery']})")
+    if criteria.get("hasAttachment"):
+        parts.append("has:attachment")
+    if criteria.get("size"):
+        op = criteria.get("sizeComparison")
+        if op not in ("larger", "smaller"):
+            raise ValueError(
+                "size criteria need sizeComparison 'larger' or 'smaller' to be "
+                f"translated into a search query (got {op!r})"
+            )
+        parts.append(f"{op}:{int(criteria['size'])}")
+    return " ".join(parts)
+
+
+async def update_gmail_filter(
+    service,
+    filter_id: str,
+    criteria: Optional[Mapping[str, Any]] = None,
+    filter_action: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Replace a filter, keeping the parts the caller did not pass.
+
+    Gmail has no filter update endpoint, so the new filter is created FIRST and
+    the old one deleted afterwards: a failure never leaves the mailbox without
+    the rule. Returns the new filter; the filter ID changes.
+    """
+    filters = service.users().settings().filters()
+    old = await asyncio.to_thread(filters.get(userId="me", id=filter_id).execute)
+    body = {
+        "criteria": dict(criteria) if criteria else old.get("criteria", {}),
+        "action": dict(filter_action) if filter_action else old.get("action", {}),
+    }
+    created = await asyncio.to_thread(filters.create(userId="me", body=body).execute)
+    try:
+        await asyncio.to_thread(filters.delete(userId="me", id=filter_id).execute)
+    except Exception as error:
+        raise ToolExecutionError(
+            f"Created the new filter {created.get('id', '(unknown)')} but could "
+            f"not delete the old filter {filter_id}: both are active now. "
+            f"Delete {filter_id} manually. Cause: {error}"
+        ) from error
+    created.setdefault("criteria", body["criteria"])
+    created.setdefault("action", body["action"])
+    return created
+
+
+async def apply_gmail_filter_to_existing(
+    service,
+    criteria: Mapping[str, Any],
+    filter_action: Mapping[str, Any],
+    dry_run: bool = False,
+    max_messages: int = FILTER_APPLY_DEFAULT_MAX_MESSAGES,
+) -> Dict[str, Any]:
+    """Apply a filter's label actions to messages already in the mailbox.
+
+    Gmail filters only act on new mail. Only matching messages change, not the
+    rest of their threads, mirroring how the filter treats incoming mail.
+    Forwarding is never applied retroactively.
+    Returns a summary dict (query, matched, truncated, applied, notes).
+    """
+    query = filter_criteria_to_query(criteria)
+    if not query:
+        raise ValueError("Filter criteria produce an empty search query; refusing.")
+    add = list(filter_action.get("addLabelIds") or [])
+    remove = list(filter_action.get("removeLabelIds") or [])
+    notes: List[str] = []
+    if filter_action.get("forward"):
+        notes.append("Forwarding is not applied to existing mail.")
+    if criteria.get("excludeChats"):
+        notes.append("excludeChats has no search equivalent and was ignored.")
+
+    ids: List[str] = []
+    page_token: Optional[str] = None
+    while len(ids) < max_messages:
+        params: Dict[str, Any] = {"userId": "me", "q": query, "maxResults": 500}
+        if page_token:
+            params["pageToken"] = page_token
+        response = await asyncio.to_thread(
+            service.users().messages().list(**params).execute
+        )
+        ids.extend(m["id"] for m in response.get("messages") or [])
+        page_token = response.get("nextPageToken")
+        if not page_token:
+            break
+    truncated = len(ids) > max_messages or bool(page_token)
+    ids = ids[:max_messages]
+
+    applied = 0
+    if not dry_run and ids and (add or remove):
+        body: Dict[str, Any] = {}
+        if add:
+            body["addLabelIds"] = add
+        if remove:
+            body["removeLabelIds"] = remove
+        for start in range(0, len(ids), GMAIL_BATCH_MODIFY_LIMIT):
+            chunk = ids[start : start + GMAIL_BATCH_MODIFY_LIMIT]
+            await asyncio.to_thread(
+                service.users()
+                .messages()
+                .batchModify(userId="me", body={"ids": chunk, **body})
+                .execute
+            )
+            applied += len(chunk)
+    if not add and not remove:
+        notes.append("The filter has no label actions; nothing to apply.")
+    return {
+        "query": query,
+        "matched": len(ids),
+        "truncated": truncated,
+        "applied": applied,
+        "add": add,
+        "remove": remove,
+        "notes": notes,
+    }
+
+
+def format_filter_apply_result(result: Mapping[str, Any], dry_run: bool) -> str:
+    """Human-readable summary for apply_gmail_filter_to_existing."""
+    matched = f"{result['matched']}{'+' if result['truncated'] else ''}"
+    lines = [
+        "DRY RUN: nothing changed."
+        if dry_run
+        else f"Applied to {result['applied']} messages.",
+        f"Query: {result['query']}",
+        f"Matching messages: {matched}",
+    ]
+    if result["add"]:
+        lines.append(f"Add labels: {', '.join(result['add'])}")
+    if result["remove"]:
+        lines.append(f"Remove labels: {', '.join(result['remove'])}")
+    lines.extend(result["notes"])
+    if result["truncated"] and not dry_run:
+        lines.append(
+            "Stopped at max_messages; raise it to process the remaining matches."
+        )
+    return "\n".join(lines)

@@ -83,9 +83,9 @@ Send an email. Supports new messages, replies, HTML, attachments, CC/BCC, and Se
 | bcc | string | no | | |
 | from_name | string | no | | Display name, e.g. "John Doe" |
 | from_email | string | no | | Send As alias (must be configured in Gmail settings) |
-| thread_id | string | no | | Thread ID for replies |
-| in_reply_to | string | no | | RFC Message-ID being replied to, e.g. `<msg@gmail.com>` |
-| references | string | no | | Space-separated chain of Message-IDs for threading |
+| thread_id | string | no | | Thread ID for replies; defaults to its latest non-draft, non-trash message with an RFC `Message-ID` |
+| in_reply_to | string | no | | RFC Message-ID of a specific reply target; omit to reply to the latest eligible message |
+| references | string | no | | Optional Message-ID ancestry chain; normally derived from thread_id |
 | attachments | array | no | | See attachment format below |
 
 **Attachment format** (each item is an object):
@@ -105,13 +105,15 @@ Create a draft. Same capabilities as send but with additional signature/quoting 
 | cc | string | no | | |
 | bcc | string | no | | |
 | from_name | string | no | | Display name |
-| from_email | string | no | | Send As alias |
-| thread_id | string | no | | For reply drafts |
-| in_reply_to | string | no | | RFC Message-ID |
-| references | string | no | | Message-ID chain |
+| from_email | string | no | Gmail default | Send As alias; when omitted, resolves `isDefault`, then `isPrimary`, then the first Send-As entry, and finally the authenticated email if no usable entry is available |
+| thread_id | string | no | | For reply drafts; defaults to its latest non-draft, non-trash message with an RFC `Message-ID` |
+| in_reply_to | string | no | | RFC Message-ID of a specific reply target; omit for the latest eligible message |
+| references | string | no | | Optional Message-ID ancestry chain; normally derived from thread_id |
 | attachments | array | no | | Same format as send |
 | include_signature | boolean | no | true | Append Gmail signature if available |
 | quote_original | boolean | no | false | Include original message as quoted reply (requires thread_id) |
+
+Operational Gmail settings errors such as rate limits abort draft creation instead of silently falling back to a potentially unintended sender.
 
 ---
 
@@ -133,8 +135,15 @@ Create, update, or delete a label.
 | action | string | yes | | "create", "update", or "delete" |
 | name | string | conditional | | Required for create, optional for update |
 | label_id | string | conditional | | Required for update and delete |
-| label_list_visibility | string | no | "labelShow" | "labelShow" or "labelHide" |
-| message_list_visibility | string | no | "show" | "show" or "hide" |
+| label_list_visibility | string | no | "labelShow" on create | "labelShow", "labelShowIfUnread" or "labelHide". On update, omitting it keeps the label's current setting |
+| message_list_visibility | string | no | "show" on create | "show" or "hide". On update, omitting it keeps the label's current setting |
+| background_color | string | no | | Hex color, e.g. "#fb4c2f". Set with text_color. Gmail accepts only its own [palette](https://developers.google.com/gmail/api/reference/rest/v1/users.labels#Label); other values are rejected before the request. User labels only |
+| text_color | string | no | | Hex color, e.g. "#ffffff". Set with background_color. Same palette |
+| clear_color | boolean | no | false | On update, remove the current color. Cannot be combined with background_color or text_color |
+
+Colors are optional, but Gmail requires both when one is given, so passing only
+one is rejected. On update, passing neither keeps the color the label already had;
+set clear_color to remove it. Color parameters are ignored for delete actions.
 
 ### modify_gmail_message_labels
 Add or remove labels on a single message.
@@ -197,9 +206,9 @@ Create or delete a filter.
 
 ### Threading and Replies
 - Every search result returns both a `message_id` and a `thread_id`. Use the thread_id to read the full conversation.
-- To reply: pass `thread_id`, `in_reply_to` (the Message-ID header of the message you are replying to), and `references` (chain of all Message-IDs in the thread, space-separated). Prefix the subject with `Re:` followed by a space.
-- The `in_reply_to` and `references` values come from the `Message-ID` header returned by `get_gmail_message_content`.
-- The `in_reply_to` field in this MCP server is known to be unreliable. Always provide `thread_id` and `references` for threading -- those are the fields Gmail actually uses.
+- For a normal reply, pass `thread_id` and omit `in_reply_to` and `references`. The server targets the latest non-draft, non-trash message with an RFC `Message-ID` and derives both RFC reply headers through it.
+- Set `in_reply_to` only when deliberately replying to a specific older message. Use that message's RFC `Message-ID` header, not its Gmail API message ID; `references` can still be omitted and derived automatically.
+- Keep the subject consistent with the thread, normally prefixed with `Re: `.
 
 ### Pagination
 - `search_gmail_messages` returns a `next_page_token` when more results exist. Pass it as `page_token` in the next call.

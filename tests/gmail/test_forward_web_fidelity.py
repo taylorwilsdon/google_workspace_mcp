@@ -486,6 +486,35 @@ def test_prepare_web_with_attachments_produces_mixed():
 
 
 @pytest.mark.asyncio
+async def test_forward_html_note_newlines_converted_but_original_untouched():
+    """Bare newlines in an HTML note become <br>; the forwarded original keeps its
+    markup byte-for-byte."""
+    from email import message_from_bytes
+
+    original_html = "<div>\n<span>Hello</span>\n<span>world</span>\n</div>"
+    msg = _create_mock_message(text_body="Hello world", html_body=original_html)
+    svc = _create_mock_service(msg)
+
+    await _forward_gmail_message_impl(
+        service=svc,
+        message_id="msg_note_newlines",
+        to="recipient@example.com",
+        forward_message="FYI\n\nsee below",
+        forward_message_format="html",
+        user_google_email="me@example.com",
+    )
+
+    parsed = message_from_bytes(_decode_sent_raw(svc))
+    html_part = next(p for p in parsed.walk() if p.get_content_type() == "text/html")
+    # SMTP policy emits CRLF; compare against the LF the caller passed.
+    html_payload = (
+        html_part.get_payload(decode=True).decode("utf-8").replace("\r\n", "\n")
+    )
+    assert "FYI<br><br>\nsee below" in html_payload
+    assert original_html in html_payload
+
+
+@pytest.mark.asyncio
 async def test_forward_html_note_placement():
     """HTML-format note appears before the gmail_quote_container div in HTML and
     before the forwarded separator in plain."""

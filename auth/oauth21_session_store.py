@@ -679,7 +679,9 @@ class OAuth21SessionStore:
                 # Create immutable session binding (first binding wins, cannot be changed)
                 if mcp_session_id not in self._session_auth_binding:
                     self._session_auth_binding[mcp_session_id] = user_email
-                    logger.info(
+                    # Debug: sessionless (2026-07-28) clients get a new session ID
+                    # on every request, so this fires per tool call.
+                    logger.debug(
                         f"Created immutable session binding: {mcp_session_id} -> {user_email}"
                     )
                 elif self._session_auth_binding[mcp_session_id] != user_email:
@@ -692,7 +694,7 @@ class OAuth21SessionStore:
                     )
 
                 self._mcp_session_mapping[mcp_session_id] = user_email
-                logger.info(
+                logger.debug(
                     f"Stored OAuth 2.1 session for {user_email} (session_id: {session_id}, mcp_session_id: {mcp_session_id})"
                 )
             else:
@@ -1231,7 +1233,7 @@ def get_credentials_from_token(
         # credentials during request authentication by
         # ``ensure_session_from_access_token`` and cached in the session store,
         # which is the ``store.get_credentials`` lookup above. There is no
-        # token-keyed provider cache to consult here on fastmcp 3.x.
+        # token-keyed provider cache to consult here.
 
         # Create minimal credentials with just the access token
         # Assume token is valid for 1 hour (typical for Google tokens)

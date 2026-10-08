@@ -8,17 +8,24 @@ and `file_type` filtering behaviors.
 
 import asyncio
 import base64
+import hashlib
 import pytest
 from unittest.mock import Mock, AsyncMock, patch
 import io
 import sys
 import os
+import zipfile
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from gdrive.drive_helpers import (
+    INCOMPLETE_SEARCH_WARNING,
+    SHARED_DRIVE_ORGANIZER_CONCURRENCY_LIMIT,
+    _create_drive_folder_impl,
     build_drive_list_params,
     has_explicit_trashed_clause,
+    normalize_drive_query_v2_compat,
+    resolve_drive_item,
 )
 from gdrive.drive_tools import (
     create_drive_file,
@@ -28,6 +35,7 @@ from gdrive.drive_tools import (
     import_to_google_slides,
     list_drive_items,
     search_drive_files,
+    set_drive_file_permissions,
     update_drive_file,
 )
 
@@ -42,6 +50,15 @@ def _unwrap(tool):
     while hasattr(fn, "__wrapped__"):
         fn = fn.__wrapped__
     return fn
+
+
+def _xlsx_bytes() -> bytes:
+    """Return a minimal structurally valid XLSX ZIP for upload tests."""
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", "<Types/>")
+        archive.writestr("xl/workbook.xml", "<workbook/>")
+    return output.getvalue()
 
 
 # ---------------------------------------------------------------------------
@@ -80,8 +97,69 @@ async def test_create_drive_file_uploads_base64_content(mock_resolve_folder):
     assert create_kwargs["supportsAllDrives"] is True
     media = create_kwargs["media_body"]
     assert media.mimetype() == "application/pdf"
+    assert media.resumable() is False
     assert media.getbytes(0, len(payload)) == payload
     assert "Successfully created file 'report.pdf'" in result
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_tools.resolve_folder_id", new_callable=AsyncMock)
+async def test_create_drive_file_validates_inline_xlsx_before_upload(
+    mock_resolve_folder,
+):
+    """Corrupt ZIP-based Office files fail before Drive creates an unusable item."""
+    mock_resolve_folder.return_value = "folder123"
+    mock_service = Mock()
+
+    with pytest.raises(ValueError, match="valid, intact archive"):
+        await _unwrap(create_drive_file)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            file_name="broken.xlsx",
+            base64_content=base64.b64encode(b"PK-not-an-xlsx").decode("ascii"),
+            content_mime_type=(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ),
+        )
+
+    mock_resolve_folder.assert_not_called()
+    mock_service.files.return_value.create.return_value.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_drive_file_rejects_google_native_inline_mime_type():
+    """Inline bytes need a source MIME type, not a Google-native target MIME type."""
+    mock_service = Mock()
+
+    with pytest.raises(ValueError, match="import_to_google_sheets"):
+        await _unwrap(create_drive_file)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            file_name="Budget",
+            base64_content=base64.b64encode(_xlsx_bytes()).decode("ascii"),
+            content_mime_type="application/vnd.google-apps.spreadsheet",
+        )
+
+    mock_service.files.return_value.create.return_value.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_drive_file_rejects_changed_inline_payload_by_sha256():
+    """An optional digest catches syntactically valid base64 that changed in transit."""
+    mock_service = Mock()
+    payload = b"original binary payload"
+
+    with pytest.raises(ValueError, match="SHA-256 integrity check"):
+        await _unwrap(create_drive_file)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            file_name="report.pdf",
+            base64_content=base64.b64encode(b"changed binary payload").decode("ascii"),
+            content_mime_type="application/pdf",
+            base64_sha256=hashlib.sha256(payload).hexdigest(),
+        )
+
+    mock_service.files.return_value.create.return_value.execute.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -172,7 +250,246 @@ async def test_create_drive_file_rejects_empty_file_url():
 
 
 # ---------------------------------------------------------------------------
-# get_drive_file_permissions — owners
+# create_drive_file - inline base64 resource-limit enforcement
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_drive_file_rejects_oversized_base64_before_decode():
+    """Base64 input exceeding the inline-upload limit is rejected before decoding."""
+    patched_limit = 6
+    max_encoded_len = ((patched_limit + 2) // 3) * 4
+    oversized_b64 = "A" * (max_encoded_len + 4)
+    mock_service = Mock()
+
+    with patch("gdrive.drive_helpers.MAX_INLINE_BASE64_BYTES", patched_limit):
+        with patch("gdrive.drive_helpers.base64.b64decode") as decode:
+            with pytest.raises(ValueError, match="limit"):
+                await _unwrap(create_drive_file)(
+                    service=mock_service,
+                    user_google_email="user@example.com",
+                    file_name="huge.bin",
+                    base64_content=oversized_b64,
+                    content_mime_type="application/octet-stream",
+                )
+        decode.assert_not_called()
+
+    mock_service.files.return_value.create.return_value.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_tools.resolve_folder_id", new_callable=AsyncMock)
+@patch(
+    "gdrive.drive_helpers.MAX_ZIP_MEMBER_COUNT",
+    5,
+)
+async def test_create_drive_file_rejects_zip_excessive_member_count(
+    mock_resolve_folder,
+):
+    """ZIP archives with too many members are rejected before testzip()."""
+    mock_resolve_folder.return_value = "folder123"
+    mock_service = Mock()
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as archive:
+        archive.writestr("[Content_Types].xml", "<Types/>")
+        archive.writestr("xl/workbook.xml", "<workbook/>")
+        for i in range(6):
+            archive.writestr(f"xl/extra_{i}.xml", "x")
+
+    with pytest.raises(ValueError, match="members"):
+        await _unwrap(create_drive_file)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            file_name="big.xlsx",
+            base64_content=base64.b64encode(buf.getvalue()).decode("ascii"),
+            content_mime_type=(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ),
+        )
+
+    mock_service.files.return_value.create.return_value.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_tools.resolve_folder_id", new_callable=AsyncMock)
+@patch(
+    "gdrive.drive_helpers.MAX_ZIP_UNCOMPRESSED_BYTES",
+    1024,
+)
+async def test_create_drive_file_rejects_zip_excessive_uncompressed_size(
+    mock_resolve_folder,
+):
+    """ZIP archives whose total uncompressed size exceeds the limit are rejected."""
+    mock_resolve_folder.return_value = "folder123"
+    mock_service = Mock()
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as archive:
+        archive.writestr("[Content_Types].xml", "<Types/>")
+        archive.writestr("xl/workbook.xml", "<workbook/>")
+        archive.writestr("xl/bigsheet.xml", "x" * 2048)
+
+    with pytest.raises(ValueError, match="uncompressed size"):
+        await _unwrap(create_drive_file)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            file_name="huge.xlsx",
+            base64_content=base64.b64encode(buf.getvalue()).decode("ascii"),
+            content_mime_type=(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ),
+        )
+
+    mock_service.files.return_value.create.return_value.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_tools.resolve_folder_id", new_callable=AsyncMock)
+@patch(
+    "gdrive.drive_helpers.MAX_ZIP_COMPRESSION_RATIO",
+    2,
+)
+async def test_create_drive_file_rejects_zip_bomb_compression_ratio(
+    mock_resolve_folder,
+):
+    """ZIP archives with suspiciously high compression ratios are rejected."""
+    mock_resolve_folder.return_value = "folder123"
+    mock_service = Mock()
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", "<Types/>")
+        archive.writestr("xl/workbook.xml", "<workbook/>")
+        archive.writestr("xl/pad.xml", "A" * 50_000)
+
+    with pytest.raises(ValueError, match="compression ratio"):
+        await _unwrap(create_drive_file)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            file_name="bomb.xlsx",
+            base64_content=base64.b64encode(buf.getvalue()).decode("ascii"),
+            content_mime_type=(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ),
+        )
+
+    mock_service.files.return_value.create.return_value.execute.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# create_drive_file - MIME type case normalization
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_drive_file_rejects_mixed_case_google_apps_mime():
+    """Mixed-case Google Apps MIME types are caught by normalization."""
+    mock_service = Mock()
+
+    with pytest.raises(ValueError, match="import_to_google"):
+        await _unwrap(create_drive_file)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            file_name="Budget",
+            base64_content=base64.b64encode(_xlsx_bytes()).decode("ascii"),
+            content_mime_type="Application/VND.Google-Apps.Spreadsheet",
+        )
+
+    mock_service.files.return_value.create.return_value.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_tools.resolve_folder_id", new_callable=AsyncMock)
+async def test_create_drive_file_normalizes_mixed_case_xlsx_mime_for_zip_validation(
+    mock_resolve_folder,
+):
+    """Mixed-case XLSX MIME types receive the same ZIP validation as lowercase."""
+    mock_resolve_folder.return_value = "folder123"
+    mock_service = Mock()
+
+    with pytest.raises(ValueError, match="valid, intact archive"):
+        await _unwrap(create_drive_file)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            file_name="broken.xlsx",
+            base64_content=base64.b64encode(b"PK-not-an-xlsx").decode("ascii"),
+            content_mime_type=(
+                "Application/VND.Openxmlformats-Officedocument.Spreadsheetml.Sheet"
+            ),
+        )
+
+    mock_service.files.return_value.create.return_value.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_tools.resolve_folder_id", new_callable=AsyncMock)
+async def test_create_drive_file_normalizes_mixed_case_odt_mime_for_zip_validation(
+    mock_resolve_folder,
+):
+    """Mixed-case OpenDocument MIME types receive ZIP validation."""
+    mock_resolve_folder.return_value = "folder123"
+    mock_service = Mock()
+
+    with pytest.raises(ValueError, match="valid, intact archive"):
+        await _unwrap(create_drive_file)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            file_name="broken.odt",
+            base64_content=base64.b64encode(b"PK-not-an-odt").decode("ascii"),
+            content_mime_type="Application/VND.Oasis.Opendocument.Text",
+        )
+
+    mock_service.files.return_value.create.return_value.execute.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# set_drive_file_permissions - link sharing
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_tools.resolve_drive_item", new_callable=AsyncMock)
+async def test_link_sharing_off_finds_anyone_permission_on_a_later_page(
+    mock_resolve_item,
+):
+    """A public link past the first page of permissions is still removed."""
+    mock_resolve_item.return_value = ("file123", {"name": "Budget"})
+    mock_service = Mock()
+    pages = {
+        None: {
+            "permissions": [
+                {"id": f"u{i}", "type": "user", "role": "reader"} for i in range(100)
+            ],
+            "nextPageToken": "page2",
+        },
+        "page2": {
+            "permissions": [{"id": "anyone1", "type": "anyone", "role": "reader"}]
+        },
+    }
+
+    def list_permissions(**kwargs):
+        request = Mock()
+        request.execute.return_value = pages[kwargs.get("pageToken")]
+        return request
+
+    mock_service.permissions().list.side_effect = list_permissions
+
+    result = await _unwrap(set_drive_file_permissions)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        file_id="file123",
+        link_sharing="off",
+    )
+
+    mock_service.permissions().delete.assert_called_once_with(
+        fileId="file123", permissionId="anyone1", supportsAllDrives=True
+    )
+    assert "Link sharing: disabled" in result
+
+
+# ---------------------------------------------------------------------------
+# get_drive_file_permissions - owners
 # ---------------------------------------------------------------------------
 
 
@@ -573,8 +890,6 @@ def _make_file(
 @pytest.mark.asyncio
 async def test_create_drive_folder():
     """Test create_drive_folder returns success message with folder id, name, and link."""
-    from gdrive.drive_tools import _create_drive_folder_impl
-
     mock_service = Mock()
     mock_response = {
         "id": "folder123",
@@ -586,7 +901,7 @@ async def test_create_drive_folder():
     mock_service.files.return_value.create.return_value = mock_request
 
     with patch(
-        "gdrive.drive_tools.resolve_folder_id",
+        "gdrive.drive_helpers.resolve_folder_id",
         new_callable=AsyncMock,
         return_value="root",
     ):
@@ -670,13 +985,111 @@ def test_build_params_order_by_omits_whitespace_only_values():
     assert "orderBy" not in params
 
 
+@pytest.mark.parametrize(
+    "kwargs, expected",
+    [
+        ({}, "allDrives"),
+        ({"corpora": "user"}, "user"),
+        ({"drive_id": "d1"}, "drive"),
+        ({"drive_id": "d1", "corpora": "allDrives"}, "allDrives"),
+    ],
+)
+def test_build_params_corpora_defaults(kwargs, expected):
+    """Shared drives are searched by default instead of the API's 'user' corpus."""
+    params = build_drive_list_params(query="q", page_size=5, **kwargs)
+    assert params["corpora"] == expected
+
+
+def test_build_params_omits_corpora_when_excluding_shared_drives():
+    """'allDrives' requires includeItemsFromAllDrives, so it is not defaulted without it."""
+    params = build_drive_list_params(
+        query="q", page_size=5, include_items_from_all_drives=False
+    )
+    assert "corpora" not in params
+
+
+@pytest.mark.parametrize("detailed", [True, False])
+def test_build_params_requests_incomplete_search(detailed):
+    """incompleteSearch is requested so partial allDrives results can be flagged."""
+    params = build_drive_list_params(query="q", page_size=5, detailed=detailed)
+    assert "incompleteSearch" in params["fields"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("files", [[], [{"id": "f1", "name": "A", "mimeType": "x"}]])
+@patch("gdrive.drive_tools.resolve_folder_id", new_callable=AsyncMock)
+async def test_drive_listings_warn_on_incomplete_search(mock_resolve_folder, files):
+    """Both listing tools flag incompleteSearch, including when nothing matched."""
+    mock_resolve_folder.return_value = "root"
+    mock_service = Mock()
+    mock_service.files().list().execute.return_value = {
+        "files": files,
+        "incompleteSearch": True,
+    }
+
+    search_result = await _unwrap(search_drive_files)(
+        service=mock_service, user_google_email="user@example.com", query="a"
+    )
+    list_result = await _unwrap(list_drive_items)(
+        service=mock_service, user_google_email="user@example.com"
+    )
+
+    assert search_result.endswith(INCOMPLETE_SEARCH_WARNING)
+    assert list_result.endswith(INCOMPLETE_SEARCH_WARNING)
+
+
+@pytest.mark.asyncio
+async def test_search_drive_files_no_warning_when_search_complete():
+    """No incompleteSearch warning is added when Drive searched every corpus."""
+    mock_service = Mock()
+    mock_service.files().list().execute.return_value = {
+        "files": [{"id": "f1", "name": "A", "mimeType": "x"}],
+        "incompleteSearch": False,
+    }
+
+    result = await _unwrap(search_drive_files)(
+        service=mock_service, user_google_email="user@example.com", query="a"
+    )
+
+    assert INCOMPLETE_SEARCH_WARNING not in result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("incomplete", [False, True])
+@pytest.mark.parametrize("detailed", [False, True])
+@patch("gdrive.drive_tools.resolve_folder_id", new_callable=AsyncMock)
+async def test_drive_listings_keep_empty_page_token(
+    mock_resolve_folder, incomplete, detailed
+):
+    """An empty page may have more results; preserve its token and warning."""
+    mock_resolve_folder.return_value = "root"
+    service = Mock()
+    service.files().list().execute.return_value = {
+        "files": [],
+        "nextPageToken": "next-page",
+        "incompleteSearch": incomplete,
+    }
+
+    for tool, kwargs in [(search_drive_files, {"query": "a"}), (list_drive_items, {})]:
+        result = await _unwrap(tool)(
+            service=service,
+            user_google_email="user@example.com",
+            detailed=detailed,
+            **kwargs,
+        )
+        assert "nextPageToken: next-page" in result
+        assert "Found 0" in result
+        assert (INCOMPLETE_SEARCH_WARNING in result) is incomplete
+        assert "incompleteSearch" in service.files().list.call_args.kwargs["fields"]
+
+
 # ---------------------------------------------------------------------------
 # import_to_google_doc — upload retries
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-@patch("gdrive.drive_tools.resolve_folder_id", new_callable=AsyncMock)
+@patch("gdrive.drive_helpers.resolve_folder_id", new_callable=AsyncMock)
 async def test_import_to_google_doc_upload_uses_google_api_retries(mock_resolve_folder):
     """Drive uploads use googleapiclient's built-in retry handling."""
     mock_resolve_folder.return_value = "resolved_root"
@@ -1632,6 +2045,69 @@ async def test_list_drive_items_shared_drives_can_include_organizers():
 
 
 @pytest.mark.asyncio
+async def test_list_drive_items_shared_drive_organizer_requests_do_not_overlap(
+    monkeypatch,
+):
+    """Organizer requests on one service must finish before the next starts."""
+    mock_service = Mock()
+    mock_service.drives().list().execute.return_value = {
+        "drives": [
+            {"id": "drive1", "name": "Engineering"},
+            {"id": "drive2", "name": "Sales"},
+        ]
+    }
+    active_requests = 0
+    seen_drives = []
+
+    def list_permissions(**kwargs):
+        drive_id = kwargs["fileId"]
+        request = Mock()
+
+        def execute():
+            assert active_requests == 1, "organizer requests overlapped"
+            seen_drives.append(drive_id)
+            return {
+                "permissions": [
+                    {
+                        "role": "organizer",
+                        "type": "user",
+                        "emailAddress": f"{drive_id}@example.com",
+                    }
+                ]
+            }
+
+        request.execute.side_effect = execute
+        return request
+
+    mock_service.permissions().list.side_effect = list_permissions
+    drive_list_execute = mock_service.drives().list().execute
+
+    async def fake_to_thread(fn, *args, **kwargs):
+        nonlocal active_requests
+        if fn is drive_list_execute:
+            return fn(*args, **kwargs)
+        active_requests += 1
+        try:
+            await asyncio.sleep(0)
+            return fn(*args, **kwargs)
+        finally:
+            active_requests -= 1
+
+    monkeypatch.setattr("gdrive.drive_tools.asyncio.to_thread", fake_to_thread)
+    result = await _unwrap(list_drive_items)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        resource_type="shared_drives",
+        include_organizers=True,
+    )
+
+    assert SHARED_DRIVE_ORGANIZER_CONCURRENCY_LIMIT == 1
+    assert seen_drives == ["drive1", "drive2"]
+    assert "Organizer (user): drive1@example.com" in result
+    assert "Organizer (user): drive2@example.com" in result
+
+
+@pytest.mark.asyncio
 async def test_list_drive_items_invalid_resource_type_raises():
     """Unknown resource types are rejected before calling Drive APIs."""
     mock_service = Mock()
@@ -1713,7 +2189,7 @@ def test_resolve_file_type_mime_empty_raises():
 
 @pytest.mark.asyncio
 @patch("gdrive.drive_helpers._download_url_to_bytes", new_callable=AsyncMock)
-@patch("gdrive.drive_tools.resolve_folder_id", new_callable=AsyncMock)
+@patch("gdrive.drive_helpers.resolve_folder_id", new_callable=AsyncMock)
 async def test_import_to_google_slides_converts_pptx(
     mock_resolve_folder, mock_download
 ):
@@ -1750,7 +2226,7 @@ async def test_import_to_google_slides_converts_pptx(
 
 @pytest.mark.asyncio
 @patch("gdrive.drive_helpers._download_url_to_bytes", new_callable=AsyncMock)
-@patch("gdrive.drive_tools.resolve_folder_id", new_callable=AsyncMock)
+@patch("gdrive.drive_helpers.resolve_folder_id", new_callable=AsyncMock)
 async def test_import_to_google_slides_detects_extension_before_url_query(
     mock_resolve_folder, mock_download
 ):
@@ -1795,7 +2271,7 @@ async def test_import_to_google_slides_rejects_unsupported_format():
 
 
 @pytest.mark.asyncio
-@patch("gdrive.drive_tools.resolve_folder_id", new_callable=AsyncMock)
+@patch("gdrive.drive_helpers.resolve_folder_id", new_callable=AsyncMock)
 async def test_import_to_google_sheets_converts_csv_content(mock_resolve_folder):
     """CSV content uploads as text/csv while the body targets Sheets."""
     mock_resolve_folder.return_value = "resolved_root"
@@ -1825,7 +2301,63 @@ async def test_import_to_google_sheets_converts_csv_content(mock_resolve_folder)
 
 
 @pytest.mark.asyncio
-@patch("gdrive.drive_tools.resolve_folder_id", new_callable=AsyncMock)
+@patch("gdrive.drive_helpers.resolve_folder_id", new_callable=AsyncMock)
+async def test_import_to_google_sheets_accepts_validated_inline_xlsx(
+    mock_resolve_folder,
+):
+    """The purpose-built import tool accepts binary XLSX content without a detour."""
+    payload = _xlsx_bytes()
+    mock_resolve_folder.return_value = "resolved_root"
+    mock_service = Mock()
+    mock_service.files().create().execute.return_value = {
+        "id": "sheet123",
+        "name": "Budget",
+        "webViewLink": "https://docs.google.com/spreadsheets/d/sheet123",
+        "mimeType": "application/vnd.google-apps.spreadsheet",
+    }
+
+    result = await _unwrap(import_to_google_sheets)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        file_name="Budget.xlsx",
+        source_format="xlsx",
+        folder_id="root",
+        base64_content=base64.b64encode(payload).decode("ascii"),
+        base64_sha256=hashlib.sha256(payload).hexdigest(),
+    )
+
+    create_kwargs = mock_service.files.return_value.create.call_args.kwargs
+    assert create_kwargs["body"]["mimeType"] == (
+        "application/vnd.google-apps.spreadsheet"
+    )
+    media = create_kwargs["media_body"]
+    assert media.mimetype() == (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    assert media.resumable() is False
+    assert media.getbytes(0, len(payload)) == payload
+    assert "Successfully imported" in result
+
+
+@pytest.mark.asyncio
+async def test_import_to_google_sheets_rejects_corrupt_inline_xlsx():
+    """Malformed XLSX content never reaches Drive's slow asynchronous importer."""
+    mock_service = Mock()
+
+    with pytest.raises(ValueError, match="valid, intact archive"):
+        await _unwrap(import_to_google_sheets)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            file_name="Budget.xlsx",
+            source_format="xlsx",
+            base64_content=base64.b64encode(b"not an xlsx archive").decode("ascii"),
+        )
+
+    mock_service.files.return_value.create.return_value.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_helpers.resolve_folder_id", new_callable=AsyncMock)
 async def test_import_to_google_sheets_uses_google_api_retries(mock_resolve_folder):
     """Sheets conversion upload uses googleapiclient's built-in write retries."""
     mock_resolve_folder.return_value = "resolved_root"
@@ -1907,7 +2439,7 @@ async def test_import_to_google_slides_rejects_unsupported_source_via_allowlist(
 
 
 @pytest.mark.asyncio
-@patch("gdrive.drive_tools.resolve_folder_id", new_callable=AsyncMock)
+@patch("gdrive.drive_helpers.resolve_folder_id", new_callable=AsyncMock)
 async def test_import_to_google_sheets_accepts_csv_content(mock_resolve_folder):
     """csv is text-based AND in the Sheets allowlist: content still succeeds."""
     mock_resolve_folder.return_value = "resolved_root"
@@ -1934,7 +2466,7 @@ async def test_import_to_google_sheets_accepts_csv_content(mock_resolve_folder):
 
 
 @pytest.mark.asyncio
-@patch("gdrive.drive_tools.resolve_folder_id", new_callable=AsyncMock)
+@patch("gdrive.drive_helpers.resolve_folder_id", new_callable=AsyncMock)
 async def test_import_to_google_doc_accepts_markdown_content(mock_resolve_folder):
     """Backward-compat: markdown content into Docs still succeeds."""
     mock_resolve_folder.return_value = "resolved_root"
@@ -1957,6 +2489,41 @@ async def test_import_to_google_doc_accepts_markdown_content(mock_resolve_folder
     media = mock_service.files.return_value.create.call_args.kwargs["media_body"]
     assert media.mimetype() == "text/markdown"
     assert "Successfully imported" in result
+
+
+# ---------------------------------------------------------------------------
+# Drive shortcut resolution
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_resolve_drive_item_can_preserve_shortcut_resource():
+    """Metadata mutations can opt out of shortcut dereferencing."""
+    mock_service = Mock()
+    files_resource = Mock()
+    mock_service.files.return_value = files_resource
+    request = Mock()
+    files_resource.get.return_value = request
+    request.execute.return_value = {
+        "id": "shortcut123",
+        "name": "Agenda shortcut",
+        "mimeType": "application/vnd.google-apps.shortcut",
+        "shortcutDetails": {"targetId": "doc456"},
+    }
+
+    resolved_id, metadata = await resolve_drive_item(
+        mock_service,
+        "shortcut123",
+        follow_shortcuts=False,
+    )
+
+    assert resolved_id == "shortcut123"
+    assert metadata["mimeType"] == "application/vnd.google-apps.shortcut"
+    files_resource.get.assert_called_once_with(
+        fileId="shortcut123",
+        fields="id, mimeType, parents, shortcutDetails(targetId, targetMimeType)",
+        supportsAllDrives=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1988,6 +2555,15 @@ async def test_update_drive_file_replaces_content_with_conversion(mock_resolve_i
         source_format="md",
     )
 
+    mock_resolve_item.assert_awaited_once_with(
+        mock_service,
+        "doc123",
+        extra_fields=(
+            "name, description, mimeType, parents, starred, trashed, webViewLink, "
+            "writersCanShare, copyRequiresWriterPermission, properties"
+        ),
+        follow_shortcuts=False,
+    )
     update_kwargs = mock_service.files.return_value.update.call_args.kwargs
     assert update_kwargs["fileId"] == "doc123"
     assert update_kwargs["media_body"].mimetype() == "text/markdown"
@@ -1997,6 +2573,44 @@ async def test_update_drive_file_replaces_content_with_conversion(mock_resolve_i
     )
     assert execute_kwargs["num_retries"] == 3
     assert "Replaced content" in result
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_tools._get_content_update_lock")
+@patch("gdrive.drive_tools.resolve_drive_item", new_callable=AsyncMock)
+async def test_update_drive_file_replace_uses_content_lock(
+    mock_resolve_item, mock_get_lock
+):
+    """Replace must serialize with append/prepend read-modify-write operations."""
+    mock_resolve_item.return_value = (
+        "file123",
+        {"name": "note.md", "mimeType": "text/markdown"},
+    )
+    events = []
+    lock = Mock()
+    lock.acquire = AsyncMock(side_effect=lambda: events.append("acquire"))
+    lock.release = Mock(side_effect=lambda: events.append("release"))
+    mock_get_lock.return_value = lock
+    mock_service = Mock()
+
+    def _execute(**kwargs):
+        events.append("update")
+        return {"id": "file123", "name": "note.md", "mimeType": "text/markdown"}
+
+    mock_service.files().update().execute.side_effect = _execute
+
+    await _unwrap(update_drive_file)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        file_id="file123",
+        content="replacement",
+        mode="replace",
+    )
+
+    mock_get_lock.assert_called_once_with("file123")
+    lock.acquire.assert_awaited_once_with()
+    lock.release.assert_called_once_with()
+    assert events == ["acquire", "update", "release"]
 
 
 @pytest.mark.asyncio
@@ -2284,7 +2898,7 @@ async def test_update_drive_file_rejects_content_for_non_editable_google_types(
 @pytest.mark.asyncio
 @patch("gdrive.drive_tools.resolve_drive_item", new_callable=AsyncMock)
 async def test_update_drive_file_metadata_only_uploads_no_media(mock_resolve_item):
-    """A metadata-only update sends no media_body."""
+    """An ordinary metadata-only update sends no media_body."""
     mock_resolve_item.return_value = ("file123", {"name": "Old Name"})
     mock_service = Mock()
     mock_service.files().update().execute.return_value = {
@@ -2303,6 +2917,157 @@ async def test_update_drive_file_metadata_only_uploads_no_media(mock_resolve_ite
     update_kwargs = mock_service.files.return_value.update.call_args.kwargs
     assert "media_body" not in update_kwargs
     assert "Successfully updated file" in result
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_tools.resolve_drive_item", new_callable=AsyncMock)
+async def test_update_drive_file_metadata_only_preserves_shortcut_resource(
+    mock_resolve_item,
+):
+    """Metadata-only updates act on the supplied shortcut rather than its target."""
+    shortcut_metadata = {
+        "name": "Agenda shortcut",
+        "mimeType": "application/vnd.google-apps.shortcut",
+        "trashed": False,
+    }
+    mock_resolve_item.return_value = ("shortcut123", shortcut_metadata)
+    mock_service = Mock()
+    mock_service.files().update().execute.return_value = {
+        "id": "shortcut123",
+        "name": "Agenda shortcut",
+        "mimeType": "application/vnd.google-apps.shortcut",
+        "trashed": True,
+        "webViewLink": "https://drive.google.com/file/d/shortcut123",
+    }
+
+    result = await _unwrap(update_drive_file)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        file_id="shortcut123",
+        trashed=True,
+    )
+
+    mock_resolve_item.assert_awaited_once_with(
+        mock_service,
+        "shortcut123",
+        extra_fields=(
+            "name, description, mimeType, parents, starred, trashed, webViewLink, "
+            "writersCanShare, copyRequiresWriterPermission, properties"
+        ),
+        follow_shortcuts=False,
+    )
+    update_kwargs = mock_service.files.return_value.update.call_args.kwargs
+    assert update_kwargs["fileId"] == "shortcut123"
+    assert update_kwargs["body"] == {"trashed": True}
+    assert "media_body" not in update_kwargs
+    assert "File moved to trash" in result
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_tools.resolve_drive_item", new_callable=AsyncMock)
+async def test_update_drive_file_shortcut_content_update_follows_target(
+    mock_resolve_item,
+):
+    """Content controls inspect the shortcut and then apply to the target."""
+    mock_resolve_item.side_effect = [
+        (
+            "shortcut123",
+            {
+                "name": "Agenda shortcut",
+                "mimeType": "application/vnd.google-apps.shortcut",
+            },
+        ),
+        ("doc456", {"name": "Agenda", "mimeType": "text/markdown"}),
+    ]
+    mock_service = Mock()
+    mock_service.files().update().execute.return_value = {
+        "id": "doc456",
+        "name": "Agenda",
+        "mimeType": "text/markdown",
+        "webViewLink": "https://drive.google.com/file/d/doc456",
+    }
+
+    await _unwrap(update_drive_file)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        file_id="shortcut123",
+        content="# Updated agenda",
+        mime_type="text/plain",
+    )
+
+    assert [
+        call.kwargs["follow_shortcuts"] for call in mock_resolve_item.await_args_list
+    ] == [
+        False,
+        True,
+    ]
+    update_kwargs = mock_service.files.return_value.update.call_args.kwargs
+    assert update_kwargs["fileId"] == "doc456"
+    assert update_kwargs["body"] == {"mimeType": "text/plain"}
+    assert "media_body" in update_kwargs
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_tools.resolve_drive_item", new_callable=AsyncMock)
+async def test_update_drive_file_rejects_mixed_shortcut_content_and_metadata(
+    mock_resolve_item,
+):
+    """A mixed call cannot accidentally trash the underlying shortcut target."""
+    mock_resolve_item.return_value = (
+        "shortcut123",
+        {
+            "name": "Agenda shortcut",
+            "mimeType": "application/vnd.google-apps.shortcut",
+        },
+    )
+    mock_service = Mock()
+
+    with pytest.raises(ValueError, match="separate calls"):
+        await _unwrap(update_drive_file)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            file_id="shortcut123",
+            content="# Updated agenda",
+            trashed=True,
+        )
+
+    mock_resolve_item.assert_awaited_once()
+    mock_service.files.return_value.update.return_value.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "unsupported_update",
+    [
+        {"mime_type": "text/plain"},
+        {"writers_can_share": False},
+        {"copy_requires_writer_permission": True},
+    ],
+)
+@patch("gdrive.drive_tools.resolve_drive_item", new_callable=AsyncMock)
+async def test_update_drive_file_rejects_unsupported_shortcut_metadata(
+    mock_resolve_item,
+    unsupported_update,
+):
+    """Content and permission controls are not treated as shortcut-local metadata."""
+    mock_resolve_item.return_value = (
+        "shortcut123",
+        {
+            "name": "Agenda shortcut",
+            "mimeType": "application/vnd.google-apps.shortcut",
+        },
+    )
+    mock_service = Mock()
+
+    with pytest.raises(ValueError, match="cannot be updated on a Drive shortcut"):
+        await _unwrap(update_drive_file)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            file_id="shortcut123",
+            **unsupported_update,
+        )
+
+    mock_service.files.return_value.update.return_value.execute.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -2592,3 +3357,126 @@ async def test_check_drive_file_public_access_shared_drive(mock_resolve):
 
     assert "PUBLIC ACCESS ENABLED" in result
     assert "Shared: True" in result
+
+
+# ---------------------------------------------------------------------------
+# search_drive_files - Drive API v2 -> v3 query compat (title -> name)
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_drive_query_v2_title_contains():
+    """v2 `title contains` is rewritten to v3 `name contains`."""
+    assert (
+        normalize_drive_query_v2_compat("title contains 'test'")
+        == "name contains 'test'"
+    )
+
+
+def test_normalize_drive_query_v2_preserves_literals():
+    """Quoted values mentioning v2 names are data, not fields."""
+    assert (
+        normalize_drive_query_v2_compat("name contains 'title'")
+        == "name contains 'title'"
+    )
+    assert (
+        normalize_drive_query_v2_compat("name contains \"title contains 'test'\"")
+        == "name contains \"title contains 'test'\""
+    )
+    assert (
+        normalize_drive_query_v2_compat("name contains 'it\\'s title' and title = 'a'")
+        == "name contains 'it\\'s title' and name = 'a'"
+    )
+
+
+def test_normalize_drive_query_v2_whole_words_any_case():
+    """Matching is case-insensitive but never touches longer identifiers."""
+    assert (
+        normalize_drive_query_v2_compat(
+            "TITLE = 'a' or subtitle = 'b' or title_x = 'c'"
+        )
+        == "name = 'a' or subtitle = 'b' or title_x = 'c'"
+    )
+
+
+def test_normalize_drive_query_v2_date_fields():
+    """v2 date fields map to v3 `Time` suffix equivalents."""
+    assert (
+        normalize_drive_query_v2_compat("modifiedDate > '2024-01-01T00:00:00Z'")
+        == "modifiedTime > '2024-01-01T00:00:00Z'"
+    )
+    assert (
+        normalize_drive_query_v2_compat("createdDate > '2024-01-01T00:00:00Z'")
+        == "createdTime > '2024-01-01T00:00:00Z'"
+    )
+    assert (
+        normalize_drive_query_v2_compat("lastViewedByMeDate > '2024-01-01T00:00:00Z'")
+        == "viewedByMeTime > '2024-01-01T00:00:00Z'"
+    )
+
+
+@pytest.mark.asyncio
+async def test_search_drive_files_normalizes_title_contains_to_name():
+    """`title contains 'test'` produces v3 `(name contains 'test') and trashed=false`."""
+    mock_service = Mock()
+    mock_service.files().list().execute.return_value = {"files": []}
+
+    await _unwrap(search_drive_files)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        query="title contains 'test'",
+    )
+
+    call_kwargs = mock_service.files.return_value.list.call_args.kwargs
+    assert call_kwargs["q"] == "(name contains 'test') and trashed=false"
+    assert "title contains" not in call_kwargs["q"]
+    assert "name contains 'test'" in call_kwargs["q"]
+
+
+@pytest.mark.asyncio
+async def test_search_drive_files_normalizes_title_equals_to_name():
+    """`title = 'report'` is also a v2 field usage and must become v3 `name`."""
+    mock_service = Mock()
+    mock_service.files().list().execute.return_value = {"files": []}
+
+    await _unwrap(search_drive_files)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        query="title = 'report'",
+    )
+
+    call_kwargs = mock_service.files.return_value.list.call_args.kwargs
+    assert call_kwargs["q"] == "(name = 'report') and trashed=false"
+
+
+@pytest.mark.asyncio
+async def test_search_drive_files_does_not_rewrite_quoted_title():
+    """A literal filename containing the word title is left untouched."""
+    mock_service = Mock()
+    mock_service.files().list().execute.return_value = {"files": []}
+
+    await _unwrap(search_drive_files)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        query="name contains 'title'",
+    )
+
+    call_kwargs = mock_service.files.return_value.list.call_args.kwargs
+    assert call_kwargs["q"] == "(name contains 'title') and trashed=false"
+
+
+@pytest.mark.asyncio
+async def test_search_drive_files_escapes_free_text_literal():
+    """Backslashes and quotes in free text stay inside one literal, never rewritten."""
+    mock_service = Mock()
+    mock_service.files().list().execute.return_value = {"files": []}
+
+    await _unwrap(search_drive_files)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        query="it's a title\\",
+    )
+
+    call_kwargs = mock_service.files.return_value.list.call_args.kwargs
+    assert (
+        call_kwargs["q"] == "(fullText contains 'it\\'s a title\\\\') and trashed=false"
+    )

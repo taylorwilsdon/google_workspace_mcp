@@ -1,8 +1,13 @@
+import base64
+import json
 from unittest.mock import Mock
 
+import httpx
 import pytest
+from fastmcp.tools import ToolResult
 
 from core.utils import UserInputError
+from gslides import slides_tools
 from gslides.slides_tools import (
     _describe_elements,
     _extract_shape_text,
@@ -615,3 +620,381 @@ async def test_batch_update_allows_insert_text_into_the_speaker_notes_shape():
 
     assert presentations.batchUpdate.call_args.kwargs["body"] == {"requests": requests}
     assert "Batch Update Completed" in result
+
+
+class TestGeometryReporting:
+    """Element placement is reported only when asked for (issue #1026)."""
+
+    ELEMENTS = [
+        {
+            "objectId": "el1",
+            "shape": {"shapeType": "TEXT_BOX"},
+            "transform": {
+                "translateX": 685800,
+                "translateY": 1143000,
+                "scaleX": 1,
+                "scaleY": 1,
+                "unit": "EMU",
+            },
+            "size": {
+                "width": {"magnitude": 7772400, "unit": "EMU"},
+                "height": {"magnitude": 1325563, "unit": "EMU"},
+            },
+        }
+    ]
+
+    def test_geometry_is_omitted_by_default(self):
+        lines = slides_tools._describe_elements(self.ELEMENTS)
+        assert not any("position:" in line for line in lines)
+
+    def test_geometry_reports_position_and_size_in_emu(self):
+        lines = slides_tools._describe_elements(self.ELEMENTS, include_geometry=True)
+        geometry = next(line for line in lines if "position:" in line)
+        assert "x=685800" in geometry
+        assert "y=1143000" in geometry
+        assert "7772400 x 1325563 EMU" in geometry
+        # Identity scale is noise, so it is left out.
+        assert "scale:" not in geometry
+
+    def test_non_identity_scale_is_reported(self):
+        element = {
+            **self.ELEMENTS[0],
+            "transform": {**self.ELEMENTS[0]["transform"], "scaleX": 0.5},
+        }
+        geometry = next(
+            line
+            for line in slides_tools._describe_elements(
+                [element], include_geometry=True
+            )
+            if "position:" in line
+        )
+        assert "scale: x=0.5 y=1" in geometry
+
+    def test_geometry_line_follows_its_own_element_inside_a_group(self):
+        group = [
+            {
+                "objectId": "grp",
+                "elementGroup": {"children": self.ELEMENTS},
+                "transform": {"translateX": 0, "translateY": 0, "unit": "EMU"},
+            }
+        ]
+        lines = slides_tools._describe_elements(group, include_geometry=True)
+        assert "Group: ID grp" in lines[0]
+        assert "position: x=0" in lines[1]
+        assert "Shape: ID el1" in lines[2]
+        assert "x=685800" in lines[3]
+
+    def test_element_without_geometry_yields_no_line(self):
+        lines = slides_tools._describe_elements(
+            [{"objectId": "el2", "shape": {"shapeType": "TEXT_BOX"}}],
+            include_geometry=True,
+        )
+        assert lines == ["  Shape: ID el2, Type: TEXT_BOX"]
+
+
+class TestStyleAndTableReporting:
+    """get_page detail for proofing: text styles, table cells, raw resource."""
+
+    STYLED_SHAPE = {
+        "objectId": "h1",
+        "shape": {
+            "shapeType": "TEXT_BOX",
+            "placeholder": {"type": "TITLE", "index": 0, "parentObjectId": "lay_t"},
+            "shapeProperties": {"autofit": {"autofitType": "NONE"}},
+            "text": {
+                "textElements": [
+                    {
+                        "startIndex": 0,
+                        "endIndex": 25,
+                        "paragraphMarker": {"style": {"alignment": "START"}},
+                    },
+                    {
+                        "startIndex": 0,
+                        "endIndex": 10,
+                        "textRun": {
+                            "content": "More data ",
+                            "style": {
+                                "weightedFontFamily": {
+                                    "fontFamily": "Poppins",
+                                    "weight": 700,
+                                },
+                                "fontSize": {"magnitude": 28, "unit": "PT"},
+                                "bold": True,
+                                "foregroundColor": {
+                                    "opaqueColor": {
+                                        "rgbColor": {"red": 0, "green": 0.4, "blue": 1}
+                                    }
+                                },
+                            },
+                        },
+                    },
+                    {
+                        "startIndex": 10,
+                        "endIndex": 25,
+                        "textRun": {
+                            "content": "complicates.\n",
+                            "style": {
+                                "weightedFontFamily": {
+                                    "fontFamily": "Poppins",
+                                    "weight": 700,
+                                },
+                                "fontSize": {"magnitude": 28, "unit": "PT"},
+                                "bold": True,
+                                "foregroundColor": {
+                                    "opaqueColor": {
+                                        "rgbColor": {"red": 0, "green": 0.4, "blue": 1}
+                                    }
+                                },
+                            },
+                        },
+                    },
+                ]
+            },
+        },
+    }
+
+    TABLE = {
+        "objectId": "tbl",
+        "table": {
+            "rows": 1,
+            "columns": 2,
+            "tableColumns": [
+                {"columnWidth": {"magnitude": 2000000, "unit": "EMU"}},
+                {"columnWidth": {"magnitude": 2100000, "unit": "EMU"}},
+            ],
+            "tableRows": [
+                {
+                    "rowHeight": {"magnitude": 500000, "unit": "EMU"},
+                    "tableCells": [
+                        {
+                            "location": {"rowIndex": 0, "columnIndex": 0},
+                            "text": {
+                                "textElements": [
+                                    {
+                                        "startIndex": 0,
+                                        "textRun": {
+                                            "content": "Pair signals\n",
+                                            "style": {"italic": True},
+                                        },
+                                    }
+                                ]
+                            },
+                        },
+                        {"location": {"rowIndex": 0, "columnIndex": 1}},
+                    ],
+                }
+            ],
+        },
+    }
+
+    def test_styles_omitted_by_default(self):
+        lines = slides_tools._describe_elements([self.STYLED_SHAPE, self.TABLE])
+        assert not any(
+            "run:" in line or "cell [" in line or "columns (EMU)" in line
+            for line in lines
+        )
+        assert lines[-1] == "  Table: ID tbl, Size: 1x2"
+
+    def test_runs_with_identical_style_are_merged(self):
+        lines = slides_tools._describe_elements(
+            [self.STYLED_SHAPE], include_styles=True
+        )
+        runs = [line for line in lines if "run:" in line]
+        assert len(runs) == 1
+        assert "Poppins w700 28pt bold color=#0066FF" in runs[0]
+        assert '"More data complicates."' in runs[0]
+
+    def test_paragraph_placeholder_and_frame_are_reported(self):
+        lines = slides_tools._describe_elements(
+            [self.STYLED_SHAPE], include_styles=True
+        )
+        assert any("para @0-25: align=START" in line for line in lines)
+        assert any("placeholder: TITLE index=0 parent=lay_t" in line for line in lines)
+        assert any("frame: autofit=NONE" in line for line in lines)
+
+    def test_explicitly_disabled_flag_is_reported(self):
+        assert slides_tools._describe_run_style({"bold": False}) == "bold=false"
+        assert slides_tools._describe_run_style({}) == "inherited"
+
+    def test_text_autofit_reports_font_scale(self):
+        shape = {
+            "shapeProperties": {
+                "autofit": {"autofitType": "TEXT_AUTOFIT", "fontScale": 0.85}
+            }
+        }
+        assert slides_tools._describe_shape_frame(shape, "") == [
+            "  frame: autofit=TEXT_AUTOFIT fontScale=0.85"
+        ]
+
+    def test_table_geometry_and_cells(self):
+        lines = slides_tools._describe_elements([self.TABLE], include_geometry=True)
+        assert any("columns (EMU): 2000000, 2100000" in line for line in lines)
+        assert any("rows (EMU): 500000" in line for line in lines)
+        assert any('cell [0,0]: "Pair signals"' in line for line in lines)
+        # Empty cells stay quiet.
+        assert not any("cell [0,1]" in line for line in lines)
+
+    def test_table_geometry_reports_api_units(self):
+        table = {
+            "tableColumns": [
+                {"columnWidth": {"magnitude": 100, "unit": "PT"}},
+                {"columnWidth": {"magnitude": 1270000, "unit": "EMU"}},
+            ],
+            "tableRows": [{"rowHeight": {"magnitude": 20, "unit": "PT"}}],
+        }
+        assert slides_tools._describe_table_geometry(table, "") == (
+            "  columns (PT): 100, 1270000 EMU   rows (PT): 20"
+        )
+
+    def test_table_cell_styles(self):
+        lines = slides_tools._describe_elements([self.TABLE], include_styles=True)
+        assert any('run: italic | "Pair signals"' in line for line in lines)
+
+    RED = {"solidFill": {"color": {"rgbColor": {"red": 1}}}}
+
+    @pytest.mark.parametrize(
+        ("prop", "expected"),
+        [
+            # An absent propertyState is the API default, RENDERED.
+            (RED, "#FF0000"),
+            ({**RED, "propertyState": "RENDERED"}, "#FF0000"),
+            # NOT_RENDERED may keep a color for child placeholders to inherit.
+            ({**RED, "propertyState": "NOT_RENDERED"}, "none"),
+            ({**RED, "propertyState": "INHERIT"}, "inherit:#FF0000"),
+            ({"propertyState": "INHERIT"}, "inherit"),
+            # SolidFill fields may be unset and inherited from the parent.
+            ({"solidFill": {"alpha": 1}}, None),
+            ({}, None),
+        ],
+    )
+    def test_fill_state_follows_property_state(self, prop, expected):
+        assert slides_tools._describe_fill_state(prop, prop) == expected
+
+    def test_frame_reports_fill_and_outline_by_state(self):
+        shape = {
+            "shapeProperties": {
+                "shapeBackgroundFill": {**self.RED, "propertyState": "NOT_RENDERED"},
+                "outline": {"outlineFill": self.RED},
+            }
+        }
+        assert slides_tools._describe_shape_frame(shape, "") == [
+            "  frame: fill=none outline=#FF0000"
+        ]
+
+    def test_theme_color_rendered_by_name(self):
+        assert (
+            slides_tools._describe_color({"opaqueColor": {"themeColor": "ACCENT1"}})
+            == "ACCENT1"
+        )
+
+    @pytest.mark.asyncio
+    async def test_raw_returns_full_page_resource(self):
+        page = {"objectId": "p1", "pageType": "SLIDE", "pageElements": [self.TABLE]}
+        service = Mock()
+        service.presentations.return_value.pages.return_value.get.return_value.execute.return_value = page
+        out = await _unwrap(slides_tools.get_page)(
+            service, "u@example.com", "pres", "p1", raw=True
+        )
+        assert json.loads(out) == page
+
+
+def test_iter_text_bearing_elements_includes_table_cells():
+    table = {
+        "table": {
+            "tableRows": [
+                {
+                    "tableCells": [
+                        _text_shape("cell-a")["shape"],
+                        {},
+                        _text_shape("cell-b")["shape"],
+                    ]
+                }
+            ]
+        }
+    }
+    assert list(_iter_text_bearing_elements([table])) == ["cell-a", "cell-b"]
+
+
+@pytest.mark.asyncio
+async def test_get_presentation_raw_returns_full_resource():
+    presentation = {
+        "presentationId": "pres",
+        "slides": [{"objectId": "p"}],
+        "layouts": [],
+    }
+    service, _ = _build_slides_service(presentation=presentation)
+    out = await _unwrap(get_presentation)(service, "u@example.com", "pres", raw=True)
+    assert json.loads(out) == presentation
+
+
+class TestThumbnailInline:
+    def _service(self):
+        service = Mock()
+        service.presentations.return_value.pages.return_value.getThumbnail.return_value.execute.return_value = {
+            "contentUrl": "https://lh7-us.googleusercontent.com/thumb.png"
+        }
+        return service
+
+    @pytest.mark.asyncio
+    async def test_url_only_by_default(self):
+        out = await _unwrap(slides_tools.get_page_thumbnail)(
+            self._service(), "u@example.com", "pres", "p1"
+        )
+        assert isinstance(out, str)
+        assert "thumb.png" in out
+
+    @pytest.mark.asyncio
+    async def test_inline_returns_png_image_content(self, monkeypatch):
+        png = b"\x89PNG\r\n\x1a\nfake"
+
+        def handler(request):
+            assert request.url.host == "lh7-us.googleusercontent.com"
+            return httpx.Response(
+                200, content=png, headers={"content-type": "image/png"}
+            )
+
+        real_client = httpx.AsyncClient
+        monkeypatch.setattr(
+            slides_tools.httpx,
+            "AsyncClient",
+            lambda **kw: real_client(transport=httpx.MockTransport(handler), **kw),
+        )
+        out = await _unwrap(slides_tools.get_page_thumbnail)(
+            self._service(), "u@example.com", "pres", "p1", inline=True
+        )
+        assert isinstance(out, ToolResult)
+        text, image = out.content
+        assert "thumb.png" in text.text
+        assert image.type == "image" and image.mime_type == "image/png"
+        assert base64.b64decode(image.data) == png
+        assert out.structured_content == {"result": text.text}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "response",
+        [
+            httpx.Response(403),
+            httpx.Response(
+                200, content=b"<html>", headers={"content-type": "text/html"}
+            ),
+            httpx.ConnectError("unreachable"),
+        ],
+    )
+    async def test_inline_fetch_failure_falls_back_to_url(self, monkeypatch, response):
+        def handler(request):
+            if isinstance(response, Exception):
+                raise response
+            return response
+
+        real_client = httpx.AsyncClient
+        monkeypatch.setattr(
+            slides_tools.httpx,
+            "AsyncClient",
+            lambda **kw: real_client(transport=httpx.MockTransport(handler), **kw),
+        )
+        out = await _unwrap(slides_tools.get_page_thumbnail)(
+            self._service(), "u@example.com", "pres", "p1", inline=True
+        )
+        assert isinstance(out, str)
+        assert "https://lh7-us.googleusercontent.com/thumb.png" in out
+        assert "Inline image unavailable" in out

@@ -88,3 +88,7 @@ docker run -p 8000:8000 -e GOOGLE_OAUTH_CLIENT_ID=... -e GOOGLE_OAUTH_CLIENT_SEC
 2. `.env` file in project root -- **will not work with `uvx`** (uvx runs outside the repo directory)
 3. `client_secret.json` via `GOOGLE_CLIENT_SECRET_PATH` env var
 4. Default `client_secret.json` in project root
+
+This priority applies to both the per-user Google grant flow and OAuth 2.1 (`MCP_ENABLE_OAUTH21=true`) startup. Per-value mixing - e.g. `GOOGLE_OAUTH_CLIENT_ID` from the environment while the client secret comes from a `client_secret.json` supplied via `GOOGLE_CLIENT_SECRET_PATH`, which satisfies the OAuth 2.1 client-secret requirement - happens only at OAuth 2.1 startup, and only when the file describes the same client: a file whose `client_id` differs from `GOOGLE_OAUTH_CLIENT_ID` is ignored with a warning, since Google rejects a mismatched id/secret pair. The per-user grant flow is all-or-nothing: when `GOOGLE_OAUTH_CLIENT_ID` is set, the environment is used as-is (an unset `GOOGLE_OAUTH_CLIENT_SECRET` means a public client) and the client secrets file is not read.
+
+A `GOOGLE_CLIENT_SECRET_PATH` that cannot be read is fatal at startup only under `MCP_ENABLE_OAUTH21=true`, which needs the credentials before serving; other modes log a warning and resolve credentials when a user authenticates. A leading `~` in the path is expanded.

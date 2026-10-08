@@ -37,6 +37,7 @@ from auth.scopes import (
     CHAT_WRITE_SCOPE,
     CHAT_SPACES_SCOPE,
     CHAT_SPACES_READONLY_SCOPE,
+    CHAT_MEMBERSHIPS_READONLY_SCOPE,
     FORMS_BODY_SCOPE,
     FORMS_BODY_READONLY_SCOPE,
     FORMS_RESPONSES_READONLY_SCOPE,
@@ -53,6 +54,8 @@ from auth.scopes import (
     SCRIPT_DEPLOYMENTS_READONLY_SCOPE,
     SCRIPT_PROCESSES_READONLY_SCOPE,
     SCRIPT_METRICS_SCOPE,
+    SCRIPT_EXTERNAL_REQUEST_SCOPE,
+    SCRIPT_SCRIPTAPP_SCOPE,
 )
 
 logger = logging.getLogger(__name__)
@@ -82,10 +85,18 @@ SERVICE_PERMISSION_LEVELS: Dict[str, List[Tuple[str, List[str]]]] = {
     ],
     "sheets": [
         ("readonly", [SHEETS_READONLY_SCOPE, DRIVE_READONLY_SCOPE]),
-        ("full", [SHEETS_WRITE_SCOPE, DRIVE_READONLY_SCOPE]),
+        ("full", [SHEETS_WRITE_SCOPE, DRIVE_READONLY_SCOPE, DRIVE_FILE_SCOPE]),
     ],
     "chat": [
-        ("readonly", [CHAT_READONLY_SCOPE, CHAT_SPACES_READONLY_SCOPE]),
+        (
+            "readonly",
+            [
+                CHAT_READONLY_SCOPE,
+                CHAT_SPACES_READONLY_SCOPE,
+                CHAT_MEMBERSHIPS_READONLY_SCOPE,
+                CONTACTS_READONLY_SCOPE,
+            ],
+        ),
         ("full", [CHAT_WRITE_SCOPE, CHAT_SPACES_SCOPE]),
     ],
     "forms": [
@@ -127,7 +138,9 @@ SERVICE_PERMISSION_LEVELS: Dict[str, List[Tuple[str, List[str]]]] = {
                 SCRIPT_DEPLOYMENTS_SCOPE,
                 SCRIPT_PROCESSES_READONLY_SCOPE,
                 SCRIPT_METRICS_SCOPE,
-                DRIVE_FILE_SCOPE,
+                SCRIPT_EXTERNAL_REQUEST_SCOPE,
+                SCRIPT_SCRIPTAPP_SCOPE,
+                DRIVE_SCOPE,
             ],
         ),
     ],

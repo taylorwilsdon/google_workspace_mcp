@@ -5,8 +5,11 @@ This module provides MCP tools for interacting with Google Apps Script API.
 """
 
 import asyncio
+import inspect
+import json
 import logging
 import weakref
+from functools import wraps
 from typing import Any, Dict, List, Optional
 
 from mcp.types import ToolAnnotations
@@ -150,8 +153,64 @@ async def _list_script_projects_impl(
     return "\n".join(output)
 
 
+def _require_project_action_service(action_services):
+    """Select authentication by action while retaining the named service slots."""
+
+    def decorator(func):
+        original_sig = inspect.signature(func)
+        public_params = list(original_sig.parameters.values())[2:]
+        dispatch_sig = original_sig.replace(parameters=public_params)
+
+        @wraps(func)
+        async def invoke(service, *args, **kwargs):
+            action = (
+                dispatch_sig.bind(*args, **kwargs).arguments["action"].lower().strip()
+            )
+            service_type, _ = action_services[action]
+            return await func(
+                service if service_type == "drive" else None,
+                service if service_type == "script" else None,
+                *args,
+                **kwargs,
+            )
+
+        invoke.__signature__ = original_sig.replace(
+            parameters=[
+                inspect.Parameter("service", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+                *public_params,
+            ]
+        )
+        handlers = {
+            action: require_google_service(service_type, scopes)(invoke)
+            for action, (service_type, scopes) in action_services.items()
+        }
+        # Let the existing auth decorator handle the managed-email signature.
+        public_sig = inspect.signature(next(iter(handlers.values())))
+
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            arguments = public_sig.bind(*args, **kwargs).arguments
+            action = arguments["action"].lower().strip()
+            if action not in handlers:
+                choices = " or ".join(repr(value) for value in handlers)
+                raise UserInputError(f"Invalid action '{action}'. Must be {choices}.")
+            return await handlers[action](**arguments)
+
+        wrapper.__signature__ = public_sig
+        wrapper._required_google_scopes = list(
+            dict.fromkeys(
+                scope
+                for handler in handlers.values()
+                for scope in handler._required_google_scopes
+            )
+        )
+        return wrapper
+
+    return decorator
+
+
 @server.tool(
-    title="List Script Projects",
+    title="Get Script Project",
     annotations=ToolAnnotations(
         readOnlyHint=True,
         destructiveHint=False,
@@ -159,31 +218,59 @@ async def _list_script_projects_impl(
         openWorldHint=True,
     ),
 )
-@handle_http_errors("list_script_projects", is_read_only=True, service_type="drive")
-@require_google_service("drive", "drive_read")
-async def list_script_projects(
-    service: Any,
+@_require_project_action_service(
+    {"list": ("drive", "drive_read"), "get": ("script", "script_readonly")}
+)
+@handle_http_errors("get_script_project", is_read_only=True, service_type="script")
+async def get_script_project(
+    drive_service: Any,
+    script_service: Any,
     user_google_email: str,
+    action: str,
+    script_id: Optional[str] = None,
+    file_name: Optional[str] = None,
     page_size: int = 50,
     page_token: Optional[str] = None,
 ) -> str:
     """
-    Lists Google Apps Script projects accessible to the user.
+    Read Apps Script projects and their source files.
 
-    Uses Drive API to find Apps Script files.
+    Actions:
+        - "list": List Apps Script projects accessible to the user (Drive-backed).
+          Optional: page_size, page_token.
+        - "get": Retrieve one project's metadata and file overview, or one
+          complete source file when file_name is provided. Requires script_id.
 
     Args:
-        service: Injected Google API service client
+        drive_service: Injected Drive client (used for list).
+        script_service: Injected Script client (used for get).
         user_google_email: User's email address
-        page_size: Number of results per page (default: 50)
-        page_token: Token for pagination (optional)
+        action: One of "list", "get".
+        script_id: The script project ID (required for get).
+        file_name: Optional source file name for get.
+        page_size: Number of results per page for list (default: 50).
+        page_token: Pagination token for list (optional).
 
     Returns:
-        str: Formatted list of script projects
+        str: Formatted result for the requested action.
     """
-    return await _list_script_projects_impl(
-        service, user_google_email, page_size, page_token
-    )
+    action = action.lower().strip()
+    if action == "list":
+        return await _list_script_projects_impl(
+            drive_service, user_google_email, page_size, page_token
+        )
+    elif action == "get":
+        if not script_id:
+            raise UserInputError("script_id is required for get action")
+        if file_name:
+            return await _get_script_content_impl(
+                script_service, user_google_email, script_id, file_name
+            )
+        return await _get_script_project_impl(
+            script_service, user_google_email, script_id
+        )
+    else:
+        raise UserInputError(f"Invalid action '{action}'. Must be 'list' or 'get'.")
 
 
 async def _get_script_project_impl(
@@ -230,36 +317,6 @@ async def _get_script_project_impl(
     return "\n".join(output)
 
 
-@server.tool(
-    title="Get Script Project",
-    annotations=ToolAnnotations(
-        readOnlyHint=True,
-        destructiveHint=False,
-        idempotentHint=True,
-        openWorldHint=True,
-    ),
-)
-@handle_http_errors("get_script_project", is_read_only=True, service_type="script")
-@require_google_service("script", "script_readonly")
-async def get_script_project(
-    service: Any,
-    user_google_email: str,
-    script_id: str,
-) -> str:
-    """
-    Retrieves complete project details including all source files.
-
-    Args:
-        service: Injected Google API service client
-        user_google_email: User's email address
-        script_id: The script project ID
-
-    Returns:
-        str: Formatted project details with all file contents
-    """
-    return await _get_script_project_impl(service, user_google_email, script_id)
-
-
 async def _get_script_content_impl(
     service: Any,
     user_google_email: str,
@@ -297,37 +354,55 @@ async def _get_script_content_impl(
 
 
 @server.tool(
-    title="Get Script Content",
+    title="Manage Script Content",
     annotations=ToolAnnotations(
-        readOnlyHint=True,
-        destructiveHint=False,
-        idempotentHint=True,
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=False,
         openWorldHint=True,
     ),
 )
-@handle_http_errors("get_script_content", is_read_only=True, service_type="script")
-@require_google_service("script", "script_readonly")
-async def get_script_content(
+@handle_http_errors("manage_script_content", service_type="script")
+@require_google_service("script", "script_projects")
+async def manage_script_content(
     service: Any,
     user_google_email: str,
+    action: str,
     script_id: str,
-    file_name: str,
+    files: Optional[List[Dict[str, str]]] = None,
+    merge: bool = True,
 ) -> str:
     """
-    Retrieves content of a specific file within a project.
+    Update the source files of an Apps Script project.
+
+    Actions:
+        - "update": Create or update files. By default (merge=True) the supplied
+          files are overlaid onto the project by (name, type), leaving other
+          files untouched. Set merge=False to replace the full project file set;
+          any existing file omitted from `files` is permanently deleted.
 
     Args:
         service: Injected Google API service client
         user_google_email: User's email address
-        script_id: The script project ID
-        file_name: Name of the file to retrieve
+        action: "update".
+        script_id: The script project ID.
+        files: File objects with name, type, and source to create or update
+            (required for update).
+        merge: When True (default), overlay `files` onto the current project.
+            When False, replace the full project file set (update only).
 
     Returns:
-        str: File content as string
+        str: Confirmation with the updated file list.
     """
-    return await _get_script_content_impl(
-        service, user_google_email, script_id, file_name
-    )
+    action = action.lower().strip()
+    if action == "update":
+        if not files:
+            raise UserInputError("files is required for update action")
+        return await _update_script_content_impl(
+            service, user_google_email, script_id, files, merge
+        )
+    else:
+        raise UserInputError(f"Invalid action '{action}'. Must be 'update'.")
 
 
 async def _create_script_project_impl(
@@ -337,7 +412,9 @@ async def _create_script_project_impl(
     parent_id: Optional[str] = None,
 ) -> str:
     """Internal implementation for create_script_project."""
-    logger.info(f"[create_script_project] Email: {user_google_email}, Title: {title}")
+    logger.info(
+        f"[create_script_project] Email: {user_google_email}, title_len={len(title)}"
+    )
 
     request_body = {"title": title}
 
@@ -359,40 +436,6 @@ async def _create_script_project_impl(
 
     logger.info(f"[create_script_project] Created project {script_id}")
     return "\n".join(output)
-
-
-@server.tool(
-    title="Create Script Project",
-    annotations=ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=False,
-        idempotentHint=False,
-        openWorldHint=True,
-    ),
-)
-@handle_http_errors("create_script_project", service_type="script")
-@require_google_service("script", "script_projects")
-async def create_script_project(
-    service: Any,
-    user_google_email: str,
-    title: str,
-    parent_id: Optional[str] = None,
-) -> str:
-    """
-    Creates a new Apps Script project.
-
-    Args:
-        service: Injected Google API service client
-        user_google_email: User's email address
-        title: Project title
-        parent_id: Optional Drive folder ID or bound container ID
-
-    Returns:
-        str: Formatted string with new project details
-    """
-    return await _create_script_project_impl(
-        service, user_google_email, title, parent_id
-    )
 
 
 async def _update_script_content_impl(
@@ -445,48 +488,6 @@ async def _update_script_content_impl(
     return "\n".join(output)
 
 
-@server.tool(
-    title="Update Script Content",
-    annotations=ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=True,
-        idempotentHint=False,
-        openWorldHint=True,
-    ),
-)
-@handle_http_errors("update_script_content", service_type="script")
-@require_google_service("script", "script_projects")
-async def update_script_content(
-    service: Any,
-    user_google_email: str,
-    script_id: str,
-    files: List[Dict[str, str]],
-    merge: bool = True,
-) -> str:
-    """
-    Update or create files in a script project.
-
-    By default this merges the supplied files into the existing project by file
-    name, leaving other files untouched. Set merge=False to replace the entire
-    project: any existing file omitted from `files` is permanently deleted.
-
-    Args:
-        service: Injected Google API service client
-        user_google_email: User's email address
-        script_id: The script project ID
-        files: File objects with name, type, and source to create or update
-        merge: When True (default), overlay these files onto the current
-            project. When False, replace the full project file set; omitted
-            files are deleted.
-
-    Returns:
-        str: Formatted string confirming update with file list
-    """
-    return await _update_script_content_impl(
-        service, user_google_email, script_id, files, merge
-    )
-
-
 async def _run_script_function_impl(
     service: Any,
     user_google_email: str,
@@ -494,6 +495,7 @@ async def _run_script_function_impl(
     function_name: str,
     parameters: Optional[list[object]] = None,
     dev_mode: bool = False,
+    deployment_id: Optional[str] = None,
 ) -> str:
     """Internal implementation for run_script_function."""
     logger.info(
@@ -506,8 +508,21 @@ async def _run_script_function_impl(
         request_body["parameters"] = parameters
 
     try:
+        if not deployment_id:
+            deployment_id = await _resolve_execution_deployment_id(service, script_id)
+            if not deployment_id:
+                return (
+                    "Execution failed\n"
+                    f"Function: {function_name}\n"
+                    "Error: No versioned API Executable deployment was found. In the "
+                    "Apps Script editor, use Deploy > New deployment > API Executable. "
+                    "The script and caller must share a standard Google Cloud project. "
+                    "manage_deployment(action='create') is sufficient only when the "
+                    "script manifest already defines executionApi."
+                )
+
         response = await asyncio.to_thread(
-            service.scripts().run(scriptId=script_id, body=request_body).execute
+            service.scripts().run(scriptId=deployment_id, body=request_body).execute
         )
 
         if "error" in response:
@@ -532,6 +547,46 @@ async def _run_script_function_impl(
         return f"Execution failed\nFunction: {function_name}\nError: {str(e)}"
 
 
+async def _resolve_execution_deployment_id(
+    service: Any,
+    script_id: str,
+) -> Optional[str]:
+    """Return the newest versioned API Executable deployment for a project."""
+    all_deployments = []
+    page_token = None
+    while True:
+        list_params = {"scriptId": script_id}
+        if page_token:
+            list_params["pageToken"] = page_token
+
+        response = await asyncio.to_thread(
+            service.projects().deployments().list(**list_params).execute
+        )
+        all_deployments.extend(response.get("deployments", []))
+        page_token = response.get("nextPageToken")
+        if not page_token:
+            break
+
+    candidates = [
+        deployment
+        for deployment in all_deployments
+        if deployment.get("deploymentId")
+        and deployment.get("deploymentConfig", {}).get("versionNumber") is not None
+        and any(
+            entry_point.get("entryPointType") == "EXECUTION_API"
+            for entry_point in deployment.get("entryPoints", [])
+        )
+    ]
+    if not candidates:
+        return None
+
+    latest = max(
+        candidates,
+        key=lambda deployment: deployment["deploymentConfig"]["versionNumber"],
+    )
+    return latest["deploymentId"]
+
+
 @server.tool(
     title="Run Script Function",
     annotations=ToolAnnotations(
@@ -542,7 +597,7 @@ async def _run_script_function_impl(
     ),
 )
 @handle_http_errors("run_script_function", service_type="script")
-@require_google_service("script", "script_run")
+@require_google_service("script", ["script_run", "script_deployments_readonly"])
 async def run_script_function(
     service: Any,
     user_google_email: str,
@@ -550,6 +605,7 @@ async def run_script_function(
     function_name: str,
     parameters: Optional[ObjectList] = None,
     dev_mode: bool = False,
+    deployment_id: Optional[str] = None,
 ) -> str:
     """
     Executes a function in a deployed script.
@@ -561,12 +617,21 @@ async def run_script_function(
         function_name: Name of function to execute
         parameters: Optional list of parameters to pass
         dev_mode: Whether to run latest code vs deployed version
+        deployment_id: Optional API Executable deployment ID. When supplied,
+            skips the automatic deployment lookup. When omitted, the versioned
+            API Executable deployment with the highest version number is used.
 
     Returns:
         str: Formatted string with execution result or error
     """
     return await _run_script_function_impl(
-        service, user_google_email, script_id, function_name, parameters, dev_mode
+        service,
+        user_google_email,
+        script_id,
+        function_name,
+        parameters,
+        dev_mode,
+        deployment_id,
     )
 
 
@@ -582,7 +647,7 @@ async def _create_deployment_impl(
     Creates a new version first, then creates a deployment using that version.
     """
     logger.info(
-        f"[create_deployment] Email: {user_google_email}, ID: {script_id}, Desc: {description}"
+        f"[create_deployment] Email: {user_google_email}, ID: {script_id}, desc_len={len(description) if description else 0}"
     )
 
     # First, create a new version
@@ -644,7 +709,7 @@ async def manage_deployment(
     version_number: Optional[int] = None,
 ) -> str:
     """
-    Manages Apps Script deployments. Supports creating, updating, and deleting deployments.
+    Create, update, or delete Apps Script deployments.
 
     Args:
         service: Injected Google API service client
@@ -717,10 +782,24 @@ async def _list_deployments_impl(
 
     for i, deployment in enumerate(deployments, 1):
         deployment_id = deployment.get("deploymentId", "Unknown")
-        description = deployment.get("description", "No description")
+        # description and versionNumber live under deploymentConfig; fall back to
+        # any top-level description for forward/backward compatibility.
+        config = deployment.get("deploymentConfig", {})
+        description = (
+            config.get("description")
+            or deployment.get("description")
+            or "No description"
+        )
         update_time = deployment.get("updateTime", "Unknown")
+        # A HEAD deployment has no versionNumber — it always serves the latest
+        # saved content rather than a pinned version.
+        version_number = config.get("versionNumber")
+        version_label = (
+            str(version_number) if version_number is not None else "HEAD (latest)"
+        )
 
         output.append(f"{i}. {description} ({deployment_id})")
+        output.append(f"   Version: {version_label}")
         output.append(f"   Updated: {update_time}")
         output.append("")
 
@@ -729,7 +808,7 @@ async def _list_deployments_impl(
 
 
 @server.tool(
-    title="List Deployments",
+    title="List Script Deployments",
     annotations=ToolAnnotations(
         readOnlyHint=True,
         destructiveHint=False,
@@ -737,24 +816,14 @@ async def _list_deployments_impl(
         openWorldHint=True,
     ),
 )
-@handle_http_errors("list_deployments", is_read_only=True, service_type="script")
+@handle_http_errors("list_script_deployments", is_read_only=True, service_type="script")
 @require_google_service("script", "script_deployments_readonly")
-async def list_deployments(
+async def list_script_deployments(
     service: Any,
     user_google_email: str,
     script_id: str,
 ) -> str:
-    """
-    Lists all deployments for a script project.
-
-    Args:
-        service: Injected Google API service client
-        user_google_email: User's email address
-        script_id: The script project ID
-
-    Returns:
-        str: Formatted string with deployment list
-    """
+    """List deployments for an Apps Script project."""
     return await _list_deployments_impl(service, user_google_email, script_id)
 
 
@@ -845,13 +914,18 @@ async def _list_script_processes_impl(
         f"[list_script_processes] Email: {user_google_email}, PageSize: {page_size}"
     )
 
-    request_params = {"pageSize": page_size}
     if script_id:
-        request_params["scriptId"] = script_id
-
-    response = await asyncio.to_thread(
-        service.processes().list(**request_params).execute
-    )
+        # processes.list() has no top-level scriptId parameter; the
+        # script-scoped endpoint takes it directly.
+        response = await asyncio.to_thread(
+            service.processes()
+            .listScriptProcesses(scriptId=script_id, pageSize=page_size)
+            .execute
+        )
+    else:
+        response = await asyncio.to_thread(
+            service.processes().list(pageSize=page_size).execute
+        )
 
     processes = response.get("processes", [])
 
@@ -874,40 +948,6 @@ async def _list_script_processes_impl(
 
     logger.info(f"[list_script_processes] Found {len(processes)} processes")
     return "\n".join(output)
-
-
-@server.tool(
-    title="List Script Processes",
-    annotations=ToolAnnotations(
-        readOnlyHint=True,
-        destructiveHint=False,
-        idempotentHint=True,
-        openWorldHint=True,
-    ),
-)
-@handle_http_errors("list_script_processes", is_read_only=True, service_type="script")
-@require_google_service("script", "script_readonly")
-async def list_script_processes(
-    service: Any,
-    user_google_email: str,
-    page_size: int = 50,
-    script_id: Optional[str] = None,
-) -> str:
-    """
-    Lists recent execution processes for user's scripts.
-
-    Args:
-        service: Injected Google API service client
-        user_google_email: User's email address
-        page_size: Number of results (default: 50)
-        script_id: Optional filter by script ID
-
-    Returns:
-        str: Formatted string with process list
-    """
-    return await _list_script_processes_impl(
-        service, user_google_email, page_size, script_id
-    )
 
 
 # ============================================================================
@@ -933,7 +973,7 @@ async def _delete_script_project_impl(
 
 
 @server.tool(
-    title="Delete Script Project",
+    title="Manage Script Project",
     annotations=ToolAnnotations(
         readOnlyHint=False,
         destructiveHint=True,
@@ -941,27 +981,43 @@ async def _delete_script_project_impl(
         openWorldHint=True,
     ),
 )
-@handle_http_errors("delete_script_project", is_read_only=False, service_type="drive")
-@require_google_service("drive", "drive_full")
-async def delete_script_project(
-    service: Any,
+@_require_project_action_service(
+    {"create": ("script", "script_projects"), "delete": ("drive", "drive_full")}
+)
+@handle_http_errors("manage_script_project", service_type="script")
+async def manage_script_project(
+    drive_service: Any,
+    script_service: Any,
     user_google_email: str,
-    script_id: str,
+    action: str,
+    script_id: Optional[str] = None,
+    title: Optional[str] = None,
+    parent_id: Optional[str] = None,
 ) -> str:
     """
-    Deletes an Apps Script project.
+    Create or delete an Apps Script project.
 
-    This permanently deletes the script project. The action cannot be undone.
-
-    Args:
-        service: Injected Google API service client
-        user_google_email: User's email address
-        script_id: The script project ID to delete
-
-    Returns:
-        str: Confirmation message
+    Actions:
+        - "create": Create a project. Requires title; parent_id is optional.
+        - "delete": Permanently delete a project. Requires script_id.
     """
-    return await _delete_script_project_impl(service, user_google_email, script_id)
+    action = action.lower().strip()
+    if action == "create":
+        if not title or not title.strip():
+            raise UserInputError("title is required for create action")
+        return await _create_script_project_impl(
+            script_service, user_google_email, title, parent_id
+        )
+    elif action == "delete":
+        if not script_id:
+            raise UserInputError("script_id is required for delete action")
+        return await _delete_script_project_impl(
+            drive_service, user_google_email, script_id
+        )
+    else:
+        raise UserInputError(
+            f"Invalid action '{action}'. Must be 'create' or 'delete'."
+        )
 
 
 # ============================================================================
@@ -1002,36 +1058,50 @@ async def _list_versions_impl(
 
 
 @server.tool(
-    title="List Versions",
+    title="Manage Script Version",
     annotations=ToolAnnotations(
-        readOnlyHint=True,
+        readOnlyHint=False,
         destructiveHint=False,
-        idempotentHint=True,
+        idempotentHint=False,
         openWorldHint=True,
     ),
 )
-@handle_http_errors("list_versions", is_read_only=True, service_type="script")
-@require_google_service("script", "script_readonly")
-async def list_versions(
+@handle_http_errors("manage_script_version", service_type="script")
+@require_google_service("script", "script_full")
+async def manage_script_version(
     service: Any,
     user_google_email: str,
+    action: str,
     script_id: str,
+    description: Optional[str] = None,
 ) -> str:
     """
-    Lists all versions of a script project.
+    Create immutable version snapshots of a script project.
 
-    Versions are immutable snapshots of your script code.
-    They are created when you deploy or explicitly create a version.
+    Versions capture a snapshot of the current script code; once created they
+    cannot be modified.
+
+    Actions:
+        - "create": Create a new version from the current code. Optional
+          description.
 
     Args:
         service: Injected Google API service client
         user_google_email: User's email address
-        script_id: The script project ID
+        action: "create".
+        script_id: The script project ID.
+        description: Optional description for the new version (create only).
 
     Returns:
-        str: Formatted string with version list
+        str: Formatted result for the requested action.
     """
-    return await _list_versions_impl(service, user_google_email, script_id)
+    action = action.lower().strip()
+    if action == "create":
+        return await _create_version_impl(
+            service, user_google_email, script_id, description
+        )
+    else:
+        raise UserInputError(f"Invalid action '{action}'. Must be 'create'.")
 
 
 async def _create_version_impl(
@@ -1067,43 +1137,6 @@ async def _create_version_impl(
     return "\n".join(output)
 
 
-@server.tool(
-    title="Create Version",
-    annotations=ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=False,
-        idempotentHint=False,
-        openWorldHint=True,
-    ),
-)
-@handle_http_errors("create_version", is_read_only=False, service_type="script")
-@require_google_service("script", "script_full")
-async def create_version(
-    service: Any,
-    user_google_email: str,
-    script_id: str,
-    description: Optional[str] = None,
-) -> str:
-    """
-    Creates a new immutable version of a script project.
-
-    Versions capture a snapshot of the current script code.
-    Once created, versions cannot be modified.
-
-    Args:
-        service: Injected Google API service client
-        user_google_email: User's email address
-        script_id: The script project ID
-        description: Optional description for this version
-
-    Returns:
-        str: Formatted string with new version details
-    """
-    return await _create_version_impl(
-        service, user_google_email, script_id, description
-    )
-
-
 async def _get_version_impl(
     service: Any,
     user_google_email: str,
@@ -1137,7 +1170,7 @@ async def _get_version_impl(
 
 
 @server.tool(
-    title="Get Version",
+    title="Get Script Version",
     annotations=ToolAnnotations(
         readOnlyHint=True,
         destructiveHint=False,
@@ -1145,33 +1178,37 @@ async def _get_version_impl(
         openWorldHint=True,
     ),
 )
-@handle_http_errors("get_version", is_read_only=True, service_type="script")
+@handle_http_errors("get_script_version", is_read_only=True, service_type="script")
 @require_google_service("script", "script_readonly")
-async def get_version(
+async def get_script_version(
     service: Any,
     user_google_email: str,
+    action: str,
     script_id: str,
-    version_number: int,
+    version_number: Optional[int] = None,
 ) -> str:
     """
-    Gets details of a specific version.
+    List or retrieve immutable version snapshots of a script project.
 
-    Args:
-        service: Injected Google API service client
-        user_google_email: User's email address
-        script_id: The script project ID
-        version_number: The version number to retrieve (1, 2, 3, etc.)
-
-    Returns:
-        str: Formatted string with version details
+    Actions:
+        - "list": List every version of the project.
+        - "get": Retrieve one version. Requires version_number.
     """
-    return await _get_version_impl(
-        service, user_google_email, script_id, version_number
-    )
+    action = action.lower().strip()
+    if action == "list":
+        return await _list_versions_impl(service, user_google_email, script_id)
+    elif action == "get":
+        if version_number is None:
+            raise UserInputError("version_number is required for get action")
+        return await _get_version_impl(
+            service, user_google_email, script_id, version_number
+        )
+    else:
+        raise UserInputError(f"Invalid action '{action}'. Must be 'list' or 'get'.")
 
 
 # ============================================================================
-# Metrics
+# Activity: processes and metrics
 # ============================================================================
 
 
@@ -1242,7 +1279,7 @@ async def _get_script_metrics_impl(
 
 
 @server.tool(
-    title="Get Script Metrics",
+    title="Get Script Activity",
     annotations=ToolAnnotations(
         readOnlyHint=True,
         destructiveHint=False,
@@ -1250,32 +1287,55 @@ async def _get_script_metrics_impl(
         openWorldHint=True,
     ),
 )
-@handle_http_errors("get_script_metrics", is_read_only=True, service_type="script")
+@handle_http_errors("get_script_activity", is_read_only=True, service_type="script")
 @require_google_service("script", "script_readonly")
-async def get_script_metrics(
+async def get_script_activity(
     service: Any,
     user_google_email: str,
-    script_id: str,
+    action: str,
+    script_id: Optional[str] = None,
+    page_size: int = 50,
     metrics_granularity: str = "DAILY",
 ) -> str:
     """
-    Gets execution metrics for a script project.
+    Read execution activity for scripts: recent processes or aggregate metrics.
 
-    Returns analytics data including active users, total executions,
-    and failed executions over time.
+    Actions:
+        - "processes": List recent execution processes. Without script_id, lists
+          the user's own recent runs; with script_id, lists all processes for
+          that script visible to the user (including runs by others). Optional
+          page_size.
+        - "metrics": Get aggregate execution metrics (active users, total and
+          failed executions) for one script. Requires script_id; optional
+          metrics_granularity ("DAILY" or "WEEKLY").
 
     Args:
         service: Injected Google API service client
         user_google_email: User's email address
-        script_id: The script project ID
-        metrics_granularity: Granularity of metrics - "DAILY" or "WEEKLY"
+        action: One of "processes", "metrics".
+        script_id: The script project ID (required for metrics; optional for
+            processes).
+        page_size: Number of results for processes (default: 50).
+        metrics_granularity: Granularity for metrics - "DAILY" or "WEEKLY".
 
     Returns:
-        str: Formatted string with metrics data
+        str: Formatted process list or metrics data.
     """
-    return await _get_script_metrics_impl(
-        service, user_google_email, script_id, metrics_granularity
-    )
+    action = action.lower().strip()
+    if action == "processes":
+        return await _list_script_processes_impl(
+            service, user_google_email, page_size, script_id
+        )
+    elif action == "metrics":
+        if not script_id:
+            raise UserInputError("script_id is required for metrics action")
+        return await _get_script_metrics_impl(
+            service, user_google_email, script_id, metrics_granularity
+        )
+    else:
+        raise UserInputError(
+            f"Invalid action '{action}'. Must be 'processes' or 'metrics'."
+        )
 
 
 # ============================================================================
@@ -1487,7 +1547,7 @@ def _generate_trigger_code_impl(
             "INSTALLABLE TRIGGER",
             "=" * 50,
             "",
-            "1. Add this code to your script using update_script_content",
+            "1. Add this code to your script using manage_script_content(action='update')",
             "2. Run the setup function ONCE (manually in Apps Script editor or via run_script_function)",
             "3. The trigger will then run automatically on schedule",
             "",
@@ -1519,6 +1579,8 @@ async def generate_trigger_code(
 
     The Apps Script API cannot create triggers directly - they must be created
     from within Apps Script itself. This tool generates the code you need.
+    To list or remove existing triggers without opening the editor, use
+    `manage_script_trigger` (action="list" / action="delete") instead.
 
     Args:
         trigger_type: Type of trigger. One of:
@@ -1544,3 +1606,317 @@ async def generate_trigger_code(
         str: Apps Script code to create the trigger
     """
     return _generate_trigger_code_impl(trigger_type, function_name, schedule)
+
+
+# ---------------------------------------------------------------------------
+# Trigger management (list / delete for the current user)
+#
+# The Apps Script REST API has no triggers resource; trigger state only exists
+# inside the Apps Script runtime. A small helper file is merged into the
+# project and invoked through the Execution API (scripts.run), which requires
+# the script.scriptapp scope.
+# ---------------------------------------------------------------------------
+
+_TRIGGER_ADMIN_FILE_NAME = "McpTriggerAdmin"
+_TRIGGER_ADMIN_MARKER = (
+    "// Auto-provisioned by the Google Workspace MCP server's "
+    "manage_script_trigger tool."
+)
+_TRIGGER_ADMIN_SOURCE = (
+    _TRIGGER_ADMIN_MARKER
+    + """
+// Overwritten when the helper changes; safe to delete.
+
+function __mcpListTriggers() {
+  var triggers = ScriptApp.getProjectTriggers();
+  var out = [];
+  for (var i = 0; i < triggers.length; i++) {
+    var t = triggers[i];
+    out.push({
+      uniqueId: t.getUniqueId(),
+      handlerFunction: t.getHandlerFunction(),
+      eventType: t.getEventType().toString(),
+      triggerSource: t.getTriggerSource().toString()
+    });
+  }
+  return JSON.stringify(out);
+}
+
+function __mcpDeleteTrigger(uniqueId, handlerFunction) {
+  if (!uniqueId && !handlerFunction) return "[]";
+  var triggers = ScriptApp.getProjectTriggers();
+  var deleted = [];
+  for (var i = 0; i < triggers.length; i++) {
+    var t = triggers[i];
+    var tId = t.getUniqueId();
+    var tHandler = t.getHandlerFunction();
+    if ((!uniqueId || tId === uniqueId) &&
+        (!handlerFunction || tHandler === handlerFunction)) {
+      ScriptApp.deleteTrigger(t);
+      deleted.push({uniqueId: tId, handlerFunction: tHandler});
+    }
+  }
+  return JSON.stringify(deleted);
+}
+"""
+)
+
+
+async def _ensure_trigger_admin_file(service: Any, script_id: str) -> None:
+    """Install or refresh the trigger helper file without touching other files.
+
+    Holds the per-script update lock so it cannot race manage_script_content.
+    A same-named file is only overwritten when it carries the helper marker.
+    """
+    admin_file = {
+        "name": _TRIGGER_ADMIN_FILE_NAME,
+        "type": "SERVER_JS",
+        "source": _TRIGGER_ADMIN_SOURCE,
+    }
+    async with _get_script_update_lock(script_id):
+        current_content = await asyncio.to_thread(
+            service.projects().getContent(scriptId=script_id).execute
+        )
+        existing_files = current_content.get("files", [])
+        current_source = next(
+            (
+                f.get("source", "")
+                for f in existing_files
+                if f.get("name") == _TRIGGER_ADMIN_FILE_NAME
+                and f.get("type") == "SERVER_JS"
+            ),
+            None,
+        )
+        if current_source == _TRIGGER_ADMIN_SOURCE:
+            return
+        if current_source is not None and not current_source.startswith(
+            _TRIGGER_ADMIN_MARKER
+        ):
+            raise UserInputError(
+                f"Cannot install the trigger helper because the project already "
+                f"contains a user-managed {_TRIGGER_ADMIN_FILE_NAME}.gs file. "
+                "Rename that file before managing triggers."
+            )
+
+        merged_files = _merge_script_files(existing_files, [admin_file])
+        await asyncio.to_thread(
+            service.projects()
+            .updateContent(scriptId=script_id, body={"files": merged_files})
+            .execute
+        )
+
+
+async def _run_trigger_admin(
+    service: Any,
+    script_id: str,
+    function_name: str,
+    parameters: List[Optional[str]],
+    dev_mode: bool,
+    deployment_id: Optional[str],
+) -> List[Dict[str, Any]]:
+    """Ensure the executed code has the helper, run it, and parse its JSON result."""
+    if not deployment_id:
+        deployment_id = await _resolve_execution_deployment_id(service, script_id)
+    if not deployment_id:
+        raise UserInputError(
+            "No versioned API Executable deployment was found. In the Apps Script "
+            "editor, use Deploy > New deployment > API Executable."
+        )
+
+    if dev_mode:
+        await _ensure_trigger_admin_file(service, script_id)
+    else:
+        deployment = await asyncio.to_thread(
+            service.projects()
+            .deployments()
+            .get(scriptId=script_id, deploymentId=deployment_id)
+            .execute
+        )
+        version_number = deployment.get("deploymentConfig", {}).get("versionNumber")
+        if version_number is None:
+            raise UserInputError(
+                "The selected deployment must reference a script version."
+            )
+        content = await asyncio.to_thread(
+            service.projects()
+            .getContent(scriptId=script_id, versionNumber=version_number)
+            .execute
+        )
+        if not any(
+            function.get("name") == function_name
+            for file in content.get("files", [])
+            if file.get("type") == "SERVER_JS"
+            for function in file.get("functionSet", {}).get("values", [])
+        ):
+            raise UserInputError(
+                f"Deployment '{deployment_id}' (version {version_number}) does not "
+                f"contain {function_name}. Run with dev_mode=True as the project "
+                "owner to provision the helper, then create a new version and "
+                "update the deployment before using dev_mode=False."
+            )
+
+    body: Dict[str, Any] = {"function": function_name, "devMode": dev_mode}
+    if parameters:
+        body["parameters"] = parameters
+    response = await asyncio.to_thread(
+        service.scripts().run(scriptId=deployment_id, body=body).execute
+    )
+
+    if "error" in response:
+        message = response["error"].get("message", "Unknown error")
+        raise RuntimeError(f"{function_name} execution failed: {message}")
+
+    result = response.get("response", {}).get("result")
+    return json.loads(result) if result else []
+
+
+async def _list_script_triggers_impl(
+    service: Any,
+    user_google_email: str,
+    script_id: str,
+    dev_mode: bool = True,
+    deployment_id: Optional[str] = None,
+) -> str:
+    """Internal implementation for manage_script_trigger list."""
+    logger.info(f"[list_script_triggers] Email: {user_google_email}, ID: {script_id}")
+
+    triggers = await _run_trigger_admin(
+        service, script_id, "__mcpListTriggers", [], dev_mode, deployment_id
+    )
+
+    if not triggers:
+        return f"No triggers found for the current user on script: {script_id}"
+
+    output = [f"Triggers owned by the current user for script {script_id}:", ""]
+    for i, trig in enumerate(triggers, 1):
+        output.append(f"{i}. {trig.get('handlerFunction', 'Unknown')}")
+        output.append(f"   Unique ID: {trig.get('uniqueId', 'Unknown')}")
+        output.append(f"   Event type: {trig.get('eventType', 'Unknown')}")
+        output.append(f"   Source: {trig.get('triggerSource', 'Unknown')}")
+        output.append("")
+
+    logger.info(f"[list_script_triggers] Found {len(triggers)} triggers")
+    return "\n".join(output)
+
+
+@server.tool(
+    title="Manage Script Trigger",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("manage_script_trigger", service_type="script")
+@require_google_service(
+    "script",
+    ["script_projects", "script_scriptapp", "script_deployments_readonly"],
+)
+async def manage_script_trigger(
+    service: Any,
+    user_google_email: str,
+    action: str,
+    script_id: str,
+    trigger_id: Optional[str] = None,
+    handler_function: Optional[str] = None,
+    dev_mode: bool = True,
+    deployment_id: Optional[str] = None,
+) -> str:
+    """
+    List or delete the current user's installable triggers on a script project.
+
+    The Apps Script REST API has no triggers resource, so in dev_mode both actions
+    provision (or refresh) a small helper file and run it via the Execution
+    API - the only way to inspect or change trigger state without opening the
+    editor. Neither action is read-only: the helper file may be written into the
+    project on first use. To create a trigger, use `generate_trigger_code` to
+    produce the setup code, add it with `manage_script_content`, then run it with
+    `run_script_function`.
+
+    Actions:
+        - "list": List the current user's triggers configured on the project.
+        - "delete": Delete triggers matching every supplied selector. trigger_id
+          removes one trigger; handler_function alone removes EVERY trigger
+          calling that function; both together remove the trigger only if its
+          handler also matches. At least one is required; run "list" first to
+          find a trigger's unique ID.
+
+    Args:
+        service: Injected Google API service client
+        user_google_email: User's email address
+        action: One of "list", "delete".
+        script_id: The script project ID.
+        trigger_id: Unique ID of a specific trigger to delete (delete only).
+        handler_function: Delete all triggers calling this function name
+            (delete only).
+        dev_mode: Run against the latest saved code (default; project owner
+            only) vs. the deployed version. False requires the helper to
+            already exist in the deployed version.
+        deployment_id: Optional API Executable deployment ID. When omitted, the
+            highest versioned API Executable deployment is used.
+
+    Returns:
+        str: Formatted list of triggers, or a summary of the trigger(s) deleted.
+    """
+    action = action.lower().strip()
+    if action == "list":
+        return await _list_script_triggers_impl(
+            service, user_google_email, script_id, dev_mode, deployment_id
+        )
+    elif action == "delete":
+        return await _delete_script_trigger_impl(
+            service,
+            user_google_email,
+            script_id,
+            trigger_id,
+            handler_function,
+            dev_mode,
+            deployment_id,
+        )
+    else:
+        raise UserInputError(f"Invalid action '{action}'. Must be 'list' or 'delete'.")
+
+
+async def _delete_script_trigger_impl(
+    service: Any,
+    user_google_email: str,
+    script_id: str,
+    trigger_id: Optional[str] = None,
+    handler_function: Optional[str] = None,
+    dev_mode: bool = True,
+    deployment_id: Optional[str] = None,
+) -> str:
+    """Internal implementation for manage_script_trigger delete."""
+    if not trigger_id and not handler_function:
+        raise UserInputError("Provide trigger_id or handler_function (or both).")
+
+    logger.info(
+        f"[delete_script_trigger] Email: {user_google_email}, ID: {script_id}, "
+        f"trigger_id: {trigger_id}, handler_function: {handler_function}"
+    )
+
+    deleted = await _run_trigger_admin(
+        service,
+        script_id,
+        "__mcpDeleteTrigger",
+        [trigger_id, handler_function],
+        dev_mode,
+        deployment_id,
+    )
+
+    if not deleted:
+        return (
+            f"No matching trigger found for script {script_id} "
+            f"(trigger_id={trigger_id}, handler_function={handler_function})."
+        )
+
+    output = [f"Deleted {len(deleted)} trigger(s) from script {script_id}:"]
+    for trig in deleted:
+        output.append(
+            f"- {trig.get('handlerFunction', 'Unknown')} "
+            f"(unique ID: {trig.get('uniqueId', 'Unknown')})"
+        )
+
+    logger.info(f"[delete_script_trigger] Deleted {len(deleted)} trigger(s)")
+    return "\n".join(output)

@@ -11,10 +11,17 @@ from contextlib import ExitStack
 
 from google.auth.exceptions import RefreshError
 from google.oauth2 import service_account as google_service_account
-from googleapiclient.discovery import build
 from fastmcp.server.dependencies import get_access_token, get_context
-from auth.google_auth import get_authenticated_google_service, GoogleAuthenticationError
-from auth.gateway_identity import require_gateway_principal
+from auth.google_auth import (
+    GoogleAuthenticationError,
+    build_google_service,
+    get_authenticated_google_service,
+    recycling,
+)
+from auth.gateway_identity import (
+    require_gateway_principal,
+    get_verified_gateway_principal,
+)
 from auth.request_identity import get_request_identity
 from core.config import USER_GOOGLE_EMAIL as _ENV_USER_EMAIL
 from auth.oauth21_session_store import (
@@ -72,6 +79,19 @@ from auth.scopes import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class GoogleScopeError(GoogleAuthenticationError):
+    """The authenticated account has not granted this tool's permissions."""
+
+
+def _missing_scope_message(service_name: str, error: GoogleScopeError) -> str:
+    return (
+        f"Permission required for {service_name}: {error}. "
+        "Reconnect using your MCP client's OAuth flow and grant access to this "
+        "service if it is available for your account. Other services with granted "
+        "permissions remain usable."
+    )
 
 
 def _release_google_service_cycles() -> None:
@@ -285,6 +305,29 @@ def _validate_dwd_domain(email: str, config) -> None:
         )
 
 
+def _widen_drive_scope_for_dwd(scopes: List[str], tool_name: str) -> List[str]:
+    """
+    Substitute the full Drive scope for drive.file in service-account mode.
+
+    drive.file grants access only to files the app created or the user picked
+    through the Drive file picker. A domain-wide-delegation service account never
+    goes through a picker, so under drive.file every Drive write tool gets a bare
+    404 on any pre-existing file. The delegated token carries exactly the scopes
+    requested here, so SCOPE_HIERARCHY never applies, and the effective privilege
+    is governed by the Admin console's DWD scope allowlist regardless.
+    """
+    if DRIVE_FILE_SCOPE not in scopes:
+        return scopes
+
+    widened = [DRIVE_SCOPE if s == DRIVE_FILE_SCOPE else s for s in scopes]
+    logger.debug(
+        f"[{tool_name}] Service-account mode: requesting {DRIVE_SCOPE} in place of "
+        f"{DRIVE_FILE_SCOPE}, which cannot reach pre-existing files under "
+        "domain-wide delegation. Authorize it in the Admin console DWD scope list."
+    )
+    return widened
+
+
 async def _authenticate_service(
     use_oauth21: bool,
     service_name: str,
@@ -309,14 +352,25 @@ async def _authenticate_service(
             )
 
         config = get_oauth_config()
-        if user_google_email:
-            _validate_dwd_domain(user_google_email, config)
-            target_email = user_google_email
-        else:
-            target_email = canonical_email
+        target_email = user_google_email or canonical_email
+        _validate_dwd_domain(target_email, config)
+        if target_email.lower() != canonical_email.lower():
+            if not is_trust_gateway_identity():
+                raise GoogleAuthenticationError(
+                    "DWD subjects other than USER_GOOGLE_EMAIL require "
+                    "trusted-gateway authentication."
+                )
+            principal = await get_verified_gateway_principal()
+            if target_email.lower() != principal:
+                raise GoogleAuthenticationError(
+                    "Requested DWD subject does not match the verified gateway principal."
+                )
+            target_email = principal
 
-        credentials = _get_service_account_credentials(resolved_scopes, target_email)
-        service = build(service_name, service_version, credentials=credentials)
+        credentials = _get_service_account_credentials(
+            _widen_drive_scope_for_dwd(resolved_scopes, tool_name), target_email
+        )
+        service = build_google_service(service_name, service_version, credentials)
         logger.info(
             f"[{tool_name}] Authenticated {service_name} for "
             f"{target_email} via service-account"
@@ -397,11 +451,11 @@ async def get_authenticated_google_service_oauth21(
             scopes_available = set(access_token.scopes)
 
         if not has_required_scopes(scopes_available, required_scopes):
-            raise GoogleAuthenticationError(
+            raise GoogleScopeError(
                 f"OAuth credentials lack required scopes. Need: {required_scopes}, Have: {sorted(scopes_available)}"
             )
 
-        service = build(service_name, version, credentials=credentials)
+        service = build_google_service(service_name, version, credentials)
         logger.info(
             f"[{tool_name}] Authenticated {service_name} for "
             f"{resolved_email} via oauth2.1"
@@ -430,11 +484,11 @@ async def get_authenticated_google_service_oauth21(
         scopes_available = set(credentials.scopes)
 
     if not has_required_scopes(scopes_available, required_scopes):
-        raise GoogleAuthenticationError(
+        raise GoogleScopeError(
             f"OAuth 2.1 credentials lack required scopes. Need: {required_scopes}, Have: {sorted(scopes_available)}"
         )
 
-    service = build(service_name, version, credentials=credentials)
+    service = build_google_service(service_name, version, credentials)
     logger.info(
         f"[{tool_name}] Authenticated {service_name} for "
         f"{user_google_email} via oauth2.1"
@@ -826,6 +880,11 @@ def require_google_service(
                     mcp_session_id,
                     authenticated_user,
                 )
+            except GoogleScopeError as e:
+                logger.info(
+                    "[%s] Missing %s permissions: %s", tool_name, service_name, e
+                )
+                return _missing_scope_message(service_name, e)
             except GoogleAuthenticationError as e:
                 logger.error(
                     f"[{tool_name}] Auth failed for {user_google_email} | "
@@ -841,16 +900,15 @@ def require_google_service(
                     kwargs["user_google_email"] = user_google_email
 
                 # Prepend the fetched service object to the original arguments
-                return await func(service, *args, **kwargs)
+                with recycling(service):
+                    return await func(service, *args, **kwargs)
             except RefreshError as e:
                 error_message = _handle_token_refresh_error(
                     e, actual_user_email, service_name
                 )
                 raise GoogleAuthenticationError(error_message)
             finally:
-                if service:
-                    service.close()
-                    _release_google_service_cycles()
+                _release_google_service_cycles()
 
         # Set the wrapper's signature to the one without 'service'
         wrapper.__signature__ = wrapper_sig
@@ -982,19 +1040,16 @@ def require_multiple_services(service_configs: List[Dict[str, Any]]):
 
                             # Inject service with specified parameter name
                             kwargs[param_name] = service
-                            stack.callback(service.close)
+                            stack.enter_context(recycling(service))
                             services_created = True
 
-                        except Exception as e:
+                        except GoogleAuthenticationError as e:
                             # Optional services degrade gracefully on AUTH failure
                             # only: a missing scope (or other auth error) injects None
                             # instead of failing the whole tool, so the primary action
                             # still runs and the tool reports the fallback. Non-auth
-                            # errors are NOT hidden — they re-raise even for optional
-                            # services so real bugs surface.
-                            if config.get("optional", False) and isinstance(
-                                e, GoogleAuthenticationError
-                            ):
+                            # errors are not caught here, so real bugs surface.
+                            if config.get("optional", False):
                                 logger.info(
                                     f"[{tool_name}] Optional service '{service_type}' "
                                     f"unavailable for {user_google_email} "
@@ -1003,12 +1058,19 @@ def require_multiple_services(service_configs: List[Dict[str, Any]]):
                                 )
                                 kwargs[param_name] = None
                                 continue
-                            if isinstance(e, GoogleAuthenticationError):
-                                logger.error(
-                                    f"[{tool_name}] Auth failed for {user_google_email} | "
-                                    f"{service_name}/{service_version} | "
-                                    f"method={auth_method or 'none'} | {e}"
+                            if isinstance(e, GoogleScopeError):
+                                logger.info(
+                                    "[%s] Missing %s permissions: %s",
+                                    tool_name,
+                                    service_name,
+                                    e,
                                 )
+                                return _missing_scope_message(service_name, e)
+                            logger.error(
+                                f"[{tool_name}] Auth failed for {user_google_email} | "
+                                f"{service_name}/{service_version} | "
+                                f"method={auth_method or 'none'} | {e}"
+                            )
                             # Re-raise the original error without wrapping it
                             raise
 

@@ -5,7 +5,7 @@ You are an expert Python engineer with a specific expertise around FastMCP-based
 This repository (`google_workspace_mcp`) is a production‑grade FastMCP server that exposes Google Workspace‑tooling (Gmail, Calendar, Drive, Docs, Sheets, Slides, Chat, Tasks, Forms, Contacts, Search) to LLM clients.
 Key architectural pillars:
 
-* **FastMCP 3.x** for server/runtime, tool registration, validation and transports.
+* **FastMCP 4.x** for server/runtime, tool registration, validation and transports.
 * **Async Google client libraries** with OAuth 2.1 desktop‑flow and multi‑user token caching.
 * Strict typing & *pydantic‑v2* models for request/response schemas.
 * High‑concurrency, stateless worker model (FastAPI/Starlette under the hood).

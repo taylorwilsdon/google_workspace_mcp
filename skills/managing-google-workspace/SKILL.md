@@ -123,6 +123,7 @@ For parameters: [references/calendar.md](references/calendar.md)
 |------|------|
 | Read doc as Markdown | `get_doc_as_markdown` |
 | Read doc content (raw) | `get_doc_content` |
+| Read plain text with link/chip targets and document segments | `get_doc_content(preserve_context=True)` |
 | Create new doc | `create_doc` |
 | Modify text / apply styles | `modify_doc_text` |
 | Insert elements (tables, lists, breaks) | `insert_doc_elements` |
@@ -148,12 +149,14 @@ For parameters: [references/docs.md](references/docs.md)
 |------|------|
 | Read cell values | `read_sheet_values` |
 | Write/append/clear values | `modify_sheet_values` |
+| Insert smart chips | `modify_sheet_values` (`chips`) |
 | Format cells | `format_sheet_range` |
 | Conditional formatting | `manage_conditional_formatting` |
 | Get spreadsheet info | `get_spreadsheet_info` |
 | Create spreadsheet | `create_spreadsheet` |
 | Create sheet (tab) | `create_sheet` |
 | Move rows between sheets | `move_sheet_rows` |
+| Manage named ranges | `manage_named_range` |
 | List spreadsheets | `list_spreadsheets` |
 | Comments | `manage_spreadsheet_comment` / `list_spreadsheet_comments` |
 
@@ -222,6 +225,7 @@ For parameters: [references/contacts.md](references/contacts.md)
 | Get messages | `get_messages` |
 | Search messages | `search_messages` |
 | Send message | `send_message` |
+| Edit a message already sent | `send_message` with `message_name` |
 | React to message | `create_reaction` |
 | Download attachment | `download_chat_attachment` |
 
@@ -231,18 +235,17 @@ For parameters: [references/chat.md](references/chat.md)
 
 | Task | Tool |
 |------|------|
-| List projects | `list_script_projects` |
-| Get project | `get_script_project` |
-| Create project | `create_script_project` |
-| Delete project | `delete_script_project` |
-| Get file content | `get_script_content` |
-| Update file content | `update_script_content` |
+| Projects/files (list/get) | `get_script_project` (`action`) |
+| Projects (create/delete) | `manage_script_project` (`action`) |
+| File content (update) | `manage_script_content` (`action="update"`) |
 | Run function | `run_script_function` |
 | Generate trigger code | `generate_trigger_code` |
-| Manage deployments | `manage_deployment` / `list_deployments` |
-| Versions | `create_version` / `get_version` / `list_versions` |
-| Execution metrics | `get_script_metrics` |
-| Process history | `list_script_processes` |
+| Deployments (list) | `list_script_deployments` |
+| Deployments (create/update/delete) | `manage_deployment` (`action`) |
+| Versions (list/get) | `get_script_version` (`action`) |
+| Versions (create) | `manage_script_version` (`action="create"`) |
+| Execution metrics / process history | `get_script_activity` (`action="metrics"` / `"processes"`) |
+| Current user's triggers (list/delete) | `manage_script_trigger` (`action`) |
 
 For parameters: [references/apps-script.md](references/apps-script.md)
 
@@ -268,7 +271,7 @@ Parameters: `user_google_email` (string, optional), `service_name` (string, requ
 ### Reply to an email
 1. `search_gmail_messages` -- find the email
 2. `get_gmail_message_content` -- read it (get `message_id` and `thread_id`)
-3. `send_gmail_message` -- reply using `in_reply_to` and `thread_id`
+3. `send_gmail_message` -- reply using `thread_id`; omit reply headers to target the latest non-draft, non-trash message with an RFC `Message-ID`
 
 ### Find and share a file
 1. `search_drive_files` -- find the file

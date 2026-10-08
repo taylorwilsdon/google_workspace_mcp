@@ -46,6 +46,9 @@ CHAT_READONLY_SCOPE = "https://www.googleapis.com/auth/chat.messages.readonly"
 CHAT_WRITE_SCOPE = "https://www.googleapis.com/auth/chat.messages"
 CHAT_SPACES_SCOPE = "https://www.googleapis.com/auth/chat.spaces"
 CHAT_SPACES_READONLY_SCOPE = "https://www.googleapis.com/auth/chat.spaces.readonly"
+CHAT_MEMBERSHIPS_READONLY_SCOPE = (
+    "https://www.googleapis.com/auth/chat.memberships.readonly"
+)
 
 # Google Sheets API scopes
 SHEETS_READONLY_SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly"
@@ -186,9 +189,16 @@ CHAT_SCOPES = [
     CHAT_WRITE_SCOPE,
     CHAT_SPACES_SCOPE,
     CHAT_SPACES_READONLY_SCOPE,
+    CHAT_MEMBERSHIPS_READONLY_SCOPE,  # Names DMs after their members
+    CONTACTS_READONLY_SCOPE,  # Resolves sender and member names via People API
 ]
 
-SHEETS_SCOPES = [SHEETS_READONLY_SCOPE, SHEETS_WRITE_SCOPE, DRIVE_READONLY_SCOPE]
+SHEETS_SCOPES = [
+    SHEETS_READONLY_SCOPE,
+    SHEETS_WRITE_SCOPE,
+    DRIVE_READONLY_SCOPE,
+    DRIVE_FILE_SCOPE,  # create_spreadsheet places new files in a folder
+]
 
 FORMS_SCOPES = [
     FORMS_BODY_SCOPE,
@@ -214,11 +224,11 @@ SCRIPT_SCOPES = [
     SCRIPT_PROJECTS_READONLY_SCOPE,
     SCRIPT_DEPLOYMENTS_SCOPE,
     SCRIPT_DEPLOYMENTS_READONLY_SCOPE,
-    SCRIPT_PROCESSES_READONLY_SCOPE,  # Required for list_script_processes
-    SCRIPT_METRICS_SCOPE,  # Required for get_script_metrics
+    SCRIPT_PROCESSES_READONLY_SCOPE,  # Required for get_script_activity (processes)
+    SCRIPT_METRICS_SCOPE,  # Required for get_script_activity (metrics)
     SCRIPT_EXTERNAL_REQUEST_SCOPE,  # Required for scripts.run (execution API)
     SCRIPT_SCRIPTAPP_SCOPE,  # Required for scripts.run (execution API)
-    DRIVE_FILE_SCOPE,  # Required for list/delete script projects (uses Drive API)
+    DRIVE_SCOPE,  # Required for manage_script_project delete (uses Drive API)
 ]
 
 # Tool-to-scopes mapping
@@ -244,7 +254,12 @@ TOOL_READONLY_SCOPES_MAP = {
     "calendar": [CALENDAR_READONLY_SCOPE],
     "docs": [DOCS_READONLY_SCOPE, DRIVE_READONLY_SCOPE],
     "sheets": [SHEETS_READONLY_SCOPE, DRIVE_READONLY_SCOPE],
-    "chat": [CHAT_READONLY_SCOPE, CHAT_SPACES_READONLY_SCOPE],
+    "chat": [
+        CHAT_READONLY_SCOPE,
+        CHAT_SPACES_READONLY_SCOPE,
+        CHAT_MEMBERSHIPS_READONLY_SCOPE,
+        CONTACTS_READONLY_SCOPE,
+    ],
     "forms": [FORMS_BODY_READONLY_SCOPE, FORMS_RESPONSES_READONLY_SCOPE],
     "slides": [SLIDES_READONLY_SCOPE],
     "tasks": [TASKS_READONLY_SCOPE],
