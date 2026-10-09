@@ -7,8 +7,9 @@ NOTE: OAuth configuration has been moved to auth.oauth_config for centralization
 This module now imports from there for backward compatibility.
 """
 
+import logging
 import os
-from typing import TYPE_CHECKING
+from typing import Literal, TYPE_CHECKING
 
 from auth.oauth_config import (
     get_oauth_base_url,
@@ -17,6 +18,8 @@ from auth.oauth_config import (
     get_transport_mode,
     is_oauth21_enabled,
 )
+
+logger = logging.getLogger(__name__)
 
 # Server configuration. WORKSPACE_MCP_PORT is resolved lazily via PEP 562
 # __getattr__ so that the value reflects the current env at access time.
@@ -29,6 +32,42 @@ WORKSPACE_EXTERNAL_URL = os.getenv("WORKSPACE_EXTERNAL_URL")
 
 if TYPE_CHECKING:
     WORKSPACE_MCP_PORT: int
+
+
+def get_send_transport() -> Literal["api", "smtp"]:
+    """Get the configured Gmail send transport.
+
+    Reads the GMAIL_SEND_TRANSPORT environment variable, normalizes it via
+    strip and lowercase, and returns either "smtp" or "api" (default).
+    Unknown values log a warning and fall back to "api".
+    """
+    value = os.getenv("GMAIL_SEND_TRANSPORT", "").strip().lower()
+
+    if value == "smtp":
+        return "smtp"
+    elif value == "" or value == "api":
+        return "api"
+    else:
+        logger.warning(
+            f"Unknown GMAIL_SEND_TRANSPORT value {value!r}; falling back to 'api'"
+        )
+        return "api"
+
+
+def is_extended_name_lookup_enabled() -> bool:
+    """Whether Gmail compose may resolve names from Other contacts and the directory.
+
+    Reads GMAIL_EXTENDED_NAME_LOOKUP (``1``/``true``/``yes``/``on``, case-insensitive).
+    Off by default: the contacts.other.readonly and directory.readonly scopes are
+    then never requested, and recipient names come only from the conversation and
+    saved contacts.
+    """
+    return os.getenv("GMAIL_EXTENDED_NAME_LOOKUP", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
 
 
 def __getattr__(name: str) -> int:
@@ -50,6 +89,8 @@ __all__ = [
     "WORKSPACE_MCP_BASE_URI",
     "WORKSPACE_EXTERNAL_URL",
     "USER_GOOGLE_EMAIL",
+    "get_send_transport",
+    "is_extended_name_lookup_enabled",
     "get_oauth_base_url",
     "get_oauth_redirect_uri",
     "set_transport_mode",

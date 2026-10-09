@@ -7,6 +7,9 @@ Separated from service_decorator.py to avoid circular imports.
 
 import logging
 
+from core.config import get_send_transport as _get_send_transport
+from core.config import is_extended_name_lookup_enabled
+
 logger = logging.getLogger(__name__)
 
 # Global variable to store enabled tools (set by main.py)
@@ -36,6 +39,8 @@ GMAIL_COMPOSE_SCOPE = "https://www.googleapis.com/auth/gmail.compose"
 GMAIL_MODIFY_SCOPE = "https://www.googleapis.com/auth/gmail.modify"
 GMAIL_LABELS_SCOPE = "https://www.googleapis.com/auth/gmail.labels"
 GMAIL_SETTINGS_BASIC_SCOPE = "https://www.googleapis.com/auth/gmail.settings.basic"
+# Full mailbox access - superset of all gmail.* scopes; only requested when SMTP is opted in.
+MAIL_GOOGLE_COM_SCOPE = "https://mail.google.com/"
 
 # Google Chat API scopes
 CHAT_READONLY_SCOPE = "https://www.googleapis.com/auth/chat.messages.readonly"
@@ -68,6 +73,13 @@ TASKS_READONLY_SCOPE = "https://www.googleapis.com/auth/tasks.readonly"
 # Google Contacts (People API) scopes
 CONTACTS_SCOPE = "https://www.googleapis.com/auth/contacts"
 CONTACTS_READONLY_SCOPE = "https://www.googleapis.com/auth/contacts.readonly"
+# Auto-collected "Other contacts" and the Workspace directory -- read-only sources
+# Gmail itself uses to resolve recipient display names during compose/reply.
+# Requested only when GMAIL_EXTENDED_NAME_LOOKUP is enabled.
+CONTACTS_OTHER_READONLY_SCOPE = (
+    "https://www.googleapis.com/auth/contacts.other.readonly"
+)
+DIRECTORY_READONLY_SCOPE = "https://www.googleapis.com/auth/directory.readonly"
 
 # Google Custom Search API scope
 CUSTOM_SEARCH_SCOPE = "https://www.googleapis.com/auth/cse"
@@ -92,6 +104,13 @@ SCRIPT_SCRIPTAPP_SCOPE = "https://www.googleapis.com/auth/script.scriptapp"
 # See https://developers.google.com/gmail/api/auth/scopes,
 # https://developers.google.com/drive/api/guides/api-specific-auth, etc.
 SCOPE_HIERARCHY = {
+    MAIL_GOOGLE_COM_SCOPE: {
+        GMAIL_READONLY_SCOPE,
+        GMAIL_SEND_SCOPE,
+        GMAIL_COMPOSE_SCOPE,
+        GMAIL_MODIFY_SCOPE,
+        GMAIL_LABELS_SCOPE,
+    },
     GMAIL_MODIFY_SCOPE: {
         GMAIL_READONLY_SCOPE,
         GMAIL_SEND_SCOPE,
@@ -162,6 +181,11 @@ GMAIL_SCOPES = [
     GMAIL_SETTINGS_BASIC_SCOPE,
 ]
 
+# The broad full-mailbox scope is only requested when the deployment opted into SMTP.
+# SMTP auth requires https://mail.google.com/ rather than the narrower gmail.* scopes.
+if _get_send_transport() == "smtp":
+    GMAIL_SCOPES.append(MAIL_GOOGLE_COM_SCOPE)
+
 CHAT_SCOPES = [
     CHAT_READONLY_SCOPE,
     CHAT_WRITE_SCOPE,
@@ -189,6 +213,16 @@ SLIDES_SCOPES = [SLIDES_SCOPE, SLIDES_READONLY_SCOPE]
 TASKS_SCOPES = [TASKS_SCOPE, TASKS_READONLY_SCOPE]
 
 CONTACTS_SCOPES = [CONTACTS_SCOPE, CONTACTS_READONLY_SCOPE]
+CONTACTS_READONLY_SCOPES = [CONTACTS_READONLY_SCOPE]
+
+# Opt-in extra name sources for Gmail compose; off by default so a default
+# deployment asks for no new consent scopes.
+if is_extended_name_lookup_enabled():
+    CONTACTS_SCOPES += [CONTACTS_OTHER_READONLY_SCOPE, DIRECTORY_READONLY_SCOPE]
+    CONTACTS_READONLY_SCOPES += [
+        CONTACTS_OTHER_READONLY_SCOPE,
+        DIRECTORY_READONLY_SCOPE,
+    ]
 
 CUSTOM_SEARCH_SCOPES = [CUSTOM_SEARCH_SCOPE]
 
@@ -236,7 +270,7 @@ TOOL_READONLY_SCOPES_MAP = {
     "forms": [FORMS_BODY_READONLY_SCOPE, FORMS_RESPONSES_READONLY_SCOPE],
     "slides": [SLIDES_READONLY_SCOPE],
     "tasks": [TASKS_READONLY_SCOPE],
-    "contacts": [CONTACTS_READONLY_SCOPE],
+    "contacts": CONTACTS_READONLY_SCOPES,
     "search": CUSTOM_SEARCH_SCOPES,
     "appscript": [
         SCRIPT_PROJECTS_READONLY_SCOPE,
