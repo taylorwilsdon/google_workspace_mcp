@@ -756,3 +756,49 @@ async def test_send_rejects_recipient_header_with_no_parseable_address():
         )
     send_calls = gmail.users.return_value.messages.return_value.send.call_args_list
     assert not [c for c in send_calls if "body" in c.kwargs]
+
+
+@pytest.mark.asyncio
+async def test_send_rejects_semicolon_recipients_even_with_permissive_parser(
+    monkeypatch,
+):
+    """Python < 3.10.15 getaddresses splits "a; b" into addresses; the syntax
+    must still be rejected rather than sent."""
+    import gmail.gmail_tools as gmail_tools
+    from core.utils import UserInputError
+
+    monkeypatch.setattr(
+        gmail_tools,
+        "getaddresses",
+        lambda values: [("", "ada@example.com"), ("", ""), ("", "alan@example.com")],
+    )
+    gmail = _gmail_service()
+
+    with pytest.raises(UserInputError, match="Separate recipients with commas"):
+        await _unwrap(send_gmail_message)(
+            service=gmail,
+            people_service=_people_service_empty(),
+            user_google_email="grace@example.org",
+            to="ada@example.com; alan@example.com",
+            subject="Project sync",
+            body="Hello there",
+            include_signature=False,
+        )
+    send_calls = gmail.users.return_value.messages.return_value.send.call_args_list
+    assert not [c for c in send_calls if "body" in c.kwargs]
+
+
+@pytest.mark.asyncio
+async def test_send_keeps_group_and_trailing_comma_recipients():
+    gmail = _gmail_service()
+    await _unwrap(send_gmail_message)(
+        service=gmail,
+        people_service=_people_service_empty(),
+        user_google_email="grace@example.org",
+        to="Team: ada@example.com, alan@example.com;, bob@example.com,",
+        subject="Project sync",
+        body="Hello there",
+        include_signature=False,
+    )
+    headers = _raw_sent(gmail).split("\r\n\r\n", 1)[0]
+    assert "To: Team: ada@example.com, alan@example.com;, bob@example.com" in headers
