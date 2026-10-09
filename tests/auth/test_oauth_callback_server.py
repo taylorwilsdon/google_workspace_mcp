@@ -239,6 +239,8 @@ def test_ensure_stdio_callback_is_noop_outside_stdio(monkeypatch):
 
 def test_ensure_stdio_callback_starts_server_on_demand(monkeypatch):
     monkeypatch.setattr(oauth_callback_server, "get_transport_mode", lambda: "stdio")
+    # Fixed-port path (operator-pinned); ephemeral path is covered separately.
+    monkeypatch.setattr(oauth_callback_server, "_OPERATOR_PINNED_CALLBACK_PORT", True)
     monkeypatch.setattr(
         oauth_callback_server,
         "get_oauth_config",
