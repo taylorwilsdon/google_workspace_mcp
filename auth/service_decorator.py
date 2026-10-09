@@ -14,6 +14,7 @@ from google.oauth2 import service_account as google_service_account
 from fastmcp.server.dependencies import get_access_token, get_context
 from auth.google_auth import (
     GoogleAuthenticationError,
+    GoogleServiceBuildError,
     build_google_service,
     get_authenticated_google_service,
     recycling,
@@ -1065,7 +1066,11 @@ def require_multiple_services(service_configs: List[Dict[str, Any]]):
                             # instead of failing the whole tool, so the primary action
                             # still runs and the tool reports the fallback. Non-auth
                             # errors are not caught here, so real bugs surface.
-                            if config.get("optional", False):
+                            # A build failure (legacy OAuth wraps it as an auth
+                            # error) is a real bug, not a missing credential.
+                            if config.get("optional", False) and not isinstance(
+                                e, GoogleServiceBuildError
+                            ):
                                 logger.info(
                                     f"[{tool_name}] Optional service '{service_type}' "
                                     f"unavailable for {user_google_email} "
