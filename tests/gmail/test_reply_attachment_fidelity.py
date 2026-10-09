@@ -127,7 +127,7 @@ async def test_send_reply_with_attachment_mime_shape_and_reply_trail():
     - second child: application/pdf attachment
     - HTML body contains the gmail_quote_container reply trail
     """
-    golden = json.loads((FIX / "golden_reply_attach.json").read_text())
+    golden = json.loads((FIX / "golden_reply_attach.json").read_text(encoding="utf-8"))
     ctx = _make_thread_context()
     gmail = _gmail_service()
 
@@ -304,7 +304,7 @@ async def test_send_reply_inline_and_regular_attachment():
     matching the golden_inline.json outer shape.
     """
     ctx = _make_thread_context()
-    golden = json.loads((FIX / "golden_inline.json").read_text())
+    golden = json.loads((FIX / "golden_inline.json").read_text(encoding="utf-8"))
     gmail = _gmail_service()
 
     with patch(
