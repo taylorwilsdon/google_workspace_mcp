@@ -4,6 +4,7 @@ import base64
 from email import message_from_bytes
 from email.policy import SMTP
 
+from gmail.gmail_helpers import _prepare_gmail_message_web
 from gmail.gmail_tools import _prepare_gmail_message
 
 
