@@ -1048,15 +1048,29 @@ def require_multiple_services(service_configs: List[Dict[str, Any]]):
                             stack.enter_context(recycling(service))
                             services_created = True
 
-                        except GoogleScopeError as e:
-                            logger.info(
-                                "[%s] Missing %s permissions: %s",
-                                tool_name,
-                                service_name,
-                                e,
-                            )
-                            return _missing_scope_message(service_name, e)
                         except GoogleAuthenticationError as e:
+                            # Optional services degrade gracefully on AUTH failure
+                            # only: a missing scope (or other auth error) injects None
+                            # instead of failing the whole tool, so the primary action
+                            # still runs and the tool reports the fallback. Non-auth
+                            # errors are not caught here, so real bugs surface.
+                            if config.get("optional", False):
+                                logger.info(
+                                    f"[{tool_name}] Optional service '{service_type}' "
+                                    f"unavailable for {user_google_email} "
+                                    f"({service_name}/{service_version}): {e}. "
+                                    "Injecting None; tool will degrade gracefully."
+                                )
+                                kwargs[param_name] = None
+                                continue
+                            if isinstance(e, GoogleScopeError):
+                                logger.info(
+                                    "[%s] Missing %s permissions: %s",
+                                    tool_name,
+                                    service_name,
+                                    e,
+                                )
+                                return _missing_scope_message(service_name, e)
                             logger.error(
                                 f"[{tool_name}] Auth failed for {user_google_email} | "
                                 f"{service_name}/{service_version} | "
