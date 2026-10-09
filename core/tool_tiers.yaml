@@ -86,6 +86,7 @@ sheets:
     - list_spreadsheets
     - get_spreadsheet_info
     - format_sheet_range
+    - read_sheet_formatting
     - list_sheet_tables
   complete:
     - create_sheet
