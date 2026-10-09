@@ -239,7 +239,9 @@ def test_assemble_mixed_skeleton_matches_golden():
     from gmail.gmail_web_mime import assemble_mixed
     from tests.gmail.golden_skeleton import extract_skeleton
 
-    golden = json.loads((FIX / "golden_forward_attach.json").read_text())
+    golden = json.loads(
+        (FIX / "golden_forward_attach.json").read_text(encoding="utf-8")
+    )
     shape = golden["mime_shape"]
 
     raw = assemble_mixed(
@@ -591,7 +593,9 @@ def test_web_message_inline_and_attach_matches_golden():
     from tests.gmail.golden_skeleton import extract_skeleton
 
     golden = json.loads(
-        (pathlib.Path(__file__).parent / "fixtures" / "golden_inline.json").read_text()
+        (pathlib.Path(__file__).parent / "fixtures" / "golden_inline.json").read_text(
+            encoding="utf-8"
+        )
     )
     shape = golden["mime_shape"]
 
