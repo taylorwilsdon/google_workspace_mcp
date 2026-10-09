@@ -2248,3 +2248,13 @@ async def test_send_gmail_message_rejects_an_unresolvable_thread_id():
         )
 
     mock_service.users().messages().send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_send_as_entries_ignores_non_dict_response():
+    from gmail.gmail_helpers import _get_send_as_entries
+
+    mock_service = Mock()
+    mock_service.users().settings().sendAs().list().execute.return_value = None
+
+    assert await _get_send_as_entries(mock_service) == []

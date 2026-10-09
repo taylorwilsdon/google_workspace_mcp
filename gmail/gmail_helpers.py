@@ -984,6 +984,8 @@ async def _get_send_as_entries(service) -> List[Dict[str, Any]]:
         logger.error(f"Failed to fetch Gmail send-as settings: {e}", exc_info=True)
         raise _signature_fetch_tool_error(e) from e
 
+    if not isinstance(response, dict):
+        return []
     return response.get("sendAs", [])
 
 
