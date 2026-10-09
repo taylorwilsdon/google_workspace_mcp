@@ -319,7 +319,7 @@ async def test_draft_gmail_message_uses_default_send_as_alias_and_signature():
     parsed = _parse_raw_message(raw_message)
     raw_text = base64.urlsafe_b64decode(raw_message).decode("utf-8", errors="ignore")
 
-    assert parsed["From"] == "default.alias@example.com"
+    assert parsed["From"].addresses[0].addr_spec == "default.alias@example.com"
     assert "Default alias signature" in raw_text
     assert "Primary signature" not in raw_text
     list_mock.assert_called_once_with(userId="me")
@@ -351,7 +351,7 @@ async def test_draft_gmail_message_uses_default_send_as_alias_when_signature_dis
     parsed = _parse_raw_message(raw_message)
     raw_text = base64.urlsafe_b64decode(raw_message).decode("utf-8", errors="ignore")
 
-    assert parsed["From"] == "default.alias@example.com"
+    assert parsed["From"].addresses[0].addr_spec == "default.alias@example.com"
     assert "Default alias signature" not in raw_text
     list_mock.assert_called_once_with(userId="me")
 
@@ -389,11 +389,14 @@ async def test_draft_gmail_message_threaded_reply_uses_default_alias_and_signatu
         "utf-8", errors="ignore"
     )
 
-    assert parsed["From"] == "default.alias@example.com"
+    assert parsed["From"].addresses[0].addr_spec == "default.alias@example.com"
     assert "Default alias signature" in raw_text
     assert "Primary signature" not in raw_text
     assert parsed["In-Reply-To"] == "<msg2@example.com>"
-    assert parsed["References"] == "<msg1@example.com> <msg2@example.com>"
+    assert (
+        " ".join(parsed["References"].split())
+        == "<msg1@example.com> <msg2@example.com>"
+    )
     assert message_body["threadId"] == "thread123"
     list_mock.assert_called_once_with(userId="me")
 
@@ -762,13 +765,17 @@ async def test_draft_gmail_message_builds_threaded_html_reply_as_multipart_alter
     assert parsed["Subject"] == "Re: Meeting tomorrow"
     assert parsed["To"] == "recipient@example.com"
     assert parsed["In-Reply-To"] == "<msg2@example.com>"
-    assert parsed["References"] == "<msg1@example.com> <msg2@example.com>"
+    # References is folded (CRLF+TAB) per the Gmail-web spec; normalize whitespace.
+    assert " ".join(parsed["References"].split()) == (
+        "<msg1@example.com> <msg2@example.com>"
+    )
     assert parsed.get_content_type() == "multipart/alternative"
     assert parsed.get_body(preferencelist=("plain",)).get_content().strip() == (
         "Thanks for the update."
     )
+    # The HTML part is wrapped in Gmail's ltr container per the web-compose spec.
     assert parsed.get_body(preferencelist=("html",)).get_content().strip() == (
-        "<p>Thanks for the update.</p>"
+        '<div dir="ltr"><p>Thanks for the update.</p></div>'
     )
 
 
@@ -809,9 +816,9 @@ async def test_draft_gmail_message_builds_html_attachments_with_mixed_top_level(
     attachments = list(parsed.iter_attachments())
 
     assert parsed.get_content_type() == "multipart/mixed"
-    assert parsed.get_body(preferencelist=("html",)).get_content().strip() == (
-        "<p>Please see attached.</p>"
-    )
+    # The web-compose path wraps HTML body in Gmail's ltr container.
+    html_content = parsed.get_body(preferencelist=("html",)).get_content().strip()
+    assert "<p>Please see attached.</p>" in html_content
     assert parsed.get_body(preferencelist=("plain",)).get_content().strip() == (
         "Please see attached."
     )
@@ -932,7 +939,7 @@ async def test_draft_gmail_message_quotes_html_reply_with_signature():
     )
 
     assert 'data-smartmail="gmail_signature"' in html_body
-    assert '<div class="gmail_quote">' in html_body
+    assert 'class="gmail_quote' in html_body
 
 
 @pytest.mark.asyncio
@@ -965,7 +972,7 @@ async def test_draft_gmail_message_html_newlines_convert_body_not_quoted_origina
         parsed.get_body(preferencelist=("html",)).get_content().replace("\r\n", "\n")
     )
 
-    assert html_body.startswith("Thanks,<br><br>\nsee you there")
+    assert "Thanks,<br><br>\nsee you there" in html_body.split("gmail_quote")[0]
     assert original_html in html_body
 
 
@@ -1009,9 +1016,10 @@ async def test_draft_gmail_message_autofills_reply_headers_from_thread():
     raw_text = base64.urlsafe_b64decode(raw_message).decode("utf-8", errors="ignore")
 
     assert "In-Reply-To: <msg3@example.com>" in raw_text
+    # References is folded (CRLF+TAB) per spec; normalize whitespace to compare.
     assert (
         "References: <msg1@example.com> <msg2@example.com> <msg3@example.com>"
-        in raw_text
+        in " ".join(raw_text.split())
     )
     assert create_kwargs["body"]["message"]["threadId"] == "thread123"
 
@@ -1046,7 +1054,7 @@ async def test_draft_gmail_message_skips_existing_draft_as_default_reply_parent(
     parsed = _parse_raw_message(message_body["raw"])
 
     assert parsed["In-Reply-To"] == "<latest-sent@example.com>"
-    assert parsed["References"] == "<latest-sent@example.com>"
+    assert " ".join(parsed["References"].split()) == "<latest-sent@example.com>"
     assert message_body["threadId"] == "thread123"
 
 
@@ -1090,7 +1098,7 @@ async def test_draft_gmail_message_skips_headerless_default_reply_parent():
 
     assert parsed["To"] == "alice-replies@example.com"
     assert parsed["In-Reply-To"] == "<latest-replyable@example.com>"
-    assert parsed["References"] == "<latest-replyable@example.com>"
+    assert " ".join(parsed["References"].split()) == "<latest-replyable@example.com>"
 
 
 @pytest.mark.parametrize(
@@ -1150,7 +1158,7 @@ async def test_draft_gmail_message_uses_selected_parent_rfc_ancestry(
     parsed = _parse_raw_message(create_kwargs["body"]["message"]["raw"])
 
     assert parsed["In-Reply-To"] == "<latest@example.com>"
-    assert parsed["References"] == expected
+    assert " ".join(parsed["References"].split()) == expected
 
 
 @pytest.mark.parametrize("reaction_depth", [0, 1, 2, 3, 5])
@@ -1198,7 +1206,10 @@ async def test_draft_gmail_message_skips_emoji_reaction_as_reply_parent(reaction
     parsed = _parse_raw_message(create_kwargs["body"]["message"]["raw"])
 
     assert parsed["In-Reply-To"] == "<latest@example.com>"
-    assert parsed["References"] == "<root@example.com> <latest@example.com>"
+    assert (
+        " ".join(parsed["References"].split())
+        == "<root@example.com> <latest@example.com>"
+    )
 
 
 @pytest.mark.asyncio
@@ -1229,7 +1240,9 @@ async def test_draft_gmail_message_uses_explicit_in_reply_to_when_filling_refere
     raw_text = base64.urlsafe_b64decode(raw_message).decode("utf-8", errors="ignore")
 
     assert "In-Reply-To: <msg2@example.com>" in raw_text
-    assert "References: <msg1@example.com> <msg2@example.com>" in raw_text
+    assert "References: <msg1@example.com> <msg2@example.com>" in " ".join(
+        raw_text.split()
+    )
     assert "<msg3@example.com>" not in raw_text
 
 
@@ -1275,7 +1288,9 @@ async def test_draft_gmail_message_uses_explicit_trashed_reply_target_context():
 
     assert parsed["To"] == "bob-replies@example.com"
     assert parsed["In-Reply-To"] == "<trashed-target@example.com>"
-    assert parsed["References"] == ("<root@example.com> <trashed-target@example.com>")
+    assert " ".join(parsed["References"].split()) == (
+        "<root@example.com> <trashed-target@example.com>"
+    )
 
 
 @pytest.mark.asyncio
@@ -1308,7 +1323,7 @@ async def test_draft_gmail_message_defaults_to_latest_when_only_references_are_g
     assert "In-Reply-To: <msg3@example.com>" in raw_text
     assert (
         "References: <msg1@example.com> <msg2@example.com> <msg3@example.com>"
-        in raw_text
+        in " ".join(raw_text.split())
     )
 
 
@@ -1691,7 +1706,12 @@ async def test_send_gmail_message_autofills_reply_headers_from_thread():
     )
     parsed = _parse_raw_message(send_kwargs["body"]["raw"])
     assert parsed["In-Reply-To"] == "<msg2@example.com>"
-    assert parsed["References"] == "<msg1@example.com> <msg2@example.com>"
+    # The web-faithful builder folds long headers per RFC 5322, so the raw value
+    # may carry a fold (CRLF + WSP) between ids. Compare on the unfolded token list.
+    assert parsed["References"].split() == [
+        "<msg1@example.com>",
+        "<msg2@example.com>",
+    ]
 
 
 @pytest.mark.asyncio
@@ -1720,7 +1740,7 @@ async def test_send_gmail_message_preserves_caller_reply_headers():
     )
     parsed = _parse_raw_message(send_kwargs["body"]["raw"])
     assert parsed["In-Reply-To"] == "<msg1@example.com>"
-    assert parsed["References"] == "<msg1@example.com>"
+    assert " ".join(parsed["References"].split()) == "<msg1@example.com>"
 
 
 @pytest.mark.asyncio
@@ -1752,7 +1772,8 @@ async def test_send_gmail_message_quotes_original_when_requested():
         mock_service.users.return_value.messages.return_value.send.call_args.kwargs
     )
     parsed = _parse_raw_message(send_kwargs["body"]["raw"])
-    payload = parsed.get_content()
+    # The web-faithful path emits multipart/alternative, so select the plain part.
+    payload = parsed.get_body(preferencelist=("plain",)).get_content()
     assert "Alice Example <alice@example.com> wrote:" in payload
     assert "> Original plain text" in payload
 
@@ -2029,14 +2050,72 @@ async def test_forward_draft_selects_send_as_identity(from_email):
         user_google_email="primary@example.com",
         forward_message_id="original",
         from_email=from_email,
+        include_signature=False,
     )
 
     raw = service.users().drafts().create.call_args.kwargs["body"]["message"]["raw"]
     drafted = _parse_raw_message(raw)
-    assert drafted["From"] == (from_email or "default.alias@example.com")
+    assert drafted["From"].addresses[0].addr_spec == (
+        from_email or "default.alias@example.com"
+    )
     assert "signature" not in drafted.get_body().get_content()
     if from_email:
         service.users().settings().sendAs().list.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool", [draft_gmail_message, send_gmail_message])
+@pytest.mark.parametrize(
+    ("from_name", "expected_from"),
+    [
+        (None, "Example User <user@example.com>"),
+        ("Custom Name", "Custom Name <user@example.com>"),
+    ],
+)
+async def test_forward_uses_send_as_display_name(tool, from_name, expected_from):
+    """Forwards get the same Send-As displayName fallback as regular sends and
+    drafts; an explicit from_name still wins."""
+    service = _mock_gmail_service()
+    service.users().messages().get().execute.return_value = _thread_message(
+        "original", text="Original body"
+    )
+
+    await _unwrap(tool)(
+        service=service,
+        user_google_email="user@example.com",
+        to="recipient@example.com",
+        forward_message_id="original",
+        from_name=from_name,
+    )
+
+    if tool is draft_gmail_message:
+        raw = service.users().drafts().create.call_args.kwargs["body"]["message"]["raw"]
+    else:
+        raw = service.users().messages().send.call_args.kwargs["body"]["raw"]
+    assert str(_parse_raw_message(raw)["From"]) == expected_from
+
+
+@pytest.mark.asyncio
+async def test_send_forward_without_signature_skips_send_as_lookup():
+    """With signatures disabled the send-forward path never touches the
+    settings endpoint, matching the regular send path; From stays bare."""
+    service = _mock_gmail_service()
+    service.users().messages().get().execute.return_value = _thread_message(
+        "original", text="Original body"
+    )
+    service.users().settings().sendAs().list.reset_mock()
+
+    await _unwrap(send_gmail_message)(
+        service=service,
+        user_google_email="user@example.com",
+        to="recipient@example.com",
+        forward_message_id="original",
+        include_signature=False,
+    )
+
+    raw = service.users().messages().send.call_args.kwargs["body"]["raw"]
+    assert str(_parse_raw_message(raw)["From"]) == "user@example.com"
+    service.users().settings().sendAs().list.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -2248,3 +2327,28 @@ async def test_send_gmail_message_rejects_an_unresolvable_thread_id():
         )
 
     mock_service.users().messages().send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_draft_gmail_message_forward_honors_direction(monkeypatch):
+    """A draft forward passes an explicit direction through, as send forwards do."""
+    captured = {}
+
+    async def fake_forward(**kwargs):
+        captured.update(kwargs)
+        return "ok"
+
+    monkeypatch.setattr(gmail_tools, "_forward_gmail_message_impl", fake_forward)
+
+    await _unwrap(draft_gmail_message)(
+        service=Mock(),
+        user_google_email="user@example.com",
+        forward_message_id="msg123",
+        body="FYI",
+        from_email="user@example.com",
+        direction="rtl",
+        include_signature=False,
+    )
+
+    assert captured["direction"] == "rtl"
+    assert captured["as_draft"] is True

@@ -207,6 +207,32 @@ async def test_forward_html_email():
 
 
 @pytest.mark.asyncio
+async def test_forward_html_only_original_fills_plain_part():
+    """An HTML-only original still yields its body in the text/plain part."""
+    message = create_mock_message(
+        subject="HTML only",
+        from_addr="alice@example.com",
+        to_addr="bob@example.com",
+        html_body="<p>First paragraph.</p><p>Second paragraph.</p>",
+    )
+    mock_service = create_mock_service(message, sent_message_id="fwd003")
+
+    await _forward_gmail_message_impl(
+        service=mock_service,
+        message_id="msg789",
+        to="recipient@example.com",
+        user_google_email="me@example.com",
+    )
+
+    plain = get_body_text(get_sent_mime_message(mock_service), subtype="plain")
+    assert "Forwarded message" in plain
+    assert "First paragraph." in plain
+    assert "Second paragraph." in plain
+    assert "First paragraph.Second paragraph." not in plain
+    assert "<p>" not in plain
+
+
+@pytest.mark.asyncio
 async def test_forward_with_message_plain():
     """Forward with plain text user message prepended"""
     message = create_mock_message(
@@ -228,6 +254,79 @@ async def test_forward_with_message_plain():
 
     assert "Email forwarded" in result
     assert "fwd003" in result
+
+
+@pytest.mark.asyncio
+async def test_forward_hebrew_note_renders_rtl():
+    """A Hebrew forwarding note auto-detects RTL; forwarded original keeps its own dir."""
+    message = create_mock_message(
+        subject="FYI",
+        from_addr="alice@example.com",
+        to_addr="bob@example.com",
+        text_body="Original message body.",
+    )
+    mock_service = create_mock_service(message, sent_message_id="fwdrtl")
+
+    await _forward_gmail_message_impl(
+        service=mock_service,
+        message_id="msg789",
+        to="recipient@example.com",
+        forward_message="שלום, ראה למטה",
+        forward_message_format="plain",
+        user_google_email="me@example.com",
+    )
+
+    sent = get_sent_mime_message(mock_service)
+    body = get_body_text(sent, subtype="html")
+    assert body.startswith('<div dir="rtl">')
+
+
+@pytest.mark.asyncio
+async def test_forward_no_note_stays_ltr():
+    """No note: the wrapper stays ltr (byte-identical to historical output)."""
+    message = create_mock_message(
+        subject="FYI",
+        from_addr="alice@example.com",
+        to_addr="bob@example.com",
+        text_body="Original message body.",
+    )
+    mock_service = create_mock_service(message, sent_message_id="fwdltr")
+
+    await _forward_gmail_message_impl(
+        service=mock_service,
+        message_id="msg789",
+        to="recipient@example.com",
+        user_google_email="me@example.com",
+    )
+
+    sent = get_sent_mime_message(mock_service)
+    body = get_body_text(sent, subtype="html")
+    assert body.startswith('<div dir="ltr">')
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("direction", ["rtl", "ltr"])
+async def test_forward_no_note_honors_explicit_direction(direction):
+    """No note: an explicit direction still sets the wrapper's base direction."""
+    message = create_mock_message(
+        subject="FYI",
+        from_addr="alice@example.com",
+        to_addr="bob@example.com",
+        text_body="Original message body.",
+    )
+    mock_service = create_mock_service(message, sent_message_id="fwddir")
+
+    await _forward_gmail_message_impl(
+        service=mock_service,
+        message_id="msg789",
+        to="recipient@example.com",
+        user_google_email="me@example.com",
+        direction=direction,
+    )
+
+    sent = get_sent_mime_message(mock_service)
+    body = get_body_text(sent, subtype="html")
+    assert body.startswith(f'<div dir="{direction}">')
 
 
 @pytest.mark.asyncio
@@ -293,7 +392,7 @@ async def test_forward_plain_original_with_html_note():
     body = get_body_text(sent, subtype="html")
     assert "<b>Heads up</b>" in body
     # The plain-text original is escaped and newline-converted into the HTML body.
-    assert "Line one<br/>Line two" in body
+    assert "Line one<br>Line two" in body
 
 
 @pytest.mark.asyncio
