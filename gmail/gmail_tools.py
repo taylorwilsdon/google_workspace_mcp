@@ -29,7 +29,11 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 from pydantic.json_schema import SkipJsonSchema
 
-from auth.oauth_config import is_stateless_mode
+from auth.oauth_config import (
+    is_external_oauth21_provider,
+    is_oauth21_enabled,
+    is_stateless_mode,
+)
 from auth.service_decorator import (
     require_google_service,
     require_multiple_services,
@@ -93,6 +97,7 @@ from gmail.gmail_helpers import (
     _prepare_gmail_message_web,
     _reject_entity_escaped_html_body,
     _reply_subject,
+    _is_quota_or_rate_limit_error,
     _retryable_result_ids,
     _signature_html_to_text,
     _wrap_signature_html,
@@ -1009,16 +1014,23 @@ async def _people_search_tier(
 ) -> Optional[str]:
     """Run one People search tier and extract a matching display name.
 
-    Best-effort: a 403 (scope not granted) records ``scope`` in ``missing_scopes``
-    and returns None; any other failure is logged and returns None. ``wrap_key``
+    Best-effort: a 401, or a 403 that is neither a quota/rate-limit error nor
+    ``accessNotConfigured`` (People API disabled for the project), means the scope
+    is not granted and records ``scope`` in ``missing_scopes``; any other failure
+    is logged. Either way it returns None. ``wrap_key``
     is the per-result wrapper field (``person`` for searchContacts/otherContacts,
     None for searchDirectoryPeople where results are person objects directly).
     """
     try:
         result = await asyncio.to_thread(request_factory(**params).execute)
     except HttpError as e:
-        status = getattr(getattr(e, "resp", None), "status", None)
-        if status in (401, 403):
+        status = _http_error_status(e)
+        scope_error = status == 401 or (
+            status == 403
+            and not _is_quota_or_rate_limit_error(e)
+            and "accessnotconfigured" not in f"{e} {e.content!r}".lower()
+        )
+        if scope_error:
             if missing_scopes is not None:
                 missing_scopes.add(scope)
         else:
@@ -1226,11 +1238,20 @@ def _build_name_fallback_note(
     listed = "; ".join(
         label for scope, label in _NAME_SCOPE_LABELS.items() if scope in scopes
     )
+    if not is_oauth21_enabled():
+        reauth = "re-authenticate by running start_google_auth for this account"
+    elif is_external_oauth21_provider():
+        reauth = (
+            "provide an OAuth 2.1 bearer token in the Authorization header that "
+            "carries these scopes"
+        )
+    else:
+        reauth = "sign in again through your MCP client's OAuth 2.1 flow"
     return (
         "\n\n[Heads up] Some recipient display names could not be resolved, so "
-        "those addresses were sent as bare emails. For Gmail-web-style names, "
-        f"grant: {listed}. Enable the 'contacts' tool (it requests these scopes) "
-        "and re-authenticate by running start_google_auth for this account."
+        "those addresses were written as bare addresses. For Gmail-web-style "
+        f"names, grant: {listed}. Enable the 'contacts' tool (it requests these "
+        f"scopes) and {reauth}."
     )
 
 
