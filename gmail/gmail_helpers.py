@@ -11,7 +11,6 @@ import hashlib
 import itertools
 import logging
 import re
-import secrets
 import ssl
 import sys
 from collections import Counter, OrderedDict
@@ -40,6 +39,7 @@ from core.utils import UserInputError
 from gmail.gmail_web_mime import (
     TextDirection,
     assemble_alternative,
+    assemble_web_message,
     base_text_direction,
     build_forwarded_container_html,
     build_forwarded_plain,
@@ -463,11 +463,6 @@ def _normalize_email(address: str) -> str:
     local, _, domain = addr.partition("@")
     local = local.split("+", 1)[0]
     return f"{local}@{domain}"
-
-
-def _new_attachment_id() -> str:
-    """Return a random attachment id in the shape Gmail web uses (``f_...``)."""
-    return f"f_{secrets.token_hex(5)}"
 
 
 def _generate_gmail_web_url(
@@ -1596,13 +1591,21 @@ def _prepare_gmail_message_web(
     from_email: Optional[str] = None,
     from_name: Optional[str] = None,
     priority: MessagePriority = "normal",
+    inline_parts: Optional[List[Dict[str, Any]]] = None,
+    attachment_parts: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
-    """Assemble a Gmail-web faithful ``multipart/alternative`` raw message.
+    """Assemble a Gmail-web faithful raw message.
 
     ``plain_body`` and ``html_body`` are the finished text/plain and text/html
     parts. Headers are authored in Gmail's order; To/Cc/Bcc are validated and
     their non-ASCII display names RFC 2047 encoded. Message-ID is left for
     Gmail to assign. Returns the base64url raw message.
+
+    ``inline_parts`` (``{filename, mime_type, data, content_id}``) and
+    ``attachment_parts`` (``{filename, mime_type, data}``) pick the smallest
+    structure Gmail web uses: ``multipart/alternative`` alone, wrapped in
+    ``multipart/related`` for inline images, in ``multipart/mixed`` for
+    regular attachments, or both.
     """
     subject = _reply_subject(_checked_header("Subject", subject), in_reply_to)
     if not subject.isascii():
@@ -1630,11 +1633,24 @@ def _prepare_gmail_message_web(
 
     headers.extend(_priority_headers(priority))
 
-    message = assemble_alternative(
+    if not inline_parts and not attachment_parts:
+        message = assemble_alternative(
+            headers=headers,
+            plain_text=plain_body,
+            html_text=html_body,
+            boundary=gmail_boundary(),
+        )
+        return encode_raw(message)
+
+    message = assemble_web_message(
         headers=headers,
         plain_text=plain_body,
         html_text=html_body,
-        boundary=gmail_boundary(),
+        inline_parts=inline_parts or None,
+        attachment_parts=attachment_parts or None,
+        boundary_alt=gmail_boundary(),
+        boundary_related=gmail_boundary() if inline_parts else None,
+        boundary_mixed=gmail_boundary(),
     )
     return encode_raw(message)
 
@@ -1654,12 +1670,15 @@ def _build_web_compose_raw(
     direction: TextDirection,
     reply_target: Optional[Mapping[str, Any]],
     priority: MessagePriority,
+    inline_parts: List[Dict[str, Any]],
+    attachment_parts: List[Dict[str, Any]],
 ) -> str:
-    """Build a Gmail-web raw message for the attachment-free send/draft paths.
+    """Build a Gmail-web raw message for the send/draft paths.
 
     Both body parts are derived from ``body``; when ``reply_target`` (the
     parent from the thread reply context) is given, Gmail's reply trail is
-    appended to them.
+    appended to them. The classified attachment parts are carried as Gmail
+    web nests them (see ``_prepare_gmail_message_web``).
     """
     plain_part, html_part = _derive_web_bodies(body, body_format, direction)
     if reply_target:
@@ -1678,6 +1697,8 @@ def _build_web_compose_raw(
         from_email=from_email,
         from_name=from_name,
         priority=priority,
+        inline_parts=inline_parts,
+        attachment_parts=attachment_parts,
     )
 
 

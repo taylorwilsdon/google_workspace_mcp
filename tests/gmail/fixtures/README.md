@@ -50,4 +50,7 @@ drifts.
 
 ## Files
 - `golden_reply.json` - reply, no attachments.
+- `golden_reply_attach.json` - reply with attachment (multipart/mixed).
 - `golden_forward.json` - forward, no attachments.
+- `golden_forward_attach.json` - forward with attachment (multipart/mixed).
+- `golden_inline.json` - inline images plus attachments (mixed > related).

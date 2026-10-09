@@ -489,3 +489,94 @@ class TestFormatAddressListParsing:
     )
     def test_valid_ascii_list_is_returned_byte_identical(self, value):
         assert format_address_list(value) == value
+
+
+class TestFilenameHeaderSafety:
+    def test_escape_filename_strips_crlf_and_nul(self):
+        from gmail.gmail_web_mime import _escape_filename
+
+        out = _escape_filename("a\r\nX-Evil: 1\x00.pdf")
+        assert "\r" not in out and "\n" not in out and "\x00" not in out
+
+    def test_attachment_part_no_header_injection_via_filename(self):
+        from gmail.gmail_web_mime import _attachment_part
+
+        part = _attachment_part(
+            "BND", "x\r\nBcc: evil@example.com\r\n.pdf", "application/pdf", b"data"
+        )
+        # The injection vector is a CRLF that starts a new header line; after
+        # stripping, the filename text stays on its own header line (harmless).
+        assert "\r\nBcc:" not in part
+        assert "\rBcc:" not in part and "\nBcc:" not in part
+
+    def test_inline_part_no_injection_via_content_id(self):
+        from gmail.gmail_web_mime import _inline_part
+
+        part = _inline_part("BND", "img.png", "image/png", b"d", "cid\r\nX-Evil: 1")
+        assert "\r\nX-Evil" not in part
+        assert "\rX-Evil" not in part and "\nX-Evil" not in part
+
+    def test_inline_part_x_attachment_id_matches_content_id(self):
+        from gmail.gmail_web_mime import _inline_part
+
+        part = _inline_part("BND", "img.png", "image/png", b"d", "ii_abc")
+        assert "Content-ID: <ii_abc>\r\nX-Attachment-Id: ii_abc\r\n" in part
+
+    def test_ascii_filename_is_byte_identical_quoted_string(self):
+        from gmail.gmail_web_mime import _attachment_part
+
+        part = _attachment_part("BND", "report.pdf", "application/pdf", b"d")
+        assert 'name="report.pdf"' in part
+        assert 'filename="report.pdf"' in part
+
+    def test_non_ascii_filename_uses_rfc2231(self):
+        from gmail.gmail_web_mime import _attachment_part
+
+        part = _attachment_part("BND", "café.pdf", "application/pdf", b"d")
+        # No raw non-ASCII bytes leak into the header; RFC 2231 extended params used.
+        assert "café.pdf" not in part
+        assert "name*=UTF-8''caf%C3%A9.pdf" in part
+        assert "filename*=UTF-8''caf%C3%A9.pdf" in part
+
+
+class TestPartMimeTypeSanitization:
+    """A caller-supplied mime_type must not inject headers into a MIME part."""
+
+    INJECTED = "application/pdf\r\nContent-Disposition: inline\r\n\r\nINJECTED"
+
+    def test_attachment_part_rejects_crlf_mime_type(self):
+        from gmail.gmail_web_mime import _attachment_part
+
+        part = _attachment_part("b", "a.pdf", self.INJECTED, b"x")
+        assert "INJECTED" not in part
+        assert 'Content-Type: application/octet-stream; name="a.pdf"' in part
+
+    def test_inline_part_rejects_crlf_mime_type(self):
+        from gmail.gmail_web_mime import _inline_part
+
+        part = _inline_part("b", "a.png", self.INJECTED, b"x", "img1")
+        assert "INJECTED" not in part
+        assert 'Content-Type: application/octet-stream; name="a.png"' in part
+
+    def test_valid_mime_type_kept_and_trimmed(self):
+        from gmail.gmail_web_mime import _attachment_part
+
+        part = _attachment_part("b", "a.pdf", "  application/pdf ", b"x")
+        assert 'Content-Type: application/pdf; name="a.pdf"' in part
+
+    def test_end_to_end_web_message_has_no_injected_headers(self):
+        from gmail.gmail_helpers import _prepare_gmail_message_web
+
+        raw_b64 = _prepare_gmail_message_web(
+            subject="s",
+            plain_body="p",
+            html_body="<div>p</div>",
+            to="r@example.com",
+            from_email="s@example.com",
+            attachment_parts=[
+                {"filename": "a.pdf", "mime_type": self.INJECTED, "data": b"x"}
+            ],
+        )
+        raw = base64.urlsafe_b64decode(raw_b64).decode()
+        assert "INJECTED" not in raw
+        assert "Content-Disposition: inline" not in raw
