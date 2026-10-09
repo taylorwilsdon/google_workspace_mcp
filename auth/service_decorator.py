@@ -337,9 +337,15 @@ async def _authenticate_service(
     resolved_scopes: List[str],
     mcp_session_id: Optional[str],
     authenticated_user: Optional[str],
+    *,
+    allow_auth_flow: bool,
 ) -> Tuple[Any, str]:
     """
     Authenticate and get Google service using appropriate OAuth version.
+
+    ``allow_auth_flow`` controls whether legacy OAuth may start a new consent
+    flow when credentials are missing or lack scopes (False for optional
+    services, which degrade to None instead).
 
     Returns:
         Tuple of (service, actual_user_email)
@@ -401,6 +407,7 @@ async def _authenticate_service(
             user_google_email=user_google_email,
             required_scopes=resolved_scopes,
             session_id=mcp_session_id,
+            allow_auth_flow=allow_auth_flow,
         )
     record_google_principal(auth_mode, actual_user_email)
     return service, actual_user_email
@@ -884,6 +891,7 @@ def require_google_service(
                     resolved_scopes,
                     mcp_session_id,
                     authenticated_user,
+                    allow_auth_flow=True,
                 )
             except GoogleScopeError as e:
                 logger.info(
@@ -1041,6 +1049,9 @@ def require_multiple_services(service_configs: List[Dict[str, Any]]):
                                 resolved_scopes,
                                 mcp_session_id,
                                 authenticated_user,
+                                # An optional service must not start OAuth for
+                                # its missing scope; it degrades to None below.
+                                allow_auth_flow=not config.get("optional", False),
                             )
 
                             # Inject service with specified parameter name
