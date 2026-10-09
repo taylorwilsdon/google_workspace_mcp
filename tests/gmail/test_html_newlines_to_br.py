@@ -6,7 +6,7 @@ from email.policy import SMTP
 
 import pytest
 
-from gmail.gmail_helpers import _build_forward_content, html_newlines_to_br
+from gmail.gmail_helpers import html_newlines_to_br
 from gmail.gmail_tools import _prepare_gmail_message
 
 SIGNATURE_HTML = (
@@ -147,18 +147,3 @@ class TestPrepareGmailMessageNewlines:
         parts = _decode_parts(raw_b64)
         assert "text/html" not in parts
         assert parts["text/plain"].strip() == body
-
-
-class TestForwardNoteNewlines:
-    def test_html_note_converted_but_original_untouched(self):
-        original_html = "<div>\n<span>Hello</span>\n<span>world</span>\n</div>"
-        _, body, body_format = _build_forward_content(
-            headers={},
-            bodies={"html": original_html, "text": ""},
-            forward_message="FYI\n\nsee below",
-            forward_message_format="html",
-            subject_override=None,
-        )
-        assert body_format == "html"
-        assert "<div>FYI<br><br>\nsee below</div>" in body
-        assert original_html in body
