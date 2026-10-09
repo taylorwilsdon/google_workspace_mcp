@@ -628,3 +628,18 @@ def test_split_nonexistent_path_records_file_not_found_error(tmp_path):
     assert "file not found" in errors[0].lower(), (
         f"Error must mention 'file not found', got: {errors[0]!r}"
     )
+
+
+def test_split_oversized_path_is_rejected_before_reading(tmp_path, monkeypatch):
+    """A local file over the Gmail size limit is reported, never read whole."""
+    import gmail.gmail_tools as gt
+
+    big = tmp_path / "big.bin"
+    big.write_bytes(b"x" * 11)
+    monkeypatch.setattr(gt, "MAX_EMAIL_ATTACHMENT_BYTES", 10)
+    with patch("gmail.gmail_tools.validate_file_path", return_value=big):
+        _, _, count, errors = _split_resolved_attachments(
+            [{"path": str(big), "filename": "big.bin"}]
+        )
+    assert count == 0
+    assert len(errors) == 1 and "exceeds" in errors[0], errors

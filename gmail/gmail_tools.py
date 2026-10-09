@@ -1221,8 +1221,7 @@ def _split_resolved_attachments(
                     logger.error("File not found: path_len=%d", len(file_path))
                     attachment_errors.append(f"{filename or file_path}: file not found")
                     continue
-                with open(path_obj, "rb") as fh:
-                    file_data = fh.read()
+                file_data = _read_attachment_bytes(path_obj)
                 if not filename:
                     filename = path_obj.name
                 if not mime_type:
