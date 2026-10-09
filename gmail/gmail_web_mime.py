@@ -20,7 +20,7 @@ from email.header import Header
 from email.headerregistry import HeaderRegistry
 from email.policy import SMTP
 from email.utils import encode_rfc2231, formataddr, getaddresses
-from typing import List, Literal, Optional, Tuple
+from typing import Iterable, List, Literal, Optional, Tuple
 
 TextDirection = Literal["auto", "ltr", "rtl"]
 AddressGroup = Tuple[Optional[str], List[Tuple[str, str]]]
@@ -87,9 +87,21 @@ def format_address_list(value: str) -> str:
     groups = parse_address_list(value)
     if value.isascii() and len(value) <= 998:
         return value
+    return join_address_groups(
+        (group_name, [format_display_address(n, a) for n, a in members])
+        for group_name, members in groups
+    )
+
+
+def join_address_groups(groups: Iterable[Tuple[Optional[str], List[str]]]) -> str:
+    """Serialize ``(group_name, [formatted mailbox, ...])`` as an address list.
+
+    Ungrouped mailboxes (``group_name`` None) are joined as-is; a named group is
+    emitted as ``Name: a, b;`` with its label quoted or RFC 2047 encoded.
+    """
     out: List[str] = []
     for group_name, members in groups:
-        formatted = ", ".join(format_display_address(n, a) for n, a in members)
+        formatted = ", ".join(members)
         if group_name is None:
             out.append(formatted)
         else:
