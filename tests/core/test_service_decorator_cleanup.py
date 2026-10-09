@@ -125,6 +125,8 @@ async def test_require_multiple_services_recycles_connections_on_success(
         resolved_scopes,
         mcp_session_id,
         authenticated_user,
+        *,
+        allow_auth_flow,
     ):
         return services[service_name], user_google_email
 
@@ -182,6 +184,8 @@ async def test_require_multiple_services_collects_after_partial_auth_failure(
         resolved_scopes,
         mcp_session_id,
         authenticated_user,
+        *,
+        allow_auth_flow,
     ):
         if service_name == "drive":
             return drive_service, user_google_email
@@ -240,6 +244,8 @@ async def test_require_multiple_services_optional_failure_injects_none(monkeypat
         resolved_scopes,
         mcp_session_id,
         authenticated_user,
+        *,
+        allow_auth_flow,
     ):
         if service_name == "gmail":
             return gmail_service, user_google_email
@@ -301,6 +307,8 @@ async def test_require_multiple_services_optional_non_auth_error_reraises(monkey
         resolved_scopes,
         mcp_session_id,
         authenticated_user,
+        *,
+        allow_auth_flow,
     ):
         if service_name == "gmail":
             return gmail_service, user_google_email

@@ -1374,6 +1374,8 @@ async def get_authenticated_google_service(
     user_google_email: str,  # Required - no more Optional
     required_scopes: List[str],
     session_id: Optional[str] = None,  # Session context for logging
+    *,
+    allow_auth_flow: bool,
 ) -> tuple[Any, str]:
     """
     Centralized Google service authentication for all MCP tools.
@@ -1385,6 +1387,8 @@ async def get_authenticated_google_service(
         tool_name: The name of the calling tool (for logging/debugging)
         user_google_email: The user's Google email address (required)
         required_scopes: List of required OAuth scopes
+        allow_auth_flow: Whether missing or insufficient credentials may start an
+            OAuth flow. False for optional services, which degrade instead.
 
     Returns:
         tuple[service, user_email] on success
@@ -1457,6 +1461,11 @@ async def get_authenticated_google_service(
         logger.warning(
             f"[{tool_name}] No valid credentials. Email: '{user_google_email}'."
         )
+        if not allow_auth_flow:
+            raise GoogleAuthenticationError(
+                f"No valid credentials with the required scopes for {service_name}; "
+                "not starting OAuth for an optional service."
+            )
         logger.info(
             f"[{tool_name}] Valid email '{user_google_email}' provided, initiating auth flow."
         )
