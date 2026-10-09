@@ -352,6 +352,31 @@ def _mode_field(
     return label, f"on  · {env_var}", "warn" if warn_when_on else "on"
 
 
+def _systemd_activation_sockets() -> list[socket.socket] | None:
+    """Return sockets handed off via systemd socket activation, if any.
+
+    Follows the sd_listen_fds(3) protocol: LISTEN_PID must match our own
+    pid (guards against a child process inheriting the env vars) and
+    LISTEN_FDS gives the number of inherited, already-bound/listening
+    sockets starting at fd 3. Unsets both env vars once consumed so a
+    child process (if any) doesn't also try to claim them.
+    """
+    listen_pid = os.environ.get("LISTEN_PID")
+    listen_fds = os.environ.get("LISTEN_FDS")
+    if not listen_pid or not listen_fds:
+        return None
+    try:
+        pid_matches = int(listen_pid) == os.getpid()
+        fd_count = int(listen_fds)
+    except ValueError:
+        return None
+    if not pid_matches or fd_count <= 0:
+        return None
+    os.environ.pop("LISTEN_PID", None)
+    os.environ.pop("LISTEN_FDS", None)
+    return [socket.socket(fileno=fd) for fd in range(3, 3 + fd_count)]
+
+
 def _disabled_tools_field(disabled_tools: set[str]) -> tuple[str, str, str]:
     """Describe the resolved per-tool block list as a display row."""
     env_var = "WORKSPACE_MCP_DISABLED_TOOLS"
@@ -973,16 +998,19 @@ def main():
         ui.blank()
 
         if args.transport == "streamable-http":
-            # Check port availability before starting HTTP server
-            try:
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    s.bind((host, port))
-            except OSError as e:
-                fatal(
-                    ui,
-                    f"Port {port} is already in use. Cannot start HTTP server.",
-                    str(e),
-                )
+            activation_sockets = _systemd_activation_sockets()
+
+            if activation_sockets is None:
+                # Check port availability before starting HTTP server
+                try:
+                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                        s.bind((host, port))
+                except OSError as e:
+                    fatal(
+                        ui,
+                        f"Port {port} is already in use. Cannot start HTTP server.",
+                        str(e),
+                    )
 
             server.run(
                 transport="streamable-http",
@@ -990,6 +1018,7 @@ def main():
                 port=port,
                 stateless_http=is_stateless_mode(),
                 show_banner=False,
+                sockets=activation_sockets,
             )
         else:
             if http_port is not None:
