@@ -382,6 +382,24 @@ def _parse_message_id_chain(header_value: Optional[str]) -> list[str]:
     return message_ids or header_value.split()
 
 
+# A Re:/RE: reply marker counts as present even behind leading list or ticket
+# tags such as "[list]", so an inherited subject never gains a second Re:.
+_REPLY_PREFIX_RE = re.compile(r"^\s*(?:\[[^\]]*\]\s*)*re\s*:", re.IGNORECASE)
+
+
+def normalize_reply_subject(subject: str) -> str:
+    """Return *subject* with exactly one leading ``Re:`` reply prefix.
+
+    Prepends ``"Re: "`` only when *subject* is not already a reply. An existing
+    ``Re:``/``RE:`` counts even when preceded by bracketed list/ticket tags
+    (``[list] Re: ...``). Existing prefixes and tags are kept verbatim.
+    Idempotent.
+    """
+    if _REPLY_PREFIX_RE.match(subject):
+        return subject
+    return f"Re: {subject}"
+
+
 def _is_email_reaction(payload: Mapping[str, Any]) -> bool:
     """Return True if a message payload is a Gmail emoji reaction."""
     return payload.get("mimeType") == EMAIL_REACTION_MIME_TYPE or any(
