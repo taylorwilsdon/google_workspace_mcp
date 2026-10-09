@@ -734,3 +734,25 @@ async def test_reply_resolves_recipient_name_from_thread_without_people():
     assert "To: MG Carroll <mg@example.com>" in raw
     # Name resolved from the thread, so no scope-fallback note.
     assert "could not be resolved" not in result
+
+
+@pytest.mark.asyncio
+async def test_send_rejects_recipient_header_with_no_parseable_address():
+    """A non-empty To that parses to no address (semicolon separators) must be
+    rejected, not silently dropped from the message."""
+    from core.utils import UserInputError
+
+    gmail = _gmail_service()
+
+    with pytest.raises(UserInputError, match="Separate recipients with commas"):
+        await _unwrap(send_gmail_message)(
+            service=gmail,
+            people_service=_people_service_empty(),
+            user_google_email="grace@example.org",
+            to="ada@example.com; alan@example.com",
+            subject="Project sync",
+            body="Hello there",
+            include_signature=False,
+        )
+    send_calls = gmail.users.return_value.messages.return_value.send.call_args_list
+    assert not [c for c in send_calls if "body" in c.kwargs]

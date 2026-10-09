@@ -1189,7 +1189,14 @@ async def _format_address_list_with_names(
                 missing_scopes=missing_scopes,
             )
         formatted.append(format_display_address(name, addr))
-    return ", ".join(formatted) if formatted else None
+    if not formatted:
+        # A non-empty header that yields no address (e.g. "a@x.com; b@y.com")
+        # would otherwise drop the header silently and send without it.
+        raise UserInputError(
+            f"Could not parse any email address from {header_value!r}. "
+            "Separate recipients with commas."
+        )
+    return ", ".join(formatted)
 
 
 def _build_name_fallback_note(
