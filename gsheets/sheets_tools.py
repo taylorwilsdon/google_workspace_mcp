@@ -26,6 +26,9 @@ from gsheets.sheets_helpers import (
     _clamp_a1_read_rows,
     _column_to_index,
     _build_boolean_rule,
+    _build_tab_style_properties,
+    _build_update_borders_request,
+    _build_dropdown_request,
     _build_gradient_rule,
     _fetch_cell_formulas,
     _fetch_detailed_sheet_errors,
@@ -655,11 +658,17 @@ async def _format_sheet_range_impl(
     bold: Optional[bool] = None,
     italic: Optional[bool] = None,
     font_size: Optional[int] = None,
+    borders: Optional[str] = None,
+    border_style: Optional[str] = None,
+    border_color: Optional[str] = None,
+    dropdown_values: Optional[List[str]] = None,
+    dropdown_strict: Optional[bool] = None,
+    clear_dropdown: Optional[bool] = None,
 ) -> str:
     """Internal implementation for format_sheet_range.
 
     Applies formatting to a Google Sheets range including colors, number formats,
-    text wrapping, alignment, and text styling.
+    text wrapping, alignment, text styling, borders, and dropdown lists.
 
     Args:
         service: Google Sheets API service client.
@@ -675,10 +684,39 @@ async def _format_sheet_range_impl(
         bold: Whether to apply bold formatting.
         italic: Whether to apply italic formatting.
         font_size: Font size in points.
+        borders: Comma-separated border sides (all, outer, inner, top, bottom,
+            left, right, inner_horizontal, inner_vertical), or "none".
+        border_style: Border line style (SOLID, SOLID_MEDIUM, SOLID_THICK,
+            DASHED, DOTTED, DOUBLE). Defaults to SOLID.
+        border_color: Hex border color. Defaults to black.
+        dropdown_values: Values offered as a dropdown list in every cell.
+        dropdown_strict: Reject other values (default True) or only warn.
+        clear_dropdown: Remove all data validation (dropdowns, checkboxes,
+            other rules) from the range.
 
     Returns:
         Dictionary with keys: range_name, spreadsheet_id, summary.
     """
+    if (border_style or border_color) and not borders:
+        raise UserInputError(
+            "border_style and border_color need borders to say which sides to draw."
+        )
+    border_request = None
+    border_summary = None
+    if borders:
+        border_request, border_summary = _build_update_borders_request(
+            borders, border_style, border_color
+        )
+    wants_dropdown = dropdown_values is not None or bool(clear_dropdown)
+    if dropdown_strict is not None and dropdown_values is None:
+        raise UserInputError("dropdown_strict needs dropdown_values.")
+    dropdown_request = None
+    dropdown_summary = None
+    if wants_dropdown:
+        dropdown_request, dropdown_summary = _build_dropdown_request(
+            dropdown_values, dropdown_strict, clear_dropdown
+        )
+
     # Validate at least one formatting option is provided
     has_any_format = any(
         [
@@ -691,13 +729,15 @@ async def _format_sheet_range_impl(
             bold is not None,
             italic is not None,
             font_size is not None,
+            borders,
+            wants_dropdown,
         ]
     )
     if not has_any_format:
         raise UserInputError(
             "Provide at least one formatting option (background_color, text_color, "
             "number_format_type, wrap_strategy, horizontal_alignment, vertical_alignment, "
-            "bold, italic, or font_size)."
+            "bold, italic, font_size, borders, dropdown_values, or clear_dropdown)."
         )
 
     # Parse colors
@@ -822,14 +862,20 @@ async def _format_sheet_range_impl(
         user_entered_format["verticalAlignment"] = v_align_normalized
         fields.append("userEnteredFormat.verticalAlignment")
 
-    if not user_entered_format:
+    if border_request:
+        border_request["updateBorders"]["range"] = grid_range
+    if dropdown_request:
+        dropdown_request["setDataValidation"]["range"] = grid_range
+
+    if not user_entered_format and not border_request and not dropdown_request:
         raise UserInputError(
             "No formatting applied. Verify provided formatting options."
         )
 
     # Build and execute request
-    request_body = {
-        "requests": [
+    requests = []
+    if user_entered_format:
+        requests.append(
             {
                 "repeatCell": {
                     "range": grid_range,
@@ -837,8 +883,12 @@ async def _format_sheet_range_impl(
                     "fields": ",".join(fields),
                 }
             }
-        ]
-    }
+        )
+    if border_request:
+        requests.append(border_request)
+    if dropdown_request:
+        requests.append(dropdown_request)
+    request_body = {"requests": requests}
 
     await asyncio.to_thread(
         service.spreadsheets()
@@ -869,6 +919,10 @@ async def _format_sheet_range_impl(
         applied_parts.append("italic" if italic else "not italic")
     if font_size is not None:
         applied_parts.append(f"font size {font_size}")
+    if border_summary:
+        applied_parts.append(border_summary)
+    if dropdown_summary:
+        applied_parts.append(dropdown_summary)
 
     summary = ", ".join(applied_parts)
 
@@ -906,10 +960,16 @@ async def format_sheet_range(
     bold: Optional[bool] = None,
     italic: Optional[bool] = None,
     font_size: Optional[int] = None,
+    borders: Optional[str] = None,
+    border_style: Optional[str] = None,
+    border_color: Optional[str] = None,
+    dropdown_values: Optional[StringList] = None,
+    dropdown_strict: Optional[bool] = None,
+    clear_dropdown: Optional[bool] = None,
 ) -> str:
     """
     Applies formatting to a range: colors, number formats, text wrapping,
-    alignment, and text styling.
+    alignment, text styling, borders, and dropdown lists.
 
     Colors accept hex strings (#RRGGBB). Number formats follow Sheets types
     (e.g., NUMBER, CURRENCY, DATE, PERCENT). If no sheet name is provided,
@@ -933,6 +993,20 @@ async def format_sheet_range(
         bold (Optional[bool]): Whether to apply bold formatting.
         italic (Optional[bool]): Whether to apply italic formatting.
         font_size (Optional[int]): Font size in points.
+        borders (Optional[str]): Which borders to draw, comma-separated: all,
+            outer, inner, top, bottom, left, right, inner_horizontal,
+            inner_vertical (e.g., "outer" or "bottom,inner_horizontal").
+            "none" removes every border in the range.
+        border_style (Optional[str]): SOLID (default), SOLID_MEDIUM, SOLID_THICK,
+            DASHED, DOTTED, or DOUBLE. Requires borders.
+        border_color (Optional[str]): Hex border color (default black). Requires
+            borders.
+        dropdown_values (Optional[List[str]]): Turns every cell in the range into
+            a dropdown offering these values (e.g., ["open", "done"]).
+        dropdown_strict (Optional[bool]): With dropdown_values: reject other
+            input (default True) or only show a warning (False).
+        clear_dropdown (Optional[bool]): Remove all data validation from the
+            range: dropdowns, but also checkboxes and other validation rules.
 
     Returns:
         str: Confirmation of the applied formatting.
@@ -958,6 +1032,12 @@ async def format_sheet_range(
         bold=bold,
         italic=italic,
         font_size=font_size,
+        borders=borders,
+        border_style=border_style,
+        border_color=border_color,
+        dropdown_values=dropdown_values,
+        dropdown_strict=dropdown_strict,
+        clear_dropdown=clear_dropdown,
     )
 
     # Build confirmation message with user email
@@ -2370,9 +2450,12 @@ async def manage_sheet_tab(
     action: str,
     new_name: Optional[str] = None,
     new_index: Optional[int] = None,
+    tab_color: Optional[str] = None,
+    show_gridlines: Optional[bool] = None,
 ) -> str:
     """
-    Manages the lifecycle of an existing sheet tab: rename, delete, hide, unhide or reorder.
+    Manages an existing sheet tab: rename, delete, hide, unhide, reorder, or
+    style (tab color and gridlines).
 
     Use create_sheet to add a tab, and resize_sheet_dimensions for row and column
     level changes. This tool operates on the tab itself.
@@ -2381,14 +2464,18 @@ async def manage_sheet_tab(
         user_google_email: User's Google email address
         spreadsheet_id: ID of the spreadsheet
         sheet_name: Title of the existing tab to act on
-        action: One of "rename", "delete", "hide", "unhide", "reorder"
+        action: One of "rename", "delete", "hide", "unhide", "reorder", "style"
         new_name: New title, required for action="rename"
         new_index: New zero-based position, required for action="reorder"
+        tab_color: For action="style": hex tab color (#RRGGBB), or "none" to
+            remove it
+        show_gridlines: For action="style": show (True) or hide (False) the
+            sheet's gridlines
 
     Returns:
         str: Confirmation of the change.
     """
-    valid_actions = ("rename", "delete", "hide", "unhide", "reorder")
+    valid_actions = ("rename", "delete", "hide", "unhide", "reorder", "style")
     action_lower = action.strip().lower() if isinstance(action, str) else ""
     if action_lower not in valid_actions:
         raise UserInputError(
@@ -2409,6 +2496,14 @@ async def manage_sheet_tab(
             raise UserInputError(
                 "new_index must be a non-negative integer for action='reorder'."
             )
+    if action_lower == "style":
+        style_properties, style_fields, style_summary = _build_tab_style_properties(
+            tab_color, show_gridlines
+        )
+    elif tab_color is not None or show_gridlines is not None:
+        raise UserInputError(
+            "tab_color and show_gridlines only apply to action='style'."
+        )
 
     logger.info(
         f"[manage_sheet_tab] Email: '{user_google_email}', Spreadsheet: {spreadsheet_id}, "
@@ -2441,6 +2536,15 @@ async def manage_sheet_tab(
             properties["hidden"] = action_lower == "hide"
             fields = "hidden"
             summary = f"{action_lower} sheet '{sheet_name}'"
+        elif action_lower == "style":
+            sheet_type = target_sheet["properties"].get("sheetType", "GRID")
+            if show_gridlines is not None and sheet_type != "GRID":
+                raise UserInputError(
+                    f"'{sheet_name}' is a {sheet_type} sheet and has no gridlines."
+                )
+            properties.update(style_properties)
+            fields = style_fields
+            summary = f"styled sheet '{sheet_name}' ({style_summary})"
         else:
             if new_index >= len(sheets):
                 raise UserInputError(
