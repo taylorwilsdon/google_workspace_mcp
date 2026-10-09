@@ -1108,9 +1108,12 @@ def require_multiple_services(service_configs: List[Dict[str, Any]]):
                 wrapper.__doc__ = _remove_user_email_arg_from_docstring(func.__doc__)
 
         # Attach all required scopes to the wrapper for tool filtering
+        # Optional services are excluded: their missing scopes degrade at call
+        # time (None injected), so they must not hide the tool when filtering.
         all_scopes = []
         for config in service_configs:
-            all_scopes.extend(_resolve_scopes(config["scopes"]))
+            if not config.get("optional", False):
+                all_scopes.extend(_resolve_scopes(config["scopes"]))
         wrapper._required_google_scopes = all_scopes
 
         return wrapper
