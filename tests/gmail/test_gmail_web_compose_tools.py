@@ -322,3 +322,24 @@ async def test_send_with_attachments_derives_reply_headers(monkeypatch):
     assert "<second@example.com>" in captured["references"]
     assert [p["filename"] for p in captured["attachment_parts"]] == ["a.txt"]
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body_format", ["plain", "html"])
+async def test_send_with_attachment_honors_direction(body_format):
+    """Attachments take the web path too, so direction still applies."""
+    gmail = _gmail_service()
+    body = "<div>OK שלום</div>" if body_format == "html" else "OK שלום"
+
+    await _unwrap(send_gmail_message)(
+        service=gmail,
+        user_google_email="grace@example.org",
+        to="ada@example.com",
+        subject="Project sync",
+        body=body,
+        body_format=body_format,
+        direction="rtl",
+        attachments=[{"filename": "a.txt", "content": "eA=="}],
+        include_signature=False,
+    )
+
+    assert '<div dir="rtl">' in _part(_raw_sent(gmail), "text/html")
