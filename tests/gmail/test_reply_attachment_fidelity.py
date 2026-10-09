@@ -233,6 +233,10 @@ async def test_draft_reply_with_attachment_matches_send_structure():
     # Top-level structure must match
     assert sent_sk["mime_tree"][0]["content_type"] == "multipart/mixed"
     assert draft_sk["mime_tree"][0]["content_type"] == "multipart/mixed"
+    for sk in (sent_sk, draft_sk):
+        attach = sk["mime_tree"][0]["parts"][1]
+        assert attach["content_type"] == "application/pdf"
+        assert attach["disposition"] == "attachment"
 
     # Both must have the reply trail
     sent_html = _html_of(sent_raw)
