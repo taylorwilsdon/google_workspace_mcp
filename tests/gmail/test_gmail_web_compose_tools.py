@@ -802,3 +802,71 @@ async def test_send_keeps_group_and_trailing_comma_recipients():
     )
     headers = _raw_sent(gmail).split("\r\n\r\n", 1)[0]
     assert "To: Team: ada@example.com, alan@example.com;, bob@example.com" in headers
+
+
+def _people_http_error(status: int, reason: str):
+    import json
+
+    import httplib2
+    from googleapiclient.errors import HttpError
+
+    content = json.dumps(
+        {"error": {"code": status, "errors": [{"reason": reason}], "message": reason}}
+    ).encode()
+    return HttpError(httplib2.Response({"status": status}), content)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status,reason,recorded",
+    [
+        (401, "authError", True),
+        (403, "insufficientPermissions", True),
+        (403, "accessNotConfigured", False),
+        (403, "rateLimitExceeded", False),
+        (403, "quotaExceeded", False),
+    ],
+)
+async def test_people_tier_records_scope_only_for_auth_errors(status, reason, recorded):
+    from gmail.gmail_tools import _people_search_tier
+
+    request = Mock()
+    request.return_value.execute.side_effect = _people_http_error(status, reason)
+    missing: set = set()
+
+    name = await _people_search_tier(
+        request,
+        {},
+        "ada@example.com",
+        results_key="results",
+        wrap_key="person",
+        scope="scope-x",
+        missing_scopes=missing,
+    )
+
+    assert name is None
+    assert (missing == {"scope-x"}) is recorded
+
+
+def test_name_fallback_note_is_neutral_for_drafts(monkeypatch):
+    from gmail import gmail_tools
+
+    monkeypatch.setattr(gmail_tools, "is_oauth21_enabled", lambda: False)
+    note = gmail_tools._build_name_fallback_note(True, None)
+    assert "written as bare addresses" in note
+    assert "sent as bare" not in note
+    assert "start_google_auth" in note
+
+
+def test_name_fallback_note_uses_oauth21_instruction(monkeypatch):
+    from gmail import gmail_tools
+
+    monkeypatch.setattr(gmail_tools, "is_oauth21_enabled", lambda: True)
+    monkeypatch.setattr(gmail_tools, "is_external_oauth21_provider", lambda: False)
+    note = gmail_tools._build_name_fallback_note(True, None)
+    assert "start_google_auth" not in note
+    assert "OAuth 2.1" in note
+
+    monkeypatch.setattr(gmail_tools, "is_external_oauth21_provider", lambda: True)
+    note = gmail_tools._build_name_fallback_note(True, None)
+    assert "bearer token" in note
