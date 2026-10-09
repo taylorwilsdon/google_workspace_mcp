@@ -486,15 +486,22 @@ def _b64_crlf(data: bytes) -> str:
 def _attachment_part(
     outer_boundary: str, filename: str, mime_type: str, data: bytes
 ) -> str:
-    """Render one ``Content-Disposition: attachment`` MIME part."""
+    """Render one ``Content-Disposition: attachment`` MIME part.
+
+    Header set and order match Gmail web: a random ``X-Attachment-Id`` with a
+    matching ``Content-ID`` on every regular attachment.
+    """
     crlf = "\r\n"
     name_param, filename_param = _mime_filename_params(filename)
+    attachment_id = _new_attachment_id()
     return crlf.join(
         [
             f"--{outer_boundary}",
             f"Content-Type: {_safe_mime_type(mime_type)}; {name_param}",
-            "Content-Transfer-Encoding: base64",
             f"Content-Disposition: attachment; {filename_param}",
+            "Content-Transfer-Encoding: base64",
+            f"Content-ID: <{attachment_id}>",
+            f"X-Attachment-Id: {attachment_id}",
             "",
             _b64_crlf(data),
         ]

@@ -548,9 +548,13 @@ def test_web_message_inline_only_base64_roundtrip():
     assert decoded == data
 
 
-def test_web_message_attach_only_matches_assemble_mixed():
+def test_web_message_attach_only_matches_assemble_mixed(monkeypatch):
     """Attachments-only path must produce byte-identical output to assemble_mixed."""
+    from gmail import gmail_web_mime
     from gmail.gmail_web_mime import assemble_mixed, assemble_web_message
+
+    # Attachment ids are random per part; pin them so the outputs compare.
+    monkeypatch.setattr(gmail_web_mime, "_new_attachment_id", lambda: "f_0000000000")
 
     headers = [
         ("From", "a@example.com"),
