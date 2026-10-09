@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Annotated, Optional, List, Dict, Literal, Any, Union
 from urllib.parse import unquote, urlparse, urlunsplit
 
+from email.header import Header
 from email.message import EmailMessage
 from email.policy import SMTP
 from email.utils import formataddr
@@ -76,7 +77,6 @@ from gmail.gmail_helpers import (
     _derive_reply_headers,
     _fetch_with_retry,
     _get_send_as_identity_and_signature,
-    _get_send_as_signature_html_for_tool,
     _http_error_status,
     _is_email_reaction,
     _new_attachment_id,
@@ -89,6 +89,15 @@ from gmail.gmail_helpers import (
     html_newlines_to_br,
     html_to_text_preserving_breaks,
     update_gmail_filter,
+)
+from gmail.gmail_web_mime import (
+    assemble_alternative,
+    encode_raw,
+    format_address_list,
+    format_display_address,
+    gmail_boundary,
+    new_message_html,
+    plain_body_to_html,
 )
 
 logger = logging.getLogger(__name__)
@@ -1310,6 +1319,132 @@ async def _resolve_url_attachments(
     return resolved
 
 
+def _derive_web_bodies(
+    body: str, body_format: Literal["plain", "html"]
+) -> tuple[str, str]:
+    """Derive the (text/plain, text/html) parts of a Gmail-web compose.
+
+    Plain text becomes Gmail's typed ``<div>`` structure inside the ltr
+    container; HTML is wrapped in that container unless it already starts with
+    one, and its plain part keeps block breaks.
+    """
+    if body_format == "html":
+        html_part = (
+            body if body.lstrip().startswith("<div dir=") else new_message_html(body)
+        )
+        return html_to_text_preserving_breaks(body).strip(), html_part
+    return body, new_message_html(plain_body_to_html(body))
+
+
+def _build_web_compose_raw(
+    *,
+    subject: str,
+    body: str,
+    body_format: Literal["plain", "html"],
+    to: Optional[str],
+    cc: Optional[str],
+    bcc: Optional[str],
+    from_email: str,
+    from_name: Optional[str],
+    in_reply_to: Optional[str],
+    references: Optional[str],
+) -> str:
+    """Assemble a Gmail-web faithful raw message for the send/draft tools.
+
+    Builds both body parts from ``body`` (Gmail's typed ``<div>`` structure for
+    plain text, the ltr container for HTML) and delegates the deterministic MIME
+    assembly to ``_prepare_gmail_message``'s web path. The reply ``Re:`` subject
+    prefix is applied there, exactly as on the legacy path.
+    """
+    new_plain, new_html = _derive_web_bodies(body, body_format)
+
+    raw_message, _thread, _count, _errors = _prepare_gmail_message(
+        subject=subject,
+        body=new_plain,
+        html_body=new_html,
+        to=to,
+        cc=cc,
+        bcc=bcc,
+        in_reply_to=in_reply_to,
+        references=references,
+        from_email=from_email,
+        from_name=from_name,
+        web_compose=True,
+    )
+    return raw_message
+
+
+def _prepare_gmail_message_web(
+    subject: str,
+    plain_body: str,
+    html_body: str,
+    to: Optional[str] = None,
+    cc: Optional[str] = None,
+    bcc: Optional[str] = None,
+    in_reply_to: Optional[str] = None,
+    references: Optional[str] = None,
+    from_email: Optional[str] = None,
+    from_name: Optional[str] = None,
+) -> str:
+    """Assemble a Gmail-web faithful ``multipart/alternative`` message.
+
+    ``plain_body`` and ``html_body`` are the fully-assembled text/plain and
+    text/html parts built by the caller. Returns the base64url raw message.
+    To/Cc/Bcc are validated, then any non-ASCII display names are RFC 2047
+    encoded; From is formatted here from ``from_email`` + optional ``from_name``.
+    """
+
+    # Reject CR/LF in any user-controlled header value before assembly: bare
+    # newlines would let a crafted subject/recipient inject extra headers
+    # (RFC5322 header injection).
+    def _safe_header(field: str, value: str) -> str:
+        if "\r" in value or "\n" in value:
+            raise ValueError(f"Invalid {field} header value: line breaks not allowed.")
+        return value
+
+    # Author headers in Gmail's order. Message-ID is intentionally NOT authored
+    # (Gmail assigns it on send/draft).
+    headers: List[tuple[str, str]] = [("MIME-Version", "1.0")]
+    if references:
+        # Fold the References chain with CRLF + TAB per RFC5322 continuation.
+        folded = "\r\n\t".join(_safe_header("References", references).split())
+        headers.append(("References", folded))
+    if in_reply_to:
+        headers.append(("In-Reply-To", _safe_header("In-Reply-To", in_reply_to)))
+    if bcc:
+        headers.append(("Bcc", format_address_list(_safe_header("Bcc", bcc))))
+    # Guard the caller-supplied subject for header injection BEFORE encoding.
+    # A long non-ASCII subject RFC2047-folds into a multi-line continuation; with
+    # linesep="\r\n" that is a valid RFC5322 fold, but _safe_header would reject
+    # its CRLF, so validate the raw input and append the encoded value directly.
+    _safe_header("Subject", subject)
+    subj_value = (
+        subject
+        if subject.isascii()
+        else Header(subject, "utf-8").encode(maxlinelen=998, linesep="\r\n")
+    )
+    headers.append(("Subject", subj_value))
+    if from_email:
+        headers.append(
+            (
+                "From",
+                _safe_header("From", format_display_address(from_name, from_email)),
+            )
+        )
+    if to:
+        headers.append(("To", format_address_list(_safe_header("To", to))))
+    if cc:
+        headers.append(("Cc", format_address_list(_safe_header("Cc", cc))))
+
+    message = assemble_alternative(
+        headers=headers,
+        plain_text=plain_body,
+        html_text=html_body,
+        boundary=gmail_boundary(),
+    )
+    return encode_raw(message)
+
+
 def _prepare_gmail_message(
     subject: str,
     body: str,
@@ -1323,9 +1458,19 @@ def _prepare_gmail_message(
     from_email: Optional[str] = None,
     from_name: Optional[str] = None,
     attachments: Optional[List[Dict[str, str]]] = None,
+    web_compose: bool = False,
+    html_body: Optional[str] = None,
 ) -> tuple[str, Optional[str], int, List[str]]:
     """
     Prepare a Gmail message with threading and attachment support.
+
+    When ``web_compose`` is True the message is assembled to be byte-faithful
+    to a Gmail-web compose via ``_prepare_gmail_message_web``. ``body`` is the
+    fully-assembled text/plain content and ``html_body`` the fully-assembled
+    text/html content; when ``html_body`` is omitted it is derived from
+    ``body``. ``to``/``cc``/``bcc`` are expected pre-formatted
+    (``Display Name <addr>``); ``from`` is formatted here from ``from_email`` +
+    optional ``from_name``. The web path does not carry attachments.
 
     Args:
         subject: Email subject
@@ -1354,6 +1499,31 @@ def _prepare_gmail_message(
     normalized_format = body_format.lower()
     if normalized_format not in {"plain", "html"}:
         raise ValueError("body_format must be either 'plain' or 'html'.")
+
+    # Gmail-web faithful path: build MIME by hand so charset casing, boundary
+    # shape, and part ordering match a real web compose.
+    if web_compose:
+        # When the caller did not supply an HTML part, derive it from ``body``
+        # so the path still yields both parts.
+        if html_body is not None:
+            plain_part = body
+            html_part = html_body
+        else:
+            plain_part, html_part = _derive_web_bodies(body, normalized_format)
+
+        raw_message = _prepare_gmail_message_web(
+            subject=reply_subject,
+            plain_body=plain_part,
+            html_body=html_part,
+            to=to,
+            cc=cc,
+            bcc=bcc,
+            in_reply_to=in_reply_to,
+            references=references,
+            from_email=from_email,
+            from_name=from_name,
+        )
+        return raw_message, thread_id, 0, []
 
     attached_count = 0
     attachment_errors: List[str] = []
@@ -2814,6 +2984,14 @@ async def send_gmail_message(
             raise UserInputError(
                 "'to' is required when forwarding via 'forward_message_id'."
             )
+        # Same Send-As displayName fallback as a regular send: only looked up
+        # when signatures are enabled, so the settings endpoint stays optional.
+        if include_signature and from_name is None:
+            _, _, from_name = await _get_send_as_identity_and_signature(
+                service,
+                from_email=from_email or user_google_email,
+                fallback_email=user_google_email,
+            )
         logger.info(
             f"[send_gmail_message] Forwarding message '{forward_message_id}' for '{user_google_email}'"
         )
@@ -2891,11 +3069,18 @@ async def send_gmail_message(
 
     # Optionally append the Gmail signature from send-as settings, mirroring
     # draft_gmail_message so sent mail respects the user's Settings > Signature.
+    # The send-as entry carries both the signature and the displayName Gmail web
+    # renders in the From line (the sender's own name is not in contacts, so
+    # Send-As is the right source). With signatures disabled the settings
+    # endpoint is never touched (no gmail.settings.basic requirement) and From
+    # stays the bare address unless from_name is given.
     signature_html = ""
     if include_signature:
-        signature_html = await _get_send_as_signature_html_for_tool(
-            service, from_email=sender_email
+        _, signature_html, send_as_name = await _get_send_as_identity_and_signature(
+            service, from_email=sender_email, fallback_email=user_google_email
         )
+        if from_name is None:
+            from_name = send_as_name
 
     if body_format == "html":
         # Bare newlines between text are invisible to HTML renderers; callers
@@ -2919,22 +3104,38 @@ async def send_gmail_message(
         send_body_content = _append_signature_to_body(body, body_format, signature_html)
 
     resolved_attachments = await _resolve_url_attachments(attachments)
-    raw_message, thread_id_final, attached_count, attachment_errors = (
-        _prepare_gmail_message(
+    if resolved_attachments:
+        raw_message, thread_id_final, attached_count, attachment_errors = (
+            _prepare_gmail_message(
+                subject=subject,
+                body=send_body_content,
+                to=to,
+                cc=cc,
+                bcc=bcc,
+                thread_id=thread_id,
+                in_reply_to=in_reply_to,
+                references=references,
+                body_format=body_format,
+                from_email=sender_email,
+                from_name=from_name,
+                attachments=resolved_attachments,
+            )
+        )
+    else:
+        # Without attachments the message takes the Gmail-web faithful path.
+        raw_message = _build_web_compose_raw(
             subject=subject,
             body=send_body_content,
+            body_format=body_format,
             to=to,
             cc=cc,
             bcc=bcc,
-            thread_id=thread_id,
-            in_reply_to=in_reply_to,
-            references=references,
-            body_format=body_format,
             from_email=sender_email,
             from_name=from_name,
-            attachments=resolved_attachments if resolved_attachments else None,
+            in_reply_to=in_reply_to,
+            references=references,
         )
-    )
+        thread_id_final, attached_count, attachment_errors = thread_id, 0, []
 
     requested_attachment_count = len(attachments or [])
     if requested_attachment_count > 0 and attached_count == 0:
@@ -3353,11 +3554,16 @@ async def draft_gmail_message(
         )
     """
     if forward_message_id:
-        sender_email = from_email
-        if not sender_email:
-            sender_email, _ = await _get_send_as_identity_and_signature(
-                service, from_email=None, fallback_email=user_google_email
+        # Resolve the identity and Gmail-web From displayName the same way as a
+        # regular draft below.
+        if from_email and not include_signature:
+            sender_email = from_email
+        else:
+            sender_email, _, send_as_name = await _get_send_as_identity_and_signature(
+                service, from_email=from_email, fallback_email=user_google_email
             )
+            if from_name is None:
+                from_name = send_as_name
         logger.info(
             f"[draft_gmail_message] Drafting forward of message '{forward_message_id}' for '{user_google_email}'"
         )
@@ -3389,19 +3595,24 @@ async def draft_gmail_message(
     )
 
     # Prepare the email message. An explicit alias needs no settings lookup when
-    # its signature is disabled. Otherwise resolve the identity and signature
-    # together so Gmail's default sender and its signature stay aligned.
+    # its signature is disabled. Otherwise resolve the identity, signature and
+    # Gmail-web From displayName together so Gmail's default sender and its
+    # signature stay aligned.
+    send_as_name = None
     if from_email and not include_signature:
         sender_email, resolved_signature_html = from_email, ""
     else:
         (
             sender_email,
             resolved_signature_html,
+            send_as_name,
         ) = await _get_send_as_identity_and_signature(
             service,
             from_email=from_email,
             fallback_email=user_google_email,
         )
+    if from_name is None:
+        from_name = send_as_name
     # Convert only the caller's body, before any signature or quoted original
     # is attached; see send_gmail_message.
     draft_body = html_newlines_to_br(body) if body_format == "html" else body
@@ -3446,22 +3657,38 @@ async def draft_gmail_message(
         draft_body = _append_signature_to_body(draft_body, body_format, signature_html)
 
     resolved_attachments = await _resolve_url_attachments(attachments)
-    raw_message, _thread_id_final, attached_count, attachment_errors = (
-        _prepare_gmail_message(
+    if resolved_attachments:
+        raw_message, _thread_id_final, attached_count, attachment_errors = (
+            _prepare_gmail_message(
+                subject=subject,
+                body=draft_body,
+                body_format=body_format,
+                to=to,
+                cc=cc,
+                bcc=bcc,
+                thread_id=thread_id,
+                in_reply_to=in_reply_to,
+                references=references,
+                from_email=sender_email,
+                from_name=from_name,
+                attachments=resolved_attachments,
+            )
+        )
+    else:
+        # Without attachments the draft takes the Gmail-web faithful path.
+        raw_message = _build_web_compose_raw(
             subject=subject,
             body=draft_body,
             body_format=body_format,
             to=to,
             cc=cc,
             bcc=bcc,
-            thread_id=thread_id,
-            in_reply_to=in_reply_to,
-            references=references,
             from_email=sender_email,
             from_name=from_name,
-            attachments=resolved_attachments,
+            in_reply_to=in_reply_to,
+            references=references,
         )
-    )
+        attached_count, attachment_errors = 0, []
 
     requested_attachment_count = len(attachments or [])
     if requested_attachment_count > 0 and attached_count == 0:
