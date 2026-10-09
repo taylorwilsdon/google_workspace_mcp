@@ -31,6 +31,22 @@ if TYPE_CHECKING:
     WORKSPACE_MCP_PORT: int
 
 
+def is_extended_name_lookup_enabled() -> bool:
+    """Whether Gmail compose may resolve names from Other contacts and the directory.
+
+    Reads GMAIL_EXTENDED_NAME_LOOKUP (``1``/``true``/``yes``/``on``, case-insensitive).
+    Off by default: the contacts.other.readonly and directory.readonly scopes are
+    then never requested, and recipient names come only from the conversation and
+    saved contacts.
+    """
+    return os.getenv("GMAIL_EXTENDED_NAME_LOOKUP", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
 def __getattr__(name: str) -> int:
     if name == "WORKSPACE_MCP_PORT":
         if os.getenv("WORKSPACE_MCP_RESOLVED_PORT") == "1":
@@ -50,6 +66,7 @@ __all__ = [
     "WORKSPACE_MCP_BASE_URI",
     "WORKSPACE_EXTERNAL_URL",
     "USER_GOOGLE_EMAIL",
+    "is_extended_name_lookup_enabled",
     "get_oauth_base_url",
     "get_oauth_redirect_uri",
     "set_transport_mode",
