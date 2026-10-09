@@ -1367,6 +1367,14 @@ class GoogleAuthenticationError(Exception):
         self.auth_url = auth_url
 
 
+class GoogleServiceBuildError(GoogleAuthenticationError):
+    """Credentials were valid but building the API client failed.
+
+    Subclasses GoogleAuthenticationError so existing handlers keep working, but
+    lets callers tell a construction failure apart from missing credentials.
+    """
+
+
 async def get_authenticated_google_service(
     service_name: str,  # "gmail", "calendar", "drive", "docs"
     version: str,  # "v1", "v3"
@@ -1523,4 +1531,4 @@ async def get_authenticated_google_service(
     except Exception as e:
         error_msg = f"[{tool_name}] Failed to build {service_name} service: {str(e)}"
         logger.error(error_msg, exc_info=True)
-        raise GoogleAuthenticationError(error_msg)
+        raise GoogleServiceBuildError(error_msg) from e
