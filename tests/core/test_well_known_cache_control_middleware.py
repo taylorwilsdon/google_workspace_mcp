@@ -235,6 +235,108 @@ def test_origin_validation_rejects_dns_rebinding_without_oauth21(monkeypatch):
     assert local.status_code == 200
 
 
+def _origin_check_client(monkeypatch, oauth21=False, external_url=None):
+    from core.server import OriginValidationMiddleware
+
+    monkeypatch.setattr(
+        "auth.oauth_config.get_oauth_config",
+        lambda: SimpleNamespace(
+            get_allowed_origins=lambda: ["http://localhost:8000"],
+            external_url=external_url,
+            is_oauth21_enabled=lambda: oauth21,
+        ),
+    )
+    monkeypatch.setattr("core.server.is_oauth21_enabled", lambda: oauth21)
+
+    async def endpoint(request):
+        return Response("ok")
+
+    app = Starlette(
+        routes=[Route("/attachments/{file_id}", endpoint, methods=["GET"])],
+        middleware=[Middleware(OriginValidationMiddleware)],
+    )
+    return TestClient(app)
+
+
+def test_origin_validation_rejects_rebound_same_origin_fetch_without_origin(
+    monkeypatch,
+):
+    # Browsers omit Origin on same-origin GETs, so a DNS-rebinding page's fetch
+    # carries only the attacker's Host. Sec-Fetch-Site marks it as page script.
+    client = _origin_check_client(monkeypatch)
+
+    rebound = client.get(
+        "/attachments/abc",
+        headers={"Host": "attacker.example:8000", "Sec-Fetch-Site": "same-origin"},
+    )
+    assert rebound.status_code == 403
+
+    local = client.get(
+        "/attachments/abc",
+        headers={"Host": "localhost:8000", "Sec-Fetch-Site": "same-origin"},
+    )
+    assert local.status_code == 200
+
+
+def test_origin_validation_allows_configured_host_without_origin(monkeypatch):
+    client = _origin_check_client(monkeypatch, external_url="https://mcp.example.com")
+
+    response = client.get(
+        "/attachments/abc",
+        headers={"Host": "mcp.example.com", "Sec-Fetch-Site": "same-origin"},
+    )
+    assert response.status_code == 200
+
+    explicit_default = client.get(
+        "/attachments/abc",
+        headers={"Host": "mcp.example.com:443", "Sec-Fetch-Site": "same-origin"},
+    )
+    assert explicit_default.status_code == 200
+
+
+def test_origin_validation_rejects_configured_host_on_other_port(monkeypatch):
+    client = _origin_check_client(monkeypatch, external_url="https://mcp.example.com")
+
+    for host in ("mcp.example.com:9999", "mcp.example.com:bad"):
+        response = client.get(
+            "/attachments/abc",
+            headers={"Host": host, "Sec-Fetch-Site": "same-origin"},
+        )
+        assert response.status_code == 403, host
+
+
+def test_origin_validation_rejects_malformed_host(monkeypatch):
+    # A Host that urlparse cannot parse (an unclosed IPv6 bracket) is untrusted
+    # and must yield 403, not an unhandled ValueError and a 500.
+    from core.server import _is_rebound_same_origin_fetch, _is_same_origin_as_host
+
+    monkeypatch.setattr("core.server.is_oauth21_enabled", lambda: True)
+    assert _is_same_origin_as_host("http://[::1]:8000", "[bad") is False
+
+    client = _origin_check_client(monkeypatch)
+    assert _is_rebound_same_origin_fetch({b"sec-fetch-site": b"same-origin"}, "[bad")
+    response = client.get(
+        "/attachments/abc",
+        headers={"Host": "[bad", "Sec-Fetch-Site": "same-origin"},
+    )
+    assert response.status_code == 403
+
+
+def test_origin_validation_leaves_non_browser_and_navigation_requests_alone(
+    monkeypatch,
+):
+    # Non-browser clients (no Sec-Fetch-Site) may reach the server under any
+    # name, e.g. a Docker service name or LAN IP; a user clicking an attachment
+    # link (Sec-Fetch-Site: none) cannot let a page read the response.
+    client = _origin_check_client(monkeypatch)
+
+    for headers in (
+        {"Host": "workspace-mcp:8000"},
+        {"Host": "192.168.1.20:8000", "Sec-Fetch-Site": "none"},
+    ):
+        assert client.get("/attachments/abc", headers=headers).status_code == 200
+
+
 def test_origin_validation_rejects_null_origin_consent_by_default(monkeypatch):
     from core.server import OriginValidationMiddleware
 

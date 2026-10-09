@@ -176,8 +176,8 @@ def _is_same_origin_as_host(origin: str, host_header: Optional[str]) -> bool:
     parsed = urlparse(origin)
     if not parsed.hostname:
         return False
-    host = urlparse(f"//{host_header}")
     try:
+        host = urlparse(f"//{host_header}")
         origin_port = parsed.port or _DEFAULT_PORTS.get(parsed.scheme)
         host_port = host.port or _DEFAULT_PORTS.get(parsed.scheme)
     except ValueError:
@@ -187,6 +187,36 @@ def _is_same_origin_as_host(origin: str, host_header: Optional[str]) -> bool:
         and origin_port == host_port
         and is_oauth21_enabled()
     )
+
+
+def _is_rebound_same_origin_fetch(headers: dict, host_header: Optional[str]) -> bool:
+    """Return True for a same-origin script request to a non-allowlisted Host.
+
+    Browsers omit Origin on same-origin GETs, so a DNS-rebinding page's fetch
+    carries only the attacker's hostname in Host. Sec-Fetch-Site (a
+    browser-forbidden header) identifies it as page script; non-browser clients
+    and user navigations, which may legitimately use any hostname, are left
+    alone. As with the same-origin fallback, OAuth 2.1 mode is exempt.
+    """
+    if headers.get(b"sec-fetch-site") != b"same-origin":
+        return False
+    if not host_header or is_oauth21_enabled():
+        return False
+    try:
+        host = urlparse(f"//{host_header}")
+        host_port = host.port
+    except ValueError:
+        return True
+    if host.hostname in _LOOPBACK_HOSTS:
+        return False
+    for origin in _get_allowed_http_origins():
+        parsed = urlparse(origin)
+        default_port = _DEFAULT_PORTS.get(parsed.scheme)
+        if parsed.hostname == host.hostname and (parsed.port or default_port) == (
+            host_port or default_port
+        ):
+            return False
+    return True
 
 
 def _is_null_origin_consent_compat_allowed(scope: Scope, origin: str) -> bool:
@@ -219,10 +249,15 @@ class OriginValidationMiddleware:
         if scope["type"] == "http":
             headers = dict(scope.get("headers") or [])
             raw_origin = headers.get(b"origin")
+            raw_host = headers.get(b"host")
+            host_header = raw_host.decode("latin-1") if raw_host else None
+            if not raw_origin and _is_rebound_same_origin_fetch(headers, host_header):
+                logger.warning("Rejected same-origin request for Host: %s", host_header)
+                response = JSONResponse({"error": "Host not allowed"}, status_code=403)
+                await response(scope, receive, send)
+                return
             if raw_origin:
                 origin = raw_origin.decode("latin-1")
-                raw_host = headers.get(b"host")
-                host_header = raw_host.decode("latin-1") if raw_host else None
                 if not _is_origin_allowed(origin) and not _is_same_origin_as_host(
                     origin, host_header
                 ):
