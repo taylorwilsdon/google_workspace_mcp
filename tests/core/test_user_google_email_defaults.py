@@ -231,6 +231,7 @@ async def test_authenticate_service_account_uses_verified_gateway_email(monkeypa
         resolved_scopes=["scope-a"],
         mcp_session_id=None,
         authenticated_user=None,
+        allow_auth_flow=True,
     )
 
     assert service is fake_service
@@ -265,6 +266,7 @@ async def test_authenticate_service_account_raises_without_configured_user(
             resolved_scopes=["scope-a"],
             mcp_session_id=None,
             authenticated_user=None,
+            allow_auth_flow=True,
         )
 
 
@@ -328,6 +330,7 @@ async def test_dwd_request_impersonation_uses_verified_gateway_email(monkeypatch
         resolved_scopes=["scope-a"],
         mcp_session_id=None,
         authenticated_user=None,
+        allow_auth_flow=True,
     )
 
     assert service is fake_service
@@ -348,6 +351,7 @@ async def test_dwd_request_impersonation_falls_back_to_canonical(monkeypatch):
         resolved_scopes=["scope-a"],
         mcp_session_id=None,
         authenticated_user=None,
+        allow_auth_flow=True,
     )
 
     assert actual_user == "canonical@corp.com"
@@ -375,6 +379,7 @@ async def test_dwd_request_impersonation_domain_allowlist_passes(monkeypatch):
         resolved_scopes=["scope-a"],
         mcp_session_id=None,
         authenticated_user=None,
+        allow_auth_flow=True,
     )
 
     assert actual_user == "alice@partner.io"
@@ -398,6 +403,7 @@ async def test_dwd_request_impersonation_domain_allowlist_rejects(monkeypatch):
             resolved_scopes=["scope-a"],
             mcp_session_id=None,
             authenticated_user=None,
+            allow_auth_flow=True,
         )
 
 
@@ -419,6 +425,7 @@ async def test_dwd_rejects_same_domain_subject_without_trusted_gateway(
             resolved_scopes=["https://www.googleapis.com/auth/drive.file"],
             mcp_session_id=None,
             authenticated_user=authenticated_user,
+            allow_auth_flow=True,
         )
     assert "subject" not in captured
 
@@ -444,6 +451,7 @@ async def test_dwd_rejects_subject_mismatching_verified_gateway(monkeypatch):
             resolved_scopes=["scope-a"],
             mcp_session_id=None,
             authenticated_user="other@corp.com",
+            allow_auth_flow=True,
         )
     assert "subject" not in captured
 
@@ -473,5 +481,6 @@ async def test_dwd_gateway_mode_rejects_missing_or_unverified_identity(
             resolved_scopes=["scope-a"],
             mcp_session_id=None,
             authenticated_user="other@corp.com",
+            allow_auth_flow=True,
         )
     assert "subject" not in captured
