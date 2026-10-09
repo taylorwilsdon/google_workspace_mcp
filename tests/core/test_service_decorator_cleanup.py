@@ -374,3 +374,55 @@ def test_require_multiple_services_required_scopes_exclude_optional_services():
     required = sample_tool._required_google_scopes
     assert required == service_decorator._resolve_scopes("gmail_read")
     assert not set(service_decorator._resolve_scopes("contacts_read")) & set(required)
+
+
+@pytest.mark.asyncio
+async def test_optional_service_legacy_build_failure_reraises(monkeypatch):
+    """Legacy OAuth wraps a service-construction failure; for an optional
+    service that must still surface, not degrade to None like a missing scope."""
+    _patch_common_decorator_state(monkeypatch)
+    events = []
+    gmail_service = _FakeService("gmail", events)
+
+    async def fake_to_thread(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    def fake_build(service_name, version, credentials):
+        if service_name == "gmail":
+            return gmail_service
+        raise RuntimeError("discovery boom")
+
+    monkeypatch.setattr(service_decorator, "is_service_account_enabled", lambda: False)
+    monkeypatch.setattr(google_auth, "get_fastmcp_session_id", lambda: None)
+    monkeypatch.setattr(google_auth, "get_fastmcp_context", None)
+    monkeypatch.setattr(google_auth.asyncio, "to_thread", fake_to_thread)
+    monkeypatch.setattr(
+        google_auth,
+        "get_credentials",
+        lambda **kwargs: SimpleNamespace(valid=True, id_token=None),
+    )
+    monkeypatch.setattr(google_auth, "build_google_service", fake_build)
+    monkeypatch.setattr(
+        service_decorator,
+        "_release_google_service_cycles",
+        lambda: events.append("collect"),
+    )
+
+    @service_decorator.require_multiple_services(
+        [
+            {"service_type": "gmail", "scopes": "gmail_read", "param_name": "service"},
+            {
+                "service_type": "people",
+                "scopes": "contacts_read",
+                "param_name": "people_service",
+                "optional": True,
+            },
+        ]
+    )
+    async def sample_tool(service, people_service, user_google_email: str):
+        events.append("func")
+        return "ran"
+
+    with pytest.raises(google_auth.GoogleServiceBuildError, match="discovery boom"):
+        await sample_tool(user_google_email="user@example.com")
+    assert "func" not in events
