@@ -1853,7 +1853,8 @@ async def test_send_gmail_message_reply_all_derives_recipients(cc, expected_cc):
         mock_service.users.return_value.messages.return_value.send.call_args.kwargs
     )
     parsed = _parse_raw_message(send_kwargs["body"]["raw"])
-    assert parsed["To"] == "alice@example.com"
+    # Recipients carry the display name harvested from the thread, as Gmail web does.
+    assert parsed["To"] == "Alice Example <alice@example.com>"
     assert parsed["Cc"] == expected_cc
 
 
@@ -1923,7 +1924,9 @@ async def test_send_gmail_message_reply_all_moves_sender_to_cc_when_to_is_explic
     parsed = _parse_raw_message(send_kwargs["body"]["raw"])
     assert parsed["To"] == "dave@example.com"
     # Redirecting To must not drop Alice from the reply-all entirely.
-    assert parsed["Cc"] == "alice@example.com, bob@example.com, carol@example.com"
+    assert parsed["Cc"] == (
+        "Alice Example <alice@example.com>, bob@example.com, carol@example.com"
+    )
 
 
 @pytest.mark.asyncio
@@ -2101,7 +2104,8 @@ async def test_draft_gmail_message_reply_all_derives_recipients(cc, expected_cc)
         mock_service.users.return_value.drafts.return_value.create.call_args.kwargs
     )
     parsed = _parse_raw_message(create_kwargs["body"]["message"]["raw"])
-    assert parsed["To"] == "alice@example.com"
+    # Recipients carry the display name harvested from the thread, as Gmail web does.
+    assert parsed["To"] == "Alice Example <alice@example.com>"
     assert parsed["Cc"] == expected_cc
 
 
