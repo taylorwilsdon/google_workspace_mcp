@@ -339,3 +339,30 @@ async def test_require_multiple_services_optional_non_auth_error_reraises(monkey
     # The already-opened Gmail service is still cleaned up on the re-raise path
     # (no leak when an optional service fails non-auth).
     assert events == ["close:gmail", "collect"]
+
+
+def test_require_multiple_services_required_scopes_exclude_optional_services():
+    """Tool filtering must not demand an optional service's scopes: a missing
+    optional scope degrades at call time, so it must not hide the tool."""
+
+    @service_decorator.require_multiple_services(
+        [
+            {
+                "service_type": "gmail",
+                "scopes": "gmail_read",
+                "param_name": "service",
+            },
+            {
+                "service_type": "people",
+                "scopes": "contacts_read",
+                "param_name": "people_service",
+                "optional": True,
+            },
+        ]
+    )
+    async def sample_tool(service, people_service, user_google_email: str):
+        return "ran"
+
+    required = sample_tool._required_google_scopes
+    assert required == service_decorator._resolve_scopes("gmail_read")
+    assert not set(service_decorator._resolve_scopes("contacts_read")) & set(required)
