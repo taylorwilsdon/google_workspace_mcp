@@ -22,6 +22,7 @@ from gdrive.drive_helpers import flag_incomplete_search, move_new_file_to_folder
 from gsheets.sheets_helpers import (
     CONDITION_TYPES,
     MAX_READ_SHEET_ROWS,
+    _a1_first_row_number,
     _a1_range_for_values,
     _clamp_a1_read_rows,
     _column_to_index,
@@ -253,7 +254,9 @@ async def read_sheet_values(
             and People chips) for the range. Defaults to False to avoid expensive includeGridData requests.
 
     Returns:
-        str: The formatted values from the specified range.
+        str: The formatted values from the specified range. Each row shows its
+            sheet row number, which matches the cell references in the
+            hyperlink, note, and smart chip sections.
     """
     logger.info(
         f"[read_sheet_values] Invoked. Email: '{user_google_email}', Spreadsheet: {spreadsheet_id}, Range: {range_name}"
@@ -331,11 +334,15 @@ async def read_sheet_values(
             )
 
     # Format the output as a readable table
+    first_sheet_row = _a1_first_row_number(resolved_range)
     formatted_rows = []
     for i, row in enumerate(values, 1):
         # Pad row with empty strings to show structure
         padded_row = row + [""] * max(0, len(values[0]) - len(row)) if values else row
-        formatted_rows.append(f"Row {i:2d}: {padded_row}")
+        label = f"Row {i:2d}"
+        if first_sheet_row is not None:
+            label += f" (sheet row {first_sheet_row + i - 1})"
+        formatted_rows.append(f"{label}: {padded_row}")
 
     text_output = (
         f"Successfully read {len(values)} rows from range '{range_name}' in spreadsheet {spreadsheet_id} for {user_google_email}:\n"
