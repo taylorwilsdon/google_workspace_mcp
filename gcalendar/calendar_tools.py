@@ -17,13 +17,17 @@ import pytz
 from googleapiclient.errors import HttpError
 from googleapiclient.discovery import build
 
+from auth.multi_account import AccountService, is_all_accounts
 from auth.service_decorator import require_google_service
 from core.utils import handle_http_errors, StringList, StringOrDictList, UserInputError
 from gcalendar.calendar_helpers import (
     _format_event_detail_lines,
     _format_event_time,
     _get_meeting_link,
+    get_events_across,
+    is_all_calendars,
     parse_event_boundary,
+    query_freebusy_across,
 )
 
 from mcp.types import ToolAnnotations
@@ -433,11 +437,11 @@ async def list_calendars(
     ),
 )
 @handle_http_errors("get_events", is_read_only=True, service_type="calendar")
-@require_google_service("calendar", "calendar_read")
+@require_google_service("calendar", "calendar_read", allow_all_accounts=True)
 async def get_events(
     service,
     user_google_email: str,
-    calendar_id: str = "primary",
+    calendar_id: Optional[str] = None,
     event_id: Optional[str] = None,
     time_min: Optional[str] = None,
     time_max: Optional[str] = None,
@@ -453,8 +457,8 @@ async def get_events(
     You can also search for events by keyword by supplying the optional "query" param.
 
     Args:
-        user_google_email (str): The user's Google email address. Required.
-        calendar_id (str): The ID of the calendar to query. Use 'primary' for the user's primary calendar. Defaults to 'primary'. Calendar IDs can be obtained using `list_calendars`.
+        user_google_email (str): The user's Google email address. Required. Pass 'all' to read every signed-in account at once, merged and tagged by account and calendar.
+        calendar_id (Optional[str]): The ID of the calendar to query, 'primary', or 'all' for every calendar in the account's list. Defaults to 'primary', or to each account's own calendars when user_google_email is 'all'. Calendar IDs can be obtained using `list_calendars`. Reading several calendars merges them by start time and does not support event_id or page_token.
         event_id (Optional[str]): The ID of a specific event to retrieve. If provided, retrieves only this event and ignores time filtering parameters.
         time_min (Optional[str]): The start of the time range (inclusive) in RFC3339 format (e.g., '2024-05-12T10:00:00Z' or '2024-05-12'). If omitted, defaults to the current time when single_events=True. It is omitted from unexpanded queries so recurring masters that began in the past but still have future occurrences remain discoverable. Ignored if event_id is provided.
         time_max (Optional[str]): The end of the time range (exclusive) in RFC3339 format. If omitted, events starting from `time_min` onwards are considered (up to `max_results`). Ignored if event_id is provided.
@@ -471,6 +475,41 @@ async def get_events(
     logger.info(
         f"[get_events] Raw parameters - event_id: '{event_id}', time_min: '{time_min}', time_max: '{time_max}', query_len={len(query) if query else 0}, detailed: {detailed}, include_attachments: {include_attachments}, single_events: {single_events}"
     )
+
+    all_accounts = is_all_accounts(user_google_email)
+    if all_accounts or is_all_calendars(calendar_id):
+        if event_id or page_token or not single_events:
+            raise UserInputError(
+                "event_id, page_token and single_events=False need one account "
+                "and one calendar."
+            )
+        effective_time_min = _correct_time_format_for_api(time_min, "time_min", None)
+        if not effective_time_min:
+            utc_now = datetime.datetime.now(datetime.timezone.utc)
+            effective_time_min = utc_now.isoformat().replace("+00:00", "Z")
+        request_params: Dict[str, Any] = {
+            "timeMin": effective_time_min,
+            "timeMax": _correct_time_format_for_api(time_max, "time_max", None),
+            "maxResults": max_results,
+            "singleEvents": True,
+            "orderBy": "startTime",
+        }
+        if query:
+            request_params["q"] = query
+        if all_accounts:
+            accounts = service
+        else:
+            accounts = [AccountService(email=user_google_email, service=service)]
+        return await get_events_across(
+            accounts,
+            calendar_id,
+            request_params,
+            max_results,
+            detailed,
+            include_attachments,
+            single_account=not all_accounts,
+        )
+    calendar_id = calendar_id or "primary"
 
     next_page_token: Optional[str] = None
     pagination_info = ""
@@ -2592,7 +2631,7 @@ async def manage_focus_time(
     ),
 )
 @handle_http_errors("query_freebusy", is_read_only=True, service_type="calendar")
-@require_google_service("calendar", "calendar_read")
+@require_google_service("calendar", "calendar_read", allow_all_accounts=True)
 async def query_freebusy(
     service,
     user_google_email: str,
@@ -2606,10 +2645,10 @@ async def query_freebusy(
     Returns free/busy information for a set of calendars.
 
     Args:
-        user_google_email (str): The user's Google email address. Required.
+        user_google_email (str): The user's Google email address. Required. Pass 'all' to check every signed-in account at once.
         time_min (str): The start of the interval for the query in RFC3339 format (e.g., '2024-05-12T10:00:00Z' or '2024-05-12').
         time_max (str): The end of the interval for the query in RFC3339 format (e.g., '2024-05-12T18:00:00Z' or '2024-05-12').
-        calendar_ids (Optional[List[str]]): List of calendar identifiers to query. If not provided, queries the primary calendar. Use 'primary' for the user's primary calendar or specific calendar IDs obtained from `list_calendars`.
+        calendar_ids (Optional[List[str]]): List of calendar identifiers to query. If not provided, queries the primary calendar, or each account's own calendars when user_google_email is 'all'. Use 'primary' for the user's primary calendar, ['all'] for every calendar in the account's list, or specific calendar IDs obtained from `list_calendars`. Several calendars also get their busy periods combined.
         group_expansion_max (Optional[int]): Maximum number of calendar identifiers to be provided for a single group. Optional. An error is returned for a group with more members than this value. Maximum value is 100.
         calendar_expansion_max (Optional[int]): Maximum number of calendars for which FreeBusy information is to be provided. Optional. Maximum value is 50.
 
@@ -2623,6 +2662,33 @@ async def query_freebusy(
     # Format time parameters
     formatted_time_min = _correct_time_format_for_api(time_min, "time_min", None)
     formatted_time_max = _correct_time_format_for_api(time_max, "time_max", None)
+
+    all_accounts = is_all_accounts(user_google_email)
+    wants_all_calendars = bool(calendar_ids) and any(
+        is_all_calendars(cal_id) for cal_id in calendar_ids
+    )
+    if wants_all_calendars and len(calendar_ids) > 1:
+        raise UserInputError("calendar_ids=['all'] can't be combined with other IDs.")
+    if all_accounts or wants_all_calendars:
+        body: Dict[str, Any] = {
+            "timeMin": formatted_time_min,
+            "timeMax": formatted_time_max,
+        }
+        if group_expansion_max is not None:
+            body["groupExpansionMax"] = group_expansion_max
+        if calendar_expansion_max is not None:
+            body["calendarExpansionMax"] = calendar_expansion_max
+        if all_accounts:
+            accounts = service
+        else:
+            accounts = [AccountService(email=user_google_email, service=service)]
+        return await query_freebusy_across(
+            accounts,
+            "all" if wants_all_calendars else None,
+            None if wants_all_calendars else calendar_ids,
+            body,
+            single_account=not all_accounts,
+        )
 
     # Default to primary calendar if no calendar IDs provided
     if not calendar_ids:

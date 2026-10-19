@@ -5,13 +5,22 @@ This module provides utility functions for formatting Google Calendar
 event data for display.
 """
 
+import asyncio
 import datetime
 import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from googleapiclient.errors import HttpError
+
+from auth.multi_account import (
+    AccountService,
+    format_account_errors,
+    gather_per_account,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -378,3 +387,440 @@ def _format_event_detail_lines(
         lines.append(f"{prefix}Attachments: {attachment_details}")
 
     return "".join(f"{line}\n" for line in lines)
+
+
+# ---------------------------------------------------------------------------
+# Several calendars (and accounts) at once: get_events and query_freebusy with
+# user_google_email="all" or calendar_id="all".
+# ---------------------------------------------------------------------------
+
+ALL_CALENDARS = "all"
+FREEBUSY_MAX_CALENDARS = 50
+_UTC = datetime.timezone.utc
+
+
+def is_all_calendars(value: Any) -> bool:
+    """True for calendar_id="all" (any case)."""
+    return isinstance(value, str) and value.strip().lower() == ALL_CALENDARS
+
+
+@dataclass
+class CalendarEventEntry:
+    """One event as found on one account's calendar."""
+
+    item: Dict[str, Any]
+    account: str
+    calendar_id: str
+    calendar_name: str
+    calendar_time_zone: Optional[str] = None
+
+
+@dataclass
+class MergedEvent:
+    """One event, with every account/calendar it was found on."""
+
+    item: Dict[str, Any]
+    sources: List[CalendarEventEntry]
+
+
+@dataclass
+class AccountEvents:
+    """What one account's calendars returned."""
+
+    account: str
+    entries: List[CalendarEventEntry]
+    truncated: List[str]
+    calendar_errors: List[str]
+    calendars_read: int = 0
+
+
+async def list_calendars_to_read(
+    service, selection: Optional[str]
+) -> List[Dict[str, str]]:
+    """Resolve a calendar selection to the calendars to read.
+
+    None means the calendars the account owns or fully manages (accessRole
+    "owner"): its primary plus any it created. Calendars it can only read,
+    such as a holiday calendar or most shared ones, are left out, since their
+    events are not the user's time. "all" means every calendar in the
+    account's list. Anything else is one calendar ID.
+    """
+    if selection is not None and not is_all_calendars(selection):
+        return [{"id": selection, "name": selection}]
+    calendars: List[Dict[str, str]] = []
+    params: Dict[str, Any] = {}
+    while True:
+        response = await asyncio.to_thread(
+            service.calendarList().list(**params).execute
+        )
+        for cal in response.get("items", []):
+            if selection is None and cal.get("accessRole") != "owner":
+                continue
+            name = "primary" if cal.get("primary") else cal.get("summary") or cal["id"]
+            calendars.append({"id": cal["id"], "name": name})
+        if not response.get("nextPageToken"):
+            return calendars
+        params = {"pageToken": response["nextPageToken"]}
+
+
+def _source_label(account: str, cal_id: str, name: str) -> str:
+    if name in (cal_id, "primary"):
+        return f"{account} / {name}"
+    return f'{account} / "{name}" ({cal_id})'
+
+
+async def fetch_account_events(
+    service,
+    account: str,
+    selection: Optional[str],
+    request_params: Dict[str, Any],
+) -> AccountEvents:
+    """Read one page of events from each selected calendar of one account.
+
+    Calendars are read one at a time: they share the account's HTTP
+    connection. A calendar the API refuses is reported in ``calendar_errors``
+    and the others are still returned.
+    """
+    result = AccountEvents(
+        account=account, entries=[], truncated=[], calendar_errors=[]
+    )
+    for cal in await list_calendars_to_read(service, selection):
+        label = _source_label(account, cal["id"], cal["name"])
+        try:
+            response = await asyncio.to_thread(
+                service.events().list(calendarId=cal["id"], **request_params).execute
+            )
+        except HttpError as e:
+            logger.warning(f"[get_events] {label} failed: {e}")
+            result.calendar_errors.append(f"{label}: {e}")
+            continue
+        for item in response.get("items", []):
+            result.entries.append(
+                CalendarEventEntry(
+                    item=item,
+                    account=account,
+                    calendar_id=cal["id"],
+                    calendar_name=cal["name"],
+                    calendar_time_zone=response.get("timeZone"),
+                )
+            )
+        result.calendars_read += 1
+        if response.get("nextPageToken"):
+            result.truncated.append(label)
+    return result
+
+
+def event_sort_key(entry: CalendarEventEntry):
+    """Chronological key across calendars in different zones.
+
+    Timed events sort by their instant. All-day events sort at the start of
+    their date in the calendar's own zone, ahead of timed events at that same
+    instant.
+    """
+    start = parse_event_boundary(entry.item, "start")
+    if start is None:
+        return (datetime.datetime.max.replace(tzinfo=_UTC), 2)
+    if start.moment is not None:
+        return (start.moment.astimezone(_UTC), 1)
+    zone = _resolve_zone({"timeZone": entry.calendar_time_zone}) or _UTC
+    midnight = datetime.datetime.combine(start.local_date, datetime.time.min, zone)
+    return (midnight.astimezone(_UTC), 0)
+
+
+def _instant_key(item: Dict[str, Any]) -> str:
+    start = parse_event_boundary(item, "start")
+    if start is None:
+        return json.dumps(item.get("start"), sort_keys=True)
+    if start.moment is not None:
+        return start.moment.astimezone(_UTC).isoformat()
+    return start.raw
+
+
+def merge_calendar_events(entries: List[CalendarEventEntry]) -> List[MergedEvent]:
+    """Merge events from several calendars, earliest first.
+
+    An event on more than one calendar (an invitation sent to two of the
+    user's accounts, or a calendar shared between them) is listed once, with
+    every place it was found. Occurrences of a recurring series stay separate:
+    they share an iCalUID but not a start.
+    """
+    merged: Dict[tuple, MergedEvent] = {}
+    order: Dict[tuple, Any] = {}
+    for entry in entries:
+        key = (
+            entry.item.get("iCalUID") or entry.item.get("id"),
+            _instant_key(entry.item),
+        )
+        if key in merged:
+            merged[key].sources.append(entry)
+        else:
+            merged[key] = MergedEvent(item=entry.item, sources=[entry])
+            order[key] = event_sort_key(entry)
+    return [merged[key] for key in sorted(merged, key=lambda k: order[k])]
+
+
+def _attendance_note(event: MergedEvent) -> str:
+    """Flag an event that takes none of the user's time on any copy of it."""
+    items = [source.item for source in event.sources]
+    declined = all(
+        any(
+            a.get("self") and a.get("responseStatus") == "declined"
+            for a in item.get("attendees", [])
+        )
+        for item in items
+    )
+    free = all(item.get("transparency") == "transparent" for item in items)
+    notes = [
+        note for note, on in (("declined", declined), ("shows as free", free)) if on
+    ]
+    return f" ({', '.join(notes)})" if notes else ""
+
+
+def format_merged_events(
+    events: List[MergedEvent],
+    detailed: bool = False,
+    include_attachments: bool = False,
+) -> List[str]:
+    """One block per event, tagged with the account and calendar it is on.
+
+    The first source is the one to pass back (as user_google_email and
+    calendar_id) to act on the event.
+    """
+    lines = []
+    for event in events:
+        item = event.item
+        first, others = event.sources[0], event.sources[1:]
+        line = (
+            f'- "{item.get("summary", "No Title")}"{_attendance_note(event)} '
+            f"(Starts: {_format_event_time(item, 'start')}, "
+            f"Ends: {_format_event_time(item, 'end')})\n"
+            f"  Account / calendar: "
+            f"{_source_label(first.account, first.calendar_id, first.calendar_name)}"
+        )
+        if others:
+            line += "\n  Also on: " + "; ".join(
+                _source_label(s.account, s.calendar_id, s.calendar_name) for s in others
+            )
+        if detailed:
+            line += "\n" + _format_event_detail_lines(
+                item,
+                prefix="  ",
+                indent="    ",
+                include_attachments=include_attachments,
+            ).rstrip("\n")
+        else:
+            meeting_link = _get_meeting_link(item)
+            if meeting_link:
+                line += f"\n  Meeting: {meeting_link}"
+        line += f"\n  ID: {item.get('id', 'No ID')} | Link: {item.get('htmlLink', 'No Link')}"
+        lines.append(line)
+    return lines
+
+
+def _describe_selection(selection: Optional[str]) -> str:
+    if selection is None:
+        return "the own calendars"
+    if is_all_calendars(selection):
+        return "every calendar"
+    return f"calendar '{selection}'"
+
+
+async def get_events_across(
+    accounts: List[AccountService],
+    selection: Optional[str],
+    request_params: Dict[str, Any],
+    max_results: int,
+    detailed: bool,
+    include_attachments: bool,
+    single_account: bool = False,
+) -> str:
+    """get_events over several calendars and/or accounts, merged by start.
+
+    ``request_params`` are events.list parameters without ``calendarId``. With
+    ``single_account`` an API failure propagates to the tool's error handling
+    instead of being reported as an excluded account.
+    """
+
+    async def _fetch(account: AccountService) -> AccountEvents:
+        return await fetch_account_events(
+            account.service, account.email, selection, request_params
+        )
+
+    if single_account:
+        results: List[Any] = [await _fetch(accounts[0])]
+    else:
+        results = await gather_per_account(accounts, _fetch)
+    read = [r for r in results if isinstance(r, AccountEvents)]
+    merged = merge_calendar_events([e for r in read for e in r.entries])
+    shown = merged[:max_results]
+
+    where = f"{_describe_selection(selection)} of " + (
+        ", ".join(r.account for r in read) or "no account"
+    )
+    calendar_errors = [e for r in read for e in r.calendar_errors]
+    incomplete = bool(calendar_errors) or len(read) < len(results)
+    read_any = any(r.entries or r.calendars_read for r in read)
+    if shown:
+        lines = [f"Retrieved {len(shown)} events from {where}, sorted by start time:"]
+        lines.extend(format_merged_events(shown, detailed, include_attachments))
+    elif not read_any:
+        lines = ["Could not read any calendar, so this says nothing about free time."]
+    elif incomplete:
+        lines = [
+            f"No events found in {where} that could be read (some calendars "
+            "could not, see below)."
+        ]
+    else:
+        lines = [f"No events found in {where} for the specified time range."]
+
+    if len(merged) > max_results or any(r.truncated for r in read):
+        lines.append(
+            "\nMore events exist in this range than max_results allows; "
+            "raise max_results or narrow time_min/time_max."
+        )
+    if calendar_errors:
+        lines.append("\nCalendars not included:")
+        lines.extend(f"- {e}" for e in calendar_errors)
+    lines.extend(format_account_errors(results))
+    return "\n".join(lines)
+
+
+def merge_busy_periods(
+    periods: List[Dict[str, str]],
+) -> List[Tuple[datetime.datetime, datetime.datetime]]:
+    """Union of free/busy periods as sorted, non-overlapping UTC (start, end) pairs."""
+    spans = []
+    for period in periods:
+        try:
+            start = datetime.datetime.fromisoformat(
+                re.sub(r"[zZ]$", "+00:00", period.get("start", ""))
+            )
+            end = datetime.datetime.fromisoformat(
+                re.sub(r"[zZ]$", "+00:00", period.get("end", ""))
+            )
+        except (TypeError, ValueError):
+            continue
+        if start.tzinfo and end.tzinfo and end > start:
+            spans.append((start.astimezone(_UTC), end.astimezone(_UTC)))
+    spans.sort()
+    merged: List[List[datetime.datetime]] = []
+    for start, end in spans:
+        if merged and start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    return [(start, end) for start, end in merged]
+
+
+def _utc(moment: datetime.datetime) -> str:
+    return moment.isoformat().replace("+00:00", "Z")
+
+
+async def _account_freebusy(
+    service,
+    selection: Optional[str],
+    calendar_ids: Optional[List[str]],
+    body: Dict[str, Any],
+) -> List[Tuple[str, str, Dict[str, Any]]]:
+    """(calendar ID, name, freebusy entry) for one account's calendars."""
+    if calendar_ids:
+        calendars = [{"id": cal_id, "name": cal_id} for cal_id in calendar_ids]
+    else:
+        calendars = await list_calendars_to_read(service, selection)
+    found = []
+    # freebusy.query takes at most 50 calendars per request.
+    for start in range(0, len(calendars), FREEBUSY_MAX_CALENDARS):
+        chunk = calendars[start : start + FREEBUSY_MAX_CALENDARS]
+        response = await asyncio.to_thread(
+            service.freebusy()
+            .query(body={**body, "items": [{"id": c["id"]} for c in chunk]})
+            .execute
+        )
+        result = response.get("calendars", {})
+        for cal in chunk:
+            missing = {"errors": [{"domain": "calendar", "reason": "notReturned"}]}
+            found.append((cal["id"], cal["name"], result.get(cal["id"], missing)))
+    return found
+
+
+async def query_freebusy_across(
+    accounts: List[AccountService],
+    selection: Optional[str],
+    calendar_ids: Optional[List[str]],
+    body: Dict[str, Any],
+    single_account: bool = False,
+) -> str:
+    """query_freebusy over several calendars and/or accounts.
+
+    ``body`` is the freebusy.query body without ``items``. The combined busy
+    list only claims "free" when every calendar asked about was read.
+    """
+
+    async def _fetch(account: AccountService):
+        found = await _account_freebusy(account.service, selection, calendar_ids, body)
+        return account.email, found
+
+    if single_account:
+        results: List[Any] = [await _fetch(accounts[0])]
+    else:
+        results = await gather_per_account(accounts, _fetch)
+    read = [r for r in results if not isinstance(r, AccountService)]
+
+    busy: List[Dict[str, str]] = []
+    per_calendar: List[str] = []
+    incomplete = len(read) < len(results)
+    for email, found in read:
+        for cal_id, name, entry in found:
+            label = _source_label(email, cal_id, name)
+            errors = entry.get("errors", [])
+            if errors:
+                incomplete = True
+                reasons = ", ".join(
+                    f"{e.get('domain', 'unknown')}: {e.get('reason', 'unknown')}"
+                    for e in errors
+                )
+                per_calendar.append(f"- {label}: not read ({reasons})")
+                continue
+            periods = entry.get("busy", [])
+            busy.extend(periods)
+            if periods:
+                spans = ", ".join(
+                    f"{p.get('start')} to {p.get('end')}" for p in periods
+                )
+                per_calendar.append(f"- {label}: busy {spans}")
+            else:
+                per_calendar.append(f"- {label}: free")
+
+    combined = merge_busy_periods(busy)
+    accounts_read = ", ".join(email for email, _ in read) or "no account"
+    what = (
+        f"calendars {', '.join(calendar_ids)}"
+        if calendar_ids
+        else _describe_selection(selection)
+    )
+    lines = [
+        f"Free/Busy for {what} of {accounts_read}:",
+        f"Time range: {body.get('timeMin')} to {body.get('timeMax')}",
+        "",
+    ]
+    if not per_calendar:
+        lines.append(
+            "Could not read any calendar, so this says nothing about free time."
+        )
+    else:
+        heading = (
+            "Busy on the calendars that could be read (some could not, see below)"
+            if incomplete
+            else "Busy on any of these calendars"
+        )
+        lines.append(f"{heading}, combined (UTC):")
+        if combined:
+            lines.extend(f"- {_utc(s)} to {_utc(e)}" for s, e in combined)
+        elif incomplete:
+            lines.append("- none found")
+        else:
+            lines.append("- none: free on every calendar")
+        lines.extend(["", "Per calendar:"])
+        lines.extend(per_calendar)
+    lines.extend(format_account_errors(results))
+    return "\n".join(lines)

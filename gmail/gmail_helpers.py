@@ -17,6 +17,8 @@ from typing import Any, Callable, Dict, Iterable, List, Literal, Mapping, Option
 from fastmcp.exceptions import ToolError as ToolExecutionError
 from googleapiclient.errors import HttpError
 
+from auth.multi_account import AccountService, format_account_errors, gather_per_account
+
 logger = logging.getLogger(__name__)
 
 RAW_BODY_TRUNCATE_LIMIT = 20000
@@ -1230,3 +1232,134 @@ def format_filter_apply_result(result: Mapping[str, Any], dry_run: bool) -> str:
             "Stopped at max_messages; raise it to process the remaining matches."
         )
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# search_gmail_messages with user_google_email="all": one inbox view across
+# every signed-in account.
+# ---------------------------------------------------------------------------
+
+
+def merge_account_search_results(per_account: Iterable[tuple]) -> List[tuple]:
+    """Interleave (account, message, headers) rows from several accounts.
+
+    Newest first by Gmail's internalDate (when the account received it), not
+    the sender-controlled Date header. A message whose metadata could not be
+    fetched keeps its place in its own account's list, which Gmail already
+    returns newest first. ``per_account`` holds
+    (account, messages, headers_by_id, internal_dates) tuples.
+    """
+    rows = []
+    for account, messages, headers_by_id, internal_dates in per_account:
+        rank = float("inf")
+        for message in messages:
+            if not isinstance(message, dict) or not message.get("id"):
+                continue
+            received = str(internal_dates.get(message["id"]) or "")
+            if received.isdigit():
+                rank = int(received)
+            rows.append((rank, account, message, headers_by_id.get(message["id"])))
+    rows.sort(key=lambda row: row[0], reverse=True)
+    return [row[1:] for row in rows]
+
+
+def format_all_accounts_search(
+    rows: List[tuple],
+    query: str,
+    accounts_read: List[str],
+    accounts_with_more: List[str],
+) -> str:
+    """Format a merged multi-account search, each row tagged with its account."""
+    where = ", ".join(accounts_read) or "no account"
+    if not rows:
+        lines = [f"No messages found for query '{query}' in {where}."]
+    else:
+        lines = [
+            f"Found {len(rows)} messages matching '{query}' across {where}, newest first:",
+            "",
+        ]
+        for i, (account, message, headers) in enumerate(rows, 1):
+            message_id = message["id"]
+            lines.append(f"  {i}. Account: {account}")
+            lines.append(f"     Message ID: {message_id}")
+            if headers is None:
+                lines.append("     Headers: unavailable (metadata fetch failed)")
+            else:
+                lines.extend(
+                    [
+                        f"     Subject: {headers.get('Subject', '(no subject)')}",
+                        f"     From: {headers.get('From', '(unknown sender)')}",
+                        f"     Date: {headers.get('Date', '(unknown date)')}",
+                    ]
+                )
+            lines.extend(
+                [
+                    f"     Web Link: https://mail.google.com/mail/u/{account}/#all/{message_id}",
+                    f"     Thread ID: {message.get('threadId') or 'unknown'}",
+                    "",
+                ]
+            )
+        lines.append(
+            "💡 USAGE: IDs belong to the account shown with them; pass that "
+            "account as user_google_email to read the message or thread."
+        )
+    if accounts_with_more:
+        lines.append("")
+        lines.append(
+            f"📄 More matches exist in {', '.join(accounts_with_more)}; raise "
+            "page_size, narrow the query, or page one account at a time."
+        )
+    return "\n".join(lines)
+
+
+async def search_all_accounts(
+    accounts: List[AccountService],
+    query: str,
+    page_size: int,
+    fetch_headers: Callable[..., Any],
+) -> str:
+    """search_gmail_messages across every signed-in account, newest first.
+
+    ``fetch_headers(service, message_ids, internal_dates)`` is the search
+    tool's own metadata fetch, so both paths enrich results the same way.
+    """
+
+    async def _fetch(account: AccountService):
+        response = await asyncio.to_thread(
+            account.service.users()
+            .messages()
+            .list(userId="me", q=query, maxResults=page_size)
+            .execute
+        )
+        messages = (response or {}).get("messages") or []
+        ids = [m["id"] for m in messages if isinstance(m, dict) and m.get("id")]
+        internal_dates: Dict[str, str] = {}
+        try:
+            headers_by_id = (
+                await fetch_headers(account.service, ids, internal_dates) if ids else {}
+            )
+        except Exception as exc:  # same degradation as the one-account search
+            logger.exception(
+                "[search_gmail_messages] Header enrichment failed for %s: %s",
+                account.email,
+                exc,
+            )
+            headers_by_id = dict.fromkeys(ids)
+        more = bool((response or {}).get("nextPageToken"))
+        return account.email, messages, headers_by_id, internal_dates, more
+
+    results = await gather_per_account(accounts, _fetch)
+    read = [r for r in results if not isinstance(r, AccountService)]
+    rows = merge_account_search_results(r[:4] for r in read)
+    accounts_with_more = {r[0] for r in read if r[4]}
+    accounts_with_more |= {row[0] for row in rows[page_size:]}
+    output = format_all_accounts_search(
+        rows[:page_size],
+        query,
+        [r[0] for r in read],
+        sorted(accounts_with_more),
+    )
+    error_lines = format_account_errors(results)
+    if error_lines:
+        output += "\n" + "\n".join(error_lines)
+    return output

@@ -22,6 +22,7 @@ from auth.gateway_identity import (
     require_gateway_principal,
     get_verified_gateway_principal,
 )
+from auth.multi_account import is_all_accounts, open_all_account_services
 from auth.request_identity import get_request_identity
 from core.config import USER_GOOGLE_EMAIL as _ENV_USER_EMAIL
 from auth.oauth21_session_store import (
@@ -774,6 +775,7 @@ def require_google_service(
     service_type: str,
     scopes: Union[str, List[str]],
     version: Optional[str] = None,
+    allow_all_accounts: bool = False,
 ):
     """
     Decorator that automatically handles Google service authentication and injection.
@@ -782,6 +784,10 @@ def require_google_service(
         service_type: Type of Google service ("gmail", "drive", "calendar", etc.)
         scopes: Required scopes (can be scope group names or actual URLs)
         version: Service version (defaults to standard version for service type)
+        allow_all_accounts: Accept user_google_email="all". The tool then
+            receives a list of auth.multi_account.AccountService (one per
+            signed-in account) as ``service``, and must merge the results
+            itself. Read-only tools only.
 
     Usage:
         @require_google_service("gmail", "gmail_read")
@@ -845,6 +851,23 @@ def require_google_service(
 
             # Resolve scopes
             resolved_scopes = _resolve_scopes(scopes)
+
+            if (
+                allow_all_accounts
+                and not _user_email_is_managed()
+                and is_all_accounts(user_google_email)
+            ):
+                accounts = await open_all_account_services(
+                    service_name, service_version, resolved_scopes, func.__name__
+                )
+                try:
+                    with ExitStack() as stack:
+                        for account in accounts:
+                            if account.service is not None:
+                                stack.enter_context(recycling(account.service))
+                        return await func(accounts, *args, **kwargs)
+                finally:
+                    _release_google_service_cycles()
 
             try:
                 tool_name = func.__name__

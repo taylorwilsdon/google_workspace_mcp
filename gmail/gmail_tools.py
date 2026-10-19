@@ -29,6 +29,7 @@ from pydantic import Field
 from pydantic.json_schema import SkipJsonSchema
 
 from auth.oauth_config import is_stateless_mode
+from auth.multi_account import is_all_accounts
 from auth.service_decorator import require_google_service
 from core.attachment_storage import (
     get_attachment_storage,
@@ -88,6 +89,7 @@ from gmail.gmail_helpers import (
     format_filter_apply_result,
     html_newlines_to_br,
     html_to_text_preserving_breaks,
+    search_all_accounts,
     update_gmail_filter,
 )
 
@@ -1558,7 +1560,9 @@ def _generate_gmail_web_url(item_id: str, account_index: int = 0) -> str:
 
 
 async def _fetch_search_result_headers(
-    service, message_ids: List[str]
+    service,
+    message_ids: List[str],
+    internal_dates: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Optional[Dict[str, str]]]:
     """Fetch metadata headers for search result message IDs.
 
@@ -1569,6 +1573,9 @@ async def _fetch_search_result_headers(
     concurrency 429s) are retried sequentially afterwards. A message that
     still cannot be fetched maps to None so the caller can degrade that row
     instead of failing the whole search.
+
+    When ``internal_dates`` is given, each fetched message's internalDate
+    (Gmail's own received time, in epoch ms) is recorded in it as well.
     """
     headers_by_id: Dict[str, Optional[Dict[str, str]]] = {}
 
@@ -1620,6 +1627,8 @@ async def _fetch_search_result_headers(
                     headers_by_id[mid] = _extract_headers(
                         entry["data"].get("payload") or {}, GMAIL_METADATA_HEADERS
                     )
+                    if internal_dates is not None:
+                        internal_dates[mid] = entry["data"].get("internalDate")
                 except Exception as exc:
                     logger.warning(
                         f"[search_gmail_messages] Invalid metadata for message {mid}, will retry: {exc}"
@@ -1646,6 +1655,8 @@ async def _fetch_search_result_headers(
                     headers_by_id[mid] = _extract_headers(
                         msg_data.get("payload") or {}, GMAIL_METADATA_HEADERS
                     )
+                    if internal_dates is not None:
+                        internal_dates[mid] = msg_data.get("internalDate")
                 except Exception as exc:
                     logger.warning(
                         f"[search_gmail_messages] Invalid metadata for message {mid} after retry: {exc}"
@@ -1759,7 +1770,7 @@ def _format_gmail_results_plain(
     ),
 )
 @handle_http_errors("search_gmail_messages", is_read_only=True, service_type="gmail")
-@require_google_service("gmail", "gmail_read")
+@require_google_service("gmail", "gmail_read", allow_all_accounts=True)
 async def search_gmail_messages(
     service,
     query: str,
@@ -1775,7 +1786,7 @@ async def search_gmail_messages(
 
     Args:
         query (str): The search query. Supports standard Gmail search operators.
-        user_google_email (str): The user's Google email address. Required.
+        user_google_email (str): The user's Google email address. Required. Pass 'all' to search every signed-in Google account at once (a unified inbox): results are merged newest first, each tagged with its account, and always include Subject, From and Date. page_token is not supported with 'all'.
         page_size (int): The maximum number of messages to return. Defaults to 10.
         page_token (Optional[str]): Token for retrieving the next page of results. Use the next_page_token from a previous response.
         include_headers (bool): If True, also fetch each message's metadata and include
@@ -1792,6 +1803,16 @@ async def search_gmail_messages(
         f"[search_gmail_messages] Email: '{user_google_email}', query_len={len(query)}, Page size: {page_size}"
     )
     logger.debug(f"[search_gmail_messages] Query: '{query}'")
+
+    if is_all_accounts(user_google_email):
+        if page_token:
+            raise UserInputError(
+                "page_token is not supported with user_google_email='all'; "
+                "page one account at a time instead."
+            )
+        return await search_all_accounts(
+            service, query, page_size, _fetch_search_result_headers
+        )
 
     # Build the API request parameters
     request_params = {"userId": "me", "q": query, "maxResults": page_size}
