@@ -381,6 +381,7 @@ def _a1_range_for_values(a1_range: str, values: List[List[object]]) -> Optional[
 
 
 def _a1_first_row_number(a1_range: str) -> Optional[int]:
+    """Return the 1-based sheet row where an A1 range starts (e.g. 13 for B13:C20)."""
     _, range_part = _split_sheet_and_range(a1_range)
     try:
         _, row_idx = _parse_a1_part(range_part.split(":", 1)[0])
