@@ -16,7 +16,7 @@ from mcp.types import ImageContent, TextContent, ToolAnnotations
 
 from auth.service_decorator import require_google_service
 from core.server import server
-from core.utils import handle_http_errors, DictList
+from core.utils import DictList, handle_http_errors
 from core.comments import create_comment_tools
 from gslides.slides_helpers import (
     validate_batch_update_requests,

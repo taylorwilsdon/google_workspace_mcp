@@ -15,7 +15,7 @@ from mcp.types import ToolAnnotations
 
 from auth.service_decorator import require_google_service
 from core.server import server
-from core.utils import handle_http_errors, DictList
+from core.utils import DictList, handle_http_errors
 
 logger = logging.getLogger(__name__)
 

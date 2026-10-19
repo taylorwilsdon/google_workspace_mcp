@@ -6,7 +6,7 @@ from unittest.mock import Mock
 import httpx
 import pytest
 from fastmcp.tools import ToolResult
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 
 from core.utils import DictList, UserInputError
 from gslides import slides_tools
@@ -29,35 +29,34 @@ def _unwrap(tool):
 
 
 class TestBatchUpdatePresentationRequestsCoercion:
-    """The ``requests`` param must accept both a native list and a JSON-encoded
-    string of a list — some MCP clients serialise array args as strings."""
+    """``requests`` accepts a native list or a JSON-encoded array string."""
+
+    REQUESTS = [{"createSlide": {"objectId": "s1"}}]
 
     @staticmethod
-    def _adapter() -> TypeAdapter:
-        annotation = (
+    def _annotation():
+        return (
             inspect.signature(_unwrap(batch_update_presentation))
             .parameters["requests"]
             .annotation
         )
-        return TypeAdapter(annotation)
 
     def test_requests_annotation_is_dictlist(self):
-        annotation = (
-            inspect.signature(_unwrap(batch_update_presentation))
-            .parameters["requests"]
-            .annotation
-        )
-        assert annotation is DictList
+        assert self._annotation() is DictList
 
     def test_requests_accepts_native_list(self):
-        value = [{"createSlide": {"objectId": "s1"}}]
-        assert self._adapter().validate_python(value) == value
+        adapter = TypeAdapter(self._annotation())
+        assert adapter.validate_python(self.REQUESTS) == self.REQUESTS
 
     def test_requests_coerces_json_array_string(self):
-        import json as _json
+        adapter = TypeAdapter(self._annotation())
+        assert adapter.validate_python(json.dumps(self.REQUESTS)) == self.REQUESTS
 
-        value = [{"createSlide": {"objectId": "s1"}}]
-        assert self._adapter().validate_python(_json.dumps(value)) == value
+    def test_requests_rejects_json_object_string(self):
+        with pytest.raises(ValidationError):
+            TypeAdapter(self._annotation()).validate_python(
+                json.dumps(self.REQUESTS[0])
+            )
 
 
 def _build_slides_service(presentation=None, batch_update_response=None):

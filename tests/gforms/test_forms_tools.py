@@ -5,6 +5,7 @@ Tests the batch_update_form tool with mocked API responses
 """
 
 import inspect
+import json
 import pytest
 from googleapiclient.errors import HttpError
 from httplib2 import Response
@@ -12,7 +13,7 @@ from unittest.mock import Mock
 import sys
 import os
 
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
@@ -37,33 +38,31 @@ def _raw(fn):
     return fn
 
 
-def _requests_adapter() -> TypeAdapter:
-    """TypeAdapter for the wired ``requests`` annotation on batch_update_form."""
-    annotation = (
-        inspect.signature(_raw(batch_update_form)).parameters["requests"].annotation
-    )
-    return TypeAdapter(annotation)
+def _requests_annotation():
+    return inspect.signature(_raw(batch_update_form)).parameters["requests"].annotation
 
 
 class TestBatchUpdateFormRequestsCoercion:
-    """The ``requests`` param must accept both a native list and a JSON-encoded
-    string of a list — some MCP clients serialise array args as strings."""
+    """``requests`` accepts a native list or a JSON-encoded array string."""
+
+    REQUESTS = [{"createItem": {"item": {"title": "Q1"}, "location": {"index": 0}}}]
 
     def test_requests_annotation_is_dictlist(self):
-        annotation = (
-            inspect.signature(_raw(batch_update_form)).parameters["requests"].annotation
-        )
-        assert annotation is DictList
+        assert _requests_annotation() is DictList
 
     def test_requests_accepts_native_list(self):
-        value = [{"createItem": {"item": {"title": "Q1"}, "location": {"index": 0}}}]
-        assert _requests_adapter().validate_python(value) == value
+        adapter = TypeAdapter(_requests_annotation())
+        assert adapter.validate_python(self.REQUESTS) == self.REQUESTS
 
     def test_requests_coerces_json_array_string(self):
-        value = [{"createItem": {"item": {"title": "Q1"}, "location": {"index": 0}}}]
-        import json as _json
+        adapter = TypeAdapter(_requests_annotation())
+        assert adapter.validate_python(json.dumps(self.REQUESTS)) == self.REQUESTS
 
-        assert _requests_adapter().validate_python(_json.dumps(value)) == value
+    def test_requests_rejects_json_object_string(self):
+        with pytest.raises(ValidationError):
+            TypeAdapter(_requests_annotation()).validate_python(
+                json.dumps(self.REQUESTS[0])
+            )
 
 
 @pytest.mark.asyncio
