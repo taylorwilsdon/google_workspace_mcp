@@ -12,6 +12,7 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from gmail.gmail_tools import _forward_gmail_message_impl
+from core.utils import UserInputError
 
 
 def get_sent_mime_message(mock_service):
@@ -459,6 +460,40 @@ async def test_forward_attachment_download_failure_raises():
 
 
 @pytest.mark.asyncio
+async def test_forward_rejects_oversized_attachment_before_download(monkeypatch):
+    monkeypatch.setenv("WORKSPACE_MCP_MAX_FILE_BYTES", "100")
+    message = create_mock_message(
+        subject="Oversized attachment",
+        text_body="See attached.",
+        attachments=[
+            {
+                "filename": "huge.zip",
+                "mimeType": "application/zip",
+                "attachmentId": "att-large",
+                "size": 500,
+            }
+        ],
+    )
+    mock_service = create_mock_service(message)
+    attachment_get = mock_service.users().messages().attachments().get
+    attachment_get.reset_mock()
+    send_execute = mock_service.users().messages().send().execute
+    send_execute.reset_mock()
+
+    with pytest.raises(UserInputError, match="huge.zip.*too large"):
+        await _forward_gmail_message_impl(
+            service=mock_service,
+            message_id="msg-large",
+            to="recipient@example.com",
+            include_attachments=True,
+            user_google_email="me@example.com",
+        )
+
+    attachment_get.assert_not_called()
+    send_execute.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_forward_with_cc_bcc():
     """Forward with CC and BCC recipients"""
     message = create_mock_message(
@@ -508,3 +543,48 @@ async def test_forward_subject_override():
 
     sent = get_sent_mime_message(mock_service)
     assert sent["Subject"] == "Custom Subject"
+
+
+@pytest.mark.asyncio
+async def test_forward_as_draft_keeps_attachments_and_does_not_send():
+    """as_draft saves the forward, attachments included, without sending it."""
+    message = create_mock_message(
+        subject="Quarterly",
+        from_addr="alice@example.com",
+        to_addr="bob@example.com",
+        text_body="See attached.",
+        attachments=[
+            {
+                "filename": "report.pdf",
+                "mimeType": "application/pdf",
+                "attachmentId": "att1",
+            }
+        ],
+    )
+    mock_service = create_mock_service(
+        message,
+        attachments_data=[
+            {"data": base64.urlsafe_b64encode(b"%PDF-1.4").decode().rstrip("=")}
+        ],
+    )
+    mock_service.users().drafts().create().execute.return_value = {"id": "draft001"}
+
+    result = await _forward_gmail_message_impl(
+        service=mock_service,
+        message_id="msgdraft",
+        to=None,
+        user_google_email="me@example.com",
+        as_draft=True,
+    )
+
+    assert "Forward draft created" in result
+    assert "draft001" in result
+    mock_service.users().messages().send().execute.assert_not_called()
+
+    draft_body = mock_service.users().drafts().create.call_args.kwargs["body"]
+    drafted = message_from_bytes(base64.urlsafe_b64decode(draft_body["message"]["raw"]))
+    assert drafted["Subject"] == "Fwd: Quarterly"
+    assert drafted["To"] is None
+    _, attachments = get_body_and_attachments(drafted)
+    assert [a.get_filename() for a in attachments] == ["report.pdf"]
+    assert attachments[0].get_payload(decode=True) == b"%PDF-1.4"

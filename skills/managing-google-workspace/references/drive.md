@@ -29,6 +29,7 @@ Search for files and folders across My Drive and shared drives.
 | file_type | string | no | | Friendly name (`folder`, `document`/`doc`, `spreadsheet`/`sheet`, `presentation`/`slides`, `form`, `drawing`, `pdf`, `shortcut`, `script`, `site`, `jam`/`jamboard`) or raw MIME type |
 | detailed | boolean | no | true | Include size, modified time, and link |
 | order_by | string | no | | Sort order (see Sort Order below) |
+| include_trashed | boolean | no | false | Include files in the trash. A `trashed` clause (`=` or `!=`) written into `query` always wins over this flag |
 
 ### list_drive_items
 List files and folders in a specific folder.
@@ -82,7 +83,9 @@ Default export formats for Google native files:
 ## Create & Modify
 
 ### create_drive_file
-Create a new file in Drive.
+Create a new file in Drive without converting it to a native Google format. For
+Office-to-Google conversion, use `import_to_google_doc`,
+`import_to_google_sheets`, or `import_to_google_slides`.
 
 | Parameter | Type | Required | Default | Notes |
 |-----------|------|----------|---------|-------|
@@ -92,6 +95,13 @@ Create a new file in Drive.
 | folder_id | string | no | root | Parent folder ID |
 | mime_type | string | no | text/plain | MIME type of the file |
 | fileUrl | string | no | | Fetch content from this URL (file://, http://, https://) |
+| base64_content | string | no | | Standard base64-encoded binary content |
+| content_mime_type | string | with base64_content | | Source MIME type; Google-native MIME types are rejected |
+| base64_sha256 | string | no | | Optional SHA-256 integrity check for decoded binary content |
+
+The import tools also accept `base64_content` and optional `base64_sha256` for
+binary Office/OpenDocument sources. ZIP-based formats are checked for required
+members and CRC/decompression errors before Drive is called.
 
 ### create_drive_folder
 Create a new folder.
@@ -196,6 +206,8 @@ Search for a file by name and check if it has public link sharing enabled.
 ## Drive Search Query Operators
 
 The `query` parameter of `search_drive_files` uses Google Drive query syntax (e.g. `name contains`, `mimeType =`, `'id' in parents`, `modifiedTime >`, `trashed =`, `sharedWithMe`). Combine with `and`/`or`/`not`.
+
+**Trash:** both `search_drive_files` and `list_drive_items` exclude trashed files by default. To see trashed files, either pass `include_trashed=true` to `search_drive_files` or write an explicit `trashed = true` clause into `query` — an explicit clause always wins over the flag.
 
 ---
 

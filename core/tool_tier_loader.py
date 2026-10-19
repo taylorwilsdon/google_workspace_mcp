@@ -46,7 +46,7 @@ class ToolTierLoader:
         try:
             with open(self.config_path, "r", encoding="utf-8") as f:
                 self._tiers_config = yaml.safe_load(f)
-            logger.info(f"Loaded tool tiers configuration from {self.config_path}")
+            logger.debug(f"Loaded tool tiers configuration from {self.config_path}")
             return self._tiers_config
         except yaml.YAMLError as e:
             raise ValueError(f"Invalid YAML in tool tiers configuration: {e}")
@@ -189,7 +189,8 @@ def resolve_tools_from_tier(
     # Map back to service names
     service_names = loader.get_services_for_tools(tools)
 
-    logger.info(
+    # Debug level: the startup screen reports the tier, services and tool count.
+    logger.debug(
         f"Tier '{tier}' resolved to {len(tools)} tools across {len(service_names)} services: {sorted(service_names)}"
     )
 

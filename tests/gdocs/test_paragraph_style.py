@@ -7,11 +7,20 @@ Covers the helpers, validation, and batch manager integration.
 import pytest
 from unittest.mock import AsyncMock, Mock
 
+from gdocs import docs_tools
 from gdocs.docs_helpers import (
     build_paragraph_style,
     create_update_paragraph_style_request,
 )
 from gdocs.managers.validation_manager import ValidationManager
+
+
+def _unwrap(tool):
+    """Unwrap the decorated tool function to the original implementation."""
+    fn = tool.fn if hasattr(tool, "fn") else tool
+    while hasattr(fn, "__wrapped__"):
+        fn = fn.__wrapped__
+    return fn
 
 
 class TestBuildParagraphStyle:
@@ -51,6 +60,27 @@ class TestBuildParagraphStyle:
         )
         assert len(fields) == 3
         assert style["alignment"] == "CENTER"
+
+    def test_paragraph_border_applies_only_selected_edge(self):
+        style, fields = build_paragraph_style(
+            border_edges=["left"],
+            border_color="#FF0000",
+            border_width=2.5,
+            border_padding=4,
+            border_dash="DASH",
+        )
+
+        assert fields == ["borderLeft"]
+        assert style["borderLeft"] == {
+            "color": {"color": {"rgbColor": {"red": 1.0, "green": 0.0, "blue": 0.0}}},
+            "width": {"magnitude": 2.5, "unit": "PT"},
+            "padding": {"magnitude": 4, "unit": "PT"},
+            "dashStyle": "DASH",
+        }
+
+    def test_empty_border_edges_rejected(self):
+        with pytest.raises(ValueError, match="at least one edge"):
+            build_paragraph_style(border_edges=[], border_color="#FF0000")
 
 
 class TestCreateUpdateParagraphStyleRequest:
@@ -111,6 +141,25 @@ class TestValidateParagraphStyleParams:
         )
         assert not is_valid
         assert "mutually exclusive" in msg
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("border_width", float("nan")),
+            ("border_width", float("inf")),
+            ("border_padding", float("nan")),
+            ("border_padding", float("inf")),
+        ],
+    )
+    def test_non_finite_border_dimensions_rejected(self, vm, field, value):
+        is_valid, msg = vm.validate_paragraph_style_params(**{field: value})
+        assert not is_valid
+        assert f"{field} must be finite" in msg
+
+    def test_empty_border_edges_rejected(self, vm):
+        is_valid, msg = vm.validate_paragraph_style_params(border_edges=[])
+        assert not is_valid
+        assert "at least one edge" in msg
 
     def test_batch_validation_wired_up(self, vm):
         valid_ops = [
@@ -178,6 +227,20 @@ class TestBatchManagerIntegration:
         }
         assert "paragraph style 0-20" in desc
 
+    def test_border_only_request_has_useful_description(self, manager):
+        op = {
+            "type": "update_paragraph_style",
+            "start_index": 1,
+            "end_index": 20,
+            "border_edges": ["left"],
+            "border_width": 2,
+        }
+
+        _, desc = manager._build_operation_request(op, "update_paragraph_style")
+
+        assert "border edges: ['left']" in desc
+        assert "border width: 2pt" in desc
+
     @pytest.mark.asyncio
     async def test_end_to_end_execute(self, manager):
         manager._execute_batch_requests = AsyncMock(return_value={"replies": [{}]})
@@ -211,3 +274,41 @@ class TestBatchManagerIntegration:
         )
         assert success
         assert meta["operations_count"] == 1
+
+
+class TestPublicToolWiring:
+    @pytest.fixture()
+    def service(self):
+        mock_service = Mock()
+        mock_service.documents().batchUpdate().execute.return_value = {"replies": [{}]}
+        return mock_service
+
+    @pytest.mark.asyncio
+    async def test_list_formatting_does_not_bypass_border_validation(self, service):
+        result = await _unwrap(docs_tools.update_paragraph_style)(
+            service=service,
+            user_google_email="user@example.com",
+            document_id="a" * 25,
+            start_index=1,
+            end_index=10,
+            border_width=-1,
+            list_type="UNORDERED",
+        )
+
+        assert result == "Error: border_width must be positive, got -1"
+        service.documents.return_value.batchUpdate.return_value.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_list_only_formatting_remains_valid(self, service):
+        result = await _unwrap(docs_tools.update_paragraph_style)(
+            service=service,
+            user_google_email="user@example.com",
+            document_id="a" * 25,
+            start_index=1,
+            end_index=10,
+            list_type="UNORDERED",
+        )
+
+        assert "unordered list" in result
+        request = service.documents.return_value.batchUpdate.call_args.kwargs["body"]
+        assert "createParagraphBullets" in request["requests"][0]

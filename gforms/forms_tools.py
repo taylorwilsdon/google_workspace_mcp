@@ -10,6 +10,7 @@ import json
 from typing import List, Optional, Dict, Any
 
 
+from googleapiclient.errors import HttpError
 from mcp.types import ToolAnnotations
 
 from auth.service_decorator import require_google_service
@@ -148,15 +149,14 @@ async def create_form(
     Returns:
         str: Confirmation message with form ID and edit URL.
     """
-    logger.info(f"[create_form] Invoked. Email: '{user_google_email}', Title: {title}")
+    logger.info(
+        f"[create_form] Invoked. Email: '{user_google_email}', title_len={len(title)}"
+    )
 
     form_body: Dict[str, Any] = {"info": {"title": title}}
 
-    if description:
-        form_body["info"]["description"] = description
-
     if document_title:
-        form_body["info"]["document_title"] = document_title
+        form_body["info"]["documentTitle"] = document_title
 
     created_form = await asyncio.to_thread(
         service.forms().create(body=form_body).execute
@@ -170,6 +170,33 @@ async def create_form(
 
     confirmation_message = f"Successfully created form '{created_form.get('info', {}).get('title', title)}' for {user_google_email}. Form ID: {form_id}. Edit URL: {edit_url}. Responder URL: {responder_url}"
     logger.info(f"Form created successfully for {user_google_email}. ID: {form_id}")
+
+    if description:
+        # The form already exists, so surface its ID rather than inviting a duplicate create.
+        try:
+            await asyncio.to_thread(
+                service.forms()
+                .batchUpdate(
+                    formId=form_id,
+                    body={
+                        "requests": [
+                            {
+                                "updateFormInfo": {
+                                    "info": {"description": description},
+                                    "updateMask": "description",
+                                }
+                            }
+                        ]
+                    },
+                )
+                .execute
+            )
+        except HttpError as error:
+            logger.error(
+                f"[create_form] Description update failed for {form_id}: {error}"
+            )
+            return f"{confirmation_message}. Warning: the description was not applied ({error}). Set it with batch_update_form on form ID {form_id} instead of calling create_form again."
+
     return confirmation_message
 
 

@@ -248,7 +248,8 @@ def test_attachment_without_content_id_still_uses_mixed():
     image_parts = [p for p in parts if p.get_content_type() == "image/png"]
     assert len(image_parts) == 1
     img = image_parts[0]
-    assert img.get("Content-ID") is None, (
+    # Only the generated attachment id, never a caller-supplied cid.
+    assert img.get("Content-ID") == f"<{img.get('X-Attachment-Id')}>", (
         f"unexpected Content-ID on legacy attachment: {img.get('Content-ID')!r}"
     )
     disposition = img.get("Content-Disposition", "")
@@ -293,11 +294,15 @@ def test_mixed_inline_and_legacy_attachments():
     assert "multipart/mixed" in content_types
     assert "multipart/related" in content_types
 
-    # One image with Content-ID = hero, one without.
+    # One inline image with Content-ID = hero, one regular attachment whose
+    # Content-ID is its generated attachment id.
     image_parts = [p for p in parts if p.get_content_type() == "image/png"]
     assert len(image_parts) == 2
-    cids = {(p.get("Content-ID") or "").strip("<>") for p in image_parts}
-    assert cids == {"hero", ""}, f"expected one cid 'hero' and one empty, got {cids}"
+    inline = [p for p in image_parts if p.get_content_disposition() == "inline"]
+    regular = [p for p in image_parts if p.get_content_disposition() == "attachment"]
+    assert [p["Content-ID"].strip("<>") for p in inline] == ["hero"]
+    assert len(regular) == 1
+    assert regular[0]["Content-ID"] == f"<{regular[0]['X-Attachment-Id']}>"
 
 
 def test_plaintext_body_with_content_id_fallback():

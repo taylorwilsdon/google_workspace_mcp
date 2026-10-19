@@ -1,0 +1,519 @@
+{
+  "kind": "discovery#restDescription",
+  "discoveryVersion": "v1",
+  "id": "script:v1",
+  "name": "script",
+  "version": "v1",
+  "revision": "20260830",
+  "rootUrl": "https://script.googleapis.com/",
+  "servicePath": "",
+  "baseUrl": "https://script.googleapis.com/",
+  "batchPath": "batch",
+  "parameters": {
+    "prettyPrint": {
+      "type": "boolean",
+      "location": "query",
+      "default": "true",
+      "description": "Returns response with indentations and line breaks."
+    },
+    "upload_protocol": {
+      "description": "Upload protocol for media (e.g. \"raw\", \"multipart\").",
+      "location": "query",
+      "type": "string"
+    },
+    "$.xgafv": {
+      "type": "string",
+      "location": "query",
+      "description": "V1 error format.",
+      "enum": [
+        "1",
+        "2"
+      ],
+      "enumDescriptions": [
+        "v1 error format",
+        "v2 error format"
+      ]
+    },
+    "fields": {
+      "type": "string",
+      "location": "query",
+      "description": "Selector specifying which fields to include in a partial response."
+    },
+    "alt": {
+      "description": "Data format for response.",
+      "enum": [
+        "json",
+        "media",
+        "proto"
+      ],
+      "location": "query",
+      "type": "string",
+      "enumDescriptions": [
+        "Responses with Content-Type of application/json",
+        "Media download with context-dependent Content-Type",
+        "Responses with Content-Type of application/x-protobuf"
+      ],
+      "default": "json"
+    },
+    "uploadType": {
+      "location": "query",
+      "description": "Legacy upload protocol for media (e.g. \"media\", \"multipart\").",
+      "type": "string"
+    },
+    "quotaUser": {
+      "type": "string",
+      "description": "Available to use for quota purposes for server-side applications. Can be any arbitrary string assigned to a user, but should not exceed 40 characters.",
+      "location": "query"
+    },
+    "key": {
+      "location": "query",
+      "type": "string",
+      "description": "API key. Your API key identifies your project and provides you with API access, quota, and reports. Required unless you provide an OAuth 2.0 token."
+    },
+    "oauth_token": {
+      "location": "query",
+      "type": "string",
+      "description": "OAuth 2.0 token for the current user."
+    },
+    "access_token": {
+      "location": "query",
+      "description": "OAuth access token.",
+      "type": "string"
+    },
+    "callback": {
+      "type": "string",
+      "description": "JSONP",
+      "location": "query"
+    }
+  },
+  "schemas": {
+    "GoogleAppsScriptTypeProcess": {
+      "id": "GoogleAppsScriptTypeProcess",
+      "type": "object",
+      "properties": {
+        "functionName": {
+          "description": "Name of the function the started the execution.",
+          "type": "string"
+        },
+        "runtimeVersion": {
+          "type": "string",
+          "enumDescriptions": [
+            "Runtime version unset / unknown.",
+            "Legacy rhino version of the Apps script runtime",
+            "Current default V8 version of the apps script runtime."
+          ],
+          "enum": [
+            "RUNTIME_VERSION_UNSPECIFIED",
+            "DEPRECATED_ES5",
+            "V8"
+          ],
+          "description": "Which version of maestro to use to execute the script."
+        },
+        "processType": {
+          "description": "The executions type.",
+          "enum": [
+            "PROCESS_TYPE_UNSPECIFIED",
+            "ADD_ON",
+            "EXECUTION_API",
+            "TIME_DRIVEN",
+            "TRIGGER",
+            "WEBAPP",
+            "EDITOR",
+            "SIMPLE_TRIGGER",
+            "MENU",
+            "BATCH_TASK"
+          ],
+          "enumDescriptions": [
+            "Unspecified type.",
+            "The process was started from an add-on entry point.",
+            "The process was started using the Apps Script API.",
+            "The process was started from a time-based trigger.",
+            "The process was started from an event-based trigger.",
+            "The process was started from a web app entry point.",
+            "The process was started using the Apps Script IDE.",
+            "The process was started from a G Suite simple trigger.",
+            "The process was started from a G Suite menu item.",
+            "The process was started as a task in a batch job."
+          ],
+          "type": "string"
+        },
+        "projectName": {
+          "type": "string",
+          "description": "Name of the script being executed."
+        },
+        "startTime": {
+          "type": "string",
+          "description": "Time the execution started.",
+          "format": "google-datetime"
+        },
+        "userAccessLevel": {
+          "description": "The executing users access level to the script.",
+          "enum": [
+            "USER_ACCESS_LEVEL_UNSPECIFIED",
+            "NONE",
+            "READ",
+            "WRITE",
+            "OWNER"
+          ],
+          "type": "string",
+          "enumDescriptions": [
+            "User access level unspecified",
+            "The user has no access.",
+            "The user has read-only access.",
+            "The user has write access.",
+            "The user is an owner."
+          ]
+        },
+        "duration": {
+          "description": "Duration the execution spent executing.",
+          "type": "string",
+          "format": "google-duration"
+        },
+        "processStatus": {
+          "enumDescriptions": [
+            "Unspecified status.",
+            "The process is currently running.",
+            "The process has paused.",
+            "The process has completed.",
+            "The process was cancelled.",
+            "The process failed.",
+            "The process timed out.",
+            "Process status unknown.",
+            "The process is delayed, waiting for quota.",
+            "AppsScript executions are disabled by Admin."
+          ],
+          "description": "The executions status.",
+          "type": "string",
+          "enum": [
+            "PROCESS_STATUS_UNSPECIFIED",
+            "RUNNING",
+            "PAUSED",
+            "COMPLETED",
+            "CANCELED",
+            "FAILED",
+            "TIMED_OUT",
+            "UNKNOWN",
+            "DELAYED",
+            "EXECUTION_DISABLED"
+          ]
+        }
+      },
+      "description": "Representation of a single script process execution that was started from the script editor, a trigger, an application, or using the Apps Script API. This is distinct from the `Operation` resource, which only represents executions started via the Apps Script API."
+    },
+    "ListScriptProcessesResponse": {
+      "properties": {
+        "nextPageToken": {
+          "description": "Token for the next page of results. If empty, there are no more pages remaining.",
+          "type": "string"
+        },
+        "processes": {
+          "type": "array",
+          "items": {
+            "$ref": "GoogleAppsScriptTypeProcess"
+          },
+          "description": "List of processes matching request parameters."
+        }
+      },
+      "type": "object",
+      "description": "Response with the list of Process resources.",
+      "id": "ListScriptProcessesResponse"
+    },
+    "ListUserProcessesResponse": {
+      "id": "ListUserProcessesResponse",
+      "properties": {
+        "processes": {
+          "items": {
+            "$ref": "GoogleAppsScriptTypeProcess"
+          },
+          "description": "List of processes matching request parameters.",
+          "type": "array"
+        },
+        "nextPageToken": {
+          "description": "Token for the next page of results. If empty, there are no more pages remaining.",
+          "type": "string"
+        }
+      },
+      "description": "Response with the list of Process resources.",
+      "type": "object"
+    }
+  },
+  "resources": {
+    "processes": {
+      "methods": {
+        "listScriptProcesses": {
+          "response": {
+            "$ref": "ListScriptProcessesResponse"
+          },
+          "scopes": [
+            "https://www.googleapis.com/auth/script.processes"
+          ],
+          "httpMethod": "GET",
+          "path": "v1/processes:listScriptProcesses",
+          "parameterOrder": [],
+          "description": "List information about a script's executed processes, such as process type and current status.",
+          "id": "script.processes.listScriptProcesses",
+          "flatPath": "v1/processes:listScriptProcesses",
+          "parameters": {
+            "scriptProcessFilter.functionName": {
+              "type": "string",
+              "location": "query",
+              "description": "Optional field used to limit returned processes to those originating from a script function with the given function name."
+            },
+            "pageSize": {
+              "description": "The maximum number of returned processes per page of results. Defaults to 50.",
+              "location": "query",
+              "type": "integer",
+              "format": "int32"
+            },
+            "scriptId": {
+              "description": "The script ID of the project whose processes are listed.",
+              "type": "string",
+              "location": "query"
+            },
+            "scriptProcessFilter.userAccessLevels": {
+              "repeated": true,
+              "enum": [
+                "USER_ACCESS_LEVEL_UNSPECIFIED",
+                "NONE",
+                "READ",
+                "WRITE",
+                "OWNER"
+              ],
+              "type": "string",
+              "location": "query",
+              "description": "Optional field used to limit returned processes to those having one of the specified user access levels.",
+              "enumDescriptions": [
+                "User access level unspecified",
+                "The user has no access.",
+                "The user has read-only access.",
+                "The user has write access.",
+                "The user is an owner."
+              ]
+            },
+            "scriptProcessFilter.deploymentId": {
+              "type": "string",
+              "location": "query",
+              "description": "Optional field used to limit returned processes to those originating from projects with a specific deployment ID."
+            },
+            "scriptProcessFilter.statuses": {
+              "type": "string",
+              "repeated": true,
+              "description": "Optional field used to limit returned processes to those having one of the specified process statuses.",
+              "enumDescriptions": [
+                "Unspecified status.",
+                "The process is currently running.",
+                "The process has paused.",
+                "The process has completed.",
+                "The process was cancelled.",
+                "The process failed.",
+                "The process timed out.",
+                "Process status unknown.",
+                "The process is delayed, waiting for quota.",
+                "AppsScript executions are disabled by Admin."
+              ],
+              "enum": [
+                "PROCESS_STATUS_UNSPECIFIED",
+                "RUNNING",
+                "PAUSED",
+                "COMPLETED",
+                "CANCELED",
+                "FAILED",
+                "TIMED_OUT",
+                "UNKNOWN",
+                "DELAYED",
+                "EXECUTION_DISABLED"
+              ],
+              "location": "query"
+            },
+            "pageToken": {
+              "type": "string",
+              "description": "The token for continuing a previous list request on the next page. This should be set to the value of `nextPageToken` from a previous response.",
+              "location": "query"
+            },
+            "scriptProcessFilter.endTime": {
+              "location": "query",
+              "format": "google-datetime",
+              "description": "Optional field used to limit returned processes to those that completed on or before the given timestamp.",
+              "type": "string"
+            },
+            "scriptProcessFilter.types": {
+              "type": "string",
+              "repeated": true,
+              "description": "Optional field used to limit returned processes to those having one of the specified process types.",
+              "location": "query",
+              "enum": [
+                "PROCESS_TYPE_UNSPECIFIED",
+                "ADD_ON",
+                "EXECUTION_API",
+                "TIME_DRIVEN",
+                "TRIGGER",
+                "WEBAPP",
+                "EDITOR",
+                "SIMPLE_TRIGGER",
+                "MENU",
+                "BATCH_TASK"
+              ],
+              "enumDescriptions": [
+                "Unspecified type.",
+                "The process was started from an add-on entry point.",
+                "The process was started using the Apps Script API.",
+                "The process was started from a time-based trigger.",
+                "The process was started from an event-based trigger.",
+                "The process was started from a web app entry point.",
+                "The process was started using the Apps Script IDE.",
+                "The process was started from a G Suite simple trigger.",
+                "The process was started from a G Suite menu item.",
+                "The process was started as a task in a batch job."
+              ]
+            },
+            "scriptProcessFilter.startTime": {
+              "type": "string",
+              "location": "query",
+              "format": "google-datetime",
+              "description": "Optional field used to limit returned processes to those that were started on or after the given timestamp."
+            }
+          }
+        },
+        "list": {
+          "httpMethod": "GET",
+          "id": "script.processes.list",
+          "flatPath": "v1/processes",
+          "parameters": {
+            "userProcessFilter.projectName": {
+              "type": "string",
+              "description": "Optional field used to limit returned processes to those originating from projects with project names containing a specific string.",
+              "location": "query"
+            },
+            "userProcessFilter.userAccessLevels": {
+              "type": "string",
+              "location": "query",
+              "description": "Optional field used to limit returned processes to those having one of the specified user access levels.",
+              "enumDescriptions": [
+                "User access level unspecified",
+                "The user has no access.",
+                "The user has read-only access.",
+                "The user has write access.",
+                "The user is an owner."
+              ],
+              "repeated": true,
+              "enum": [
+                "USER_ACCESS_LEVEL_UNSPECIFIED",
+                "NONE",
+                "READ",
+                "WRITE",
+                "OWNER"
+              ]
+            },
+            "pageSize": {
+              "format": "int32",
+              "type": "integer",
+              "description": "The maximum number of returned processes per page of results. Defaults to 50.",
+              "location": "query"
+            },
+            "userProcessFilter.deploymentId": {
+              "type": "string",
+              "location": "query",
+              "description": "Optional field used to limit returned processes to those originating from projects with a specific deployment ID."
+            },
+            "userProcessFilter.scriptId": {
+              "location": "query",
+              "description": "Optional field used to limit returned processes to those originating from projects with a specific script ID.",
+              "type": "string"
+            },
+            "userProcessFilter.types": {
+              "description": "Optional field used to limit returned processes to those having one of the specified process types.",
+              "enum": [
+                "PROCESS_TYPE_UNSPECIFIED",
+                "ADD_ON",
+                "EXECUTION_API",
+                "TIME_DRIVEN",
+                "TRIGGER",
+                "WEBAPP",
+                "EDITOR",
+                "SIMPLE_TRIGGER",
+                "MENU",
+                "BATCH_TASK"
+              ],
+              "repeated": true,
+              "location": "query",
+              "type": "string",
+              "enumDescriptions": [
+                "Unspecified type.",
+                "The process was started from an add-on entry point.",
+                "The process was started using the Apps Script API.",
+                "The process was started from a time-based trigger.",
+                "The process was started from an event-based trigger.",
+                "The process was started from a web app entry point.",
+                "The process was started using the Apps Script IDE.",
+                "The process was started from a G Suite simple trigger.",
+                "The process was started from a G Suite menu item.",
+                "The process was started as a task in a batch job."
+              ]
+            },
+            "userProcessFilter.statuses": {
+              "enum": [
+                "PROCESS_STATUS_UNSPECIFIED",
+                "RUNNING",
+                "PAUSED",
+                "COMPLETED",
+                "CANCELED",
+                "FAILED",
+                "TIMED_OUT",
+                "UNKNOWN",
+                "DELAYED",
+                "EXECUTION_DISABLED"
+              ],
+              "location": "query",
+              "type": "string",
+              "enumDescriptions": [
+                "Unspecified status.",
+                "The process is currently running.",
+                "The process has paused.",
+                "The process has completed.",
+                "The process was cancelled.",
+                "The process failed.",
+                "The process timed out.",
+                "Process status unknown.",
+                "The process is delayed, waiting for quota.",
+                "AppsScript executions are disabled by Admin."
+              ],
+              "description": "Optional field used to limit returned processes to those having one of the specified process statuses.",
+              "repeated": true
+            },
+            "userProcessFilter.functionName": {
+              "location": "query",
+              "type": "string",
+              "description": "Optional field used to limit returned processes to those originating from a script function with the given function name."
+            },
+            "userProcessFilter.endTime": {
+              "format": "google-datetime",
+              "location": "query",
+              "type": "string",
+              "description": "Optional field used to limit returned processes to those that completed on or before the given timestamp."
+            },
+            "userProcessFilter.startTime": {
+              "description": "Optional field used to limit returned processes to those that were started on or after the given timestamp.",
+              "format": "google-datetime",
+              "location": "query",
+              "type": "string"
+            },
+            "pageToken": {
+              "location": "query",
+              "type": "string",
+              "description": "The token for continuing a previous list request on the next page. This should be set to the value of `nextPageToken` from a previous response."
+            }
+          },
+          "scopes": [
+            "https://www.googleapis.com/auth/script.processes"
+          ],
+          "response": {
+            "$ref": "ListUserProcessesResponse"
+          },
+          "parameterOrder": [],
+          "description": "List information about processes made by or on behalf of a user, such as process type and current status.",
+          "path": "v1/processes"
+        }
+      }
+    }
+  }
+}

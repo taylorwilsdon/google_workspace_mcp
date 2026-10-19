@@ -7,7 +7,9 @@ import socket
 import sys
 from functools import partial
 from importlib import metadata, import_module
+from typing import NoReturn
 from dotenv import load_dotenv
+from core.startup_ui import StartupDisplay, collapse_home, wordmark_lines
 
 # Prevent any stray startup output on macOS (e.g. platform identifiers) from
 # corrupting the MCP JSON-RPC handshake on stdout. We capture anything written
@@ -36,6 +38,8 @@ def _load_startup_dependencies():
     from core.tool_tier_loader import resolve_tools_from_tier
     from core.tool_registry import (
         set_enabled_tools as set_enabled_tool_names,
+        resolve_disabled_tools,
+        set_disabled_tools,
         wrap_server_tool_method,
         filter_server_tools,
     )
@@ -56,10 +60,15 @@ def _load_startup_dependencies():
         configure_server_for_http,
         resolve_tools_from_tier,
         set_enabled_tool_names,
+        resolve_disabled_tools,
+        set_disabled_tools,
         wrap_server_tool_method,
         filter_server_tools,
     )
 
+
+dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+load_dotenv(dotenv_path=dotenv_path)
 
 (
     get_selected_backend,
@@ -77,26 +86,42 @@ def _load_startup_dependencies():
     configure_server_for_http,
     resolve_tools_from_tier,
     set_enabled_tool_names,
+    resolve_disabled_tools,
+    set_disabled_tools,
     wrap_server_tool_method,
     filter_server_tools,
 ) = _load_startup_dependencies()
-
-dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
-load_dotenv(dotenv_path=dotenv_path)
 
 # Suppress googleapiclient discovery cache warning
 logging.getLogger("googleapiclient.discovery_cache").setLevel(logging.ERROR)
 
 # Suppress httpx/httpcore INFO logs that leak access tokens in URLs
-# (e.g. tokeninfo?access_token=ya29.xxx)
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("httpcore").setLevel(logging.WARNING)
+# (e.g. tokeninfo?access_token=ya29.xxx). FastMCP 4 uses the httpx2 fork.
+for _http_logger in ("httpx", "httpcore", "httpx2", "httpcore2"):
+    logging.getLogger(_http_logger).setLevel(logging.WARNING)
 
 reload_oauth_config()
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+# WORKSPACE_MCP_LOG_LEVEL=DEBUG surfaces the debug-level companion lines that
+# carry user text (search queries, find/replace strings) which INFO deliberately
+# omits — see tests/test_log_hygiene.py. Default stays INFO. Allowlisted, not
+# getattr'd: getattr(logging, <arbitrary env value>) can resolve to a non-level
+# attribute (e.g. BASIC_FORMAT) and crash basicConfig at startup.
+_LOG_LEVEL_NAMES = {"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"}
+_log_level_name = os.environ.get("WORKSPACE_MCP_LOG_LEVEL", "INFO").upper()
+_log_level = (
+    getattr(logging, _log_level_name)
+    if _log_level_name in _LOG_LEVEL_NAMES
+    else logging.INFO
 )
+logging.basicConfig(
+    level=_log_level,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+# Imports above may already have installed a root handler, which makes
+# basicConfig a no-op. Set the level explicitly so the environment override
+# works regardless of import order without replacing embedding-app handlers.
+logging.getLogger().setLevel(_log_level)
 logger = logging.getLogger(__name__)
 
 install_noisy_log_filters()
@@ -129,6 +154,18 @@ def resolve_callback_port_for_transport(transport: str) -> None:
         os.environ.pop("WORKSPACE_MCP_RESOLVED_PORT", None)
 
 
+# Advisories raised while resolving configuration. They are queued rather than
+# logged so the startup screen can present them as one block instead of letting
+# them race ahead of the banner on stderr.
+STARTUP_NOTICES: list[str] = []
+
+
+def add_startup_notice(message: str) -> None:
+    """Queue an advisory for the startup screen, keeping it in the debug log."""
+    STARTUP_NOTICES.append(message)
+    logger.debug(message)
+
+
 def resolve_bind_host_for_transport(transport: str) -> str:
     """Choose a safe default bind host for the selected transport/auth mode."""
     configured_host = os.getenv("WORKSPACE_MCP_HOST")
@@ -142,15 +179,15 @@ def resolve_bind_host_for_transport(transport: str) -> str:
 
     if configured_host:
         if configured_host not in {"localhost", "127.0.0.1", "::1"}:
-            logger.warning(
-                "Legacy streamable-http mode has no MCP-level auth provider and is "
-                "bound to %s because WORKSPACE_MCP_HOST was explicitly set. "
-                "Use MCP_ENABLE_OAUTH21=true for remotely reachable HTTP deployments.",
-                configured_host,
+            add_startup_notice(
+                f"Legacy streamable-http mode has no MCP-level auth provider and is "
+                f"bound to {configured_host} because WORKSPACE_MCP_HOST was explicitly "
+                f"set. Use MCP_ENABLE_OAUTH21=true for remotely reachable HTTP "
+                f"deployments."
             )
         return configured_host
 
-    logger.warning(
+    add_startup_notice(
         "Legacy streamable-http mode has no MCP-level auth provider; binding to "
         "127.0.0.1 by default. Set WORKSPACE_MCP_HOST explicitly only for trusted "
         "networks, or use MCP_ENABLE_OAUTH21=true for remote HTTP deployments."
@@ -192,6 +229,23 @@ SERVICE_MODULES = {
 }
 VALID_SERVICES = frozenset(SERVICE_MODULES)
 
+# Every icon is a double-width emoji with no variation selector, so the startup
+# service grid stays aligned across terminals.
+SERVICE_ICONS = {
+    "gmail": "📧",
+    "drive": "📁",
+    "calendar": "📅",
+    "docs": "📄",
+    "sheets": "📊",
+    "chat": "💬",
+    "forms": "📝",
+    "slides": "🎥",
+    "tasks": "📋",
+    "contacts": "👤",
+    "search": "🔍",
+    "appscript": "📜",
+}
+
 
 def safe_print(text):
     """Print to stderr, falling back to debug logging when running as an MCP server."""
@@ -206,6 +260,22 @@ def safe_print(text):
         print(text, file=sys.stderr)
     except UnicodeEncodeError:
         print(text.encode("ascii", errors="replace").decode(), file=sys.stderr)
+
+
+def fatal(ui: StartupDisplay, text: str, *details: str) -> NoReturn:
+    """Report an unrecoverable startup problem on every channel, then exit.
+
+    The startup screen is discarded when stderr is not a TTY (see safe_print),
+    which is exactly how an MCP client runs the server. Logging the same text at
+    ERROR keeps the reason on stderr for the client log and in
+    mcp_server_debug.log, so a failed launch is never indistinguishable from a
+    server that simply stopped talking.
+    """
+    ui.step(text, state="fail")
+    for detail in details:
+        ui.detail(detail)
+    logger.error("Startup aborted: %s", ". ".join([text, *details]))
+    sys.exit(1)
 
 
 def configure_safe_logging():
@@ -265,6 +335,99 @@ def narrow_permissions_to_services(
     }
 
 
+def _optional_field(name: str, *, path: bool = False) -> tuple[str, str, str]:
+    """Describe an optional env var as a (label, value, state) display row."""
+    value = os.getenv(name)
+    if not value:
+        return name, "not set", "off"
+    return name, collapse_home(os.path.expanduser(value)) if path else value, "on"
+
+
+def _mode_field(
+    label: str, env_var: str, enabled: bool, *, warn_when_on: bool = False
+) -> tuple[str, str, str]:
+    """Describe a resolved mode as a (label, value, state) row naming its env var."""
+    if not enabled:
+        return label, f"off · {env_var}", "off"
+    return label, f"on  · {env_var}", "warn" if warn_when_on else "on"
+
+
+def _disabled_tools_field(disabled_tools: set[str]) -> tuple[str, str, str]:
+    """Describe the resolved per-tool block list as a display row."""
+    env_var = "WORKSPACE_MCP_DISABLED_TOOLS"
+    if not disabled_tools:
+        return "Disabled tools", f"none · {env_var}", "off"
+    return "Disabled tools", f"{', '.join(sorted(disabled_tools))} · {env_var}", "on"
+
+
+def _client_secret_field() -> tuple[str, str, str]:
+    """Describe the OAuth client secret without revealing it."""
+    name = "GOOGLE_OAUTH_CLIENT_SECRET"
+    secret = os.getenv(name)
+    if not secret:
+        # Report the resolved configuration rather than re-reading the file, so
+        # the banner cannot claim a secret the OAuth config declined to use.
+        config = get_oauth_config()
+        if config.client_secret and config.client_secrets_file:
+            return name, f"set · via {collapse_home(config.client_secrets_file)}", "on"
+        return name, "not set", "off"
+    if len(secret) <= 8:
+        return name, "set · unexpectedly short", "warn"
+    return name, f"{secret[:4]}…{secret[-4:]}", "on"
+
+
+def _credentials_dir_field() -> tuple[str, str, str]:
+    """Describe the credentials directory, mirroring credential_store resolution."""
+    for name in ("WORKSPACE_MCP_CREDENTIALS_DIR", "GOOGLE_MCP_CREDENTIALS_DIR"):
+        value = os.getenv(name)
+        if value:
+            return name, collapse_home(os.path.expanduser(value)), "on"
+    default = os.path.join(
+        os.path.expanduser("~"), ".google_workspace_mcp", "credentials"
+    )
+    return "WORKSPACE_MCP_CREDENTIALS_DIR", collapse_home(default), "off"
+
+
+def describe_credential_config() -> list[tuple[str, str, str]]:
+    """Build the credential rows shown in the startup configuration section."""
+    return [
+        _optional_field("GOOGLE_OAUTH_CLIENT_ID"),
+        _client_secret_field(),
+        _optional_field("GOOGLE_CLIENT_SECRET_PATH", path=True),
+        _optional_field("GOOGLE_SERVICE_ACCOUNT_KEY_FILE", path=True),
+        _optional_field("USER_GOOGLE_EMAIL"),
+        _credentials_dir_field(),
+    ]
+
+
+def describe_mode_config(
+    disabled_tools: set[str] = frozenset(), *, single_user: bool = False
+) -> list[tuple[str, str, str]]:
+    """Build the mode rows shown in the startup configuration section.
+
+    Rows report the modes the server resolved, not a re-parse of the env vars,
+    so the banner cannot disagree with how the server actually runs.
+    """
+    config = get_oauth_config()
+    return [
+        _mode_field("OAuth 2.1", "MCP_ENABLE_OAUTH21", config.is_oauth21_enabled()),
+        _mode_field("Stateless", "WORKSPACE_MCP_STATELESS_MODE", config.stateless_mode),
+        _mode_field(
+            "Single-user",
+            "MCP_SINGLE_USER_MODE",
+            single_user or os.getenv("MCP_SINGLE_USER_MODE") == "1",
+        ),
+        # oauthlib treats any non-empty value as enabled, "false" included.
+        _mode_field(
+            "Insecure transport",
+            "OAUTHLIB_INSECURE_TRANSPORT",
+            bool(os.getenv("OAUTHLIB_INSECURE_TRANSPORT")),
+            warn_when_on=True,
+        ),
+        _disabled_tools_field(disabled_tools),
+    ]
+
+
 def _restore_stdout() -> None:
     """Restore the real stdout and replay any captured output to stderr."""
     captured_stdout = sys.stdout
@@ -298,6 +461,11 @@ def main():
     # Configure safe logging for Windows Unicode handling
     configure_safe_logging()
 
+    # Enable OpenTelemetry tracing when an OTLP endpoint is configured.
+    from core.telemetry import configure_telemetry
+
+    configure_telemetry()
+
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="Google Workspace MCP Server")
     parser.add_argument(
@@ -315,6 +483,16 @@ def main():
         "--tool-tier",
         choices=["core", "extended", "complete"],
         help="Load tools based on tier level. Can be combined with --tools to filter services.",
+    )
+    parser.add_argument(
+        "--disabled-tools",
+        nargs="+",
+        metavar="TOOL_NAME",
+        help=(
+            "Block individual tools by name regardless of tier or permission selection. "
+            "Composes with every other filtering option. "
+            "Env var: WORKSPACE_MCP_DISABLED_TOOLS (comma-separated)."
+        ),
     )
     parser.add_argument(
         "--transport",
@@ -340,6 +518,16 @@ def main():
         ),
     )
     args = parser.parse_args()
+
+    # Validate the memory-safety settings once at startup. Tool helpers parse them
+    # defensively as well, but a deployment typo must not silently disable the
+    # configured limit.
+    from core.file_limits import validate_file_limit_settings
+
+    try:
+        validate_file_limit_settings()
+    except ValueError as exc:
+        parser.error(str(exc))
 
     # Env var fallbacks for plugin users who configure via userConfig.
     # Non-empty but invalid values fail closed to prevent silent access widening.
@@ -377,6 +565,9 @@ def main():
                     "WORKSPACE_MCP_TOOL_TIER", _env_tier, "core, extended, or complete"
                 )
             args.tool_tier = _env_tier
+    # Subtractive, so it needs no conflict handling against the allowlist flags.
+    disabled_tools = resolve_disabled_tools(args.disabled_tools)
+    set_disabled_tools(disabled_tools)
     if not args.read_only and not _cli_has_permissions:
         _env_ro = os.getenv("WORKSPACE_MCP_READ_ONLY", "").strip().lower()
         if _env_ro:
@@ -475,108 +666,42 @@ def main():
     mode = "single-user" if args.single_user else "multi-user"
     pyver = sys.version.split()[0]
 
-    # ANSI color codes for Google brand colors
-    B = "\033[1;34m"  # Blue
-    R = "\033[1;31m"  # Red
-    Y = "\033[1;33m"  # Yellow
-    G = "\033[1;32m"  # Green
-    W = "\033[1;37m"  # White
-    C = "\033[0;36m"  # Cyan
-    D = "\033[0;90m"  # Dim
-    RST = "\033[0m"  # Reset
-
-    info_lines = [f"{C}{args.transport}  ·  {mode}{RST}"]
-    if args.transport == "streamable-http":
-        info_lines.append(f"{C}{display_url}{RST}")
+    flags = []
     if args.read_only:
-        info_lines.append(f"{Y}read-only{RST}")
+        flags.append("read-only")
     if args.permissions:
-        info_lines.append(f"{Y}granular permissions{RST}")
+        flags.append("granular permissions")
 
-    banner = (
-        f"\n{D}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{RST}\n"
-        f"\n"
-        f"     {B}██████{R}╗{RST}       {W}Google Workspace{RST}\n"
-        f"     {B}██{RST}╔════╝       {W}MCP Server{RST}  {C}v{version}{RST}\n"
-        f"     {B}██{RST}║  {Y}███{RST}╗\n"
-        f"     {B}██{RST}║   {Y}██{RST}║      {info_lines[0]}\n"
-        f"     {B}╚█████{G}█╔╝{RST}      {C}Python {pyver}{RST}\n"
-        f"      {B}╚════{G}═╝{RST}"
-    )
-    for line in info_lines[1:]:
-        banner += f"\n                       {line}"
-    banner += (
-        f"\n\n{D}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{RST}\n"
-    )
-    safe_print(banner)
-
-    # Active Configuration
-    safe_print("⚙️ Active Configuration:")
-
-    # Redact client secret for security
-    client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "Not Set")
-    redacted_secret = (
-        f"{client_secret[:4]}...{client_secret[-4:]}"
-        if len(client_secret) > 8
-        else "Invalid or too short"
-    )
-
-    # Determine credentials directory (same logic as credential_store.py)
-    workspace_creds_dir = os.getenv("WORKSPACE_MCP_CREDENTIALS_DIR")
-    google_creds_dir = os.getenv("GOOGLE_MCP_CREDENTIALS_DIR")
-    if workspace_creds_dir:
-        creds_dir_display = os.path.expanduser(workspace_creds_dir)
-        creds_dir_source = "WORKSPACE_MCP_CREDENTIALS_DIR"
-    elif google_creds_dir:
-        creds_dir_display = os.path.expanduser(google_creds_dir)
-        creds_dir_source = "GOOGLE_MCP_CREDENTIALS_DIR"
-    else:
-        creds_dir_display = os.path.join(
-            os.path.expanduser("~"), ".google_workspace_mcp", "credentials"
+    ui = StartupDisplay(safe_print)
+    ui.blank()
+    ui.rule()
+    ui.blank()
+    ui.banner(
+        wordmark_lines(
+            ui,
+            version=version,
+            transport=args.transport,
+            mode=mode,
+            python_version=pyver,
+            url=display_url if args.transport == "streamable-http" else None,
+            flags=flags,
         )
-        creds_dir_source = "default"
+    )
 
-    config_vars = {
-        "GOOGLE_OAUTH_CLIENT_ID": os.getenv("GOOGLE_OAUTH_CLIENT_ID", "Not Set"),
-        "GOOGLE_OAUTH_CLIENT_SECRET": redacted_secret,
-        "USER_GOOGLE_EMAIL": os.getenv("USER_GOOGLE_EMAIL", "Not Set"),
-        "CREDENTIALS_DIR": f"{creds_dir_display} ({creds_dir_source})",
-        "MCP_SINGLE_USER_MODE": os.getenv("MCP_SINGLE_USER_MODE", "false"),
-        "MCP_ENABLE_OAUTH21": os.getenv("MCP_ENABLE_OAUTH21", "false"),
-        "WORKSPACE_MCP_STATELESS_MODE": os.getenv(
-            "WORKSPACE_MCP_STATELESS_MODE", "false"
-        ),
-        "OAUTHLIB_INSECURE_TRANSPORT": os.getenv(
-            "OAUTHLIB_INSECURE_TRANSPORT", "false"
-        ),
-        "GOOGLE_CLIENT_SECRET_PATH": os.getenv("GOOGLE_CLIENT_SECRET_PATH", "Not Set"),
-        "GOOGLE_SERVICE_ACCOUNT_KEY_FILE": os.getenv(
-            "GOOGLE_SERVICE_ACCOUNT_KEY_FILE", "Not Set"
-        ),
-    }
-
-    for key, value in config_vars.items():
-        safe_print(f"   - {key}: {value}")
-    safe_print("")
+    ui.section("Configuration")
+    ui.fields(
+        [
+            ("Credentials", describe_credential_config()),
+            (
+                "Modes",
+                describe_mode_config(disabled_tools, single_user=args.single_user),
+            ),
+        ]
+    )
 
     # Import tool modules to register them with the MCP server via decorators.
     tool_imports = {
         svc: partial(import_module, mod) for svc, mod in SERVICE_MODULES.items()
-    }
-
-    tool_icons = {
-        "gmail": "📧",
-        "drive": "📁",
-        "calendar": "📅",
-        "docs": "📄",
-        "sheets": "📊",
-        "chat": "💬",
-        "forms": "📝",
-        "slides": "🖼️",
-        "tasks": "✓",
-        "contacts": "👤",
-        "search": "🔍",
-        "appscript": "📜",
     }
 
     # Determine which tools to import based on arguments
@@ -625,8 +750,7 @@ def main():
             # Set the specific tools that should be registered
             set_enabled_tool_names(set(tier_tools))
         except Exception as e:
-            safe_print(f"❌ Error loading tools for tier '{args.tool_tier}': {e}")
-            sys.exit(1)
+            fatal(ui, f"Error loading tools for tier '{args.tool_tier}'", str(e))
     elif args.tools is not None:
         # Use explicit tool list without tier filtering
         tools_to_import = args.tools
@@ -656,73 +780,75 @@ def main():
             logger.error("Failed to import tool '%s': %s", tool, exc, exc_info=True)
             failed.append((tool, exc))
 
-    tool_summary = " ".join(f"{tool_icons.get(t, '🔧')} {t.title()}" for t in loaded)
-    safe_print(f"🛠️  Loaded {len(loaded)} services: {tool_summary}")
+    # Filter tools based on tier configuration (if tier-based loading is enabled)
+    tools_removed = filter_server_tools(server)
+
+    ui.section("Services")
+    ui.grid([(SERVICE_ICONS.get(t, "🔧"), t.title()) for t in loaded])
+    ui.blank()
+
+    summary = f"{len(loaded)} of {len(tool_imports)} services loaded"
+    if args.tool_tier is not None:
+        summary += f" · tier {args.tool_tier}"
+    if tools_removed:
+        summary += f" · {tools_removed} tools filtered out"
+    ui.step(summary)
     for tool, exc in failed:
-        safe_print(f"   ⚠️ Failed: {tool.title()} ({exc})")
+        ui.step(f"{tool.title()} failed to load", state="fail")
+        ui.detail(str(exc))
 
     if perms:
-        perm_summary = " | ".join(
-            f"{tool_icons.get(svc, ' ')}{svc}:{lvl}"
-            for svc, lvl in sorted(perms.items())
+        ui.blank()
+        ui.heading("Permissions")
+        ui.grid(
+            [
+                (SERVICE_ICONS.get(service, "🔧"), f"{service}:{level}")
+                for service, level in sorted(perms.items())
+            ],
+            columns=3,
         )
-        safe_print(f"🔒 Permissions: {perm_summary}")
-    safe_print("")
 
-    # Filter tools based on tier configuration (if tier-based loading is enabled)
-    filter_server_tools(server)
-
-    summary_parts = [f"{len(loaded)}/{len(tool_imports)} services"]
-    if args.tool_tier is not None:
-        tier_desc = f"tier={args.tool_tier}"
-        if args.tools is not None:
-            tier_desc += f" ({', '.join(args.tools)})"
-        summary_parts.append(tier_desc)
-    safe_print(f"📊 {' | '.join(summary_parts)}")
-    safe_print("")
+    ui.section("Startup")
 
     # Set global single-user mode flag
     if args.single_user:
         # Check for incompatible OAuth 2.1 mode
         if os.getenv("MCP_ENABLE_OAUTH21", "false").lower() == "true":
-            safe_print("❌ Single-user mode is incompatible with OAuth 2.1 mode")
-            safe_print(
-                "   Single-user mode is for legacy clients that pass user emails"
+            fatal(
+                ui,
+                "Single-user mode is incompatible with OAuth 2.1 mode",
+                "Single-user mode is for legacy clients that pass user emails",
+                "OAuth 2.1 mode is for multi-user scenarios with bearer tokens",
+                "Choose one: --single-user OR MCP_ENABLE_OAUTH21=true",
             )
-            safe_print(
-                "   OAuth 2.1 mode is for multi-user scenarios with bearer tokens"
-            )
-            safe_print(
-                "   Please choose one mode: either --single-user OR MCP_ENABLE_OAUTH21=true"
-            )
-            sys.exit(1)
 
         if is_stateless_mode():
-            safe_print("❌ Single-user mode is incompatible with stateless mode")
-            safe_print("   Stateless mode requires OAuth 2.1 which is multi-user")
-            sys.exit(1)
+            fatal(
+                ui,
+                "Single-user mode is incompatible with stateless mode",
+                "Stateless mode requires OAuth 2.1, which is multi-user",
+            )
 
         if is_service_account_enabled():
-            safe_print("❌ Single-user mode is incompatible with service account mode")
-            safe_print(
-                "   Service account mode handles auth via domain-wide delegation"
+            fatal(
+                ui,
+                "Single-user mode is incompatible with service account mode",
+                "Service account mode handles auth via domain-wide delegation",
+                "Choose one: --single-user OR GOOGLE_SERVICE_ACCOUNT_KEY_FILE",
             )
-            safe_print(
-                "   Please choose one mode: either --single-user OR GOOGLE_SERVICE_ACCOUNT_KEY_FILE"
-            )
-            sys.exit(1)
 
         os.environ["MCP_SINGLE_USER_MODE"] = "1"
-        safe_print("🔐 Single-user mode enabled")
-        safe_print("")
+        ui.step("Single-user mode enabled")
 
     # Service account mode startup validation
     if is_service_account_enabled():
         user_email = os.getenv("USER_GOOGLE_EMAIL")
         if not user_email:
-            safe_print("❌ Service account mode requires USER_GOOGLE_EMAIL to be set")
-            safe_print("   Set USER_GOOGLE_EMAIL to the domain user to impersonate")
-            sys.exit(1)
+            fatal(
+                ui,
+                "Service account mode requires USER_GOOGLE_EMAIL",
+                "Set USER_GOOGLE_EMAIL to the domain user to impersonate",
+            )
         # Validate service account key material before advertising readiness
         sa_config = get_oauth_config()
         try:
@@ -734,29 +860,25 @@ def main():
             required_fields = {"type", "project_id", "private_key", "client_email"}
             missing = required_fields - set(key_data.keys())
             if missing:
-                safe_print(
-                    f"❌ Service account key missing required fields: "
-                    f"{', '.join(sorted(missing))}"
+                fatal(
+                    ui,
+                    "Service account key is missing required fields",
+                    ", ".join(sorted(missing)),
                 )
-                sys.exit(1)
             if key_data.get("type") != "service_account":
-                safe_print(
-                    f"❌ Service account key has unexpected type: "
-                    f"{key_data.get('type')!r}"
+                fatal(
+                    ui,
+                    "Service account key has unexpected type",
+                    repr(key_data.get("type")),
                 )
-                sys.exit(1)
         except FileNotFoundError as e:
-            safe_print(f"❌ Service account key file not found: {e}")
-            sys.exit(1)
+            fatal(ui, "Service account key file not found", str(e))
         except json.JSONDecodeError as e:
-            safe_print(f"❌ Service account key contains invalid JSON: {e}")
-            sys.exit(1)
+            fatal(ui, "Service account key contains invalid JSON", str(e))
         except (IOError, OSError) as e:
-            safe_print(f"❌ Failed to read service account key: {e}")
-            sys.exit(1)
-        safe_print("🔐 Service account mode enabled (domain-wide delegation)")
-        safe_print(f"   Impersonating: {user_email}")
-        safe_print("")
+            fatal(ui, "Failed to read service account key", str(e))
+        ui.step("Service account mode enabled", "domain-wide delegation")
+        ui.detail(f"impersonating {user_email}")
 
     backend = get_selected_backend()
 
@@ -767,17 +889,15 @@ def main():
         and backend != "gcs"
     ):
         try:
-            safe_print("🔍 Checking credentials directory permissions...")
             check_credentials_directory_permissions()
-            safe_print("✅ Credentials directory permissions verified")
-            safe_print("")
+            ui.step("Credentials directory verified")
         except (PermissionError, OSError) as e:
-            safe_print(f"❌ Credentials directory permission check failed: {e}")
-            safe_print(
-                "   Please ensure the service has write permissions to create/access the credentials directory"
+            fatal(
+                ui,
+                "Credentials directory permission check failed",
+                str(e),
+                "Ensure the service can create and write to the credentials directory",
             )
-            logger.error(f"Failed credentials directory permission check: {e}")
-            sys.exit(1)
     else:
         if is_stateless_mode():
             skip_reason = "stateless mode"
@@ -785,8 +905,7 @@ def main():
             skip_reason = "service account mode"
         else:
             skip_reason = "gcs backend"
-        safe_print(f"🔍 Skipping credentials directory check ({skip_reason})")
-        safe_print("")
+        ui.step(f"Credentials directory check skipped ({skip_reason})", state="skip")
 
     if (
         backend == "gcs"
@@ -803,17 +922,16 @@ def main():
                 )
 
             if credential_store.require_cmek:
-                safe_print("🔍 Verifying GCS credential store configuration...")
                 credential_store.verify_cmek()
-                safe_print("✅ GCS credential store configuration verified")
+                ui.step("GCS credential store verified")
             else:
-                safe_print(
-                    "ℹ️ GCS credential store verification skipped (require_cmek=False)"
+                ui.step(
+                    "GCS credential store verification skipped",
+                    "require_cmek=False",
+                    state="skip",
                 )
-            safe_print("")
         except Exception as e:
-            safe_print(f"❌ GCS credential store verification failed: {e}")
-            sys.exit(1)
+            fatal(ui, "GCS credential store verification failed", str(e))
 
     try:
         # Set transport mode for OAuth callback handling
@@ -822,30 +940,37 @@ def main():
         # Configure auth initialization for FastMCP lifecycle events
         if args.transport == "streamable-http":
             configure_server_for_http()
-            safe_print("")
-            safe_print(f"🚀 Starting HTTP server on {base_uri}:{port}")
+            ui.step("HTTP server", f"{base_uri}:{port}")
             if external_url:
-                safe_print(f"   External URL: {external_url}")
+                ui.detail(f"external URL {external_url}")
         else:
-            safe_print("")
-            safe_print("🚀 Starting STDIO server")
+            ui.step("STDIO server")
             # The OAuth callback / attachment server is started lazily — only when
             # an auth flow is initiated or an attachment URL is handed out — so
             # short-lived spawns (e.g. client health checks) never bind a port and
             # cannot exhaust the 8000-8004 fallback range (see issue #832).
             if not is_service_account_enabled():
-                safe_print(
-                    f"   OAuth callback server will start on demand at {display_url}/oauth2callback"
+                ui.detail(
+                    f"OAuth callback starts on demand at {display_url}/oauth2callback"
                 )
 
-        safe_print("✅ Ready for MCP connections")
-        safe_print("")
+        ui.step("Ready for MCP connections")
 
         if args.transport == "streamable-http" and _env_http_port:
-            logger.warning(
-                "WORKSPACE_MCP_HTTP_PORT is ignored when transport is 'streamable-http'; "
-                "the primary server already serves HTTP on WORKSPACE_MCP_PORT/PORT."
+            add_startup_notice(
+                "WORKSPACE_MCP_HTTP_PORT is ignored when transport is "
+                "'streamable-http'; the primary server already serves HTTP on "
+                "WORKSPACE_MCP_PORT/PORT."
             )
+
+        if STARTUP_NOTICES:
+            ui.section("Notices")
+            for message in STARTUP_NOTICES:
+                ui.notice(message)
+
+        ui.blank()
+        ui.rule()
+        ui.blank()
 
         if args.transport == "streamable-http":
             # Check port availability before starting HTTP server
@@ -853,11 +978,11 @@ def main():
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                     s.bind((host, port))
             except OSError as e:
-                safe_print(f"Socket error: {e}")
-                safe_print(
-                    f"❌ Port {port} is already in use. Cannot start HTTP server."
+                fatal(
+                    ui,
+                    f"Port {port} is already in use. Cannot start HTTP server.",
+                    str(e),
                 )
-                sys.exit(1)
 
             server.run(
                 transport="streamable-http",
@@ -894,12 +1019,21 @@ def main():
                     if http_available:
                         app = server.http_app(path="/mcp")
                         config = uvicorn.Config(
-                            app, host=http_host, port=http_port, log_level="warning"
+                            app,
+                            host=http_host,
+                            port=http_port,
+                            log_level="warning",
+                            # Match FastMCP's own uvicorn config: uvicorn's "auto"
+                            # default resolves to the deprecated legacy-websockets
+                            # implementation whenever `websockets` is installed.
+                            ws="websockets-sansio",
                         )
                         http_srv = uvicorn.Server(config)
                         http_task = asyncio.create_task(http_srv.serve())
-                        safe_print(
-                            f"   workspace-cli endpoint: http://{http_host}:{http_port}/mcp"
+                        logger.info(
+                            "workspace-cli endpoint: http://%s:%d/mcp",
+                            http_host,
+                            http_port,
                         )
 
                     try:
@@ -939,6 +1073,12 @@ def main():
 
         cleanup_oauth_callback_server()
         sys.exit(1)
+    finally:
+        # External OAuth owns a bounded validation executor. Close it on every
+        # server exit path, including normal uvicorn shutdown and startup failure.
+        from core.server import close_auth_provider
+
+        close_auth_provider()
 
 
 if __name__ == "__main__":

@@ -154,15 +154,15 @@ def test_origin_validation_allows_same_origin_request(monkeypatch):
     from core.server import OriginValidationMiddleware
 
     # The OAuth proxy consent form posts to itself (action=""), so the request is
-    # always same-origin with the host that served the page. A request whose Origin
-    # matches its own Host must be accepted even if that host was never added to the
-    # allowlist (e.g. WORKSPACE_EXTERNAL_URL unset or misconfigured) — a same-origin
-    # request is the server's own page, never the cross-site threat this guard stops.
+    # always same-origin with the host that served the page. In OAuth 2.1 mode a
+    # request whose Origin matches its own Host must be accepted even if that host
+    # was never added to the allowlist (e.g. WORKSPACE_EXTERNAL_URL unset).
     monkeypatch.setattr(
         "auth.oauth_config.get_oauth_config",
         lambda: SimpleNamespace(
             get_allowed_origins=lambda: ["http://localhost:8000"],
             external_url=None,
+            is_oauth21_enabled=lambda: True,
         ),
     )
 
@@ -194,6 +194,146 @@ def test_origin_validation_allows_same_origin_request(monkeypatch):
         },
     )
     assert cross_origin.status_code == 403
+
+
+def test_origin_validation_rejects_dns_rebinding_without_oauth21(monkeypatch):
+    from core.server import OriginValidationMiddleware
+
+    # A DNS-rebinding page controls both Host and Origin, so without OAuth 2.1
+    # bearer auth a same-origin match must not bypass the allowlist.
+    monkeypatch.setattr(
+        "auth.oauth_config.get_oauth_config",
+        lambda: SimpleNamespace(
+            get_allowed_origins=lambda: ["http://localhost:8000"],
+            external_url=None,
+            is_oauth21_enabled=lambda: False,
+        ),
+    )
+
+    async def endpoint(request):
+        return Response("ok")
+
+    app = Starlette(
+        routes=[Route("/mcp", endpoint, methods=["POST"])],
+        middleware=[Middleware(OriginValidationMiddleware)],
+    )
+    client = TestClient(app)
+
+    rebound = client.post(
+        "/mcp",
+        headers={
+            "Origin": "http://attacker.example:8000",
+            "Host": "attacker.example:8000",
+        },
+    )
+    assert rebound.status_code == 403
+
+    local = client.post(
+        "/mcp",
+        headers={"Origin": "http://localhost:8000", "Host": "localhost:8000"},
+    )
+    assert local.status_code == 200
+
+
+def test_origin_validation_rejects_null_origin_consent_by_default(monkeypatch):
+    from core.server import OriginValidationMiddleware
+
+    monkeypatch.delenv("WORKSPACE_MCP_ALLOW_NULL_ORIGIN_CONSENT", raising=False)
+    monkeypatch.setattr(
+        "auth.oauth_config.get_oauth_config",
+        lambda: SimpleNamespace(
+            get_allowed_origins=lambda: ["http://localhost:8000"],
+            external_url=None,
+        ),
+    )
+
+    async def endpoint(request):
+        return Response("ok")
+
+    app = Starlette(
+        routes=[Route("/consent", endpoint, methods=["POST"])],
+        middleware=[Middleware(OriginValidationMiddleware)],
+    )
+    client = TestClient(app)
+
+    response = client.post("/consent", headers={"Origin": "null"})
+    assert response.status_code == 403
+    assert response.json() == {"error": "Origin not allowed"}
+
+
+def test_origin_validation_allows_null_origin_consent_when_enabled(monkeypatch):
+    from core.server import OriginValidationMiddleware
+
+    monkeypatch.setenv("WORKSPACE_MCP_ALLOW_NULL_ORIGIN_CONSENT", "true")
+    monkeypatch.setattr(
+        "auth.oauth_config.get_oauth_config",
+        lambda: SimpleNamespace(
+            get_allowed_origins=lambda: ["http://localhost:8000"],
+            external_url=None,
+        ),
+    )
+
+    async def endpoint(request):
+        return Response("ok")
+
+    app = Starlette(
+        routes=[Route("/consent", endpoint, methods=["GET", "POST"])],
+        middleware=[Middleware(OriginValidationMiddleware)],
+    )
+    client = TestClient(app)
+
+    allowed = client.post("/consent", headers={"Origin": "null"})
+    assert allowed.status_code == 200
+
+    assert client.get("/consent", headers={"Origin": "null"}).status_code == 403
+    assert (
+        client.post(
+            "/consent",
+            headers={
+                "Origin": "https://evil.test",
+                "Host": "workspace.example.com",
+            },
+        ).status_code
+        == 403
+    )
+
+
+def test_origin_validation_null_origin_bypass_only_applies_to_consent_post(
+    monkeypatch,
+):
+    from core.server import OriginValidationMiddleware
+
+    monkeypatch.setenv("WORKSPACE_MCP_ALLOW_NULL_ORIGIN_CONSENT", "true")
+    monkeypatch.setattr(
+        "auth.oauth_config.get_oauth_config",
+        lambda: SimpleNamespace(
+            get_allowed_origins=lambda: ["http://localhost:8000"],
+            external_url=None,
+        ),
+    )
+
+    async def endpoint(request):
+        return Response("ok")
+
+    app = Starlette(
+        routes=[
+            Route("/mcp", endpoint, methods=["POST"]),
+            Route("/token", endpoint, methods=["POST"]),
+            Route("/.well-known/oauth-authorization-server", endpoint),
+        ],
+        middleware=[Middleware(OriginValidationMiddleware)],
+    )
+    client = TestClient(app)
+
+    assert client.post("/mcp", headers={"Origin": "null"}).status_code == 403
+    assert client.post("/token", headers={"Origin": "null"}).status_code == 403
+    assert (
+        client.get(
+            "/.well-known/oauth-authorization-server",
+            headers={"Origin": "null"},
+        ).status_code
+        == 403
+    )
 
 
 def test_configured_server_applies_no_cache_to_served_oauth_discovery_routes(
@@ -233,3 +373,53 @@ def test_configured_server_applies_no_cache_to_served_oauth_discovery_routes(
     # Ensure we did not create a shadow route at the wrong path.
     wrong_path = client.get("/.well-known/oauth-protected-resource")
     assert wrong_path.status_code == 404
+
+
+def test_external_oauth_metadata_matches_mcp_resource_and_challenge(monkeypatch):
+    monkeypatch.setenv("MCP_ENABLE_OAUTH21", "true")
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "dummy-client")
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_SECRET", "dummy-secret")
+    monkeypatch.setenv("WORKSPACE_MCP_BASE_URI", "http://localhost")
+    monkeypatch.setenv("WORKSPACE_MCP_PORT", "8000")
+    monkeypatch.setenv("WORKSPACE_EXTERNAL_URL", "https://workspace.example.com")
+    monkeypatch.setenv("EXTERNAL_OAUTH21_PROVIDER", "true")
+    monkeypatch.setenv("WORKSPACE_MCP_STATELESS_MODE", "true")
+
+    import core.server as core_server
+    from auth.oauth_config import reload_oauth_config
+
+    reload_oauth_config()
+    core_server = importlib.reload(core_server)
+    core_server.set_transport_mode("streamable-http")
+    core_server.configure_server_for_http()
+
+    app = core_server.server.http_app(transport="streamable-http", path="/mcp")
+    client = TestClient(app)
+
+    protected_resource = client.get("/.well-known/oauth-protected-resource/mcp")
+    assert protected_resource.status_code == 200
+    assert protected_resource.json()["resource"] == "https://workspace.example.com/mcp"
+
+    wrong_path = client.get("/.well-known/oauth-protected-resource")
+    assert wrong_path.status_code == 404
+
+    challenge = client.post(
+        "/mcp",
+        headers={"Accept": "application/json, text/event-stream"},
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "test", "version": "1"},
+            },
+        },
+    )
+    assert challenge.status_code == 401
+    assert (
+        'resource_metadata="https://workspace.example.com/'
+        '.well-known/oauth-protected-resource/mcp"'
+        in challenge.headers["www-authenticate"]
+    )

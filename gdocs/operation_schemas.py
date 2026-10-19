@@ -13,6 +13,10 @@ from typing import Annotated, Any, Literal, Optional, Union
 from pydantic import BaseModel, ConfigDict, Field, BeforeValidator, model_validator
 
 
+ParagraphBorderEdge = Literal["top", "bottom", "left", "right", "between"]
+TableBorderEdge = Literal["top", "bottom", "left", "right"]
+
+
 def _coerce_json_str_to_list(v: Any) -> Any:
     """Accept JSON-encoded lists for MCP clients that serialize arrays as strings."""
     if not isinstance(v, str):
@@ -49,9 +53,9 @@ class SegmentTargetDocOperation(StrictDocOperation):
     )
 
 
-class InsertTextOperation(SegmentTargetDocOperation):
-    type: Literal["insert_text"]
-    text: str = Field(description="Text to insert.")
+class InsertionLocationOperation(StrictDocOperation):
+    """One explicit location or semantic anchor for an insertion."""
+
     index: Optional[int] = Field(
         default=None,
         description="Insertion index. Omit when end_of_segment=true.",
@@ -60,12 +64,51 @@ class InsertTextOperation(SegmentTargetDocOperation):
         default=False,
         description="Append to the end of the targeted body/segment instead of using index.",
     )
+    after_heading: Optional[str] = Field(
+        default=None,
+        description=(
+            "Insert immediately after the heading paragraph with this exact text, "
+            "resolved to an index at execution time. Errors when it matches zero or "
+            "more than one heading."
+        ),
+    )
+    before_heading: Optional[str] = Field(
+        default=None,
+        description=(
+            "Insert immediately before the heading paragraph with this exact text. "
+            "Errors when it matches zero or more than one heading."
+        ),
+    )
+    anchor_text: Optional[str] = Field(
+        default=None,
+        description=(
+            "Insert relative to this literal text, which must occur exactly once "
+            "within a single paragraph. Use anchor_position to pick which side."
+        ),
+    )
+    anchor_position: Literal["before", "after"] = Field(
+        default="after",
+        description="Which side of anchor_text to insert on. Defaults to 'after'.",
+    )
 
     @model_validator(mode="after")
-    def validate_location(self) -> "InsertTextOperation":
-        if self.end_of_segment == (self.index is not None):
-            raise ValueError("Provide exactly one of 'index' or 'end_of_segment=true'.")
+    def validate_location(self) -> "InsertionLocationOperation":
+        anchors = [self.after_heading, self.before_heading, self.anchor_text]
+        provided = sum(
+            [self.index is not None, self.end_of_segment]
+            + [anchor is not None for anchor in anchors]
+        )
+        if provided != 1:
+            raise ValueError(
+                "Provide exactly one of 'index', 'end_of_segment=true', "
+                "'after_heading', 'before_heading' or 'anchor_text'."
+            )
         return self
+
+
+class InsertTextOperation(InsertionLocationOperation, SegmentTargetDocOperation):
+    type: Literal["insert_text"]
+    text: str = Field(description="Text to insert.")
 
 
 class ReplaceTextOperation(SegmentTargetDocOperation):
@@ -89,7 +132,7 @@ class FormatTextOperation(SegmentTargetDocOperation):
     italic: Optional[bool] = None
     underline: Optional[bool] = None
     strikethrough: Optional[bool] = None
-    font_size: Optional[int] = None
+    font_size: Optional[float] = None
     font_family: Optional[str] = None
     font_weight: Optional[int] = None
     text_color: Optional[str] = None
@@ -120,6 +163,15 @@ class UpdateParagraphStyleOperation(SegmentTargetDocOperation):
     page_break_before: Optional[bool] = None
     spacing_mode: Optional[str] = None
     shading_color: Optional[str] = None
+    border_edges: Optional[list[ParagraphBorderEdge]] = Field(
+        default=None,
+        min_length=1,
+        description="Paragraph border edges to update; omit to update top, bottom, left, and right.",
+    )
+    border_color: Optional[str] = None
+    border_width: Optional[float] = None
+    border_padding: Optional[float] = None
+    border_dash: Optional[str] = None
 
 
 class UpdateTableCellStyleOperation(StrictDocOperation):
@@ -137,26 +189,17 @@ class UpdateTableCellStyleOperation(StrictDocOperation):
     column_index: Optional[int] = None
     row_span: Optional[int] = None
     column_span: Optional[int] = None
+    border_edges: Optional[list[TableBorderEdge]] = Field(
+        default=None,
+        min_length=1,
+        description="Table-cell border edges to update; omit to update all four edges.",
+    )
 
 
-class InsertTableOperation(SegmentTargetDocOperation):
+class InsertTableOperation(InsertionLocationOperation, SegmentTargetDocOperation):
     type: Literal["insert_table"]
     rows: int
     columns: int
-    index: Optional[int] = Field(
-        default=None,
-        description="Insertion index. Omit when end_of_segment=true.",
-    )
-    end_of_segment: bool = Field(
-        default=False,
-        description="Append to the end of the targeted body/segment instead of using index.",
-    )
-
-    @model_validator(mode="after")
-    def validate_location(self) -> "InsertTableOperation":
-        if self.end_of_segment == (self.index is not None):
-            raise ValueError("Provide exactly one of 'index' or 'end_of_segment=true'.")
-        return self
 
 
 class InsertTableRowOperation(StrictDocOperation):
@@ -211,41 +254,37 @@ class UpdateTableColumnPropertiesOperation(StrictDocOperation):
     width_type: Optional[str] = None
 
 
-class InsertPageBreakOperation(StrictDocOperation):
+class UpdateTableRowStyleOperation(StrictDocOperation):
+    type: Literal["update_table_row_style"]
+    table_start_index: int
+    row_indices: list[int] = Field(
+        description="Zero-based row indices to style, e.g. [0] for the header row."
+    )
+    min_row_height: Optional[float] = Field(
+        default=None,
+        description="Minimum row height in points.",
+    )
+
+
+class PinTableHeaderRowsOperation(StrictDocOperation):
+    type: Literal["pin_table_header_rows"]
+    table_start_index: int
+    pinned_header_rows_count: int = Field(
+        ge=0,
+        description="Number of leading rows to pin as a repeating header on each "
+        "page. 0 unpins all rows. Use this dedicated request because the "
+        "'tableHeader' value reported in TableRowStyle cannot be set through "
+        "UpdateTableRowStyleRequest.",
+    )
+
+
+class InsertPageBreakOperation(InsertionLocationOperation):
     type: Literal["insert_page_break"]
-    index: Optional[int] = Field(
-        default=None,
-        description="Insertion index. Omit when end_of_segment=true.",
-    )
-    end_of_segment: bool = Field(
-        default=False,
-        description="Append to the end of the body instead of using index.",
-    )
-
-    @model_validator(mode="after")
-    def validate_location(self) -> "InsertPageBreakOperation":
-        if self.end_of_segment == (self.index is not None):
-            raise ValueError("Provide exactly one of 'index' or 'end_of_segment=true'.")
-        return self
 
 
-class InsertSectionBreakOperation(StrictDocOperation):
+class InsertSectionBreakOperation(InsertionLocationOperation):
     type: Literal["insert_section_break"]
-    index: Optional[int] = Field(
-        default=None,
-        description="Insertion index. Omit when end_of_segment=true.",
-    )
-    end_of_segment: bool = Field(
-        default=False,
-        description="Append to the end of the body instead of using index.",
-    )
     section_type: Literal["CONTINUOUS", "NEXT_PAGE"] = "NEXT_PAGE"
-
-    @model_validator(mode="after")
-    def validate_location(self) -> "InsertSectionBreakOperation":
-        if self.end_of_segment == (self.index is not None):
-            raise ValueError("Provide exactly one of 'index' or 'end_of_segment=true'.")
-        return self
 
 
 class FindReplaceOperation(StrictDocOperation):
@@ -353,25 +392,11 @@ class CreateHeaderFooterOperation(StrictDocOperation):
     )
 
 
-class InsertImageOperation(SegmentTargetDocOperation):
+class InsertImageOperation(InsertionLocationOperation, SegmentTargetDocOperation):
     type: Literal["insert_image"]
     image_uri: str = Field(description="Image URL or resolvable image URI.")
-    index: Optional[int] = Field(
-        default=None,
-        description="Insertion index. Omit when end_of_segment=true.",
-    )
     width: Optional[int] = None
     height: Optional[int] = None
-    end_of_segment: bool = Field(
-        default=False,
-        description="Append to the end of the targeted body/segment instead of using index.",
-    )
-
-    @model_validator(mode="after")
-    def validate_location(self) -> "InsertImageOperation":
-        if self.end_of_segment == (self.index is not None):
-            raise ValueError("Provide exactly one of 'index' or 'end_of_segment=true'.")
-        return self
 
 
 class InsertDocTabOperation(BaseModel):
@@ -414,6 +439,8 @@ BatchDocOperation = Annotated[
         MergeTableCellsOperation,
         UnmergeTableCellsOperation,
         UpdateTableColumnPropertiesOperation,
+        UpdateTableRowStyleOperation,
+        PinTableHeaderRowsOperation,
         InsertPageBreakOperation,
         InsertSectionBreakOperation,
         FindReplaceOperation,

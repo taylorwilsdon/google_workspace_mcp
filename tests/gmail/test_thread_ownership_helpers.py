@@ -303,6 +303,31 @@ class TestParticipantsAndCounts:
             "vendor@example.com",
         }
 
+    def test_recipient_headers_are_case_insensitive_and_not_collapsed(self):
+        message = _msg(
+            "m-case",
+            "Alex <alex@alexreynolds.com>",
+            "Mon, 14 Apr 2026 09:00:00 -0400",
+        )
+        message["payload"]["headers"].extend(
+            [
+                {"name": "TO", "value": "first@example.com"},
+                {"name": "to", "value": "second@example.com"},
+                {"name": "CC", "value": "copied@example.com"},
+            ]
+        )
+
+        result = _analyze_thread_ownership_impl(
+            _thread("t-case", [message]), "alex@alexreynolds.com"
+        )
+
+        assert set(result["participants"]) == {
+            "alex@alexreynolds.com",
+            "first@example.com",
+            "second@example.com",
+            "copied@example.com",
+        }
+
     def test_user_forwards_to_self_returns_none(self):
         """User → User (forward-to-self or archive-to-self): there's no
         external party to owe anything, so ball_in_court_of is None rather

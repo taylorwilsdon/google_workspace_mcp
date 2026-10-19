@@ -431,6 +431,101 @@ async def test_list_ooo_respects_time_max():
     assert "timeMax" in params
 
 
+@pytest.mark.asyncio
+async def test_list_ooo_full_page_reports_next_page_token():
+    mock_service = _create_mock_service()
+    mock_service.events().list().execute = Mock(
+        return_value={
+            "items": [
+                {
+                    "id": "ooo-page-1",
+                    "start": {"dateTime": "2026-04-06T09:00:00Z"},
+                    "end": {"dateTime": "2026-04-06T11:00:00Z"},
+                    "outOfOfficeProperties": {},
+                }
+            ],
+            "nextPageToken": "tok-next",
+        }
+    )
+
+    result = await _list_ooo_events_impl(
+        service=mock_service,
+        user_google_email="user@example.com",
+        time_min="2026-04-01T00:00:00Z",
+    )
+
+    assert "ooo-page-1" in result
+    assert result.endswith(
+        "Next page token: tok-next\nPagination time_min: 2026-04-01T00:00:00Z"
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_ooo_empty_page_with_token_continues_to_next_page():
+    """The API can return an empty page alongside a nextPageToken."""
+    mock_service = _create_mock_service()
+    mock_service.events().list().execute = Mock(
+        side_effect=[
+            {"items": [], "nextPageToken": "tok-next"},
+            {
+                "items": [
+                    {
+                        "id": "ooo-page-2",
+                        "start": {"dateTime": "2026-04-06T09:00:00Z"},
+                        "end": {"dateTime": "2026-04-06T11:00:00Z"},
+                        "outOfOfficeProperties": {},
+                    }
+                ]
+            },
+        ]
+    )
+
+    first_page = await _list_ooo_events_impl(
+        service=mock_service,
+        user_google_email="user@example.com",
+    )
+    first_params = mock_service.events().list.call_args[1].copy()
+
+    assert "No out-of-office events found" not in first_page
+    assert "more pages remain" in first_page
+    continuation = dict(
+        line.split(": ", 1)
+        for line in first_page.splitlines()
+        if line.startswith(("Next page token: ", "Pagination time_min: "))
+    )
+    assert continuation["Next page token"] == "tok-next"
+
+    last_page = await _list_ooo_events_impl(
+        service=mock_service,
+        user_google_email="user@example.com",
+        time_min=continuation["Pagination time_min"],
+        page_token=continuation["Next page token"],
+    )
+
+    assert mock_service.events().list.call_args[1] == {
+        **first_params,
+        "pageToken": "tok-next",
+    }
+    assert "ooo-page-2" in last_page
+    assert "Next page token" not in last_page
+
+
+@pytest.mark.asyncio
+async def test_list_ooo_page_token_requires_time_min():
+    """Without time_min the range starts at "now", which moves between calls."""
+    mock_service = _create_mock_service()
+    mock_service.events().list.reset_mock()
+
+    with pytest.raises(ValueError, match="page_token requires time_min"):
+        await _list_ooo_events_impl(
+            service=mock_service,
+            user_google_email="user@example.com",
+            page_token="tok-next",
+        )
+
+    mock_service.events().list.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # _update_ooo_event_impl
 # ---------------------------------------------------------------------------

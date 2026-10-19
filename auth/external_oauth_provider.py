@@ -8,7 +8,10 @@ This provider acts as a Resource Server only - it validates tokens issued by
 Google's Authorization Server but does not issue tokens itself.
 """
 
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import functools
+import hashlib
 import logging
 import os
 import time
@@ -29,6 +32,19 @@ GOOGLE_ISSUER_URL = "https://accounts.google.com"
 # Configurable session time in seconds (default: 1 hour, max: 24 hours)
 _DEFAULT_SESSION_TIME = 3600
 _MAX_SESSION_TIME = 86400
+
+# Token validation is unauthenticated work and may block for the full Google API
+# socket timeout. Keep it out of asyncio's process-wide default executor so a burst
+# of invalid tokens cannot starve authenticated Google Workspace operations.
+_DEFAULT_TOKEN_VALIDATION_WORKERS = 4
+_TOKEN_VALIDATION_WORKERS_ENV = "WORKSPACE_MCP_TOKEN_VALIDATION_WORKERS"
+
+# Validated identities are remembered per token hash for this many seconds.
+# Off by default: a cached token skips the userinfo check until it ages out.
+_TOKEN_VALIDATION_CACHE_TTL_ENV = "WORKSPACE_MCP_TOKEN_VALIDATION_CACHE_TTL"
+_TOKEN_VALIDATION_CACHE_MAX_ENTRIES = 10_000
+# Caps how long a revoked or expired token can keep passing the local check.
+_MAX_TOKEN_VALIDATION_CACHE_TTL = 300
 
 
 @functools.lru_cache(maxsize=1)
@@ -58,6 +74,56 @@ def get_session_time() -> int:
     return clamped
 
 
+def get_token_validation_workers() -> int:
+    """Parse WORKSPACE_MCP_TOKEN_VALIDATION_WORKERS, defaulting when unset.
+
+    The pool is shared by every caller of the process, so a gateway fronting
+    many users needs more than the default. Invalid values raise instead of
+    falling back, so a misconfigured deployment fails at startup.
+    """
+    raw = os.getenv(_TOKEN_VALIDATION_WORKERS_ENV, "").strip()
+    if not raw:
+        return _DEFAULT_TOKEN_VALIDATION_WORKERS
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value < 1:
+        raise ValueError(
+            f"{_TOKEN_VALIDATION_WORKERS_ENV} must be a positive integer, got {raw!r}"
+        )
+    return value
+
+
+def get_token_validation_cache_ttl() -> int:
+    """Parse WORKSPACE_MCP_TOKEN_VALIDATION_CACHE_TTL; unset or 0 disables it.
+
+    Invalid values raise instead of falling back, so a misconfigured deployment
+    fails at startup. Values above the maximum are clamped with a warning.
+    """
+    raw = os.getenv(_TOKEN_VALIDATION_CACHE_TTL_ENV, "").strip()
+    if not raw:
+        return 0
+    try:
+        value = int(raw)
+    except ValueError:
+        value = -1
+    if value < 0:
+        raise ValueError(
+            f"{_TOKEN_VALIDATION_CACHE_TTL_ENV} must be a non-negative integer "
+            f"(seconds), got {raw!r}"
+        )
+    if value > _MAX_TOKEN_VALIDATION_CACHE_TTL:
+        logger.warning(
+            "%s=%d clamped to %d",
+            _TOKEN_VALIDATION_CACHE_TTL_ENV,
+            value,
+            _MAX_TOKEN_VALIDATION_CACHE_TTL,
+        )
+        return _MAX_TOKEN_VALIDATION_CACHE_TTL
+    return value
+
+
 class ExternalOAuthProvider(GoogleProvider):
     """
     Extended GoogleProvider that supports validating external Google OAuth access tokens.
@@ -76,16 +142,87 @@ class ExternalOAuthProvider(GoogleProvider):
         client_id: str,
         client_secret: Optional[str] = None,
         resource_server_url: Optional[str] = None,
+        token_validation_workers: int = _DEFAULT_TOKEN_VALIDATION_WORKERS,
+        token_validation_cache_ttl: int = 0,
         **kwargs,
     ):
         """Initialize and store client credentials for token validation."""
+        if token_validation_workers < 1:
+            raise ValueError("token_validation_workers must be at least 1")
+        if token_validation_cache_ttl < 0:
+            raise ValueError("token_validation_cache_ttl must not be negative")
+
         self._resource_server_url = resource_server_url
+        if resource_server_url and "resource_base_url" not in kwargs:
+            kwargs["resource_base_url"] = resource_server_url
         super().__init__(client_id=client_id, client_secret=client_secret, **kwargs)
         # Store credentials as they're not exposed by parent class
         self._client_id = client_id
         self._client_secret = client_secret
         # Store as string - Pydantic validates it when passed to models
         self.resource_server_url = self._resource_server_url
+        self._token_validation_executor: Optional[ThreadPoolExecutor] = (
+            ThreadPoolExecutor(
+                max_workers=token_validation_workers,
+                thread_name_prefix="external-token-validation",
+            )
+        )
+        # ThreadPoolExecutor has an unbounded internal queue. Admit no more work
+        # than can run immediately so overload fails closed instead of accumulating.
+        self._token_validation_slots = asyncio.Semaphore(token_validation_workers)
+        # Only touched from the event loop, so no lock is needed. Values are
+        # (monotonic expiry, email, sub); the token itself is never stored.
+        self._token_validation_cache_ttl = token_validation_cache_ttl
+        self._validated_identities: dict[str, tuple[float, str, Optional[str]]] = {}
+
+    def _cached_identity(self, cache_key: str) -> Optional[tuple[str, Optional[str]]]:
+        entry = self._validated_identities.get(cache_key)
+        if entry is None:
+            return None
+        expires_at, email, sub = entry
+        if expires_at <= time.monotonic():
+            del self._validated_identities[cache_key]
+            return None
+        return email, sub
+
+    def _remember_identity(
+        self, cache_key: str, email: str, sub: Optional[str]
+    ) -> None:
+        if not self._token_validation_cache_ttl:
+            return
+        now = time.monotonic()
+        cache = self._validated_identities
+        if len(cache) >= _TOKEN_VALIDATION_CACHE_MAX_ENTRIES:
+            for key in [
+                k for k, (expires_at, _, _) in cache.items() if expires_at <= now
+            ]:
+                del cache[key]
+        if len(cache) >= _TOKEN_VALIDATION_CACHE_MAX_ENTRIES:
+            del cache[next(iter(cache))]
+        cache[cache_key] = (now + self._token_validation_cache_ttl, email, sub)
+
+    def _build_access_token(
+        self, token: str, email: str, sub: Optional[str]
+    ) -> WorkspaceAccessToken:
+        scope_list = list(getattr(self, "required_scopes", []) or [])
+        return WorkspaceAccessToken(
+            token=token,
+            scopes=scope_list,
+            expires_at=int(time.time()) + get_session_time(),
+            claims={"email": email, "sub": sub},
+            client_id=self._client_id,
+            email=email,
+            sub=sub,
+        )
+
+    def close(self) -> None:
+        """Stop accepting token-validation work and release executor resources."""
+        self._validated_identities.clear()
+        executor = self._token_validation_executor
+        if executor is None:
+            return
+        self._token_validation_executor = None
+        executor.shutdown(wait=False, cancel_futures=True)
 
     async def verify_token(self, token: str) -> Optional[AccessToken]:
         """
@@ -104,6 +241,11 @@ class ExternalOAuthProvider(GoogleProvider):
         if token.startswith("ya29."):
             logger.debug("Validating external Google OAuth access token")
 
+            cache_key = hashlib.sha256(token.encode()).hexdigest()
+            cached = self._cached_identity(cache_key)
+            if cached is not None:
+                return self._build_access_token(token, *cached)
+
             try:
                 from auth.google_auth import get_user_info
 
@@ -115,29 +257,53 @@ class ExternalOAuthProvider(GoogleProvider):
                     client_secret=self._client_secret,
                 )
 
-                # Validate token by calling userinfo API
-                user_info = get_user_info(credentials, skip_valid_check=True)
+                # Validate token by calling userinfo API. This is deliberately
+                # isolated from asyncio's default executor, which handles the
+                # authenticated Google Workspace API calls throughout the server.
+                if self._token_validation_slots.locked():
+                    logger.warning(
+                        "External token validation capacity exhausted; rejecting token"
+                    )
+                    return None
+
+                await self._token_validation_slots.acquire()
+                executor = self._token_validation_executor
+                if executor is None:
+                    self._token_validation_slots.release()
+                    logger.warning(
+                        "External token validation requested after provider shutdown"
+                    )
+                    return None
+
+                try:
+                    validation_future = asyncio.get_running_loop().run_in_executor(
+                        executor,
+                        functools.partial(
+                            get_user_info, credentials, skip_valid_check=True
+                        ),
+                    )
+                except Exception:
+                    self._token_validation_slots.release()
+                    raise
+
+                # Shield the worker future so request cancellation does not mark it
+                # complete and release the slot while its HTTPS call is still running.
+                validation_future.add_done_callback(
+                    lambda _: self._token_validation_slots.release()
+                )
+                user_info = await asyncio.shield(validation_future)
 
                 if user_info and user_info.get("email"):
-                    session_time = get_session_time()
-                    # Token is valid - create AccessToken object
                     logger.info(
                         f"Validated external access token for: {user_info['email']}"
                     )
-
-                    scope_list = list(getattr(self, "required_scopes", []) or [])
-                    access_token = WorkspaceAccessToken(
-                        token=token,
-                        scopes=scope_list,
-                        expires_at=int(time.time()) + session_time,
-                        claims={
-                            "email": user_info["email"],
-                            "sub": user_info.get("id"),
-                        },
-                        client_id=self._client_id,
-                        email=user_info["email"],
-                        sub=user_info.get("id"),
+                    access_token = self._build_access_token(
+                        token, user_info["email"], user_info.get("id")
                     )
+                    if self._token_validation_executor is not None:
+                        self._remember_identity(
+                            cache_key, access_token.email, access_token.sub
+                        )
                     return access_token
                 else:
                     logger.error("Could not get user info from access token")
@@ -150,7 +316,7 @@ class ExternalOAuthProvider(GoogleProvider):
         # For JWT tokens, use parent class implementation
         return await super().verify_token(token)
 
-    def get_routes(self, **kwargs) -> list[Route]:
+    def get_routes(self, mcp_path: str | None = None) -> list[Route]:
         """
         Get OAuth routes for external provider mode.
 
@@ -159,7 +325,7 @@ class ExternalOAuthProvider(GoogleProvider):
         (/authorize, /token, etc.) since tokens are issued by Google directly.
 
         Args:
-            **kwargs: Additional arguments passed by FastMCP (e.g., mcp_path)
+            mcp_path: Path where FastMCP mounts the protected MCP endpoint.
 
         Returns:
             List of routes - only protected resource metadata
@@ -172,10 +338,18 @@ class ExternalOAuthProvider(GoogleProvider):
             )
             return []
 
+        self.set_mcp_path(mcp_path)
+        resource_url = self._get_resource_url(mcp_path)
+        if not resource_url:
+            logger.warning(
+                "ExternalOAuthProvider: protected resource URL could not be resolved"
+            )
+            return []
+
         # Create protected resource routes that point to Google as the authorization server
         # Pass strings directly - Pydantic validates them during model construction
         protected_routes = create_protected_resource_routes(
-            resource_url=self.resource_server_url,
+            resource_url=resource_url,
             authorization_servers=[GOOGLE_ISSUER_URL],
             scopes_supported=self.required_scopes,
             resource_name="Google Workspace MCP",

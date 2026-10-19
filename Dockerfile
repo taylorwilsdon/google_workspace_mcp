@@ -13,7 +13,10 @@ RUN pip install --no-cache-dir uv
 COPY . .
 
 # Install Python dependencies using uv sync
-RUN uv sync --frozen --no-dev --extra disk
+# --extra otel ships the OpenTelemetry SDK/exporter so tracing can be enabled at
+# runtime via OTEL_* env vars; it stays a no-op unless an OTLP endpoint is set.
+# --extra valkey backs WORKSPACE_MCP_OAUTH_PROXY_STORAGE_BACKEND=valkey.
+RUN uv sync --frozen --no-dev --extra disk --extra otel --extra valkey
 
 # Create non-root user for security
 RUN useradd --create-home --shell /bin/bash app \
@@ -42,4 +45,4 @@ ENV TOOLS=""
 
 # Use entrypoint for the base command and CMD for args
 ENTRYPOINT ["/bin/sh", "-c"]
-CMD ["uv run main.py --transport streamable-http ${TOOL_TIER:+--tool-tier \"$TOOL_TIER\"} ${TOOLS:+--tools $TOOLS}"]
+CMD ["exec /app/.venv/bin/python main.py --transport streamable-http ${TOOL_TIER:+--tool-tier \"$TOOL_TIER\"} ${TOOLS:+--tools $TOOLS}"]

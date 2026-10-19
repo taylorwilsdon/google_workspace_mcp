@@ -10,7 +10,8 @@ from typing import Any, Dict, List, Set, Tuple
 from core.utils import UserInputError
 
 _PRESENTATION_PAGE_ID_FIELDS = (
-    "slides(objectId,slideProperties(notesPage(objectId))),"
+    "slides(objectId,slideProperties(notesPage(objectId,"
+    "notesProperties(speakerNotesObjectId)))),"
     "masters(objectId),layouts(objectId),notesMaster(objectId)"
 )
 
@@ -148,7 +149,15 @@ def _find_created_slide_ids(requests: List[Dict[str, Any]]) -> Set[str]:
     return slide_ids
 
 
-async def _get_presentation_slide_ids(service, presentation_id: str) -> Set[str]:
+async def _get_presentation_page_ids(
+    service, presentation_id: str
+) -> Tuple[Set[str], Dict[str, str]]:
+    """Return every page object ID plus a notes page ID -> speaker notes shape ID map.
+
+    The speaker notes shape is the only writable part of a notes page, so the map
+    lets an insertText aimed at a notes page be redirected to the shape that can
+    actually hold the text. See https://developers.google.com/slides/api/guides/notes
+    """
     result = await asyncio.to_thread(
         service.presentations()
         .get(
@@ -163,14 +172,20 @@ async def _get_presentation_slide_ids(service, presentation_id: str) -> Set[str]
         for page in result.get(page_type, [])
         if isinstance(page.get("objectId"), str)
     }
+    speaker_notes_shapes: Dict[str, str] = {}
     for slide in result.get("slides", []):
-        notes_id = slide.get("slideProperties", {}).get("notesPage", {}).get("objectId")
-        if isinstance(notes_id, str):
-            page_ids.add(notes_id)
+        notes_page = slide.get("slideProperties", {}).get("notesPage", {})
+        notes_id = notes_page.get("objectId")
+        if not isinstance(notes_id, str):
+            continue
+        page_ids.add(notes_id)
+        shape_id = notes_page.get("notesProperties", {}).get("speakerNotesObjectId")
+        if isinstance(shape_id, str) and shape_id:
+            speaker_notes_shapes[notes_id] = shape_id
     notes_master = result.get("notesMaster")
     if isinstance(notes_master, dict) and isinstance(notes_master.get("objectId"), str):
         page_ids.add(notes_master["objectId"])
-    return page_ids
+    return page_ids, speaker_notes_shapes
 
 
 async def validate_insert_text_targets(
@@ -180,27 +195,41 @@ async def validate_insert_text_targets(
     if not insert_text_targets:
         return
 
-    slide_ids = _find_created_slide_ids(requests)
-    slide_ids.update(await _get_presentation_slide_ids(service, presentation_id))
+    page_ids = _find_created_slide_ids(requests)
+    presentation_page_ids, speaker_notes_shapes = await _get_presentation_page_ids(
+        service, presentation_id
+    )
+    page_ids.update(presentation_page_ids)
 
     invalid_targets = [
         (index, object_id)
         for index, object_id in insert_text_targets
-        if object_id in slide_ids
+        if object_id in page_ids
     ]
     if not invalid_targets:
         return
 
-    invalid_refs = ", ".join(
-        f"requests[{index}].insertText.objectId='{object_id}'"
-        for index, object_id in invalid_targets
-    )
-    raise UserInputError(
-        "Invalid Slides batch update request: "
-        f"{invalid_refs} targets a slide/page object. The Slides API only allows "
-        "insertText on text-capable shapes or table cells. Create a text box or "
-        "shape first with createShape, set elementProperties.pageObjectId to the "
-        "slide ID, then insertText into the new shape objectId. For existing "
-        "content, call get_page and use a Shape or Table element ID, not the "
-        "Page ID."
-    )
+    problems = []
+    has_non_notes_target = False
+    for index, object_id in invalid_targets:
+        ref = f"requests[{index}].insertText.objectId='{object_id}'"
+        shape_id = speaker_notes_shapes.get(object_id)
+        if shape_id:
+            problems.append(
+                f"{ref} targets a notes page. Speaker notes text lives in the notes "
+                f"shape on that page, so use objectId '{shape_id}' instead."
+            )
+        else:
+            has_non_notes_target = True
+            problems.append(f"{ref} targets a slide/page object.")
+
+    message = "Invalid Slides batch update request: " + " ".join(problems)
+    if has_non_notes_target:
+        message += (
+            " The Slides API only allows insertText on text-capable shapes or table "
+            "cells. Create a text box or shape first with createShape, set "
+            "elementProperties.pageObjectId to the slide ID, then insertText into "
+            "the new shape objectId. For existing content, call get_page and use a "
+            "Shape or Table element ID, not the Page ID."
+        )
+    raise UserInputError(message)

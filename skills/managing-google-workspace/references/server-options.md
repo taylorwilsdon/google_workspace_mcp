@@ -30,25 +30,36 @@ These mirror the MCP server's own flags. **Default setup**: use stdio transport 
 | `--tool-tier core` | Minimal tools (core / extended / complete) |
 | `--tool-tier extended` | Balanced set -- core + management tools |
 | `--permissions gmail:organize drive:readonly` | Per-service permission levels. Mutually exclusive with `--read-only` and `--tools` |
+| `--disabled-tools send_gmail_message` | Block individual tools by name. Composes with every option above |
 
 Gmail permission levels: `readonly`, `organize`, `drafts`, `send`, `full` (cumulative).
 Tasks permission levels: `readonly`, `manage`, `full` (cumulative; `manage` allows create/update/move but excludes delete).
 Other services: `readonly`, `full`.
 
+Every option except `--disabled-tools` is an allowlist. `--disabled-tools` is subtractive, so it combines
+with all of them and **block wins over allow** -- naming a `core` tier tool while running `--tool-tier core`
+removes it. Entries that match no registered tool log a warning at startup rather than failing, since a name
+is legitimately absent when its service was not loaded by `--tools` or `--tool-tier`.
+
+Note that blocking a tool does not narrow the OAuth scopes requested at consent -- scopes are derived from
+the loaded *services*, not from individual tools (the same is true of `--tool-tier`). Pair it with
+`--read-only` or `--permissions` when the goal is scope reduction rather than a smaller tool list.
+
 ### Plugin users: env var overrides
 
-Plugin users cannot pass CLI args directly. Use `WORKSPACE_MCP_TOOLS` and `WORKSPACE_MCP_TOOL_TIER` in the `env` block of `~/.claude/settings.json` to filter tools without overriding the plugin MCP config:
+Plugin users cannot pass CLI args directly. Use `WORKSPACE_MCP_TOOLS`, `WORKSPACE_MCP_TOOL_TIER`, and `WORKSPACE_MCP_DISABLED_TOOLS` in the `env` block of `~/.claude/settings.json` to filter tools without overriding the plugin MCP config:
 
 ```json
 {
   "env": {
     "WORKSPACE_MCP_TOOLS": "gmail,drive",
-    "WORKSPACE_MCP_TOOL_TIER": "core"
+    "WORKSPACE_MCP_TOOL_TIER": "core",
+    "WORKSPACE_MCP_DISABLED_TOOLS": "send_gmail_message,create_drive_file"
   }
 }
 ```
 
-`WORKSPACE_MCP_TOOLS` accepts a comma-separated list of services. `WORKSPACE_MCP_TOOL_TIER` accepts `core`, `extended`, or `complete`. CLI args take precedence if both are provided.
+`WORKSPACE_MCP_TOOLS` accepts a comma-separated list of services. `WORKSPACE_MCP_TOOL_TIER` accepts `core`, `extended`, or `complete`. `WORKSPACE_MCP_DISABLED_TOOLS` accepts a comma-separated list of exact tool names. CLI args take precedence if both are provided.
 
 ## MCP config examples
 
@@ -77,3 +88,7 @@ docker run -p 8000:8000 -e GOOGLE_OAUTH_CLIENT_ID=... -e GOOGLE_OAUTH_CLIENT_SEC
 2. `.env` file in project root -- **will not work with `uvx`** (uvx runs outside the repo directory)
 3. `client_secret.json` via `GOOGLE_CLIENT_SECRET_PATH` env var
 4. Default `client_secret.json` in project root
+
+This priority applies to both the per-user Google grant flow and OAuth 2.1 (`MCP_ENABLE_OAUTH21=true`) startup. Per-value mixing - e.g. `GOOGLE_OAUTH_CLIENT_ID` from the environment while the client secret comes from a `client_secret.json` supplied via `GOOGLE_CLIENT_SECRET_PATH`, which satisfies the OAuth 2.1 client-secret requirement - happens only at OAuth 2.1 startup, and only when the file describes the same client: a file whose `client_id` differs from `GOOGLE_OAUTH_CLIENT_ID` is ignored with a warning, since Google rejects a mismatched id/secret pair. The per-user grant flow is all-or-nothing: when `GOOGLE_OAUTH_CLIENT_ID` is set, the environment is used as-is (an unset `GOOGLE_OAUTH_CLIENT_SECRET` means a public client) and the client secrets file is not read.
+
+A `GOOGLE_CLIENT_SECRET_PATH` that cannot be read is fatal at startup only under `MCP_ENABLE_OAUTH21=true`, which needs the credentials before serving; other modes log a warning and resolve credentials when a user authenticates. A leading `~` in the path is expanded.

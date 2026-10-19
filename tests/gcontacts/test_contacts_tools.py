@@ -15,7 +15,7 @@ from gcontacts.contacts_tools import (
     _format_contact,
     _build_person_body,
 )
-from gcontacts.contacts_helpers import _parse_birthday
+from gcontacts.contacts_helpers import _merge_names, _parse_birthday
 
 
 class TestFormatContact:
@@ -260,15 +260,44 @@ class TestBuildPersonBody:
         """Test building a person body with only given name."""
         body = _build_person_body(given_name="John")
 
-        assert body["names"][0]["givenName"] == "John"
-        assert body["names"][0]["familyName"] == ""
+        assert body["names"] == [{"givenName": "John"}]
 
     def test_build_body_family_name_only(self):
         """Test building a person body with only family name."""
         body = _build_person_body(family_name="Doe")
 
-        assert body["names"][0]["givenName"] == ""
-        assert body["names"][0]["familyName"] == "Doe"
+        assert body["names"] == [{"familyName": "Doe"}]
+
+    def test_build_body_explicit_empty_name_part(self):
+        assert _build_person_body(given_name="")["names"] == [{"givenName": ""}]
+        assert _build_person_body(family_name="")["names"] == [{"familyName": ""}]
+
+    def test_merge_names_clears_explicit_empty_part(self):
+        existing = [
+            {
+                "metadata": {"source": {"type": "CONTACT"}},
+                "givenName": "Bob",
+                "familyName": "Smith",
+            }
+        ]
+        assert _merge_names(existing, [{"givenName": ""}]) == [
+            {"givenName": "", "familyName": "Smith"}
+        ]
+        assert _merge_names(existing, [{"familyName": ""}]) == [
+            {"givenName": "Bob", "familyName": ""}
+        ]
+
+    def test_merge_names_uses_contact_source_not_first(self):
+        existing = [
+            {"metadata": {"source": {"type": "PROFILE"}}, "givenName": "Profile"},
+            {"metadata": {"source": {"type": "CONTACT"}}, "familyName": "Smith"},
+        ]
+        assert _merge_names(existing, [{"givenName": "Robert"}]) == [
+            {"givenName": "Robert", "familyName": "Smith"}
+        ]
+        assert _merge_names(existing[:1], [{"givenName": "Robert"}]) == [
+            {"givenName": "Robert"}
+        ]
 
     def test_build_full_body(self):
         """Test building a person body with all fields."""
