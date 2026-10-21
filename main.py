@@ -1,5 +1,6 @@
 import io
 import argparse
+import asyncio
 import json
 import logging
 import os
@@ -206,7 +207,7 @@ def add_startup_notice(message: str) -> None:
 def resolve_bind_host_for_transport(transport: str) -> str:
     """Choose a safe default bind host for the selected transport/auth mode."""
     configured_host = os.getenv("WORKSPACE_MCP_HOST")
-    host = configured_host or "0.0.0.0"
+    host = configured_host or ("" if sys.version_info >= (3, 11) else "0.0.0.0")
     if transport != "streamable-http":
         return host
 
@@ -230,6 +231,14 @@ def resolve_bind_host_for_transport(transport: str) -> str:
         "networks, or use MCP_ENABLE_OAUTH21=true for remote HTTP deployments."
     )
     return "127.0.0.1"
+
+
+async def probe_http_bind(host: str, port: int) -> None:
+    """Raise OSError if any address uvicorn would bind for host:port is taken."""
+    server = await asyncio.get_running_loop().create_server(
+        asyncio.Protocol, host, port, reuse_address=False, start_serving=False
+    )
+    server.close()
 
 
 def validate_streamable_http_auth(transport: str) -> None:
@@ -1014,8 +1023,7 @@ def main():
         if args.transport == "streamable-http":
             # Check port availability before starting HTTP server
             try:
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    s.bind((host, port))
+                asyncio.run(probe_http_bind(host, port))
             except OSError as e:
                 fatal(
                     ui,
@@ -1033,7 +1041,6 @@ def main():
         else:
             if http_port is not None:
                 # Dual transport: stdio for MCP client + HTTP for workspace-cli
-                import asyncio
                 import uvicorn
 
                 # Bind sidecar to loopback only — auth provider is not initialized
