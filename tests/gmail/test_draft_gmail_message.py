@@ -816,8 +816,9 @@ async def test_draft_gmail_message_builds_html_attachments_with_mixed_top_level(
     attachments = list(parsed.iter_attachments())
 
     assert parsed.get_content_type() == "multipart/mixed"
+    # Attachments take the Gmail-web path, which wraps the body in its dir div.
     assert parsed.get_body(preferencelist=("html",)).get_content().strip() == (
-        "<p>Please see attached.</p>"
+        '<div dir="ltr"><p>Please see attached.</p></div>'
     )
     assert parsed.get_body(preferencelist=("plain",)).get_content().strip() == (
         "Please see attached."
@@ -1795,7 +1796,8 @@ async def test_send_gmail_message_reply_all_derives_recipients():
         mock_service.users.return_value.messages.return_value.send.call_args.kwargs
     )
     parsed = _parse_raw_message(send_kwargs["body"]["raw"])
-    assert parsed["To"] == "alice@example.com"
+    # Recipients carry the display name harvested from the thread, as Gmail web does.
+    assert parsed["To"] == "Alice Example <alice@example.com>"
     # The authenticated account is dropped; everyone else on the message is kept.
     assert parsed["Cc"] == "bob@example.com, carol@example.com"
 
@@ -1866,7 +1868,9 @@ async def test_send_gmail_message_reply_all_moves_sender_to_cc_when_to_is_explic
     parsed = _parse_raw_message(send_kwargs["body"]["raw"])
     assert parsed["To"] == "dave@example.com"
     # Redirecting To must not drop Alice from the reply-all entirely.
-    assert parsed["Cc"] == "alice@example.com, bob@example.com, carol@example.com"
+    assert parsed["Cc"] == (
+        "Alice Example <alice@example.com>, bob@example.com, carol@example.com"
+    )
 
 
 @pytest.mark.asyncio

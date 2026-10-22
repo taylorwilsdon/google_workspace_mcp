@@ -19,8 +19,8 @@ from email.errors import HeaderParseError, InvalidHeaderDefect
 from email.header import Header
 from email.headerregistry import HeaderRegistry
 from email.policy import SMTP
-from email.utils import formataddr, getaddresses
-from typing import List, Literal, Optional, Tuple
+from email.utils import encode_rfc2231, formataddr, getaddresses
+from typing import Iterable, List, Literal, Optional, Tuple
 
 TextDirection = Literal["auto", "ltr", "rtl"]
 AddressGroup = Tuple[Optional[str], List[Tuple[str, str]]]
@@ -37,6 +37,11 @@ _MON = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split()
 _ADDRESS_HEADER = HeaderRegistry()
 _PHRASE_SPECIALS = frozenset('()<>[]:;@\\,."')
 _FORWARD_SEPARATOR = "---------- Forwarded message ---------"
+
+
+def _new_attachment_id() -> str:
+    """Return a random attachment id in the shape Gmail web uses (``f_...``)."""
+    return f"f_{secrets.token_hex(5)}"
 
 
 def gmail_boundary() -> str:
@@ -82,9 +87,21 @@ def format_address_list(value: str) -> str:
     groups = parse_address_list(value)
     if value.isascii() and len(value) <= 998:
         return value
+    return join_address_groups(
+        (group_name, [format_display_address(n, a) for n, a in members])
+        for group_name, members in groups
+    )
+
+
+def join_address_groups(groups: Iterable[Tuple[Optional[str], List[str]]]) -> str:
+    """Serialize ``(group_name, [formatted mailbox, ...])`` as an address list.
+
+    Ungrouped mailboxes (``group_name`` None) are joined as-is; a named group is
+    emitted as ``Name: a, b;`` with its label quoted or RFC 2047 encoded.
+    """
     out: List[str] = []
     for group_name, members in groups:
-        formatted = ", ".join(format_display_address(n, a) for n, a in members)
+        formatted = ", ".join(members)
         if group_name is None:
             out.append(formatted)
         else:
@@ -384,22 +401,8 @@ def _alternative_parts(plain_text: str, html_text: str, boundary: str) -> str:
     return crlf.join([plain_part, html_part, closing, ""])
 
 
-def assemble_alternative(
-    headers: List[Tuple[str, str]],
-    plain_text: str,
-    html_text: str,
-    boundary: str,
-) -> str:
-    """Assemble a ``multipart/alternative`` message as a raw RFC5322 string.
-
-    ``headers`` is an ordered list of (name, value) pairs authored exactly as the
-    spec dictates (the caller controls order and which optional headers appear).
-    The ``Content-Type`` header for the top-level multipart is appended here so
-    its boundary always matches ``boundary``.
-
-    Both body parts use ``charset="UTF-8"`` (uppercase, double-quoted). Returns
-    the message with CRLF separators, ready for :func:`encode_raw`.
-    """
+def _render_headers(headers: List[Tuple[str, str]]) -> List[str]:
+    """Fold top-level headers to 76 columns, rejecting any line over 998 bytes."""
     crlf = "\r\n"
     policy = SMTP.clone(max_line_length=76)
     lines: List[str] = []
@@ -417,6 +420,27 @@ def assemble_alternative(
         for line in header.split(crlf)
     ):
         raise ValueError("Header contains a token too long to fit an RFC 5322 line.")
+    return lines
+
+
+def assemble_alternative(
+    headers: List[Tuple[str, str]],
+    plain_text: str,
+    html_text: str,
+    boundary: str,
+) -> str:
+    """Assemble a ``multipart/alternative`` message as a raw RFC5322 string.
+
+    ``headers`` is an ordered list of (name, value) pairs authored exactly as the
+    spec dictates (the caller controls order and which optional headers appear).
+    The ``Content-Type`` header for the top-level multipart is appended here so
+    its boundary always matches ``boundary``.
+
+    Both body parts use ``charset="UTF-8"`` (uppercase, double-quoted). Returns
+    the message with CRLF separators, ready for :func:`encode_raw`.
+    """
+    crlf = "\r\n"
+    lines = _render_headers(headers)
     lines.append(f'Content-Type: multipart/alternative; boundary="{boundary}"')
     head = crlf.join(lines)
     return crlf.join([head, "", _alternative_parts(plain_text, html_text, boundary)])
@@ -427,6 +451,48 @@ def _strip_header_controls(value: str) -> str:
     return value.replace("\r", "").replace("\n", "").replace("\x00", "")
 
 
+def _escape_filename(filename: str) -> str:
+    """RFC 2045 quoted-string escaping for an ASCII filename.
+
+    Strips CR/LF/NUL first (header-injection defense, mirroring
+    :func:`format_display_address`), then escapes backslash and double-quote.
+    """
+    safe = _strip_header_controls(filename)
+    return safe.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _mime_filename_params(filename: str) -> Tuple[str, str]:
+    """Return ``(name_param, filename_param)`` for a MIME part's headers.
+
+    ASCII filenames use the historical quoted-string form (``name="f.pdf"``),
+    kept byte-identical to prior output. Non-ASCII filenames are RFC 2231
+    encoded (``name*=UTF-8''caf%C3%A9.pdf``) so raw UTF-8 never lands in a
+    header. CR/LF/NUL are stripped either way.
+    """
+    try:
+        filename.encode("ascii")
+    except UnicodeEncodeError:
+        enc = encode_rfc2231(_strip_header_controls(filename), "UTF-8")
+        return f"name*={enc}", f"filename*={enc}"
+    esc = _escape_filename(filename)
+    return f'name="{esc}"', f'filename="{esc}"'
+
+
+_MIME_TYPE_RE = re.compile(
+    r"[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*"
+)
+
+
+def _safe_mime_type(mime_type: Optional[str]) -> str:
+    """Return *mime_type* trimmed if it is a bare ``type/subtype`` token.
+
+    Anything else (empty, parameters, CR/LF header injection) becomes
+    ``application/octet-stream`` so a caller value cannot add header lines.
+    """
+    value = (mime_type or "").strip()
+    return value if _MIME_TYPE_RE.fullmatch(value) else "application/octet-stream"
+
+
 def _b64_crlf(data: bytes) -> str:
     """Base64-encode *data* with CRLF line breaks and no trailing newline."""
     crlf = "\r\n"
@@ -434,6 +500,254 @@ def _b64_crlf(data: bytes) -> str:
     # encodebytes wraps at 76 cols with a trailing newline; strip it so there
     # is no empty line between the payload and the next boundary delimiter.
     return b64.rstrip("\n").replace("\n", crlf)
+
+
+def _attachment_part(
+    outer_boundary: str, filename: str, mime_type: str, data: bytes
+) -> str:
+    """Render one ``Content-Disposition: attachment`` MIME part.
+
+    Header set and order match Gmail web: a random ``X-Attachment-Id`` with a
+    matching ``Content-ID`` on every regular attachment.
+    """
+    crlf = "\r\n"
+    name_param, filename_param = _mime_filename_params(filename)
+    attachment_id = _new_attachment_id()
+    return crlf.join(
+        [
+            f"--{outer_boundary}",
+            f"Content-Type: {_safe_mime_type(mime_type)}; {name_param}",
+            f"Content-Disposition: attachment; {filename_param}",
+            "Content-Transfer-Encoding: base64",
+            f"Content-ID: <{attachment_id}>",
+            f"X-Attachment-Id: {attachment_id}",
+            "",
+            _b64_crlf(data),
+        ]
+    )
+
+
+def _inline_part(
+    outer_boundary: str, filename: str, mime_type: str, data: bytes, content_id: str
+) -> str:
+    """Render one ``Content-Disposition: inline`` MIME part (cid image)."""
+    crlf = "\r\n"
+    name_param, filename_param = _mime_filename_params(filename)
+    # Strip CR/LF/NUL from content_id (header-injection defense), then wrap in
+    # angle brackets if not already wrapped.
+    safe_cid = _strip_header_controls(content_id)
+    cid = safe_cid if safe_cid.startswith("<") else f"<{safe_cid}>"
+    return crlf.join(
+        [
+            f"--{outer_boundary}",
+            f"Content-Type: {_safe_mime_type(mime_type)}; {name_param}",
+            "Content-Transfer-Encoding: base64",
+            f"Content-ID: {cid}",
+            f"X-Attachment-Id: {cid[1:-1]}",
+            f"Content-Disposition: inline; {filename_param}",
+            "",
+            _b64_crlf(data),
+        ]
+    )
+
+
+def _related_body(
+    plain_text: str,
+    html_text: str,
+    inline_parts: List[dict],
+    boundary_related: str,
+    boundary_alt: str,
+) -> str:
+    """Return the body of a ``multipart/related`` subtree (no top-level headers).
+
+    Structure: ``multipart/alternative`` child + one inline part per entry in
+    *inline_parts*.
+    """
+    crlf = "\r\n"
+    alt_header = f'Content-Type: multipart/alternative; boundary="{boundary_alt}"'
+    alt_body = _alternative_parts(plain_text, html_text, boundary_alt)
+    alt_part = crlf.join([f"--{boundary_related}", alt_header, "", alt_body])
+
+    inline = [
+        _inline_part(
+            boundary_related,
+            ip["filename"],
+            ip["mime_type"],
+            ip["data"],
+            ip["content_id"],
+        )
+        for ip in inline_parts
+    ]
+
+    closing = f"--{boundary_related}--"
+    return crlf.join([alt_part] + inline + [closing, ""])
+
+
+def assemble_related(
+    headers: List[Tuple[str, str]],
+    plain_text: str,
+    html_text: str,
+    inline_parts: List[dict],
+    boundary_related: str,
+    boundary_alt: str,
+) -> str:
+    """Assemble a ``multipart/related`` message as a raw RFC5322 string.
+
+    Structure: ``multipart/related`` → [``multipart/alternative``, inline...].
+
+    Args:
+        headers: Ordered (name, value) pairs (From, To, Subject, etc.).
+        plain_text: Plain-text body.
+        html_text: HTML body.
+        inline_parts: List of ``{"filename": str, "mime_type": str, "data": bytes, "content_id": str}``.
+        boundary_related: Boundary for the outer multipart/related.
+        boundary_alt: Boundary for the inner multipart/alternative.
+
+    Returns:
+        Raw RFC5322 message string with CRLF separators.
+    """
+    crlf = "\r\n"
+    lines = _render_headers(headers)
+    lines.append(f'Content-Type: multipart/related; boundary="{boundary_related}"')
+    head = crlf.join(lines)
+    return crlf.join(
+        [
+            head,
+            "",
+            _related_body(
+                plain_text, html_text, inline_parts, boundary_related, boundary_alt
+            ),
+        ]
+    )
+
+
+def assemble_mixed(
+    headers: List[Tuple[str, str]],
+    plain_text: str,
+    html_text: str,
+    attachments: List[dict],
+    boundary_mixed: str,
+    boundary_alt: str,
+) -> str:
+    """Assemble a ``multipart/mixed`` message as a raw RFC5322 string.
+
+    Structure matches Gmail-web's format for forwarded messages with attachments:
+    ``multipart/mixed`` → [``multipart/alternative`` (plain + html)] + one part
+    per attachment.
+
+    Args:
+        headers: Ordered (name, value) pairs (From, To, Subject, etc.).
+        plain_text: Plain-text body.
+        html_text: HTML body.
+        attachments: List of ``{"filename": str, "mime_type": str, "data": bytes}``.
+        boundary_mixed: Boundary string for the outer multipart/mixed.
+        boundary_alt: Boundary string for the inner multipart/alternative child.
+
+    Returns:
+        Raw RFC5322 message string with CRLF separators.
+    """
+    return assemble_web_message(
+        headers,
+        plain_text,
+        html_text,
+        inline_parts=None,
+        attachment_parts=attachments,
+        boundary_alt=boundary_alt,
+        boundary_related=None,
+        boundary_mixed=boundary_mixed,
+    )
+
+
+def assemble_web_message(
+    headers: List[Tuple[str, str]],
+    plain_text: str,
+    html_text: str,
+    *,
+    inline_parts: Optional[List[dict]] = None,
+    attachment_parts: Optional[List[dict]] = None,
+    boundary_alt: str,
+    boundary_related: Optional[str] = None,
+    boundary_mixed: Optional[str] = None,
+) -> str:
+    """Assemble a Gmail-web-faithful MIME message as a raw RFC5322 string.
+
+    Selects the smallest sufficient MIME structure based on the presence of
+    inline images and/or attachments:
+
+    - No inline, no attachments → ``multipart/alternative``
+    - Inline only → ``multipart/related`` → [alternative, inline...]
+    - Attachments only → ``multipart/mixed`` → [alternative, attachments...]
+    - Inline AND attachments → ``multipart/mixed`` → [``multipart/related`` → [alternative, inline...], attachments...]
+
+    Args:
+        headers: Ordered (name, value) pairs (From, To, Subject, etc.).
+        plain_text: Plain-text body.
+        html_text: HTML body.
+        inline_parts: List of ``{"filename": str, "mime_type": str, "data": bytes, "content_id": str}``.
+        attachment_parts: List of ``{"filename": str, "mime_type": str, "data": bytes}``.
+        boundary_alt: Boundary for the innermost multipart/alternative.
+        boundary_related: Boundary for multipart/related (required when inline_parts present).
+        boundary_mixed: Boundary for the outermost multipart/mixed (required when
+            attachment_parts present, or when both inline and attachments present).
+
+    Returns:
+        Raw RFC5322 message string with CRLF separators.
+    """
+    crlf = "\r\n"
+    has_inline = bool(inline_parts)
+    has_attach = bool(attachment_parts)
+
+    if has_inline and boundary_related is None:
+        raise ValueError("boundary_related is required when inline_parts is provided")
+    if has_attach and boundary_mixed is None:
+        raise ValueError("boundary_mixed is required when attachment_parts is provided")
+
+    def _head(content_type: str) -> str:
+        lines = _render_headers(headers)
+        lines.append(f"Content-Type: {content_type}")
+        return crlf.join(lines)
+
+    if not has_inline and not has_attach:
+        # Pure alternative
+        return assemble_alternative(headers, plain_text, html_text, boundary_alt)
+
+    if has_inline and not has_attach:
+        # multipart/related at top
+        head = _head(f'multipart/related; boundary="{boundary_related}"')
+        body = _related_body(
+            plain_text, html_text, inline_parts, boundary_related, boundary_alt
+        )
+        return crlf.join([head, "", body])
+
+    if not has_inline and has_attach:
+        # multipart/mixed at top, alternative + attachments
+        head = _head(f'multipart/mixed; boundary="{boundary_mixed}"')
+        alt_header = f'Content-Type: multipart/alternative; boundary="{boundary_alt}"'
+        alt_body = _alternative_parts(plain_text, html_text, boundary_alt)
+        alt_part = crlf.join([f"--{boundary_mixed}", alt_header, "", alt_body])
+        attach = [
+            _attachment_part(
+                boundary_mixed, ap["filename"], ap["mime_type"], ap["data"]
+            )
+            for ap in attachment_parts
+        ]
+        closing = f"--{boundary_mixed}--"
+        return crlf.join([head, "", alt_part] + attach + [closing, ""])
+
+    # Both inline AND attachments:
+    # multipart/mixed → [multipart/related → [alternative, inline...], attachments...]
+    head = _head(f'multipart/mixed; boundary="{boundary_mixed}"')
+    related_header = f'Content-Type: multipart/related; boundary="{boundary_related}"'
+    related_body = _related_body(
+        plain_text, html_text, inline_parts, boundary_related, boundary_alt
+    )
+    related_part = crlf.join([f"--{boundary_mixed}", related_header, "", related_body])
+    attach = [
+        _attachment_part(boundary_mixed, ap["filename"], ap["mime_type"], ap["data"])
+        for ap in attachment_parts
+    ]
+    closing = f"--{boundary_mixed}--"
+    return crlf.join([head, "", related_part] + attach + [closing, ""])
 
 
 def encode_raw(message: str) -> str:

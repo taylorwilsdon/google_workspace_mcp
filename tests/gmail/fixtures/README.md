@@ -46,8 +46,16 @@ drifts.
   mostly-ASCII parts, base64 for heavily-non-ASCII parts - and it can differ
   *per part* within one message (e.g. a forward with a base64 text/plain and a
   quoted-printable text/html). `choose_cte` picks the smaller encoding per part.
+- **Regular attachment part headers** (checked 2026-10-09, 6/6 Gmail-web
+  attachments): `Content-Type`, `Content-Disposition`, `Content-Transfer-Encoding`,
+  `Content-ID: <f_...>`, `X-Attachment-Id: f_...`, with the Content-ID equal to the
+  bracketed X-Attachment-Id. The skeletons above record only shape, so this is
+  locked by `tests/gmail/test_attachment_ids.py`.
 - **Boundary** matches `^0{12}[0-9a-f]{16}$` (the `gmail_boundary()` generator).
 
 ## Files
 - `golden_reply.json` - reply, no attachments.
+- `golden_reply_attach.json` - reply with attachment (multipart/mixed).
 - `golden_forward.json` - forward, no attachments.
+- `golden_forward_attach.json` - forward with attachment (multipart/mixed).
+- `golden_inline.json` - inline images plus attachments (mixed > related).

@@ -11,25 +11,32 @@ import binascii
 import json
 import re
 import mimetypes
-import html
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Annotated, Optional, List, Dict, Literal, Any, Union
+from typing import Annotated, Optional, List, Dict, Literal, Any, Tuple, Union
 from urllib.parse import unquote, urlparse, urlunsplit
 
 from email.message import EmailMessage
 from email.policy import SMTP
-from email.utils import formataddr
+from email.utils import formataddr, getaddresses
 
 import httpx
+from googleapiclient.errors import HttpError
 from fastmcp.exceptions import ToolError as ToolExecutionError
 from mcp.types import ToolAnnotations
 
 from pydantic import Field
 from pydantic.json_schema import SkipJsonSchema
 
-from auth.oauth_config import is_stateless_mode
-from auth.service_decorator import require_google_service
+from auth.oauth_config import (
+    is_external_oauth21_provider,
+    is_oauth21_enabled,
+    is_stateless_mode,
+)
+from auth.service_decorator import (
+    require_google_service,
+    require_multiple_services,
+)
 from core.attachment_storage import (
     get_attachment_storage,
     get_attachment_url,
@@ -46,6 +53,7 @@ from core.config import (
     WORKSPACE_EXTERNAL_URL,
     WORKSPACE_MCP_BASE_URI,
     WORKSPACE_MCP_PORT,
+    is_extended_name_lookup_enabled,
 )
 from core.http_utils import ssrf_safe_stream
 from core.utils import (
@@ -63,6 +71,9 @@ from auth.scopes import (
     GMAIL_COMPOSE_SCOPE,
     GMAIL_MODIFY_SCOPE,
     GMAIL_LABELS_SCOPE,
+    CONTACTS_READONLY_SCOPE,
+    CONTACTS_OTHER_READONLY_SCOPE,
+    DIRECTORY_READONLY_SCOPE,
     has_required_scopes,
 )
 from gmail.gmail_helpers import (
@@ -81,10 +92,10 @@ from gmail.gmail_helpers import (
     _http_error_status,
     _inherit_reply_subject,
     _is_email_reaction,
-    _new_attachment_id,
     _prepare_gmail_message_web,
     _reject_entity_escaped_html_body,
     _reply_subject,
+    _is_quota_or_rate_limit_error,
     _retryable_result_ids,
     _signature_html_to_text,
     _wrap_signature_html,
@@ -98,7 +109,13 @@ from gmail.gmail_helpers import (
     send_message_once,
     update_gmail_filter,
 )
-from gmail.gmail_web_mime import TextDirection
+from gmail.gmail_web_mime import (
+    TextDirection,
+    _new_attachment_id,
+    format_display_address,
+    join_address_groups,
+    parse_address_list,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -677,66 +694,6 @@ def _append_signature_to_body(
     return f"{body}{separator}{signature_text}"
 
 
-def _build_quoted_reply_body(
-    reply_body: str,
-    body_format: Literal["plain", "html"],
-    signature_html: str,
-    original: Dict[str, Any],
-) -> str:
-    """Assemble reply body + signature + quoted original message.
-
-    Used only for replies that carry attachments, which still take the
-    EmailMessage path; attachment-free replies use the Gmail-web quote built by
-    ``_build_web_reply_bodies``.
-
-    Layout:
-        reply_body
-        -- signature --
-        On {date}, {sender} wrote:
-        > quoted original
-    """
-    sender = original.get("from") or "unknown"
-    if original.get("date"):
-        attribution = f"On {original['date']}, {sender} wrote:"
-    else:
-        attribution = f"{sender} wrote:"
-
-    if body_format == "html":
-        # Signature
-        sig_block = ""
-        if signature_html and signature_html.strip():
-            sig_block = f"<br><br>{_wrap_signature_html(signature_html)}"
-
-        # Quoted original
-        orig_html = original.get("html_body") or ""
-        if not orig_html:
-            orig_text = original.get("text_body", "")
-            orig_html = f"<pre>{html.escape(orig_text)}</pre>"
-
-        quote_block = (
-            '<br><br><div class="gmail_quote">'
-            f"<span>{html.escape(attribution)}</span><br>"
-            '<blockquote style="margin:0 0 0 .8ex;border-left:1px solid #ccc;padding-left:1ex">'
-            f"{orig_html}"
-            "</blockquote></div>"
-        )
-        return f"{reply_body}{sig_block}{quote_block}"
-
-    # Plain text path
-    sig_block = ""
-    if signature_html and signature_html.strip():
-        sig_text = _signature_html_to_text(signature_html).strip()
-        if sig_text:
-            sig_block = f"\n\n{sig_text}"
-
-    orig_text = original.get("text_body") or ""
-    if not orig_text and original.get("html_body"):
-        orig_text = _html_to_text(original["html_body"])
-    quoted_lines = "\n".join(f"> {line}" for line in orig_text.splitlines())
-
-    return f"{reply_body}{sig_block}\n\n{attribution}\n{quoted_lines}"
-
-
 def _format_attachment_result(attached_count: int, requested_count: int) -> str:
     """Format attachment result message for user-facing responses."""
     if requested_count <= 0:
@@ -969,6 +926,314 @@ def _extract_headers(payload: dict, header_names: List[str]) -> Dict[str, str]:
     return headers
 
 
+# People API readMask for name lookups: names + the emails to match against.
+_PEOPLE_NAME_READ_MASK = "names,emailAddresses"
+
+
+# Human-readable labels for the name-resolution scopes, used in the fallback note.
+_NAME_SCOPE_LABELS = {
+    CONTACTS_READONLY_SCOPE: "contacts.readonly (your saved contacts)",
+    CONTACTS_OTHER_READONLY_SCOPE: (
+        "contacts.other.readonly (auto-collected 'Other contacts')"
+    ),
+    DIRECTORY_READONLY_SCOPE: "directory.readonly (your Workspace directory)",
+}
+
+
+def _harvest_thread_display_names(messages: List[Dict[str, Any]]) -> Dict[str, str]:
+    """Map ``email -> display name`` from every thread participant's headers.
+
+    Mirrors Gmail's reply behavior: when you reply without editing recipients,
+    the names written into To/Cc come from the conversation's own
+    From/Reply-To/To/Cc headers (sender-supplied). First non-empty name seen per
+    address wins.
+    """
+    names: Dict[str, str] = {}
+    for msg in messages or []:
+        for field in ("from", "reply_to", "to", "cc"):
+            for existing_name, addr in getaddresses([msg.get(field) or ""]):
+                if not addr:
+                    continue
+                key = addr.strip().lower()
+                candidate = (existing_name or "").strip()
+                if candidate and key not in names:
+                    names[key] = candidate
+    return names
+
+
+def _match_person_name(persons: List[Dict[str, Any]], key: str) -> Optional[str]:
+    """Return the displayName of the person whose emails include ``key``."""
+    for person in persons:
+        emails = [
+            (e.get("value") or "").strip().lower()
+            for e in person.get("emailAddresses", [])
+        ]
+        if key in emails:
+            names = person.get("names", [])
+            if names:
+                candidate = (names[0].get("displayName") or "").strip()
+                if candidate:
+                    return candidate
+            return None
+    return None
+
+
+async def _people_search_tier(
+    request_factory,
+    params: Dict[str, Any],
+    key: str,
+    *,
+    results_key: str,
+    wrap_key: Optional[str],
+    scope: str,
+    missing_scopes: Optional[set],
+) -> Optional[str]:
+    """Run one People search tier and extract a matching display name.
+
+    Best-effort: a 401, or a 403 that is neither a quota/rate-limit error nor
+    ``accessNotConfigured`` (People API disabled for the project), means the scope
+    is not granted and records ``scope`` in ``missing_scopes``; any other failure
+    is logged. Either way it returns None. ``wrap_key``
+    is the per-result wrapper field (``person`` for searchContacts/otherContacts,
+    None for searchDirectoryPeople where results are person objects directly).
+    """
+    try:
+        result = await asyncio.to_thread(request_factory(**params).execute)
+    except HttpError as e:
+        status = _http_error_status(e)
+        scope_error = status == 401 or (
+            status == 403
+            and not _is_quota_or_rate_limit_error(e)
+            and "accessnotconfigured" not in f"{e} {e.content!r}".lower()
+        )
+        if scope_error:
+            if missing_scopes is not None:
+                missing_scopes.add(scope)
+        else:
+            logger.info("People name lookup tier failed: %s", e)
+        return None
+    except Exception as e:
+        logger.info("People name lookup tier failed: %s", e)
+        return None
+
+    if not isinstance(result, dict):
+        return None
+    items = result.get(results_key, []) or []
+    persons = [
+        (item.get(wrap_key, {}) if wrap_key else item)
+        for item in items
+        if isinstance(item, dict)
+    ]
+    return _match_person_name(persons, key)
+
+
+async def _people_contacts_tier(
+    people_service, email: str, key: str, missing_scopes: Optional[set]
+) -> Optional[str]:
+    """Saved-contacts lookup (highest People tier; Gmail's documented winner)."""
+    return await _people_search_tier(
+        people_service.people().searchContacts,
+        {"query": email, "readMask": _PEOPLE_NAME_READ_MASK},
+        key,
+        results_key="results",
+        wrap_key="person",
+        scope=CONTACTS_READONLY_SCOPE,
+        missing_scopes=missing_scopes,
+    )
+
+
+async def _people_other_directory_tiers(
+    people_service, email: str, key: str, missing_scopes: Optional[set]
+) -> Optional[str]:
+    """Auto-collected 'Other contacts' then Workspace directory, in that order.
+
+    Used for addresses not in saved contacts and not in the conversation (a
+    typed/added recipient -- Scenario 2). Each tier is best-effort; first hit wins.
+    """
+    name = await _people_search_tier(
+        people_service.otherContacts().search,
+        {"query": email, "readMask": _PEOPLE_NAME_READ_MASK},
+        key,
+        results_key="results",
+        wrap_key="person",
+        scope=CONTACTS_OTHER_READONLY_SCOPE,
+        missing_scopes=missing_scopes,
+    )
+    if name:
+        return name
+    return await _people_search_tier(
+        people_service.people().searchDirectoryPeople,
+        {
+            "query": email,
+            "readMask": _PEOPLE_NAME_READ_MASK,
+            "sources": [
+                "DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE",
+                "DIRECTORY_SOURCE_TYPE_DOMAIN_CONTACT",
+            ],
+        },
+        key,
+        results_key="people",
+        wrap_key=None,
+        scope=DIRECTORY_READONLY_SCOPE,
+        missing_scopes=missing_scopes,
+    )
+
+
+async def _warmup_people_cache(people_service) -> None:
+    """Issue empty-query searches so the first real lookup hits a warm cache.
+
+    Google recommends a warmup request before searchContacts/otherContacts.search
+    (a freshly authorized token has a cold people index). Fully best-effort.
+    """
+    request_factories = [people_service.people().searchContacts]
+    if is_extended_name_lookup_enabled():
+        request_factories.append(people_service.otherContacts().search)
+    for request_factory in request_factories:
+        try:
+            await asyncio.to_thread(
+                request_factory(query="", readMask=_PEOPLE_NAME_READ_MASK).execute
+            )
+        except Exception:
+            pass
+
+
+async def _lookup_display_name(
+    people_service,
+    email: str,
+    cache: Dict[str, Optional[str]],
+    thread_names: Optional[Dict[str, str]] = None,
+    missing_scopes: Optional[set] = None,
+) -> Optional[str]:
+    """Resolve a display name for ``email`` the way Gmail does, best-effort.
+
+    Priority (highest first), per Google's documented compose/reply behavior:
+      1. Saved Contacts (People ``searchContacts``) -- Gmail re-resolves the chip
+         against your contacts at compose AND reply time, so a saved name wins
+         even over the thread's sender-supplied name (subject to a ~24h lag).
+      2. Thread-participant header name (``thread_names``) -- the sender-supplied
+         name seeded into the reply chip for an address NOT in your contacts
+         (covers replies to non-contacts like an external counterpart, no scope).
+      3. People index for still-unresolved addresses (Scenario 2: typed/added):
+         Other contacts -> Workspace directory. Only when GMAIL_EXTENDED_NAME_LOOKUP
+         is enabled (those tiers need opt-in scopes).
+      4. None -> caller emits the bare address.
+
+    Never raises: any People failure (missing scope, network) degrades to the
+    next tier or bare address. Results are memoized in ``cache``.
+    """
+    key = email.strip().lower()
+    if key in cache:
+        return cache[key]
+
+    name: Optional[str] = None
+    # 1. Saved contacts win (Google's documented compose/reply resolution).
+    if people_service is not None and key:
+        name = await _people_contacts_tier(people_service, email, key, missing_scopes)
+    # 2. Thread/sender-supplied name for non-contacts in the conversation.
+    if not name and thread_names and key in thread_names:
+        name = thread_names[key]
+    # 3. Other contacts then directory for typed/added addresses (opt-in).
+    if (
+        not name
+        and people_service is not None
+        and key
+        and is_extended_name_lookup_enabled()
+    ):
+        name = await _people_other_directory_tiers(
+            people_service, email, key, missing_scopes
+        )
+
+    cache[key] = name
+    return name
+
+
+async def _format_address_list_with_names(
+    people_service,
+    header_value: Optional[str],
+    cache: Dict[str, Optional[str]],
+    thread_names: Optional[Dict[str, str]] = None,
+    missing_scopes: Optional[set] = None,
+) -> Optional[str]:
+    """Format a To/Cc/Bcc header value as ``Display Name <addr>`` per address.
+
+    Parses the header (RFC-correct, honoring existing display names), resolves a
+    display name for each bare address (thread name, then people index), and
+    re-emits the comma-separated list. Addresses that already carry a display
+    name keep it. Unresolved addresses are emitted bare. Returns None when input
+    is empty.
+    """
+    if not header_value or not header_value.strip():
+        return None
+
+    # Parse with the strict header parser, not getaddresses: before Python
+    # 3.10.15 getaddresses splits "a@x.com; b@y.com" into addresses, so a
+    # malformed list would be sent instead of rejected.
+    try:
+        groups = parse_address_list(header_value)
+    except ValueError:
+        raise UserInputError(
+            f"Could not parse any email address from {header_value!r}. "
+            "Separate recipients with commas."
+        ) from None
+
+    formatted_groups: List[Tuple[Optional[str], List[str]]] = []
+    for group_name, members in groups:
+        formatted: List[str] = []
+        for existing_name, addr in members:
+            name = existing_name.strip() if existing_name else None
+            if not name:
+                name = await _lookup_display_name(
+                    people_service,
+                    addr,
+                    cache,
+                    thread_names=thread_names,
+                    missing_scopes=missing_scopes,
+                )
+            # Keep each mailbox on one line: a long encoded name folds with
+            # CRLF, which the header check rejects; the headers are folded
+            # again when the message is assembled.
+            formatted.append(format_display_address(name, addr).replace("\r\n", ""))
+        formatted_groups.append((group_name, formatted))
+    return join_address_groups(formatted_groups)
+
+
+def _build_name_fallback_note(
+    people_service_absent: bool, missing_scopes: Optional[set]
+) -> str:
+    """Build the result note when recipient names couldn't be resolved.
+
+    Lists exactly the scopes that would have helped (every enabled tier's scope
+    when the People service is entirely absent; otherwise the specific tiers that
+    returned a scope error), and how to grant them. Returns "" when nothing is actionable.
+    """
+    if people_service_absent:
+        scopes = {CONTACTS_READONLY_SCOPE}
+        if is_extended_name_lookup_enabled():
+            scopes |= {CONTACTS_OTHER_READONLY_SCOPE, DIRECTORY_READONLY_SCOPE}
+    else:
+        scopes = set(missing_scopes or set())
+    if not scopes:
+        return ""
+    listed = "; ".join(
+        label for scope, label in _NAME_SCOPE_LABELS.items() if scope in scopes
+    )
+    if not is_oauth21_enabled():
+        reauth = "re-authenticate by running start_google_auth for this account"
+    elif is_external_oauth21_provider():
+        reauth = (
+            "provide an OAuth 2.1 bearer token in the Authorization header that "
+            "carries these scopes"
+        )
+    else:
+        reauth = "sign in again through your MCP client's OAuth 2.1 flow"
+    return (
+        "\n\n[Heads up] Some recipient display names could not be resolved, so "
+        "those addresses were written as bare addresses. For Gmail-web-style "
+        f"names, grant: {listed}. Enable the 'contacts' tool (it requests these "
+        f"scopes) and {reauth}."
+    )
+
+
 async def _fetch_thread_reply_context(
     service,
     thread_id: str,
@@ -1177,6 +1442,177 @@ def _format_resolved_attachment_error(attachment: Dict[str, Any]) -> str:
     return f"{label}: {detail}"
 
 
+def _split_resolved_attachments(
+    resolved: List[Dict[str, Any]],
+) -> tuple[List[dict], List[dict], int, List[str]]:
+    """Split a list of resolved attachments into inline and regular parts.
+
+    Mirrors the classification in ``_prepare_gmail_message``'s attachment
+    loop for the Gmail-web path.
+
+    Args:
+        resolved: List of attachment dicts, each produced by
+            ``_resolve_url_attachments`` (keys: ``_resolved_bytes``/``content``/
+            ``data``, ``filename``, ``mime_type``, optional ``content_id``,
+            optional ``error``).
+
+    Returns:
+        ``(inline_parts, attachment_parts, attached_count, attachment_errors)``
+
+        ``inline_parts`` - dicts for ``_prepare_gmail_message_web``'s inline_parts
+            argument: ``{filename, mime_type, data: bytes, content_id: str}``.
+        ``attachment_parts`` - dicts for the attachment_parts argument:
+            ``{filename, mime_type, data: bytes}``.
+        ``attached_count`` - total valid parts added across both lists.
+        ``attachment_errors`` - user-facing error strings for skipped entries.
+    """
+    inline_parts: List[dict] = []
+    attachment_parts: List[dict] = []
+    attached_count = 0
+    attachment_errors: List[str] = []
+    seen_content_ids: set[str] = set()
+
+    for attachment in resolved:
+        if attachment.get("error"):
+            attachment_errors.append(_format_resolved_attachment_error(attachment))
+            continue
+
+        filename = attachment.get("filename")
+        mime_type = attachment.get("mime_type")
+        content_id = attachment.get("content_id")
+
+        # Accept bytes from four sources: pre-resolved URL bytes, a raw ``data``
+        # bytes value (used by the forward path), base64-encoded content string,
+        # or a local file path (read from disk here so the helper is self-contained
+        # and works whether or not the caller pre-resolved file paths).
+        resolved_bytes = attachment.get("_resolved_bytes")
+        raw_data = attachment.get("data")
+        content_base64 = attachment.get("content")
+        file_path = attachment.get("path")
+
+        try:
+            if resolved_bytes is not None:
+                file_data = resolved_bytes
+                if not filename:
+                    filename = "attachment"
+                if not mime_type:
+                    mime_type = "application/octet-stream"
+            elif raw_data is not None:
+                file_data = raw_data
+                if not filename:
+                    filename = "attachment"
+                if not mime_type:
+                    mime_type = "application/octet-stream"
+            elif content_base64:
+                if not filename:
+                    logger.warning("Skipping attachment: missing filename")
+                    attachment_errors.append(
+                        "attachment: missing filename (content provided without a filename)"
+                    )
+                    continue
+                file_data = base64.b64decode(content_base64)
+                if not mime_type:
+                    mime_type = "application/octet-stream"
+            elif file_path:
+                path_obj = validate_file_path(file_path)
+                if not path_obj.exists():
+                    logger.error("File not found: path_len=%d", len(file_path))
+                    attachment_errors.append(f"{filename or file_path}: file not found")
+                    continue
+                file_data = _read_attachment_bytes(path_obj)
+                if not filename:
+                    filename = path_obj.name
+                if not mime_type:
+                    mime_type, _ = mimetypes.guess_type(str(path_obj))
+                    if not mime_type:
+                        mime_type = "application/octet-stream"
+            else:
+                logger.warning(
+                    "Skipping attachment: no data, _resolved_bytes, content, or path"
+                )
+                attachment_errors.append(
+                    f"{filename or 'attachment'}: no content, path, or data provided"
+                )
+                continue
+
+            safe_filename = (
+                (filename or "attachment")
+                .replace("\r", "")
+                .replace("\n", "")
+                .replace("\x00", "")
+            ) or "attachment"
+
+            if not mime_type:
+                mime_type = "application/octet-stream"
+
+            if content_id:
+                cid_value = _normalize_attachment_content_id(content_id)
+                if cid_value in seen_content_ids:
+                    logger.warning(
+                        "Duplicate content_id on attachment: content_id_len=%d, "
+                        "filename_len=%d, path_len=%d; email clients may only "
+                        "render one instance",
+                        len(cid_value),
+                        len(filename) if filename else 0,
+                        len(file_path) if file_path else 0,
+                    )
+                seen_content_ids.add(cid_value)
+                inline_parts.append(
+                    {
+                        "filename": safe_filename,
+                        "mime_type": mime_type,
+                        "data": file_data,
+                        "content_id": cid_value,
+                    }
+                )
+                logger.info(
+                    "Classified inline: content_id_len=%d, filename_len=%d (%d bytes)",
+                    len(cid_value),
+                    len(safe_filename),
+                    len(file_data),
+                )
+            else:
+                attachment_parts.append(
+                    {
+                        "filename": safe_filename,
+                        "mime_type": mime_type,
+                        "data": file_data,
+                    }
+                )
+                logger.info(
+                    "Classified attachment: filename_len=%d (%d bytes)",
+                    len(safe_filename),
+                    len(file_data),
+                )
+            attached_count += 1
+        except (binascii.Error, ValueError) as e:
+            logger.error(
+                "Failed to decode attachment: filename_len=%d, path_len=%d, "
+                "error_type=%s",
+                len(filename) if filename else 0,
+                len(file_path) if file_path else 0,
+                type(e).__name__,
+            )
+            attachment_errors.append(_format_attachment_error(file_path, filename, e))
+            continue
+        except FileNotFoundError:
+            logger.error("File not found: path_len=%d", len(file_path or ""))
+            attachment_errors.append(f"{filename or file_path}: file not found")
+            continue
+        except Exception as e:
+            logger.error(
+                "Failed to classify attachment: filename_len=%d, path_len=%d, "
+                "error_type=%s",
+                len(filename) if filename else 0,
+                len(file_path) if file_path else 0,
+                type(e).__name__,
+            )
+            attachment_errors.append(_format_attachment_error(file_path, filename, e))
+            continue
+
+    return inline_parts, attachment_parts, attached_count, attachment_errors
+
+
 def _try_read_local_attachment(url: str) -> Optional[tuple[bytes, str, Optional[str]]]:
     """Try to resolve a URL as an MCP attachment stored on local disk.
 
@@ -1300,6 +1736,50 @@ async def _resolve_url_attachments(
         resolved.append(entry)
 
     return resolved
+
+
+async def _resolve_web_recipient_names(
+    people_service,
+    *,
+    to: Optional[str],
+    cc: Optional[str],
+    bcc: Optional[str],
+    from_email: str,
+    thread_names: Optional[Dict[str, str]],
+) -> tuple[Optional[str], Optional[str], Optional[str], bool, set]:
+    """Fill recipient display names the way Gmail web does, best-effort.
+
+    Saved contacts first, then ``thread_names`` (sender-supplied names harvested
+    from the conversation), then, when enabled, Other contacts and the
+    directory. Addresses that already carry a name keep it; unresolved ones
+    stay bare.
+
+    Returns ``(to, cc, bcc, had_unresolved, missing_scopes)``. ``had_unresolved``
+    is True when a looked-up recipient got no name; ``missing_scopes`` holds
+    name-resolution scopes that returned a scope error. Together they drive the
+    caller's scope-fallback note.
+    """
+    name_cache: Dict[str, Optional[str]] = {}
+    missing_scopes: set = set()
+    if people_service is not None:
+        await _warmup_people_cache(people_service)
+    to, cc, bcc = [
+        await _format_address_list_with_names(
+            people_service,
+            header,
+            name_cache,
+            thread_names=thread_names,
+            missing_scopes=missing_scopes,
+        )
+        for header in (to, cc, bcc)
+    ]
+    # The sender's name comes from Send-As, never contacts, so its absence must
+    # not trigger a contacts note.
+    sender_key = from_email.strip().lower()
+    had_unresolved = any(
+        value is None for key, value in name_cache.items() if key != sender_key
+    )
+    return to, cc, bcc, had_unresolved, missing_scopes
 
 
 def _prepare_gmail_message(
@@ -2551,10 +3031,28 @@ async def get_gmail_attachment_content(
     ),
 )
 @handle_http_errors("send_gmail_message", service_type="gmail")
-@require_google_service("gmail", ["gmail_read", GMAIL_SEND_SCOPE])
+@require_multiple_services(
+    [
+        {
+            "service_type": "gmail",
+            "scopes": ["gmail_read", GMAIL_SEND_SCOPE],
+            "param_name": "service",
+        },
+        {
+            "service_type": "people",
+            "scopes": "contacts_read",
+            "param_name": "people_service",
+            # Optional: a missing contacts scope degrades to bare-address sends
+            # (pre-feature behavior) with a note in the result, never a hard failure.
+            "optional": True,
+        },
+    ]
+)
 async def send_gmail_message(
     service,
     user_google_email: str,
+    *,
+    people_service=None,
     to: Annotated[
         Optional[str],
         Field(
@@ -2919,6 +3417,13 @@ async def send_gmail_message(
             target_reply,
         )
 
+    # Harvest sender-supplied names from the conversation so reply recipients
+    # resolve like Gmail's, even with no People scope.
+    send_thread_names = (
+        _harvest_thread_display_names(reply_context.get("messages", []))
+        if reply_context
+        else None
+    )
     if reply_all and target_reply:
         to, cc = _derive_reply_all_recipients(
             target_reply, {user_google_email, sender_email}, to, cc
@@ -2936,50 +3441,43 @@ async def send_gmail_message(
         # caller's body, before any signature or quoted original is attached.
         body = html_newlines_to_br(body)
 
-    quote_target = target_reply if quote_original else None
+    # Every send (with or without attachments) takes the Gmail-web faithful path.
     resolved_attachments = await _resolve_url_attachments(attachments)
-    if resolved_attachments:
-        if quote_target:
-            send_body_content = _build_quoted_reply_body(
-                body, body_format, signature_html, quote_target
-            )
-        else:
-            send_body_content = _append_signature_to_body(
-                body, body_format, signature_html
-            )
-        raw_message, thread_id_final, attached_count, attachment_errors = (
-            _prepare_gmail_message(
-                subject=subject,
-                body=send_body_content,
-                to=to,
-                cc=cc,
-                bcc=bcc,
-                thread_id=thread_id,
-                in_reply_to=in_reply_to,
-                references=references,
-                body_format=body_format,
-                from_email=sender_email,
-                from_name=from_name,
-                attachments=resolved_attachments,
-            )
-        )
-    else:
-        # Without attachments the message takes the Gmail-web faithful path.
-        raw_message = _build_web_compose_raw(
-            subject=subject,
-            body=_append_signature_to_body(body, body_format, signature_html),
-            body_format=body_format,
-            to=to,
-            cc=cc,
-            bcc=bcc,
-            from_email=sender_email,
-            from_name=from_name,
-            in_reply_to=in_reply_to,
-            references=references,
-            direction=direction,
-            reply_target=quote_target,
-        )
-        thread_id_final, attached_count, attachment_errors = thread_id, 0, []
+    inline_parts, attachment_parts, attached_count, attachment_errors = (
+        _split_resolved_attachments(resolved_attachments or [])
+    )
+    to, cc, bcc, had_unresolved, missing_scopes = await _resolve_web_recipient_names(
+        people_service,
+        to=to,
+        cc=cc,
+        bcc=bcc,
+        from_email=sender_email,
+        thread_names=send_thread_names,
+    )
+    raw_message = _build_web_compose_raw(
+        subject=subject,
+        body=_append_signature_to_body(body, body_format, signature_html),
+        body_format=body_format,
+        to=to,
+        cc=cc,
+        bcc=bcc,
+        from_email=sender_email,
+        from_name=from_name,
+        in_reply_to=in_reply_to,
+        references=references,
+        direction=direction,
+        reply_target=target_reply if quote_original else None,
+        inline_parts=inline_parts,
+        attachment_parts=attachment_parts,
+    )
+    thread_id_final = thread_id
+    # Note only when a recipient actually went unresolved AND more scope would
+    # help (no People service at all, or a tier returned a scope error).
+    name_note = (
+        _build_name_fallback_note(people_service is None, missing_scopes)
+        if had_unresolved
+        else ""
+    )
 
     requested_attachment_count = len(attachments or [])
     if requested_attachment_count > 0 and attached_count == 0:
@@ -3005,8 +3503,8 @@ async def send_gmail_message(
         attachment_info = _format_attachment_result(
             attached_count, requested_attachment_count
         )
-        return f"Email sent{attachment_info}! Message ID: {message_id}"
-    return f"Email sent! Message ID: {message_id}"
+        return f"Email sent{attachment_info}! Message ID: {message_id}{name_note}"
+    return f"Email sent! Message ID: {message_id}{name_note}"
 
 
 # Internal implementation function for testing
@@ -3127,33 +3625,21 @@ async def _forward_gmail_message_impl(
 
     # --- Prepare and send the message ---
     sender_email = from_email or user_google_email
-    if attachments_to_send:
-        # The web assembler does not carry attachments yet; send the same HTML
-        # body through the EmailMessage path so the files are preserved.
-        raw_message, _, attached_count, attachment_errors = _prepare_gmail_message(
-            subject=forward_subject,
-            body=forward_html,
-            plain_body=forward_plain,
-            to=to,
-            cc=cc,
-            bcc=bcc,
-            body_format="html",
-            from_email=sender_email,
-            from_name=from_name,
-            attachments=attachments_to_send,
-        )
-    else:
-        raw_message = _prepare_gmail_message_web(
-            subject=forward_subject,
-            plain_body=forward_plain,
-            html_body=forward_html,
-            to=to,
-            cc=cc,
-            bcc=bcc,
-            from_email=sender_email,
-            from_name=from_name,
-        )
-        attached_count, attachment_errors = 0, []
+    inline_parts, attachment_parts, attached_count, attachment_errors = (
+        _split_resolved_attachments(attachments_to_send)
+    )
+    raw_message = _prepare_gmail_message_web(
+        subject=forward_subject,
+        plain_body=forward_plain,
+        html_body=forward_html,
+        to=to,
+        cc=cc,
+        bcc=bcc,
+        from_email=sender_email,
+        from_name=from_name,
+        inline_parts=inline_parts,
+        attachment_parts=attachment_parts,
+    )
     if attachments_to_send and attached_count != len(attachments_to_send):
         details = (
             f" Details: {'; '.join(attachment_errors)}" if attachment_errors else ""
@@ -3197,10 +3683,28 @@ async def _forward_gmail_message_impl(
     ),
 )
 @handle_http_errors("draft_gmail_message", service_type="gmail")
-@require_google_service("gmail", GMAIL_COMPOSE_SCOPE)
+@require_multiple_services(
+    [
+        {
+            "service_type": "gmail",
+            "scopes": GMAIL_COMPOSE_SCOPE,
+            "param_name": "service",
+        },
+        {
+            "service_type": "people",
+            "scopes": "contacts_read",
+            "param_name": "people_service",
+            # Optional: a missing contacts scope degrades to bare-address sends
+            # (pre-feature behavior) with a note in the result, never a hard failure.
+            "optional": True,
+        },
+    ]
+)
 async def draft_gmail_message(
     service,
     user_google_email: str,
+    *,
+    people_service=None,
     subject: Annotated[
         Optional[str],
         Field(
@@ -3508,55 +4012,52 @@ async def draft_gmail_message(
             thread_message_ids, in_reply_to, references, target_reply
         )
 
+    # Harvest sender-supplied names from the conversation so reply recipients
+    # resolve like Gmail's, even with no People scope.
+    draft_thread_names = (
+        _harvest_thread_display_names(reply_context.get("messages", []))
+        if reply_context
+        else None
+    )
     if thread_id and not to and target_reply:
         to = target_reply.get("reply_to") or target_reply.get("from") or to
     if thread_id and not (subject or "").strip():
         subject = _inherit_reply_subject(thread_id, target_reply)
 
-    quote_target = target_reply if quote_original else None
+    # Every draft (with or without attachments) takes the Gmail-web faithful path.
     resolved_attachments = await _resolve_url_attachments(attachments)
-    if resolved_attachments:
-        if quote_target:
-            draft_body = _build_quoted_reply_body(
-                draft_body, body_format, signature_html, quote_target
-            )
-        else:
-            draft_body = _append_signature_to_body(
-                draft_body, body_format, signature_html
-            )
-        raw_message, _thread_id_final, attached_count, attachment_errors = (
-            _prepare_gmail_message(
-                subject=subject,
-                body=draft_body,
-                body_format=body_format,
-                to=to,
-                cc=cc,
-                bcc=bcc,
-                thread_id=thread_id,
-                in_reply_to=in_reply_to,
-                references=references,
-                from_email=sender_email,
-                from_name=from_name,
-                attachments=resolved_attachments,
-            )
-        )
-    else:
-        # Without attachments the draft takes the Gmail-web faithful path.
-        raw_message = _build_web_compose_raw(
-            subject=subject,
-            body=_append_signature_to_body(draft_body, body_format, signature_html),
-            body_format=body_format,
-            to=to,
-            cc=cc,
-            bcc=bcc,
-            from_email=sender_email,
-            from_name=from_name,
-            in_reply_to=in_reply_to,
-            references=references,
-            direction=direction,
-            reply_target=quote_target,
-        )
-        attached_count, attachment_errors = 0, []
+    inline_parts, attachment_parts, attached_count, attachment_errors = (
+        _split_resolved_attachments(resolved_attachments or [])
+    )
+    to, cc, bcc, had_unresolved, missing_scopes = await _resolve_web_recipient_names(
+        people_service,
+        to=to,
+        cc=cc,
+        bcc=bcc,
+        from_email=sender_email,
+        thread_names=draft_thread_names,
+    )
+    raw_message = _build_web_compose_raw(
+        subject=subject,
+        body=_append_signature_to_body(draft_body, body_format, signature_html),
+        body_format=body_format,
+        to=to,
+        cc=cc,
+        bcc=bcc,
+        from_email=sender_email,
+        from_name=from_name,
+        in_reply_to=in_reply_to,
+        references=references,
+        direction=direction,
+        reply_target=target_reply if quote_original else None,
+        inline_parts=inline_parts,
+        attachment_parts=attachment_parts,
+    )
+    name_note = (
+        _build_name_fallback_note(people_service is None, missing_scopes)
+        if had_unresolved
+        else ""
+    )
 
     requested_attachment_count = len(attachments or [])
     if requested_attachment_count > 0 and attached_count == 0:
@@ -3585,7 +4086,7 @@ async def draft_gmail_message(
     attachment_info = _format_attachment_result(
         attached_count, requested_attachment_count
     )
-    return f"Draft created{attachment_info}! Draft ID: {draft_id}"
+    return f"Draft created{attachment_info}! Draft ID: {draft_id}{name_note}"
 
 
 def _format_thread_content(
