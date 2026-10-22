@@ -389,22 +389,8 @@ def _alternative_parts(plain_text: str, html_text: str, boundary: str) -> str:
     return crlf.join([plain_part, html_part, closing, ""])
 
 
-def assemble_alternative(
-    headers: List[Tuple[str, str]],
-    plain_text: str,
-    html_text: str,
-    boundary: str,
-) -> str:
-    """Assemble a ``multipart/alternative`` message as a raw RFC5322 string.
-
-    ``headers`` is an ordered list of (name, value) pairs authored exactly as the
-    spec dictates (the caller controls order and which optional headers appear).
-    The ``Content-Type`` header for the top-level multipart is appended here so
-    its boundary always matches ``boundary``.
-
-    Both body parts use ``charset="UTF-8"`` (uppercase, double-quoted). Returns
-    the message with CRLF separators, ready for :func:`encode_raw`.
-    """
+def _render_headers(headers: List[Tuple[str, str]]) -> List[str]:
+    """Fold top-level headers to 76 columns, rejecting any line over 998 bytes."""
     crlf = "\r\n"
     policy = SMTP.clone(max_line_length=76)
     lines: List[str] = []
@@ -422,6 +408,27 @@ def assemble_alternative(
         for line in header.split(crlf)
     ):
         raise ValueError("Header contains a token too long to fit an RFC 5322 line.")
+    return lines
+
+
+def assemble_alternative(
+    headers: List[Tuple[str, str]],
+    plain_text: str,
+    html_text: str,
+    boundary: str,
+) -> str:
+    """Assemble a ``multipart/alternative`` message as a raw RFC5322 string.
+
+    ``headers`` is an ordered list of (name, value) pairs authored exactly as the
+    spec dictates (the caller controls order and which optional headers appear).
+    The ``Content-Type`` header for the top-level multipart is appended here so
+    its boundary always matches ``boundary``.
+
+    Both body parts use ``charset="UTF-8"`` (uppercase, double-quoted). Returns
+    the message with CRLF separators, ready for :func:`encode_raw`.
+    """
+    crlf = "\r\n"
+    lines = _render_headers(headers)
     lines.append(f'Content-Type: multipart/alternative; boundary="{boundary}"')
     head = crlf.join(lines)
     return crlf.join([head, "", _alternative_parts(plain_text, html_text, boundary)])
@@ -588,7 +595,7 @@ def assemble_related(
         Raw RFC5322 message string with CRLF separators.
     """
     crlf = "\r\n"
-    lines: List[str] = [f"{name}: {value}" for name, value in headers]
+    lines = _render_headers(headers)
     lines.append(f'Content-Type: multipart/related; boundary="{boundary_related}"')
     head = crlf.join(lines)
     return crlf.join(
@@ -684,7 +691,7 @@ def assemble_web_message(
         raise ValueError("boundary_mixed is required when attachment_parts is provided")
 
     def _head(content_type: str) -> str:
-        lines: List[str] = [f"{name}: {value}" for name, value in headers]
+        lines = _render_headers(headers)
         lines.append(f"Content-Type: {content_type}")
         return crlf.join(lines)
 

@@ -899,3 +899,34 @@ def test_assemble_related_direct():
     assert top["parts"][0]["parts"][1]["content_type"] == "text/html"
     assert top["parts"][1]["content_type"] == "image/jpeg"
     assert top["parts"][1]["disposition"] == "inline"
+
+
+@pytest.mark.parametrize("with_inline", [False, True])
+def test_web_message_folds_long_recipient_headers(with_inline):
+    """Attachment and inline assembly fold headers like the alternative path."""
+    from gmail.gmail_web_mime import assemble_web_message
+
+    to = ", ".join(f"Person Number {i} <person{i}@example.com>" for i in range(40))
+    inline = [
+        {
+            "filename": "i.png",
+            "mime_type": "image/png",
+            "data": _PNG_DATA,
+            "content_id": "ii_1",
+        }
+    ]
+    raw = assemble_web_message(
+        headers=[("From", "a@example.com"), ("To", to), ("Subject", "S " * 60)],
+        plain_text="p",
+        html_text="<div>p</div>",
+        inline_parts=inline if with_inline else None,
+        attachment_parts=[
+            {"filename": "a.pdf", "mime_type": "application/pdf", "data": _PDF_DATA}
+        ],
+        boundary_alt="000000000000aaaaaaaaaaaaaaaa",
+        boundary_related="000000000000cccccccccccccccc" if with_inline else None,
+        boundary_mixed="000000000000bbbbbbbbbbbbbbbb",
+    )
+    head = raw.split("\r\n\r\n", 1)[0]
+    assert max(len(line) for line in head.split("\r\n")) <= 78
+    assert "person39@example.com" in head
