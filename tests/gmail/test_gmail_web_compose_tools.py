@@ -870,3 +870,26 @@ def test_name_fallback_note_uses_oauth21_instruction(monkeypatch):
     monkeypatch.setattr(gmail_tools, "is_external_oauth21_provider", lambda: True)
     note = gmail_tools._build_name_fallback_note(True, None)
     assert "bearer token" in note
+
+
+@pytest.mark.asyncio
+async def test_send_resolves_long_non_ascii_display_name():
+    """A resolved name long enough to fold must not trip the CR/LF check."""
+    from email.header import decode_header, make_header
+
+    name = "ישראל ישראלי בן אברהם יצחק ויעקב"
+    gmail = _gmail_service()
+
+    result = await _unwrap(send_gmail_message)(
+        service=gmail,
+        people_service=_people_service_with(name, "ada@example.com"),
+        user_google_email="grace@example.org",
+        to="ada@example.com",
+        subject="Project sync",
+        body="Hello there",
+        include_signature=False,
+    )
+
+    assert "Email sent" in result
+    to_header = message_from_string(_raw_sent(gmail))["To"]
+    assert str(make_header(decode_header(to_header))) == f"{name} <ada@example.com>"
