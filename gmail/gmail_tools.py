@@ -1213,7 +1213,10 @@ async def _format_address_list_with_names(
                     thread_names=thread_names,
                     missing_scopes=missing_scopes,
                 )
-            formatted.append(format_display_address(name, addr))
+            # Keep each mailbox on one line: a long encoded name folds with
+            # CRLF, which the header check rejects; the headers are folded
+            # again when the message is assembled.
+            formatted.append(format_display_address(name, addr).replace("\r\n", ""))
         formatted_groups.append((group_name, formatted))
     return join_address_groups(formatted_groups)
 
