@@ -10,7 +10,10 @@ import logging
 import ssl
 from typing import Dict, List, Optional
 
+from fastmcp.exceptions import ToolError
 from googleapiclient.errors import HttpError
+
+from core.utils import UserInputError
 
 logger = logging.getLogger(__name__)
 
@@ -273,3 +276,109 @@ def _extract_rich_links(msg: dict) -> List[str]:
             if uri and uri not in text:
                 urls.append(uri)
     return urls
+
+
+def _validate_space_target(
+    space_id: Optional[str],
+    message_name: Optional[str],
+    create_space_name: Optional[str],
+    member_emails: Optional[List[str]],
+) -> None:
+    """Require exactly one message target: an existing space or a space to create."""
+    if create_space_name is not None:
+        if space_id or message_name is not None:
+            raise UserInputError(
+                "create_space_name cannot be combined with space_id or message_name: "
+                "a new space has no existing messages to target."
+            )
+    elif space_id is None:
+        raise UserInputError(
+            "Provide space_id, or create_space_name to create a space."
+        )
+    elif member_emails:
+        raise UserInputError(
+            "member_emails is only used with create_space_name, when creating a space."
+        )
+
+
+async def _setup_space(
+    chat_service, display_name: str, member_emails: Optional[List[str]] = None
+) -> dict:
+    """Create a named space via spaces.setup; the caller is added as a manager."""
+    body = {"space": {"spaceType": "SPACE", "displayName": display_name}}
+    emails = [e.strip() for e in member_emails or [] if e and e.strip()]
+    if emails:
+        body["memberships"] = [
+            {"member": {"name": f"users/{email}", "type": "HUMAN"}} for email in emails
+        ]
+    try:
+        return await asyncio.to_thread(chat_service.spaces().setup(body=body).execute)
+    except HttpError as e:
+        if _is_scope_error(e):
+            raise ToolError(
+                "Creating a space needs the chat.spaces scope, which this token "
+                "lacks. Re-authenticate with the default Chat scopes and retry."
+            ) from e
+        raise
+
+
+async def _create_message(chat_service, request_params: dict, created_space: bool):
+    """Create a message; when its space was just created, name that space on failure.
+
+    The space already exists at that point, and its display name is now taken, so
+    retrying with create_space_name would fail. The caller needs the space ID to
+    retry with space_id instead.
+    """
+    try:
+        return await asyncio.to_thread(
+            chat_service.spaces().messages().create(**request_params).execute
+        )
+    except HttpError as e:
+        if not created_space:
+            raise
+        space_id = request_params["parent"]
+        raise ToolError(
+            f"Created space '{space_id}', but sending the message failed: "
+            f"{getattr(e, 'reason', None) or e}. Retry with space_id='{space_id}'."
+        ) from e
+    except Exception as e:
+        if not created_space:
+            raise
+        # Also stops handle_http_errors from retrying the whole call on an SSL
+        # error, which would try to create the same space again.
+        space_id = request_params["parent"]
+        raise ToolError(
+            f"Created space '{space_id}', but the message send was interrupted "
+            f"({e}), so it may or may not have been delivered. Check the space, "
+            f"then retry with space_id='{space_id}' if needed."
+        ) from e
+
+
+async def _pin_message(chat_service, space_id: str, message_name: str) -> str:
+    """Pin a message in its space and return a one-line outcome for the tool reply.
+
+    A pin failure is reported instead of raised: the message itself has already
+    been sent or edited, and raising would invite the caller to send it again.
+    """
+    try:
+        pin = await asyncio.to_thread(
+            chat_service.spaces()
+            .messagePins()
+            .create(parent=space_id, body={"message": message_name})
+            .execute
+        )
+    except HttpError as e:
+        if e.resp.status == 409:
+            return "Already pinned."
+        logger.warning(f"Pinning '{message_name}' failed: {e}")
+        if _is_scope_error(e):
+            return (
+                "Pin failed (message was still delivered): pinning needs the "
+                "chat.spaces scope, which this token lacks."
+            )
+        reason = getattr(e, "reason", None) or str(e)
+        return f"Pin failed (message was still delivered): {reason}"
+    except Exception as e:
+        logger.warning(f"Pinning '{message_name}' failed unexpectedly: {e}")
+        return f"Pin failed (message was still delivered): {e}"
+    return f"Pinned. Pin ID: {pin.get('name', '')}"

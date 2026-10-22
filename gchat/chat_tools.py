@@ -23,12 +23,16 @@ from core.gcs_attachment_storage import gcs_files_enabled
 from core.server import server
 from core.utils import TransientNetworkError, UserInputError, handle_http_errors
 from gchat.chat_helpers import (
+    _create_message,
     _execute_chat_request,
     _extract_rich_links,
     _name_spaces,
     _none_if_blank,
     _none_if_null_sentinel,
+    _pin_message,
     _resolve_sender,
+    _setup_space,
+    _validate_space_target,
 )
 
 logger = logging.getLogger(__name__)
@@ -246,31 +250,47 @@ async def get_messages(
 async def send_message(
     service,
     user_google_email: str,
-    space_id: str,
     message_text: str,
+    space_id: Optional[str] = None,
     thread_key: Optional[str] = None,
     thread_name: Optional[str] = None,
     message_name: Optional[str] = None,
+    create_space_name: Optional[str] = None,
+    member_emails: Optional[List[str]] = None,
+    pin: bool = False,
 ) -> str:
     """
     Sends a message to a Google Chat space, or edits a message already sent there.
+    Can also create a new named space first, and pin the sent or edited message.
 
     Args:
+        space_id: Target space (e.g. spaces/X). Required unless create_space_name is set.
         thread_name: Reply in an existing thread by its resource name (e.g. spaces/X/threads/Y).
         thread_key: Reply in a thread by app-defined key (creates thread if not found).
         message_name: Edit this message in place instead of sending a new one
             (e.g. spaces/X/messages/Y, as returned by send_message or get_messages).
             Must be a message of space_id. Only the text is replaced, and only the
             author can edit their own message.
+        create_space_name: Create a new named space with this display name, then
+            send the message into it. Cannot be combined with space_id or message_name.
+        member_emails: With create_space_name, email addresses of people to add to
+            the new space. The calling user is added automatically.
+        pin: Pin the sent or edited message in its space.
+
+    Creating a space and pinning also need the chat.spaces scope (part of the
+    default Chat scopes); a plain send needs only chat.messages.
 
     Returns:
         str: Confirmation message with the sent or updated message details.
     """
-    logger.info(f"[send_message] Email: '{user_google_email}', Space: '{space_id}'")
-
+    space_id = _none_if_blank(space_id)
     thread_key = _none_if_blank(thread_key)
     thread_name = _none_if_blank(thread_name)
     message_name = _none_if_null_sentinel(message_name)
+    create_space_name = _none_if_blank(create_space_name)
+    logger.info(f"[send_message] Email: '{user_google_email}', Space: '{space_id}'")
+
+    _validate_space_target(space_id, message_name, create_space_name, member_emails)
 
     if message_name is not None:
         if thread_name or thread_key:
@@ -306,10 +326,21 @@ async def send_message(
             f"Message updated in space '{space_id}' by {user_google_email}. "
             f"Message ID: {message.get('name', message_name)}, Time: {update_time}"
         )
+        if pin:
+            msg += f"\n{await _pin_message(service, space_id, message_name)}"
         logger.info(
             f"Successfully updated message '{message_name}' by {user_google_email}"
         )
         return msg
+
+    space_note = ""
+    if create_space_name is not None:
+        space = await _setup_space(service, create_space_name, member_emails)
+        space_id = space.get("name", "")
+        space_note = (
+            f"Created space '{space.get('displayName', create_space_name)}' "
+            f"(ID: {space_id}).\n"
+        )
 
     message_body = {"text": message_text}
 
@@ -323,14 +354,16 @@ async def send_message(
         message_body["thread"] = {"threadKey": thread_key}
         request_params["messageReplyOption"] = "REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD"
 
-    message = await asyncio.to_thread(
-        service.spaces().messages().create(**request_params).execute
+    message = await _create_message(
+        service, request_params, created_space=create_space_name is not None
     )
 
     sent_message_name = message.get("name", "")
     create_time = message.get("createTime", "")
 
-    msg = f"Message sent to space '{space_id}' by {user_google_email}. Message ID: {sent_message_name}, Time: {create_time}"
+    msg = f"{space_note}Message sent to space '{space_id}' by {user_google_email}. Message ID: {sent_message_name}, Time: {create_time}"
+    if pin:
+        msg += f"\n{await _pin_message(service, space_id, sent_message_name)}"
     logger.info(
         f"Successfully sent message to space '{space_id}' by {user_google_email}"
     )
