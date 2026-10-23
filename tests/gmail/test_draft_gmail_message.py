@@ -816,8 +816,9 @@ async def test_draft_gmail_message_builds_html_attachments_with_mixed_top_level(
     attachments = list(parsed.iter_attachments())
 
     assert parsed.get_content_type() == "multipart/mixed"
+    # Attachments take the Gmail-web path, which wraps the body in its dir div.
     assert parsed.get_body(preferencelist=("html",)).get_content().strip() == (
-        "<p>Please see attached.</p>"
+        '<div dir="ltr"><p>Please see attached.</p></div>'
     )
     assert parsed.get_body(preferencelist=("plain",)).get_content().strip() == (
         "Please see attached."
