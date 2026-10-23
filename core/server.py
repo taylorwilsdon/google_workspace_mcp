@@ -514,15 +514,57 @@ class SecureFastMCP(FastMCP):
         return await super().call_tool(name, arguments, *args, **kwargs)
 
 
-# Build server instructions with user email context for single-user mode.
-# Skipped in trusted-gateway mode: the verified principal supersedes the configured
-# default, and user_google_email is no longer a tool parameter clients can pass.
-_server_instructions = None
-if USER_GOOGLE_EMAIL and not is_trust_gateway_identity():
-    _server_instructions = f"""Connected Google account: {USER_GOOGLE_EMAIL}
+# Operator-supplied text for the MCP initialize result's ``instructions`` field.
+# Clients that defer tool definitions behind a search step read the instructions to
+# decide when this server is relevant, so a deployment can describe itself here.
+SERVER_INSTRUCTIONS_ENV_VAR = "WORKSPACE_MCP_SERVER_INSTRUCTIONS"
 
-When using Google Workspace tools, always use `{USER_GOOGLE_EMAIL}` as the `user_google_email` parameter. Do not ask the user for their email address."""
-    logger.info(f"Server instructions configured for user: {USER_GOOGLE_EMAIL}")
+
+def build_server_instructions(
+    custom_instructions: Optional[str],
+    user_google_email: Optional[str],
+    trust_gateway_identity: bool,
+) -> Optional[str]:
+    """Combine operator instructions with the single-user account context.
+
+    The operator text leads because some clients truncate long instructions, and
+    it is the part that tells them when to use this server.
+
+    Args:
+        custom_instructions: The WORKSPACE_MCP_SERVER_INSTRUCTIONS value, if set.
+        user_google_email: The configured single-user account, if set.
+        trust_gateway_identity: Whether trusted-gateway mode is active.
+
+    Returns:
+        The instructions string, or None when there is nothing to send.
+    """
+    sections = []
+    custom_instructions = (custom_instructions or "").strip()
+    if custom_instructions:
+        sections.append(custom_instructions)
+        logger.info(
+            "Server instructions: %d chars from %s",
+            len(custom_instructions),
+            SERVER_INSTRUCTIONS_ENV_VAR,
+        )
+    # Skipped in trusted-gateway mode: the verified principal supersedes the configured
+    # default, and user_google_email is no longer a tool parameter clients can pass.
+    if user_google_email and not trust_gateway_identity:
+        sections.append(
+            f"Connected Google account: {user_google_email}\n\n"
+            f"When using Google Workspace tools, always use `{user_google_email}` "
+            "as the `user_google_email` parameter. Do not ask the user for their "
+            "email address."
+        )
+        logger.info(f"Server instructions configured for user: {user_google_email}")
+    return "\n\n".join(sections) or None
+
+
+_server_instructions = build_server_instructions(
+    os.getenv(SERVER_INSTRUCTIONS_ENV_VAR),
+    USER_GOOGLE_EMAIL,
+    is_trust_gateway_identity(),
+)
 
 # Branding for the OAuth consent page: FastMCP's OAuth proxy renders the server's
 # name / icon / website on the consent screen (auth/oauth_config reads the env vars).
