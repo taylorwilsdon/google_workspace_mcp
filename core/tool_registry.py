@@ -21,6 +21,10 @@ _enabled_tools: Optional[Set[str]] = None
 # Tools explicitly blocked regardless of tier or permission selection
 _disabled_tools: Set[str] = set()
 
+# Tool _meta key asking clients that defer tool definitions behind a search step to
+# load the tool upfront instead. Claude Code reads it; other clients ignore it.
+ALWAYS_LOAD_META_KEY = "anthropic/alwaysLoad"
+
 
 def set_enabled_tools(tool_names: Optional[Set[str]]):
     """Set the globally enabled tools."""
@@ -61,6 +65,18 @@ def resolve_disabled_tools(cli_names: Optional[list[str]] = None) -> Set[str]:
         if cli_names
         else os.getenv("WORKSPACE_MCP_DISABLED_TOOLS", "").split(",")
     )
+    return {name.strip().lower() for name in raw if name.strip()}
+
+
+def resolve_always_load_tools() -> Set[str]:
+    """Resolve the tools to mark for upfront loading from the env var.
+
+    Names are normalized to lowercase because tool names are lowercase snake_case.
+
+    Returns:
+        The tool names listed in WORKSPACE_MCP_ALWAYS_LOAD_TOOLS, empty when unset.
+    """
+    raw = os.getenv("WORKSPACE_MCP_ALWAYS_LOAD_TOOLS", "").split(",")
     return {name.strip().lower() for name in raw if name.strip()}
 
 
@@ -266,3 +282,29 @@ def filter_server_tools(server) -> int:
         )
 
     return tools_removed
+
+
+def mark_always_load_tools(server, tool_names: Set[str]) -> int:
+    """Set ``_meta["anthropic/alwaysLoad"] = true`` on the named registered tools.
+
+    Run after filter_server_tools so a name whose tool was filtered out warns
+    instead of marking a tool the server no longer exposes.
+
+    Returns:
+        The number of tools marked.
+    """
+    tool_components = get_tool_components(server)
+    marked = 0
+    for tool_name in sorted(tool_names):
+        tool = tool_components.get(tool_name)
+        if tool is None:
+            logger.warning(
+                "Always-load entry '%s' matches no registered tool - check spelling, "
+                "or it may be filtered out by the current tool selection",
+                tool_name,
+            )
+            continue
+        tool.meta = {**(tool.meta or {}), ALWAYS_LOAD_META_KEY: True}
+        logger.info("Always-load: marking tool '%s'", tool_name)
+        marked += 1
+    return marked

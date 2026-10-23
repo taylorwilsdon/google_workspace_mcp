@@ -33,6 +33,8 @@ from core.tool_registry import (
     set_disabled_tools,
     wrap_server_tool_method,
     filter_server_tools,
+    resolve_always_load_tools,
+    mark_always_load_tools,
 )
 from auth.scopes import set_enabled_tools
 
@@ -187,6 +189,7 @@ set_disabled_tools(resolve_disabled_tools())
 
 # Filter tools based on configuration
 filter_server_tools(server)
+mark_always_load_tools(server, resolve_always_load_tools())
 
 # Configure authentication after scopes are known
 configure_server_for_http()
