@@ -24,6 +24,7 @@ from core.server import server
 from core.utils import TransientNetworkError, UserInputError, handle_http_errors
 from gchat.chat_helpers import (
     _execute_chat_request,
+    _format_space_members,
     _extract_rich_links,
     _name_spaces,
     _none_if_blank,
@@ -68,13 +69,26 @@ async def list_spaces(
     user_google_email: str,
     page_size: int = 100,
     space_type: str = "all",  # "all", "room", "dm"
+    space_id: Optional[str] = None,
 ) -> str:
     """
-    Lists Google Chat spaces (rooms and direct messages) accessible to the user.
+    Lists Google Chat spaces (rooms and direct messages) accessible to the user,
+    or the members of one space.
+
+    Args:
+        space_id: List the members of this space (e.g. spaces/X) instead of
+            listing spaces: people, apps and groups, with their role and any
+            pending invitation. Needs the chat.memberships.readonly scope (part
+            of the default Chat scopes).
 
     Returns:
-        str: A formatted list of Google Chat spaces accessible to the user.
+        str: A formatted list of Google Chat spaces, or of the members of space_id.
     """
+    space_id = _none_if_blank(space_id)
+    if space_id is not None:
+        logger.info(f"[list_spaces] Members of {space_id}")
+        return await _format_space_members(chat_service, people_service, space_id)
+
     logger.info(f"[list_spaces] Email={user_google_email}, Type={space_type}")
 
     # Build filter based on space_type

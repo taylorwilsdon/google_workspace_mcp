@@ -10,6 +10,7 @@ import logging
 import ssl
 from typing import Dict, List, Optional
 
+from fastmcp.exceptions import ToolError
 from googleapiclient.errors import HttpError
 
 logger = logging.getLogger(__name__)
@@ -124,10 +125,10 @@ def _is_scope_error(error: HttpError) -> bool:
     )
 
 
-async def _list_memberships(chat_service, space_name: str) -> List[dict]:
+async def _list_memberships(chat_service, space_name: str, **list_params) -> List[dict]:
     """Return every membership of a space, following nextPageToken."""
     memberships = []
-    params = {"parent": space_name, "pageSize": 100}
+    params = {"parent": space_name, "pageSize": 100, **list_params}
     while True:
         response = await asyncio.to_thread(
             chat_service.spaces().members().list(**params).execute
@@ -214,6 +215,60 @@ async def _name_spaces(
             label += f" and {remaining} other{'s' if remaining > 1 else ''}"
         labels[space_name] = label
     return labels
+
+
+_MEMBER_ROLE_LABELS = {"ROLE_MANAGER": "manager", "ROLE_MEMBER": "member"}
+
+
+async def _format_space_members(chat_service, people_service, space_id: str) -> str:
+    """List a space's members (people, apps and groups), including pending invites."""
+    space = await asyncio.to_thread(chat_service.spaces().get(name=space_id).execute)
+    space_label = (await _name_spaces(chat_service, people_service, [space]))[
+        space.get("name")
+    ]
+    try:
+        memberships = await _list_memberships(
+            chat_service, space_id, showInvited=True, showGroups=True
+        )
+    except HttpError as e:
+        if _is_scope_error(e):
+            raise ToolError(
+                "Listing members needs the chat.memberships.readonly scope, which "
+                "this token lacks. Re-authenticate with the default Chat scopes "
+                "and retry."
+            ) from e
+        raise
+
+    user_ids = [
+        m["member"]["name"]
+        for m in memberships
+        if m.get("member", {}).get("type") == "HUMAN" and m["member"].get("name")
+    ]
+    people_names = await _lookup_people_names(people_service, user_ids)
+
+    lines = [f"Members of '{space_label}' (ID: {space_id}): {len(memberships)}"]
+    for membership in memberships:
+        role = _MEMBER_ROLE_LABELS.get(membership.get("role"), "member")
+        state = membership.get("state")
+        suffix = ", invited" if state == "INVITED" else ""
+        if "groupMember" in membership:
+            group_id = membership["groupMember"].get("name", "")
+            lines.append(f"- Group {group_id} ({role}{suffix})")
+            continue
+        member = membership.get("member", {})
+        member_id = member.get("name", "")
+        name = (
+            people_names.get(member_id)
+            or member.get("displayName")
+            or member_id
+            or "Unknown"
+        )
+        kind = " [app]" if member.get("type") == "BOT" else ""
+        detail = (
+            f"{role}{suffix}" if name == member_id else f"{member_id}, {role}{suffix}"
+        )
+        lines.append(f"- {name}{kind} ({detail})")
+    return "\n".join(lines)
 
 
 def _none_if_null_sentinel(value: Optional[str]) -> Optional[str]:
