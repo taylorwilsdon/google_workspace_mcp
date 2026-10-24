@@ -20,8 +20,9 @@ import re
 from datetime import datetime
 from typing import Any
 from urllib.parse import quote
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from gdocs.docs_links import resolve_link_target, text_run_link
+from gdocs.docs_links import resolve_link_target
 
 logger = logging.getLogger(__name__)
 
@@ -39,12 +40,32 @@ HEADING_MAP = {
 }
 
 
+# Pending suggestions, as the Docs API returns them in the SUGGESTIONS_INLINE
+# view: the old and new text sit side by side, each run labelled with the
+# suggestion it belongs to. Rendered as CriticMarkup so a reader can tell them
+# apart; the legend precedes the document whenever any appear.
+SUGGESTION_INSERT_MARKERS = ("{++", "++}")
+SUGGESTION_DELETE_MARKERS = ("{--", "--}")
+SUGGESTION_LEGEND = (
+    "> Pending suggestions are shown inline: {++inserted text++}, "
+    "{--deleted text--}. Suggested formatting is shown as if accepted.\n\n"
+)
+_SUGGESTION_KEYS = (
+    "suggestedInsertionIds",
+    "suggestedDeletionIds",
+    "suggestedTextStyleChanges",
+    "suggestedDateElementPropertiesChanges",
+)
+
+
 def convert_doc_to_markdown(doc: dict[str, Any], include_colors: bool = False) -> str:
     """Convert a Google Docs API document response to markdown.
 
     Supports both legacy (top-level body) and tab-aware responses
     (includeTabsContent=True). For multi-tab docs, each tab gets a
     heading separator. Single-tab docs render without a tab heading.
+    Pending suggestions (SUGGESTIONS_INLINE view) are marked as
+    {++inserted++} and {--deleted--}, with a legend at the top.
 
     Args:
         doc: The document JSON from docs.documents.get()
@@ -56,10 +77,29 @@ def convert_doc_to_markdown(doc: dict[str, Any], include_colors: bool = False) -
     tabs = doc.get("tabs", [])
 
     if tabs:
-        return _convert_tabs_to_markdown(tabs, include_colors=include_colors)
+        markdown = _convert_tabs_to_markdown(tabs, include_colors=include_colors)
+    else:
+        # Legacy: no tabs, use top-level body/lists/footnotes/inlineObjects
+        markdown = _convert_body_to_markdown(doc, include_colors=include_colors)
 
-    # Legacy: no tabs, use top-level body/lists/footnotes/inlineObjects
-    return _convert_body_to_markdown(doc, include_colors=include_colors)
+    if _has_pending_suggestions(doc):
+        return SUGGESTION_LEGEND + markdown
+    return markdown
+
+
+def _has_pending_suggestions(node: Any) -> bool:
+    """Whether any element in the response carries a pending suggestion.
+
+    Covers inserted and deleted elements as well as style-only suggestions,
+    which the Docs API exposes without insertion or deletion ids.
+    """
+    if isinstance(node, dict):
+        if any(node.get(key) for key in _SUGGESTION_KEYS):
+            return True
+        return any(_has_pending_suggestions(value) for value in node.values())
+    if isinstance(node, list):
+        return any(_has_pending_suggestions(item) for item in node)
+    return False
 
 
 def _convert_tabs_to_markdown(
@@ -219,8 +259,12 @@ def _convert_paragraph_text(
     color_visible = False
     for position, elem in enumerate(elements):
         if "textRun" in elem:
-            link = text_run_link(elements, position)
-            if text_run_link(elements, position - 1) != link:
+            link = _effective_text_run_link(elements, position)
+            suggestion_ids = _text_run_suggestion_ids(elements, position)
+            if (
+                _effective_text_run_link(elements, position - 1) != link
+                or _text_run_suggestion_ids(elements, position - 1) != suggestion_ids
+            ):
                 link_start = len(parts)
             parts.append(_convert_text_run(elem["textRun"], skip_strikethrough))
             color = _text_run_color(elements, position) if include_colors else None
@@ -233,54 +277,106 @@ def _convert_paragraph_text(
                 and color_visible
                 and _text_run_color(elements, position + 1) != color
             )
-            # Link a label split across styled runs once, after its final run
-            # or before a color note.
-            if link and (color_ends or text_run_link(elements, position + 1) != link):
-                parts[link_start:] = [_apply_link("".join(parts[link_start:]), link)]
+            # Build the whole link before marking it, keeping ordinary text
+            # and different suggestions in separate links.
+            if link and (
+                color_ends
+                or _effective_text_run_link(elements, position + 1) != link
+                or _text_run_suggestion_ids(elements, position + 1) != suggestion_ids
+            ):
+                parts[link_start:] = [
+                    _mark_suggested(
+                        _apply_link("".join(parts[link_start:]), link), elem["textRun"]
+                    )
+                ]
                 link_start = len(parts)
+            elif not link:
+                parts[-1] = _mark_suggested(parts[-1], elem["textRun"])
             if color_ends:
                 label = parts[-1].rstrip()
                 parts[-1] = f"{label} [color: {color}]{parts[-1][len(label) :]}"
-        elif "person" in elem:
-            parts.append(_convert_person_chip(elem["person"]))
+            continue
+        if "person" in elem:
+            carrier = elem["person"]
+            part = _convert_person_chip(carrier)
         elif "richLink" in elem:
-            parts.append(_convert_rich_link_chip(elem["richLink"]))
+            carrier = elem["richLink"]
+            part = _convert_rich_link_chip(carrier)
         elif "dateElement" in elem:
-            parts.append(_convert_date_chip(elem["dateElement"]))
+            carrier = elem["dateElement"]
+            part = _convert_date_chip(carrier)
         elif "inlineObjectElement" in elem:
-            parts.append(
-                _convert_inline_object(elem["inlineObjectElement"], inline_objects)
-            )
+            carrier = elem["inlineObjectElement"]
+            part = _convert_inline_object(carrier, inline_objects)
         elif "footnoteReference" in elem:
-            parts.append(
-                _convert_footnote_reference(
-                    elem["footnoteReference"],
-                    footnotes_meta,
-                    inline_objects,
-                    footnote_defs,
-                    active_footnotes,
-                    include_colors=include_colors,
-                )
+            carrier = elem["footnoteReference"]
+            part = _convert_footnote_reference(
+                carrier,
+                footnotes_meta,
+                inline_objects,
+                footnote_defs,
+                active_footnotes,
+                include_colors=include_colors,
             )
         elif "horizontalRule" in elem:
-            parts.append("\n---\n")
+            carrier = elem["horizontalRule"]
+            part = "\n---\n"
         elif "autoText" in elem:
-            parts.append(_convert_auto_text(elem["autoText"]))
+            carrier = elem["autoText"]
+            part = _convert_auto_text(carrier)
         elif "pageBreak" in elem:
-            parts.append("[Page Break]")
+            carrier = elem["pageBreak"]
+            part = "[Page Break]"
         elif "columnBreak" in elem:
-            parts.append("[Column Break]")
+            carrier = elem["columnBreak"]
+            part = "[Column Break]"
         elif "equation" in elem:
-            parts.append(_convert_equation(elem["equation"]))
+            carrier = elem["equation"]
+            part = _convert_equation(carrier)
+        else:
+            continue
+        # Suggestion IDs belong to the typed payload, as they do for textRun.
+        parts.append(_mark_suggested(part, carrier))
     return "".join(parts).strip()
+
+
+def _mark_suggested(text: str, carrier: dict[str, Any]) -> str:
+    """Wrap rendered text in markers when its carrier is a pending suggestion."""
+    if not text:
+        return text
+    if carrier.get("suggestedDeletionIds"):
+        text = f"{SUGGESTION_DELETE_MARKERS[0]}{text}{SUGGESTION_DELETE_MARKERS[1]}"
+    if carrier.get("suggestedInsertionIds"):
+        text = f"{SUGGESTION_INSERT_MARKERS[0]}{text}{SUGGESTION_INSERT_MARKERS[1]}"
+    return text
+
+
+def _effective_text_run_link(
+    elements: list[dict[str, Any]], index: int
+) -> dict[str, Any] | None:
+    """Link of the text run at ``index`` with pending link suggestions applied.
+
+    Mirrors docs_links.text_run_link, which reads the base style only; grouping
+    on the effective link keeps a suggested link from being dropped or rendered
+    with its old target.
+    """
+    if 0 <= index < len(elements):
+        text_run = elements[index].get("textRun")
+        if text_run is not None:
+            return _effective_text_style(text_run).get("link")
+    return None
 
 
 def _convert_text_run(
     text_run: dict[str, Any], skip_strikethrough: bool = False
 ) -> str:
-    """Convert a single text run to markdown."""
+    """Convert a single text run to markdown.
+
+    Suggested style changes are applied as if accepted. Paragraph conversion
+    adds insertion/deletion markers after assembling any complete links.
+    """
     content = text_run.get("content", "")
-    style = text_run.get("textStyle", {})
+    style = _effective_text_style(text_run)
 
     text = content.rstrip("\n")
     # Replace Google Docs Private Use Area chip placeholders (e.g. \ue907)
@@ -290,6 +386,40 @@ def _convert_text_run(
         return ""
 
     return _apply_text_style(text, style, skip_strikethrough)
+
+
+def _text_run_suggestion_ids(
+    elements: list[dict[str, Any]], index: int
+) -> tuple[tuple[str, ...], tuple[str, ...]] | None:
+    """Identify suggestion boundaries while grouping a linked label's runs."""
+    if 0 <= index < len(elements) and "textRun" in elements[index]:
+        run = elements[index]["textRun"]
+        return (
+            tuple(run.get("suggestedInsertionIds", [])),
+            tuple(run.get("suggestedDeletionIds", [])),
+        )
+    return None
+
+
+def _effective_text_style(text_run: dict[str, Any]) -> dict[str, Any]:
+    """The run's text style with pending style suggestions applied.
+
+    suggestedTextStyleChanges maps a suggestion id to the proposed textStyle and
+    a textStyleSuggestionState whose <field>Suggested flags say which fields the
+    suggestion changes; only those fields are taken from the proposed style.
+    """
+    style = dict(text_run.get("textStyle", {}))
+    for change in text_run.get("suggestedTextStyleChanges", {}).values():
+        suggested = change.get("textStyle", {})
+        for key, flagged in change.get("textStyleSuggestionState", {}).items():
+            if not flagged or not key.endswith("Suggested"):
+                continue
+            field = key[: -len("Suggested")]
+            if field in suggested:
+                style[field] = suggested[field]
+            else:
+                style.pop(field, None)
+    return style
 
 
 def _convert_person_chip(person: dict[str, Any]) -> str:
@@ -321,10 +451,27 @@ def _convert_rich_link_chip(rich_link: dict[str, Any]) -> str:
 def _convert_date_chip(date_elem: dict[str, Any]) -> str:
     """Convert a date smart chip (dateElement) to markdown.
 
-    Date elements contain dateElementProperties with displayText (the
-    locale-formatted string) and a timestamp.
+    Apply flagged property suggestions before using Google's displayText.
+    A changed date without fresh displayText uses an ISO date/time fallback;
+    this fallback does not reproduce locale-specific date formatting.
     """
-    props = date_elem.get("dateElementProperties", {})
+    props = dict(date_elem.get("dateElementProperties", {}))
+    for change in date_elem.get("suggestedDateElementPropertiesChanges", {}).values():
+        suggested = change.get("dateElementProperties", {})
+        state = change.get("dateElementPropertiesSuggestionState", {})
+        changed = False
+        for field in ("timestamp", "timeZoneId", "locale", "dateFormat", "timeFormat"):
+            if state.get(f"{field}Suggested"):
+                changed = True
+                if field in suggested:
+                    props[field] = suggested[field]
+                else:
+                    props.pop(field, None)
+        if changed:
+            # The base displayText was derived from the old properties.
+            props.pop("displayText", None)
+            if suggested.get("displayText"):
+                props["displayText"] = suggested["displayText"]
     display_text = props.get("displayText", "")
     if display_text:
         return display_text
@@ -333,8 +480,19 @@ def _convert_date_chip(date_elem: dict[str, Any]) -> str:
     if timestamp:
         try:
             dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-            return dt.strftime("%Y-%m-%d")
-        except (ValueError, TypeError):
+            dt = dt.replace(tzinfo=dt.tzinfo or ZoneInfo("UTC"))
+            dt = dt.astimezone(ZoneInfo(props.get("timeZoneId") or "UTC"))
+            text = dt.strftime("%Y-%m-%d")
+            time_format = props.get("timeFormat")
+            if time_format in (
+                "TIME_FORMAT_HOUR_MINUTE",
+                "TIME_FORMAT_HOUR_MINUTE_TIMEZONE",
+            ):
+                text += dt.strftime(" %H:%M")
+                if time_format == "TIME_FORMAT_HOUR_MINUTE_TIMEZONE":
+                    text += f" {dt.tzname()}"
+            return text
+        except (ValueError, TypeError, ZoneInfoNotFoundError):
             return timestamp
     return ""
 
@@ -366,7 +524,8 @@ def _convert_footnote_reference(
 ) -> str:
     """Convert a footnote reference to a markdown footnote marker.
 
-    Also collects the footnote definition text for appending at the end.
+    Also collects the definition text with the reference's suggestion markers
+    for appending at the end.
     """
     fn_id = ref.get("footnoteId", "")
     if not fn_id:
@@ -387,7 +546,7 @@ def _convert_footnote_reference(
                     active_footnotes=next_active,
                     include_colors=include_colors,
                 )
-                footnote_defs.append((fn_id, fn_text))
+                footnote_defs.append((fn_id, _mark_suggested(fn_text, ref)))
     return f"[^{fn_id}]"
 
 
@@ -488,7 +647,7 @@ def _text_run_color(elements: list[dict[str, Any]], index: int) -> str | None:
     """
     if not 0 <= index < len(elements):
         return None
-    style = elements[index].get("textRun", {}).get("textStyle", {})
+    style = _effective_text_style(elements[index].get("textRun", {}))
     rgb = style.get("foregroundColor", {}).get("color", {}).get("rgbColor")
     if rgb is None:
         return None
