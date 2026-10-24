@@ -35,6 +35,7 @@ from core.utils import (
 )
 from core.server import server
 from core.comments import create_comment_tools
+from gdocs.docs_comments import insert_anchored_comment
 
 # Import helper functions for document operations
 from gdocs.docs_helpers import (
@@ -3169,7 +3170,9 @@ async def manage_doc_tab(
 
 
 # Create comment management tools for documents
-_comment_tools = create_comment_tools("document", "document_id")
+_comment_tools = create_comment_tools(
+    "document", "document_id", insert_anchored_comment=insert_anchored_comment
+)
 
 # Extract and register the functions
 list_document_comments = _comment_tools["list_comments"]

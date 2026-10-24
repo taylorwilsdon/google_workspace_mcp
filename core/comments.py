@@ -44,11 +44,23 @@ async def _manage_comment_dispatch(
     cell: Optional[str] = None,
     sheets_service=None,
     insert_cell_comment: Optional[Callable[..., Awaitable[str]]] = None,
+    anchor_text: Optional[str] = None,
+    tab_id: Optional[str] = None,
+    docs_service=None,
+    insert_anchored_comment: Optional[Callable[..., Awaitable[dict]]] = None,
 ) -> str:
     """Route comment management actions to the appropriate implementation."""
     action_lower = action.lower().strip()
+    if anchor_text is not None and not anchor_text.strip():
+        raise ValueError("anchor_text must not be empty")
     if cell and action_lower in ("reply", "resolve"):
         raise ValueError("cell is only supported for the create action")
+    if (anchor_text or tab_id) and action_lower in ("reply", "resolve"):
+        raise ValueError(
+            "anchor_text and tab_id are only supported for the create action"
+        )
+    if tab_id and not anchor_text:
+        raise ValueError("tab_id requires anchor_text")
     if action_lower == "create":
         if not comment_content:
             raise ValueError("comment_content is required for create action")
@@ -57,6 +69,19 @@ async def _manage_comment_dispatch(
                 raise ValueError("insert_cell_comment is required for cell comments")
             return await _create_cell_comment_impl(
                 insert_cell_comment, sheets_service, file_id, cell, comment_content
+            )
+        if anchor_text:
+            if insert_anchored_comment is None:
+                raise ValueError(
+                    "insert_anchored_comment is required for anchored comments"
+                )
+            return await _create_anchored_comment_impl(
+                insert_anchored_comment,
+                docs_service,
+                file_id,
+                anchor_text,
+                comment_content,
+                tab_id,
             )
         return await _create_comment_impl(service, app_name, file_id, comment_content)
     elif action_lower == "reply":
@@ -81,6 +106,7 @@ def create_comment_tools(
     app_name: str,
     file_id_param: str,
     insert_cell_comment: Optional[Callable[..., Awaitable[str]]] = None,
+    insert_anchored_comment: Optional[Callable[..., Awaitable[dict]]] = None,
 ):
     """
     Factory function to create comment management tools for a specific Google Workspace app.
@@ -89,6 +115,7 @@ def create_comment_tools(
         app_name: Name of the app (e.g., "document", "spreadsheet", "presentation")
         file_id_param: Parameter name for the file ID (e.g., "document_id", "spreadsheet_id", "presentation_id")
         insert_cell_comment: Spreadsheet only; passed in because gsheets imports this module.
+        insert_anchored_comment: Document only; passed in because gdocs imports this module.
 
     Returns:
         Dict containing the comment management functions with unique names
@@ -115,27 +142,52 @@ def create_comment_tools(
             )
 
         # Use full Drive scope so comment operations remain visible to collaborators.
-        @require_google_service("drive", "drive")
+        # The Docs API accepts it too, so anchored comments need no extra grant.
+        @require_multiple_services(
+            [
+                {"service_type": "drive", "scopes": "drive", "param_name": "service"},
+                {
+                    "service_type": "docs",
+                    "scopes": "drive",
+                    "param_name": "docs_service",
+                },
+            ]
+        )
         @handle_http_errors(manage_func_name, service_type="drive")
         async def manage_comment(
             service,
+            docs_service,
             user_google_email: str,
             document_id: str,
             action: str,
             comment_content: Optional[str] = None,
             comment_id: Optional[str] = None,
+            anchor_text: Optional[str] = None,
+            tab_id: Optional[str] = None,
         ) -> str:
             """Manage comments on a Google Document.
 
             Actions:
-              - create: Create a new document-level comment. Requires comment_content.
-                Note: The Drive API cannot anchor comments to specific text; only
-                the Google Docs UI can do that.
+              - create: Create a new comment. Requires comment_content. Pass
+                anchor_text (literal text within one paragraph that occurs exactly
+                once in the tab, table cells included) to anchor the comment to
+                that text in the margin, as the Docs editor does; otherwise it is
+                a document-level comment. tab_id picks the tab to search; the
+                first tab by default.
               - reply: Reply to a comment. Requires comment_id and comment_content.
               - resolve: Resolve a comment. Requires comment_id.
             """
             return await _manage_comment_dispatch(
-                service, app_name, document_id, action, comment_content, comment_id
+                service,
+                app_name,
+                document_id,
+                action,
+                comment_content,
+                comment_id,
+                anchor_text=anchor_text,
+                tab_id=tab_id,
+                docs_service=docs_service,
+                insert_anchored_comment=insert_anchored_comment,
             )
 
     elif file_id_param == "spreadsheet_id":
@@ -353,9 +405,9 @@ async def _create_comment_impl(
 ) -> str:
     """Implementation for creating a comment on any Google Workspace file.
 
-    Note: Comments created via the Drive API appear as document-level comments.
-    The Google Drive API does not support anchoring comments to specific text in
-    Google Docs; only the Docs UI can create anchored comments.
+    Note: Comments created via the Drive API appear as document-level comments;
+    the Docs editor ignores Drive API anchors. For a Google Doc, pass anchor_text
+    to manage_document_comment to create an anchored comment through the Docs API.
     """
     logger.info(f"[create_{app_name}_comment] Creating comment in {app_name} {file_id}")
 
@@ -393,6 +445,30 @@ async def _create_cell_comment_impl(
         sheets_service, spreadsheet_id, cell, comment_content
     )
     return f"Comment created successfully on {cell}!\nComment ID: {comment_id}\n{_format_field('Content: ', comment_content)}"
+
+
+async def _create_anchored_comment_impl(
+    insert_anchored_comment: Callable[..., Awaitable[dict]],
+    docs_service,
+    document_id: str,
+    anchor_text: str,
+    comment_content: str,
+    tab_id: Optional[str] = None,
+) -> str:
+    """Implementation for creating a text-anchored comment on a document."""
+    logger.info(
+        f"[create_document_comment] Creating anchored comment in document {document_id}"
+    )
+    created = await insert_anchored_comment(
+        docs_service, document_id, anchor_text, comment_content, tab_id
+    )
+    return (
+        f"Comment created successfully, anchored to the text "
+        f"(indices {created['start_index']}-{created['end_index']})!\n"
+        f"Comment ID: {created['comment_id']}\n"
+        f"{_format_field('Anchored text: ', created['quoted_text'])}\n"
+        f"{_format_field('Content: ', comment_content)}"
+    )
 
 
 async def _reply_to_comment_impl(

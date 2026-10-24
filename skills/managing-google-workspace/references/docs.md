@@ -292,15 +292,19 @@ List all comments on a document.
 | max_comments | integer | no | 100 | Cap on comments returned; must be at least 1. Default comes from `WORKSPACE_MCP_COMMENTS_MAX`; unset, invalid, or non-positive values fall back to 100 |
 
 ### manage_document_comment
-Create, reply to, or resolve a comment.
+Create, reply to, or resolve a comment. A comment created with `anchor_text` is tied to that text and shows in the margin next to it, like one made in the editor; without it the comment is document-level.
 
 | Parameter | Type | Required | Default | Notes |
 |-----------|------|----------|---------|-------|
 | user_google_email | string | yes | | |
 | document_id | string | yes | | |
 | action | string | yes | | `create`, `reply`, or `resolve` |
-| comment_content | string | no | | Required for `create` and `reply` |
+| comment_content | string | no | | Required for `create` and `reply`; anchored comments are capped at 2048 UTF-8 bytes |
 | comment_id | string | no | | Required for `reply` and `resolve` |
+| anchor_text | string | no | | `create` only. Nonblank literal text within one paragraph, occurring exactly once in the tab (table cells included); the comment anchors to it |
+| tab_id | string | no | | `create` only, with `anchor_text`. Tab to search; the first tab by default |
+
+Tip: pick an anchor contained in one paragraph and unique across the tab. An anchor that matches several places, or none, is refused before anything is written. Omit `anchor_text` for a document-level comment; an explicitly blank anchor is rejected.
 
 ---
 
@@ -393,4 +397,4 @@ Use `list_type='NONE'` in `create_bullet_list` to remove existing list formattin
 
 **Tab operations**: Use `inspect_doc_structure` (without `tab_id`) to discover available tabs and their IDs. Then pass `tab_id` to editing tools or to `inspect_doc_structure` again to get structure within a specific tab.
 
-**Comments**: `get_doc_as_markdown` with `comment_mode: "inline"` gives the most useful view of comments in context. Use `list_document_comments` for structured comment data, and `manage_document_comment` to create, reply, or resolve.
+**Comments**: `get_doc_as_markdown` with `comment_mode: "inline"` gives the most useful view of comments in context. Use `list_document_comments` for structured comment data, and `manage_document_comment` to create (anchored to text with `anchor_text`, or document-level), reply, or resolve.
