@@ -15,6 +15,8 @@ from gdocs.docs_anchors import (
 )
 from gdocs.docs_helpers import (
     utf16_length,
+    build_batch_update_body,
+    suggestion_save_error,
     create_insert_text_request,
     create_delete_range_request,
     create_format_text_request,
@@ -95,7 +97,10 @@ class BatchOperationManager:
         self.validation_manager = ValidationManager()
 
     async def execute_batch_operations(
-        self, document_id: str, operations: list[dict[str, Any]]
+        self,
+        document_id: str,
+        operations: list[dict[str, Any]],
+        write_mode: str = "EDIT",
     ) -> tuple[bool, str, dict[str, Any]]:
         """
         Execute multiple document operations in a single atomic batch.
@@ -105,6 +110,8 @@ class BatchOperationManager:
         Args:
             document_id: ID of the document to update
             operations: List of operation dictionaries
+            write_mode: "EDIT" applies the changes; "SUGGEST" records them as
+                suggested edits
 
         Returns:
             Tuple of (success, message, metadata)
@@ -143,7 +150,13 @@ class BatchOperationManager:
             revision_before = await self._get_revision_id(document_id)
 
             # Execute the batch
-            result = await self._execute_batch_requests(document_id, requests)
+            result = await self._execute_batch_requests(
+                document_id, requests, write_mode
+            )
+
+            save_error = suggestion_save_error(result, write_mode)
+            if save_error:
+                return False, save_error, {}
 
             # Process results
             metadata = {
@@ -206,6 +219,8 @@ class BatchOperationManager:
 
             summary = self._build_operation_summary(operation_descriptions)
             msg = f"Successfully executed {len(operations)} operations ({summary})"
+            if write_mode == "SUGGEST":
+                msg += " as suggested edits"
             if created_tabs:
                 tab_info = ", ".join(
                     f"'{t['title']}' (tab_id: {t['tab_id']})" for t in created_tabs
@@ -1140,7 +1155,10 @@ class BatchOperationManager:
         return request, description
 
     async def _execute_batch_requests(
-        self, document_id: str, requests: list[dict[str, Any]]
+        self,
+        document_id: str,
+        requests: list[dict[str, Any]],
+        write_mode: str = "EDIT",
     ) -> dict[str, Any]:
         """
         Execute the batch requests against the Google Docs API.
@@ -1148,13 +1166,17 @@ class BatchOperationManager:
         Args:
             document_id: Document ID
             requests: List of API requests
+            write_mode: "EDIT" or "SUGGEST"
 
         Returns:
             API response
         """
         return await asyncio.to_thread(
             self.service.documents()
-            .batchUpdate(documentId=document_id, body={"requests": requests})
+            .batchUpdate(
+                documentId=document_id,
+                body=build_batch_update_body(requests, write_mode),
+            )
             .execute
         )
 

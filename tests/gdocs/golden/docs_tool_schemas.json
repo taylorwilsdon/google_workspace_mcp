@@ -254,6 +254,11 @@
         ],
         "default": null,
         "description": "Whether to apply small caps"
+      },
+      "write_mode": {
+        "default": "EDIT",
+        "type": "string",
+        "description": "\"EDIT\" (default) applies the change directly; \"SUGGEST\"\nrecords it as a suggested edit that collaborators can accept or reject"
       }
     },
     "required": [
@@ -2820,6 +2825,11 @@
         },
         "type": "array",
         "description": "List of operation dicts. Each operation MUST have a 'type' field.\n        All operations accept an optional 'tab_id' to target a specific tab."
+      },
+      "write_mode": {
+        "default": "EDIT",
+        "type": "string",
+        "description": "\"EDIT\" (default) applies the batch directly; \"SUGGEST\" records\n        every operation as a suggested edit that collaborators can accept\n        or reject. The Docs API rejects some operations in SUGGEST mode,\n        such as named range and tab changes."
       }
     },
     "required": [
