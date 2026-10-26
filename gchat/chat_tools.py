@@ -148,7 +148,7 @@ async def get_messages(
                           'createTime > "2026-03-18T00:00:00-03:00" AND createTime < "2026-03-19T00:00:00-03:00"'
                           'thread.name = spaces/X/threads/Y'
         page_token: Token for the next page, taken from a previous response. Keep
-                    order_by and message_filter unchanged between pages.
+                    all other arguments unchanged between pages.
 
     Returns:
         str: Formatted messages from the specified space. When more messages

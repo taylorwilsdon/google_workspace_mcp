@@ -29,7 +29,7 @@ Retrieves one page of messages from a Google Chat space; use the `Next page toke
 | page_size | integer | no | 50 | |
 | order_by | string | no | "createTime desc" | |
 | message_filter | string | no | | Chat API filter on `createTime` and `thread.name`, e.g. `createTime > "2026-03-18T00:00:00Z"` or `thread.name = spaces/X/threads/Y` |
-| page_token | string | no | | Token from a previous response's `Next page token`. Keep `order_by` and `message_filter` unchanged between pages |
+| page_token | string | no | | Token from a previous response's `Next page token`. Keep all other parameters unchanged between pages |
 
 ### search_messages
 Searches for messages in Google Chat spaces by text content and/or time range.
