@@ -78,12 +78,13 @@ Download a file to local disk (stdio mode) or get a temporary URL (HTTP mode, va
 |-----------|------|----------|---------|-------|
 | user_google_email | string | yes | | |
 | file_id | string | yes | | Drive file ID |
-| export_format | string | no | | `pdf`, `docx`, `xlsx`, `csv`, `pptx` |
+| export_format | string | no | | `pdf`, `docx`, `xlsx`, `csv`, `pptx`, `png`, `jpg`, `svg` |
 
 Default export formats for Google native files:
 - Docs: PDF (or `docx`)
 - Sheets: XLSX (or `pdf`, `csv`)
 - Slides: PDF (or `pptx`)
+- Drawings: PNG (or `pdf`, `jpg`, `svg`)
 
 ---
 

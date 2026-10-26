@@ -65,6 +65,7 @@ from gdrive.drive_helpers import (
     GOOGLE_APPS_MIME_PREFIX,
     GOOGLE_DOCS_IMPORT_FORMATS,
     GOOGLE_DOCS_MIME_TYPE,
+    GOOGLE_DRAWINGS_MIME_TYPE,
     GOOGLE_SHEETS_IMPORT_FORMATS,
     GOOGLE_SHEETS_MIME_TYPE,
     GOOGLE_SLIDES_IMPORT_FORMATS,
@@ -85,6 +86,7 @@ from gdrive.drive_helpers import (
     _stream_url_with_validation,
     _use_resumable_upload,
     build_drive_list_params,
+    drawing_export_target,
     check_public_link_permission,
     flag_incomplete_search,
     list_all_permissions,
@@ -513,10 +515,11 @@ async def get_drive_file_download_url(
     resource, up to WORKSPACE_MCP_STATELESS_INLINE_MAX_BYTES (default 10 MiB,
     and never more than WORKSPACE_MCP_MAX_FILE_BYTES when that is set).
 
-    For Google native files (Docs, Sheets, Slides), exports to a useful format:
+    For Google native files (Docs, Sheets, Slides, Drawings), exports to a useful format:
     - Google Docs -> PDF (default) or DOCX if export_format='docx'
     - Google Sheets -> XLSX (default), PDF if export_format='pdf', or CSV if export_format='csv'
     - Google Slides -> PDF (default) or PPTX if export_format='pptx'
+    - Google Drawings -> PNG (default), or PDF, JPG or SVG if export_format='pdf', 'jpg' or 'svg'
 
     For other files, downloads the original file format.
 
@@ -524,8 +527,9 @@ async def get_drive_file_download_url(
         user_google_email: The user's Google email address. Required.
         file_id: The Google Drive file ID to download.
         export_format: Optional export format for Google native files.
-                      Options: 'pdf', 'docx', 'xlsx', 'csv', 'pptx'.
-                      If not specified, uses sensible defaults (PDF for Docs/Slides, XLSX for Sheets).
+                      Options: 'pdf', 'docx', 'xlsx', 'csv', 'pptx', 'png', 'jpg', 'svg'.
+                      If not specified, uses sensible defaults (PDF for Docs/Slides, XLSX for Sheets,
+                      PNG for Drawings).
                       For Sheets: supports 'csv', 'pdf', or 'xlsx' (default).
 
     Returns:
@@ -601,6 +605,13 @@ async def get_drive_file_download_url(
             output_mime_type = export_mime_type
             if not output_filename.endswith(".pdf"):
                 output_filename = f"{Path(output_filename).stem}.pdf"
+
+    elif mime_type == GOOGLE_DRAWINGS_MIME_TYPE:
+        # Google Drawings
+        extension, export_mime_type = drawing_export_target(export_format)
+        output_mime_type = export_mime_type
+        if not output_filename.endswith(f".{extension}"):
+            output_filename = f"{Path(output_filename).stem}.{extension}"
 
     # Stateless mode has no attachment storage to hand out a URL from, so the
     # file itself goes back as an embedded resource, up to inline_max_bytes.
