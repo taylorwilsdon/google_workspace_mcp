@@ -163,11 +163,11 @@ def _clear_name_cache():
     chat_helpers._sender_name_cache.clear()
 
 
-async def _list_spaces(chat_service, people_service=None):
+async def _list_spaces(chat_service, people_service=None, owner=SELF_EMAIL):
     return await _unwrap(list_spaces)(
         chat_service=chat_service,
         people_service=people_service or _people_service(),
-        user_google_email=SELF_EMAIL,
+        user_google_email=owner,
     )
 
 
@@ -274,6 +274,24 @@ async def test_list_spaces_uses_cached_names_without_batch_lookup():
     result = await _list_spaces(_chat_service([DM_SPACE]), people_service)
 
     assert "- Alice (cached) (ID: spaces/DM1" in result
+    people_service.people().getBatchGet.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_list_spaces_uses_each_users_own_cached_name():
+    chat_helpers._cache_sender("alice@example.com", "users/200", "Alice (to Alice)")
+    chat_helpers._cache_sender("carol@example.com", "users/200", "Alice (to Carol)")
+    people_service = _people_service()
+
+    for owner, label in [
+        ("alice@example.com", "Alice (to Alice)"),
+        ("carol@example.com", "Alice (to Carol)"),
+    ]:
+        result = await _list_spaces(
+            _chat_service([DM_SPACE]), people_service, owner=owner
+        )
+        assert f"- {label} (ID: spaces/DM1" in result
+
     people_service.people().getBatchGet.assert_not_called()
 
 
