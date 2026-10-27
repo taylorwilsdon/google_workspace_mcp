@@ -323,6 +323,70 @@ async def test_manage_event_rejects_invalid_send_updates(action):
 
 
 @pytest.mark.asyncio
+async def test_manage_event_delete_can_refuse_events_with_attendees():
+    fn = _unwrap(manage_event)
+    mock_service = _create_mock_service()
+    mock_service.events().get().execute = Mock(
+        return_value={
+            "id": "evt123",
+            "attendees": [
+                {"email": "owner@example.com"},
+                {"email": "guest@example.com"},
+            ],
+        }
+    )
+
+    with pytest.raises(UserInputError, match="1 attendee"):
+        await fn(
+            service=mock_service,
+            user_google_email="owner@example.com",
+            action="delete",
+            event_id="evt123",
+            only_if_no_attendees=True,
+        )
+
+    mock_service.events().delete.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_manage_event_delete_proceeds_when_only_owner_is_attendee():
+    fn = _unwrap(manage_event)
+    mock_service = _create_mock_service()
+    mock_service.events().get().execute = Mock(
+        return_value={"id": "evt123", "attendees": [{"email": "owner@example.com"}]}
+    )
+
+    await fn(
+        service=mock_service,
+        user_google_email="owner@example.com",
+        action="delete",
+        event_id="evt123",
+        only_if_no_attendees=True,
+    )
+
+    mock_service.events().delete.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_manage_event_delete_allows_owner_attendee_without_email():
+    fn = _unwrap(manage_event)
+    mock_service = _create_mock_service()
+    mock_service.events().get().execute = Mock(
+        return_value={"id": "evt123", "attendees": [{"displayName": "Owner"}]}
+    )
+
+    await fn(
+        service=mock_service,
+        user_google_email="owner@example.com",
+        action="delete",
+        event_id="evt123",
+        only_if_no_attendees=True,
+    )
+
+    mock_service.events().delete.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_create_event_supports_attendee_objects():
     """Issue #1145: attendee objects with metadata like responseStatus must be accepted on create."""
     mock_service = _create_mock_service()
