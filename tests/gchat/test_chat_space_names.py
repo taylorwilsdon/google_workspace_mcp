@@ -268,7 +268,7 @@ async def test_list_spaces_splits_batch_lookup_into_chunks(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_list_spaces_uses_cached_names_without_batch_lookup():
-    chat_helpers._sender_name_cache["users/200"] = "Alice (cached)"
+    chat_helpers._cache_sender(SELF_EMAIL, "users/200", "Alice (cached)")
     people_service = _people_service()
 
     result = await _list_spaces(_chat_service([DM_SPACE]), people_service)
@@ -505,6 +505,40 @@ async def test_resolve_sender_falls_back_to_email_when_person_has_no_name():
     name = await chat_helpers._resolve_sender(people_service, {"name": "users/200"})
 
     assert name == "alice@example.com"
+
+
+@pytest.mark.asyncio
+async def test_cached_names_are_isolated_per_authenticated_user():
+    alice_contacts = Mock()
+    alice_contacts.people().get.side_effect = lambda **kw: _request(
+        {"names": [{"displayName": "Bob (my private nickname)"}]}
+    )
+    sender = {"name": "users/300"}
+
+    assert (
+        await chat_helpers._resolve_sender(alice_contacts, sender, "Alice@Example.com")
+        == "Bob (my private nickname)"
+    )
+
+    other_user = _people_service()
+    name = await chat_helpers._resolve_sender(other_user, sender, "carol@example.com")
+    assert name == "Bob Jones"
+    names = await chat_helpers._lookup_people_names(
+        other_user, ["users/300"], "carol@example.com"
+    )
+    assert names == {"users/300": "Bob Jones"}
+    assert (
+        await chat_helpers._resolve_sender(Mock(), sender, "alice@example.com")
+        == "Bob (my private nickname)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_names_are_not_cached_without_an_authenticated_user():
+    await chat_helpers._resolve_sender(_people_service(), {"name": "users/300"})
+    await chat_helpers._lookup_people_names(_people_service(), ["users/400"])
+
+    assert chat_helpers._sender_name_cache == {}
 
 
 @pytest.mark.asyncio
