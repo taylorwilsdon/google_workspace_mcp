@@ -60,6 +60,36 @@ async def _list_members(chat, people, space_id="spaces/S"):
 
 
 @pytest.mark.asyncio
+async def test_labels_assistant_managers_unknown_roles_and_invited_groups():
+    pages = [
+        {
+            "memberships": [
+                {
+                    "member": {"name": "users/1", "type": "HUMAN"},
+                    "role": "ROLE_ASSISTANT_MANAGER",
+                    "state": "JOINED",
+                },
+                {
+                    "member": {"name": "users/2", "type": "HUMAN"},
+                    "role": "MEMBERSHIP_ROLE_UNSPECIFIED",
+                    "state": "JOINED",
+                },
+                {"groupMember": {"name": "groups/G"}, "state": "INVITED"},
+            ]
+        },
+    ]
+    chat, people = _services(pages)
+
+    result = await _list_members(chat, people)
+
+    assert result.splitlines()[1:] == [
+        "- Alice Smith (users/1, assistant manager)",
+        "- users/2 (unknown)",
+        "- Group groups/G (invited)",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_lists_people_apps_groups_and_invites_across_pages():
     pages = [
         {
@@ -105,7 +135,7 @@ async def test_lists_people_apps_groups_and_invites_across_pages():
         "- Alice Smith (users/1, manager)",
         "- users/2 (member, invited)",
         "- Ticket Bot [app] (users/app, member)",
-        "- Group groups/G (member)",
+        "- Group groups/G",
     ]
     members_list = chat.spaces.return_value.members.return_value.list
     first_call, second_call = members_list.call_args_list[-2:]

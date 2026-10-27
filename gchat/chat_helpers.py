@@ -217,7 +217,11 @@ async def _name_spaces(
     return labels
 
 
-_MEMBER_ROLE_LABELS = {"ROLE_MANAGER": "manager", "ROLE_MEMBER": "member"}
+_MEMBER_ROLE_LABELS = {
+    "ROLE_MANAGER": "manager",
+    "ROLE_ASSISTANT_MANAGER": "assistant manager",
+    "ROLE_MEMBER": "member",
+}
 
 
 async def _format_space_members(chat_service, people_service, space_id: str) -> str:
@@ -248,12 +252,12 @@ async def _format_space_members(chat_service, people_service, space_id: str) -> 
 
     lines = [f"Members of '{space_label}' (ID: {space_id}): {len(memberships)}"]
     for membership in memberships:
-        role = _MEMBER_ROLE_LABELS.get(membership.get("role"), "member")
+        role = _MEMBER_ROLE_LABELS.get(membership.get("role"), "unknown")
         state = membership.get("state")
         suffix = ", invited" if state == "INVITED" else ""
         if "groupMember" in membership:
             group_id = membership["groupMember"].get("name", "")
-            lines.append(f"- Group {group_id} ({role}{suffix})")
+            lines.append(f"- Group {group_id}" + (" (invited)" if suffix else ""))
             continue
         member = membership.get("member", {})
         member_id = member.get("name", "")
