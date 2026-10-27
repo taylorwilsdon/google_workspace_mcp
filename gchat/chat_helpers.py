@@ -134,10 +134,11 @@ async def _list_memberships(
     more exist without paging through the whole space.
     """
     memberships = []
-    params = {"parent": space_name, "pageSize": 100, **list_params}
+    # pageSize stays the same on every page: the API expects follow-up page
+    # requests to repeat the original parameters.
+    page_size = 100 if limit is None else min(100, limit + 1)
+    params = {"parent": space_name, "pageSize": page_size, **list_params}
     while True:
-        if limit is not None:
-            params["pageSize"] = min(100, limit + 1 - len(memberships))
         response = await asyncio.to_thread(
             chat_service.spaces().members().list(**params).execute
         )

@@ -174,7 +174,7 @@ async def test_member_listing_stops_at_page_size():
     )
     assert len(lines) == 3
     members_list = chat.spaces.return_value.members.return_value.list
-    assert [c.kwargs["pageSize"] for c in members_list.call_args_list] == [3, 1]
+    assert [c.kwargs["pageSize"] for c in members_list.call_args_list] == [3, 3]
 
 
 @pytest.mark.asyncio
