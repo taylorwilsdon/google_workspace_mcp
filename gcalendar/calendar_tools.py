@@ -950,7 +950,7 @@ async def _rsvp_event_impl(
     ),
 )
 @handle_http_errors("manage_event", service_type="calendar")
-@require_google_service("calendar", "calendar_events")
+@require_google_service("calendar", ["calendar_events", "calendar_list_read"])
 async def manage_event(
     service,
     user_google_email: str,

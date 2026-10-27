@@ -16,6 +16,7 @@ from pydantic import TypeAdapter
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from core.utils import UserInputError, handle_http_errors
+from auth.scopes import CALENDAR_EVENTS_SCOPE, CALENDAR_LIST_READONLY_SCOPE
 from gcalendar.calendar_helpers import (
     _build_addon_conference_data,
     _resolve_conference_data,
@@ -42,6 +43,13 @@ def _create_mock_service():
     mock_service.events().update().execute = Mock(return_value={})
     mock_service.events().patch().execute = Mock(return_value={})
     return mock_service
+
+
+def test_manage_event_declares_calendar_list_read_scope():
+    assert manage_event._required_google_scopes == [
+        CALENDAR_EVENTS_SCOPE,
+        CALENDAR_LIST_READONLY_SCOPE,
+    ]
 
 
 @pytest.mark.asyncio
