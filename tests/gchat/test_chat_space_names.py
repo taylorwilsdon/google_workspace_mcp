@@ -507,6 +507,55 @@ async def test_resolve_sender_falls_back_to_email_when_person_has_no_name():
     assert name == "alice@example.com"
 
 
+def _capture_cache_owners(monkeypatch):
+    owners = []
+
+    async def fake_resolve(_people_service, sender_obj, cache_owner=None):
+        owners.append(cache_owner)
+        return sender_obj.get("name", "")
+
+    monkeypatch.setattr("gchat.chat_tools._resolve_sender", fake_resolve)
+    return owners
+
+
+@pytest.mark.asyncio
+async def test_get_messages_caches_sender_names_for_the_authenticated_user(
+    monkeypatch,
+):
+    owners = _capture_cache_owners(monkeypatch)
+    chat_service = _chat_service(
+        [DM_SPACE], messages={"spaces/DM1": [_message("spaces/DM1", "hi")]}
+    )
+
+    await _unwrap(get_messages)(
+        chat_service=chat_service,
+        people_service=_people_service(),
+        user_google_email=SELF_EMAIL,
+        space_id="spaces/DM1",
+    )
+
+    assert owners and set(owners) == {SELF_EMAIL}
+
+
+@pytest.mark.asyncio
+async def test_search_messages_caches_sender_names_for_the_authenticated_user(
+    monkeypatch,
+):
+    owners = _capture_cache_owners(monkeypatch)
+    chat_service = _chat_service(
+        [DM_SPACE], messages={"spaces/DM1": [_message("spaces/DM1", "deploy?")]}
+    )
+
+    await _unwrap(search_messages)(
+        chat_service=chat_service,
+        people_service=_people_service(),
+        user_google_email=SELF_EMAIL,
+        query="deploy",
+    )
+
+    assert owners and set(owners) == {SELF_EMAIL}
+
+
 @pytest.mark.asyncio
 async def test_cached_names_are_isolated_per_authenticated_user():
     alice_contacts = Mock()
