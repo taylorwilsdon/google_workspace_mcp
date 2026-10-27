@@ -13,6 +13,10 @@ from one Office file and the text extracted from it. It is on by default;
 ``WORKSPACE_MCP_STATELESS_INLINE_MAX_BYTES`` caps the file a stateless-mode
 download returns inline. It defaults to 10 MiB and never exceeds
 ``WORKSPACE_MCP_MAX_FILE_BYTES``.
+
+``WORKSPACE_MCP_MAX_CONTENT_CHARS`` caps the text ``get_drive_file_content``
+returns in one call; the rest is available by calling again with an offset. It
+is on by default; ``0`` disables it.
 """
 
 from __future__ import annotations
@@ -30,6 +34,7 @@ from googleapiclient.http import MediaIoBaseDownload
 _ENV_NAME = "WORKSPACE_MCP_MAX_FILE_BYTES"
 _OFFICE_XML_ENV_NAME = "WORKSPACE_MCP_MAX_OFFICE_XML_BYTES"
 _STATELESS_INLINE_ENV_NAME = "WORKSPACE_MCP_STATELESS_INLINE_MAX_BYTES"
+_CONTENT_CHARS_ENV_NAME = "WORKSPACE_MCP_MAX_CONTENT_CHARS"
 
 # Office files are ZIP archives, so the download cap above bounds only the
 # COMPRESSED size, and XML compresses by orders of magnitude. Unlike the
@@ -46,6 +51,21 @@ DEFAULT_MAX_OFFICE_XML_BYTES = 25 * 1024 * 1024  # 25 MiB
 
 # Base64 inflates an inline payload by a third, so this is ~13.4 MiB on the wire.
 DEFAULT_STATELESS_INLINE_MAX_BYTES = 10 * 1024 * 1024  # 10 MiB
+
+# Returned text goes into the model's context and is re-read on every later
+# turn of the session, so a whole file costs far more than its one-off size.
+# Hosts also cap a single result (Claude Code at 25,000 tokens by default) and
+# save anything larger to a file the model has to search instead. Dense text
+# such as CSV, code or JSON runs at up to about half a token per character, so
+# 40,000 characters stays under that cap; English prose is about a quarter. Unlike
+# the download cap this is on by default, because truncation loses nothing: the
+# caller can read on by offset.
+DEFAULT_MAX_CONTENT_CHARS = 40_000
+
+# When cutting a page, end it at the last line break in the window so a CSV
+# row or a paragraph is not split, unless that would drop more than half the
+# window.
+_MIN_PAGE_FRACTION_AT_LINE_BREAK = 0.5
 
 # Keep the uncapped path from asking httplib2 to materialize its 100 MiB
 # default response chunk. This does not impose a total-size limit; it only
@@ -111,15 +131,31 @@ def get_stateless_inline_max_bytes() -> int:
     return min(value, max_file_bytes) if max_file_bytes else value
 
 
+def get_max_content_chars() -> Optional[int]:
+    """Return the most text characters one content read may return, or ``None``.
+
+    Parsing rules:
+    - unset or empty → ``DEFAULT_MAX_CONTENT_CHARS``
+    - ``0`` → uncapped (``None``)
+    - positive int → that many characters
+    - invalid or negative value → raise ``ValueError``
+    """
+    value = _byte_count_from_env(_CONTENT_CHARS_ENV_NAME, unit="character")
+    if value is None:
+        return DEFAULT_MAX_CONTENT_CHARS
+    return value or None
+
+
 def validate_file_limit_settings() -> None:
     """Raise ``ValueError`` if any file-limit environment setting is invalid."""
     get_max_file_bytes()
     get_max_office_xml_bytes()
     get_stateless_inline_max_bytes()
+    get_max_content_chars()
 
 
-def _byte_count_from_env(name: str) -> Optional[int]:
-    """Parse a non-negative byte count from ``name``; ``None`` when unset or empty."""
+def _byte_count_from_env(name: str, *, unit: str = "byte") -> Optional[int]:
+    """Parse a non-negative count from ``name``; ``None`` when unset or empty."""
     raw = os.getenv(name)
     if raw is None or raw.strip() == "":
         return None
@@ -127,13 +163,49 @@ def _byte_count_from_env(name: str) -> Optional[int]:
         value = int(raw.strip())
     except ValueError as exc:
         raise ValueError(
-            f"Invalid {name}={raw!r}; expected a non-negative integer byte count."
+            f"Invalid {name}={raw!r}; expected a non-negative integer {unit} count."
         ) from exc
     if value < 0:
         raise ValueError(
-            f"Invalid {name}={raw!r}; expected a non-negative integer byte count."
+            f"Invalid {name}={raw!r}; expected a non-negative integer {unit} count."
         )
     return value
+
+
+def page_content_text(
+    text: str,
+    *,
+    offset: int = 0,
+    max_chars: Optional[int] = None,
+    alternative: str = "",
+) -> str:
+    """Return the part of ``text`` from ``offset``, at most ``max_chars`` long.
+
+    When text is left out after the page, a note at the end says which
+    characters are shown, the limit that applied and the offset to continue
+    from. ``alternative`` is appended to that note (for example, a tool that
+    returns the whole file). ``max_chars`` of ``None`` means no limit.
+    """
+    total = len(text)
+    if offset > total:
+        return (
+            f"[offset={offset:,} is past the end of the content "
+            f"({total:,} characters).]"
+        )
+    if max_chars is None or total - offset <= max_chars:
+        return text[offset:]
+
+    page = text[offset : offset + max_chars]
+    line_end = page.rfind("\n") + 1
+    if line_end >= max_chars * _MIN_PAGE_FRACTION_AT_LINE_BREAK:
+        page = page[:line_end]
+    end = offset + len(page)
+    return (
+        f"{page}\n\n[Truncated: showing characters {offset:,} to {end:,} of "
+        f"{total:,}; {total - end:,} more follow (limit {max_chars:,} per call, "
+        f"set by {_CONTENT_CHARS_ENV_NAME}). Call again with offset={end} to "
+        f"read on{alternative}.]"
+    )
 
 
 def format_file_too_large_message(

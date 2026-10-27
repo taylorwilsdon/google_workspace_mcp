@@ -1,0 +1,158 @@
+"""get_drive_file_content returns long text a page at a time."""
+
+import base64
+from unittest.mock import Mock, patch
+
+import pytest
+
+from core.utils import UserInputError
+from gdrive.drive_tools import get_drive_file_content
+
+_HEADER = (
+    'File: "notes.txt" (ID: file123, Type: text/plain)\n'
+    "Link: https://drive.google.com/file/file123\n\n--- CONTENT ---\n"
+)
+
+
+def _unwrap(tool):
+    fn = tool.fn if hasattr(tool, "fn") else tool
+    while hasattr(fn, "__wrapped__"):
+        fn = fn.__wrapped__
+    return fn
+
+
+class _FakeDownloader:
+    def __init__(self, fh, data):
+        fh.write(data)
+        fh.seek(0)
+
+    def next_chunk(self):
+        return None, True
+
+
+async def _get_content(content: bytes, mime_type: str = "text/plain", **kwargs):
+    metadata = {
+        "name": "notes.txt",
+        "mimeType": mime_type,
+        "webViewLink": "https://drive.google.com/file/file123",
+    }
+    service = Mock()
+    service.files().get_media.return_value = "req"
+    with (
+        patch(
+            "gdrive.drive_tools.resolve_drive_item",
+            return_value=("file123", metadata),
+        ),
+        patch(
+            "core.file_limits.MediaIoBaseDownload",
+            side_effect=lambda fh, req, chunksize=None: _FakeDownloader(fh, content),
+        ),
+    ):
+        return await _unwrap(get_drive_file_content)(
+            service=service,
+            user_google_email="user@example.com",
+            file_id="file123",
+            **kwargs,
+        )
+
+
+@pytest.fixture
+def limit(monkeypatch):
+    monkeypatch.setenv("WORKSPACE_MCP_MAX_CONTENT_CHARS", "100")
+
+
+@pytest.mark.asyncio
+async def test_long_text_is_cut_off_with_a_note_on_how_to_read_on(limit):
+    text = "".join(f"row {i:03d}\n" for i in range(30))  # 240 characters
+
+    result = await _get_content(text.encode())
+
+    assert result == _HEADER + text[:96] + (
+        "\n\n[Truncated: showing characters 0 to 96 of 240; 144 more follow "
+        "(limit 100 per call, set by WORKSPACE_MCP_MAX_CONTENT_CHARS). Call again "
+        "with offset=96 to read on, or use get_drive_file_download_url for the "
+        "whole file.]"
+    )
+
+
+@pytest.mark.asyncio
+async def test_offset_reads_on_from_where_the_last_page_ended(limit):
+    text = "".join(f"row {i:03d}\n" for i in range(30))
+
+    second = await _get_content(text.encode(), offset=96)
+    last = await _get_content(text.encode(), offset=192)
+
+    assert second.startswith(_HEADER + text[96:192] + "\n\n[Truncated: ")
+    assert "offset=192" in second
+    assert last == _HEADER + text[192:]
+
+
+@pytest.mark.asyncio
+async def test_text_at_the_limit_is_returned_whole(limit):
+    text = "x" * 100
+
+    assert await _get_content(text.encode()) == _HEADER + text
+
+
+@pytest.mark.asyncio
+async def test_default_limit_applies_when_unset(monkeypatch):
+    monkeypatch.delenv("WORKSPACE_MCP_MAX_CONTENT_CHARS", raising=False)
+    text = "word " * 20_000  # 100,000 characters
+
+    result = await _get_content(text.encode())
+
+    assert "[Truncated: showing characters 0 to 40,000 of 100,000;" in result
+
+
+@pytest.mark.asyncio
+async def test_zero_turns_the_limit_off(monkeypatch):
+    monkeypatch.setenv("WORKSPACE_MCP_MAX_CONTENT_CHARS", "0")
+    text = "word " * 20_000
+
+    assert await _get_content(text.encode()) == _HEADER + text
+
+
+@pytest.mark.asyncio
+async def test_negative_offset_is_rejected(limit):
+    with pytest.raises(UserInputError, match="offset must be >= 0"):
+        await _get_content(b"abc", offset=-1)
+
+
+@pytest.mark.asyncio
+async def test_base64_image_over_the_limit_points_at_the_download_url(limit):
+    """Part of a base64 image is no use, so it is replaced, not paged."""
+    bmp = b"BM" + b"\x00" * 200
+
+    result = await _get_content(bmp, mime_type="image/bmp")
+
+    assert result.endswith(
+        "[Image is 202 bytes, 296 characters as base64, over the 100-character "
+        "limit per call (set by WORKSPACE_MCP_MAX_CONTENT_CHARS). Use "
+        "get_drive_file_download_url to get the file instead.]"
+    )
+
+
+@pytest.mark.asyncio
+async def test_base64_image_under_the_limit_ignores_offset(limit):
+    bmp = b"BM" + b"\x00" * 40
+
+    result = await _get_content(bmp, mime_type="image/bmp", offset=10)
+
+    assert result.endswith(
+        "[base64_image:image/bmp]" + base64.b64encode(bmp).decode("ascii")
+    )
+
+
+@pytest.mark.asyncio
+async def test_later_svg_pages_do_not_repeat_its_images(limit):
+    png = base64.b64encode(b"\x89PNG\r\n\x1a\n" + bytes(range(256)) * 40).decode()
+    svg = (
+        f'<svg><image href="data:image/png;base64,{png}"/>' + "<g/>" * 60 + "</svg>"
+    ).encode()
+
+    first = await _get_content(svg, mime_type="image/svg+xml")
+    second = await _get_content(svg, mime_type="image/svg+xml", offset=100)
+
+    assert len(first.content) == 2  # the page's text, then the image
+    assert "[Truncated: " in first.content[0].text
+    assert isinstance(second, str)  # text only

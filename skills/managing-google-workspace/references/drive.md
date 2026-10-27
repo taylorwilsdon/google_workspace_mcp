@@ -61,6 +61,7 @@ Retrieve file content as text.
 |-----------|------|----------|---------|-------|
 | user_google_email | string | yes | | |
 | file_id | string | yes | | Drive file ID |
+| offset | integer | no | 0 | Character offset to start from, to read on after a cut-off result |
 
 Content handling:
 - Google Docs/Sheets/Slides: exported as text/CSV
@@ -68,8 +69,10 @@ Content handling:
 - PDFs: text extracted when possible; scanned PDFs return a download hint
 - Images (PNG, JPEG, GIF, WebP): metadata header as text, plus the image itself as MCP image content
 - SVG: returned as its markup (text). Each PNG, JPEG, GIF or WebP image embedded as a base64 data URI is attached as image content, and its place in the markup reads `[embedded image N, … attached as image content]`. Other embedded payloads, such as fonts, are omitted, with a note giving their size
-- BMP, TIFF: returned as base64 text after the header
+- BMP, TIFF: returned as base64 text after the header, or a pointer to `get_drive_file_download_url` when that text would be over the limit below
 - Other files: downloaded, UTF-8 decoded if possible
+
+At most 40,000 characters of content come back per call (`WORKSPACE_MCP_MAX_CONTENT_CHARS`; `0` turns the limit off). Longer content ends at a line break where possible, with a note giving the range shown, how much follows, and the `offset` to call again with.
 
 ### get_drive_file_download_url
 Download a file to local disk (stdio mode) or get a temporary URL (HTTP mode, valid 1 hour).

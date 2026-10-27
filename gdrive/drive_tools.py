@@ -34,7 +34,9 @@ from core.file_limits import (
     FileTooLargeError,
     download_media_bytes,
     ensure_within_file_size_limit,
+    get_max_content_chars,
     get_stateless_inline_max_bytes,
+    page_content_text,
 )
 from core.gcs_attachment_storage import gcs_files_enabled
 from core.utils import (
@@ -332,6 +334,7 @@ async def get_drive_file_content(
     service,
     user_google_email: str,
     file_id: str,
+    offset: int = 0,
 ) -> str:
     """
     Retrieves the content of a specific Google Drive file by ID, supporting files in shared drives.
@@ -350,12 +353,16 @@ async def get_drive_file_content(
     Args:
         user_google_email: The user’s Google email address.
         file_id: Drive file ID.
+        offset: Character offset into the content to start from, for reading
+            on after a cut-off result. Defaults to 0.
 
     Returns:
         str: The file content as plain text with metadata header. For images, a
         ToolResult with that text followed by the image as image content.
     """
     logger.info(f"[get_drive_file_content] Invoked. File ID: '{file_id}'")
+    if offset < 0:
+        raise UserInputError(f"offset must be >= 0, got {offset}.")
 
     resolved_file_id, file_metadata = await resolve_drive_item(
         service,
@@ -403,6 +410,7 @@ async def get_drive_file_content(
     }
 
     images: List[ImageContent] = []
+    paged = True
     if mime_type in office_mime_types:
         # Offload Office XML extraction to a thread to avoid blocking the event loop
         try:
@@ -459,6 +467,16 @@ async def get_drive_file_content(
             )
     elif mime_type in IMAGE_MIME_TYPES:
         body_text = encode_image_content(file_content_bytes, mime_type)
+        # Part of a base64 image is no use, so it is replaced, not paged.
+        paged = False
+        max_chars = get_max_content_chars()
+        if max_chars is not None and len(body_text) > max_chars:
+            body_text = (
+                f"[Image is {len(file_content_bytes):,} bytes, {len(body_text):,} "
+                f"characters as base64, over the {max_chars:,}-character limit per "
+                f"call (set by WORKSPACE_MCP_MAX_CONTENT_CHARS). Use "
+                f"get_drive_file_download_url to get the file instead.]"
+            )
     else:
         # For non-Office files (including Google native files), try UTF-8 decode directly
         try:
@@ -468,6 +486,17 @@ async def get_drive_file_content(
                 f"[Binary or unsupported text encoding for mimeType '{mime_type}' - "
                 f"{len(file_content_bytes)} bytes]"
             )
+
+    if paged:
+        body_text = page_content_text(
+            body_text,
+            offset=offset,
+            max_chars=get_max_content_chars(),
+            alternative=", or use get_drive_file_download_url for the whole file",
+        )
+    # Later pages carry no images: the first page already returned them.
+    if offset:
+        images = []
 
     # Assemble response
     header = (

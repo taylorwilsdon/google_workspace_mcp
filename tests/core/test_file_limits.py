@@ -8,15 +8,18 @@ import httpx
 import pytest
 
 from core.file_limits import (
+    DEFAULT_MAX_CONTENT_CHARS,
     DEFAULT_MAX_OFFICE_XML_BYTES,
     DEFAULT_STATELESS_INLINE_MAX_BYTES,
     FileTooLargeError,
     download_http_url_bytes,
     download_media_bytes,
     ensure_within_file_size_limit,
+    get_max_content_chars,
     get_max_file_bytes,
     get_max_office_xml_bytes,
     get_stateless_inline_max_bytes,
+    page_content_text,
     validate_file_limit_settings,
 )
 
@@ -328,3 +331,85 @@ def test_get_stateless_inline_max_bytes_rejects_invalid(monkeypatch, raw):
         get_stateless_inline_max_bytes()
     with pytest.raises(ValueError, match="WORKSPACE_MCP_STATELESS_INLINE_MAX_BYTES"):
         validate_file_limit_settings()
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (None, DEFAULT_MAX_CONTENT_CHARS),
+        ("", DEFAULT_MAX_CONTENT_CHARS),
+        ("0", None),
+        (" 4096 ", 4096),
+    ],
+)
+def test_get_max_content_chars(monkeypatch, raw, expected):
+    """On by default, like the Office expansion limit; 0 turns it off."""
+    if raw is None:
+        monkeypatch.delenv("WORKSPACE_MCP_MAX_CONTENT_CHARS", raising=False)
+    else:
+        monkeypatch.setenv("WORKSPACE_MCP_MAX_CONTENT_CHARS", raw)
+    assert get_max_content_chars() == expected
+
+
+@pytest.mark.parametrize("raw", ["-1", "50k", "1.5"])
+def test_get_max_content_chars_rejects_invalid(monkeypatch, raw):
+    monkeypatch.setenv("WORKSPACE_MCP_MAX_CONTENT_CHARS", raw)
+    with pytest.raises(ValueError, match="integer character count"):
+        get_max_content_chars()
+    with pytest.raises(ValueError, match="WORKSPACE_MCP_MAX_CONTENT_CHARS"):
+        validate_file_limit_settings()
+
+
+@pytest.mark.parametrize("length", [99, 100])
+def test_page_content_text_returns_text_up_to_the_limit_whole(length):
+    text = "x" * length
+    assert page_content_text(text, max_chars=100) == text
+
+
+def test_page_content_text_returns_text_whole_without_a_limit():
+    text = "x" * 1_000_000
+    assert page_content_text(text, max_chars=None) == text
+    assert page_content_text(text, offset=10, max_chars=None) == text[10:]
+
+
+def test_page_content_text_ends_a_page_at_a_line_break():
+    text = "".join(f"row {i:03d}\n" for i in range(30))  # 8 characters a line
+
+    page = page_content_text(text, max_chars=100, alternative=", or download it")
+
+    assert page == (
+        text[:96] + "\n\n[Truncated: showing characters 0 to 96 of 240; 144 more "
+        "follow (limit 100 per call, set by WORKSPACE_MCP_MAX_CONTENT_CHARS). "
+        "Call again with offset=96 to read on, or download it.]"
+    )
+
+
+def test_page_content_text_cuts_mid_line_when_the_last_break_is_early():
+    text = "short\n" + "y" * 200
+
+    page = page_content_text(text, max_chars=100)
+
+    assert page.startswith(
+        "short\n" + "y" * 94 + "\n\n[Truncated: showing characters 0 to 100 of 206;"
+    )
+
+
+def test_page_content_text_pages_rejoin_to_the_whole_text():
+    text = "".join(f"line {i}: {'z' * (i % 17)}\n" for i in range(500))
+    pages, offset = [], 0
+    while True:
+        page = page_content_text(text, offset=offset, max_chars=300)
+        body, _, note = page.partition("\n\n[Truncated: ")
+        pages.append(body)
+        if not note:
+            break
+        offset = int(note.split("offset=")[1].split(" ")[0])
+
+    assert "".join(pages) == text
+    assert len(pages) > 1
+
+
+def test_page_content_text_reports_an_offset_past_the_end():
+    assert page_content_text("abc", offset=10, max_chars=100) == (
+        "[offset=10 is past the end of the content (3 characters).]"
+    )
