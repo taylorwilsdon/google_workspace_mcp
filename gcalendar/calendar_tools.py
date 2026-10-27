@@ -812,6 +812,24 @@ async def _delete_event_impl(
         )
         logger.info("[delete_event] Successfully verified event exists before deletion")
         if only_if_no_attendees:
+            try:
+                calendar = await asyncio.to_thread(
+                    lambda: service.calendarList().get(calendarId=calendar_id).execute()
+                )
+            except HttpError as calendar_error:
+                raise UserInputError(
+                    "Could not verify calendar ownership; refusing to delete."
+                ) from calendar_error
+            if calendar.get("accessRole") != "owner":
+                raise UserInputError(
+                    "Only the calendar owner can use this deletion guard; refusing to delete."
+                )
+
+            if existing_event.get("recurrence"):
+                raise UserInputError(
+                    "Cannot verify attendees for every instance in a recurring series; refusing to delete."
+                )
+
             attendees = existing_event.get("attendees", [])
             other_attendees = [
                 attendee

@@ -326,6 +326,9 @@ async def test_manage_event_rejects_invalid_send_updates(action):
 async def test_manage_event_delete_can_refuse_events_with_attendees():
     fn = _unwrap(manage_event)
     mock_service = _create_mock_service()
+    mock_service.calendarList().get().execute = Mock(
+        return_value={"accessRole": "owner"}
+    )
     mock_service.events().get().execute = Mock(
         return_value={
             "id": "evt123",
@@ -352,6 +355,9 @@ async def test_manage_event_delete_can_refuse_events_with_attendees():
 async def test_manage_event_delete_proceeds_when_only_owner_is_attendee():
     fn = _unwrap(manage_event)
     mock_service = _create_mock_service()
+    mock_service.calendarList().get().execute = Mock(
+        return_value={"accessRole": "owner"}
+    )
     mock_service.events().get().execute = Mock(
         return_value={"id": "evt123", "attendees": [{"email": "owner@example.com"}]}
     )
@@ -371,6 +377,9 @@ async def test_manage_event_delete_proceeds_when_only_owner_is_attendee():
 async def test_manage_event_delete_allows_owner_attendee_without_email():
     fn = _unwrap(manage_event)
     mock_service = _create_mock_service()
+    mock_service.calendarList().get().execute = Mock(
+        return_value={"accessRole": "owner"}
+    )
     mock_service.events().get().execute = Mock(
         return_value={"id": "evt123", "attendees": [{"displayName": "Owner"}]}
     )
@@ -384,6 +393,57 @@ async def test_manage_event_delete_allows_owner_attendee_without_email():
     )
 
     mock_service.events().delete.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_manage_event_delete_refuses_recurring_series_with_guard():
+    fn = _unwrap(manage_event)
+    mock_service = _create_mock_service()
+    mock_service.calendarList().get().execute = Mock(
+        return_value={"accessRole": "owner"}
+    )
+    mock_service.events().get().execute = Mock(
+        return_value={
+            "id": "series123",
+            "attendees": [{"email": "owner@example.com"}],
+            "recurrence": ["RRULE:FREQ=WEEKLY;COUNT=4"],
+        }
+    )
+
+    with pytest.raises(UserInputError, match="recurring series"):
+        await fn(
+            service=mock_service,
+            user_google_email="owner@example.com",
+            action="delete",
+            event_id="series123",
+            only_if_no_attendees=True,
+        )
+
+    mock_service.events().delete.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_manage_event_delete_refuses_guard_when_user_is_not_calendar_owner():
+    fn = _unwrap(manage_event)
+    mock_service = _create_mock_service()
+    mock_service.calendarList().get().execute = Mock(
+        return_value={"accessRole": "writer"}
+    )
+    mock_service.events().get().execute = Mock(
+        return_value={"id": "evt123", "attendees": [{"email": "user@example.com"}]}
+    )
+
+    with pytest.raises(UserInputError, match="calendar owner"):
+        await fn(
+            service=mock_service,
+            user_google_email="user@example.com",
+            action="delete",
+            event_id="evt123",
+            calendar_id="shared@example.com",
+            only_if_no_attendees=True,
+        )
+
+    mock_service.events().delete.assert_not_called()
 
 
 @pytest.mark.asyncio
