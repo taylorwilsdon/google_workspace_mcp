@@ -125,16 +125,26 @@ def _is_scope_error(error: HttpError) -> bool:
     )
 
 
-async def _list_memberships(chat_service, space_name: str, **list_params) -> List[dict]:
-    """Return every membership of a space, following nextPageToken."""
+async def _list_memberships(
+    chat_service, space_name: str, limit: Optional[int] = None, **list_params
+) -> List[dict]:
+    """Return the memberships of a space, following nextPageToken.
+
+    With a limit, stop after limit + 1 memberships, so the caller can tell that
+    more exist without paging through the whole space.
+    """
     memberships = []
     params = {"parent": space_name, "pageSize": 100, **list_params}
     while True:
+        if limit is not None:
+            params["pageSize"] = min(100, limit + 1 - len(memberships))
         response = await asyncio.to_thread(
             chat_service.spaces().members().list(**params).execute
         )
         memberships.extend(response.get("memberships", []))
-        if not response.get("nextPageToken"):
+        if not response.get("nextPageToken") or (
+            limit is not None and len(memberships) > limit
+        ):
             return memberships
         params["pageToken"] = response["nextPageToken"]
 
@@ -224,15 +234,18 @@ _MEMBER_ROLE_LABELS = {
 }
 
 
-async def _format_space_members(chat_service, people_service, space_id: str) -> str:
-    """List a space's members (people, apps and groups), including pending invites."""
+async def _format_space_members(
+    chat_service, people_service, space_id: str, limit: int
+) -> str:
+    """List up to limit members of a space (people, apps and groups), including
+    pending invites."""
     space = await asyncio.to_thread(chat_service.spaces().get(name=space_id).execute)
     space_label = (await _name_spaces(chat_service, people_service, [space]))[
         space.get("name")
     ]
     try:
         memberships = await _list_memberships(
-            chat_service, space_id, showInvited=True, showGroups=True
+            chat_service, space_id, limit, showInvited=True, showGroups=True
         )
     except HttpError as e:
         if _is_scope_error(e):
@@ -243,6 +256,8 @@ async def _format_space_members(chat_service, people_service, space_id: str) -> 
             ) from e
         raise
 
+    has_more = len(memberships) > limit
+    memberships = memberships[:limit]
     user_ids = [
         m["member"]["name"]
         for m in memberships
@@ -250,7 +265,12 @@ async def _format_space_members(chat_service, people_service, space_id: str) -> 
     ]
     people_names = await _lookup_people_names(people_service, user_ids)
 
-    lines = [f"Members of '{space_label}' (ID: {space_id}): {len(memberships)}"]
+    count = (
+        f"first {len(memberships)} shown, more exist (raise page_size to see more)"
+        if has_more
+        else str(len(memberships))
+    )
+    lines = [f"Members of '{space_label}' (ID: {space_id}): {count}"]
     for membership in memberships:
         role = _MEMBER_ROLE_LABELS.get(membership.get("role"), "unknown")
         state = membership.get("state")

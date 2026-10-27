@@ -78,8 +78,8 @@ async def list_spaces(
     Args:
         space_id: List the members of this space (e.g. spaces/X) instead of
             listing spaces: people, apps and groups, with their role and any
-            pending invitation. Needs the chat.memberships.readonly scope (part
-            of the default Chat scopes).
+            pending invitation. Shows at most page_size members. Needs the
+            chat.memberships.readonly scope (part of the default Chat scopes).
 
     Returns:
         str: A formatted list of Google Chat spaces, or of the members of space_id.
@@ -87,7 +87,9 @@ async def list_spaces(
     space_id = _none_if_blank(space_id)
     if space_id is not None:
         logger.info(f"[list_spaces] Members of {space_id}")
-        return await _format_space_members(chat_service, people_service, space_id)
+        return await _format_space_members(
+            chat_service, people_service, space_id, max(page_size, 1)
+        )
 
     logger.info(f"[list_spaces] Email={user_google_email}, Type={space_type}")
 

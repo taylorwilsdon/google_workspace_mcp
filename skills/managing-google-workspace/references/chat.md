@@ -14,7 +14,7 @@ Lists Google Chat spaces (rooms and direct messages) accessible to the user, or 
 | user_google_email | string | yes | | |
 | page_size | integer | no | 100 | |
 | space_type | string | no | "all" | |
-| space_id | string | no | | List this space's members instead: people, apps and groups, with role and pending invites. Needs `chat.memberships.readonly` (in the default Chat scopes) |
+| space_id | string | no | | List this space's members instead: people, apps and groups, with role and pending invites; at most `page_size` are shown. Needs `chat.memberships.readonly` (in the default Chat scopes) |
 
 ---
 

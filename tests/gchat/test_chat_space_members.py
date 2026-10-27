@@ -50,12 +50,13 @@ def _services(pages=None, members_error=None):
     return chat, people
 
 
-async def _list_members(chat, people, space_id="spaces/S"):
+async def _list_members(chat, people, space_id="spaces/S", **kwargs):
     return await _unwrap(list_spaces)(
         chat_service=chat,
         people_service=people,
         user_google_email="me@example.com",
         space_id=space_id,
+        **kwargs,
     )
 
 
@@ -147,6 +148,33 @@ async def test_lists_people_apps_groups_and_invites_across_pages():
     }
     assert second_call.kwargs["pageToken"] == "next"
     chat.spaces.return_value.list.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_member_listing_stops_at_page_size():
+    def member(i):
+        return {
+            "member": {"name": f"users/{i}", "type": "HUMAN"},
+            "role": "ROLE_MEMBER",
+            "state": "JOINED",
+        }
+
+    pages = [
+        {"memberships": [member(1), member(2)], "nextPageToken": "next"},
+        {"memberships": [member(3)], "nextPageToken": "more"},
+    ]
+    chat, people = _services(pages)
+
+    result = await _list_members(chat, people, page_size=2)
+
+    lines = result.splitlines()
+    assert lines[0] == (
+        "Members of 'Project 8542' (ID: spaces/S): first 2 shown, "
+        "more exist (raise page_size to see more)"
+    )
+    assert len(lines) == 3
+    members_list = chat.spaces.return_value.members.return_value.list
+    assert [c.kwargs["pageSize"] for c in members_list.call_args_list] == [3, 1]
 
 
 @pytest.mark.asyncio
