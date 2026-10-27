@@ -597,6 +597,67 @@ def _a1_range_for_values(a1_range: str, values: List[List[object]]) -> Optional[
     return range_ref
 
 
+def _values_start(a1_range: str) -> Optional[tuple[int, int]]:
+    """
+    Return the zero-based (column, row) of an A1 range's first cell.
+
+    A missing column or row (``2:10``, ``A:C``) starts at column A or row 1.
+    Returns None when the range is not A1 notation.
+    """
+    _, range_part = _split_sheet_and_range(a1_range)
+    if not range_part:
+        return None
+    try:
+        start_col, start_row = _parse_a1_part(range_part.split(":", 1)[0])
+    except UserInputError:
+        return None
+    # A single reference needs both a column and a row to be a cell; "Totals"
+    # is a named range, not column TOTALS.
+    if ":" not in range_part and (start_col is None or start_row is None):
+        return None
+    if start_col is None and start_row is None:
+        return None
+    return start_col or 0, start_row or 0
+
+
+_TSV_ESCAPES = str.maketrans({"\t": "\\t", "\r": "\\r", "\n": "\\n"})
+
+
+def _format_sheet_values_rows(a1_range: str, values: List[List[object]]) -> str:
+    """
+    Render a values matrix as one line per row: the sheet row number, then the
+    row's cells separated by tabs, with trailing empty cells dropped.
+
+    Row numbers are the sheet's own when ``a1_range`` (the range the API
+    resolved) has a starting cell, so a read of ``A41:G700`` numbers its first
+    row 41. The first line says which column the cells start at.
+    """
+    start = _values_start(a1_range)
+    if start is None:
+        start_col, start_row = 0, 0
+        legend = "Each line: row number within the range, then tab-separated cells."
+    else:
+        start_col, start_row = start
+        legend = (
+            "Each line: sheet row number, then tab-separated cells from column "
+            f"{_index_to_column(start_col)}."
+        )
+
+    lines = []
+    escaped = False
+    for offset, row in enumerate(values):
+        cells = ["" if cell is None else str(cell) for cell in row]
+        while cells and cells[-1] == "":
+            cells.pop()
+        escaped_cells = [cell.translate(_TSV_ESCAPES) for cell in cells]
+        escaped = escaped or escaped_cells != cells
+        lines.append("\t".join([str(start_row + offset + 1), *escaped_cells]))
+
+    if escaped:
+        legend += " Tabs and line breaks inside a cell are shown as \\t and \\n."
+    return "\n".join([legend, *lines])
+
+
 def _a1_range_cell_count(a1_range: str) -> Optional[int]:
     """
     Return cell count for an explicit rectangular A1 range (e.g. A1:C10).

@@ -26,13 +26,14 @@ def _create_mock_service(*responses_or_errors):
 
 async def _call_read_sheet_values(service, **overrides):
     """Call the undecorated implementation to keep auth out of unit tests."""
-    return await _unwrap(read_sheet_values)(
-        service=service,
-        user_google_email="user@example.com",
-        spreadsheet_id="spreadsheet-123",
-        range_name="Sheet1!A1:A1",
+    kwargs = {
+        "service": service,
+        "user_google_email": "user@example.com",
+        "spreadsheet_id": "spreadsheet-123",
+        "range_name": "Sheet1!A1:A1",
         **overrides,
-    )
+    }
+    return await _unwrap(read_sheet_values)(**kwargs)
 
 
 @pytest.mark.asyncio
@@ -60,7 +61,7 @@ async def test_read_sheet_values_tolerates_formula_fetch_failures():
     result = await _call_read_sheet_values(service, include_formulas=True)
 
     assert "Successfully read 1 rows" in result
-    assert "Row  1: ['1']" in result
+    assert "\n1\t1" in result
     assert "Formula cells in range" not in result
 
 
@@ -75,9 +76,10 @@ async def test_read_sheet_values_renders_all_fetched_rows():
 
     assert "Successfully read 120 rows" in result
     # Every fetched row must be rendered, not just the endpoints.
+    lines = result.split("\n")
     for i in range(1, 121):
-        assert f"Row {i:2d}: ['{i}']" in result
-    assert result.count("Row ") == 120
+        assert f"{i}\t{i}" in lines
+    assert len([line for line in lines if "\t" in line]) == 120
     assert "more rows" not in result
 
 
@@ -139,3 +141,53 @@ async def test_read_sheet_values_preserves_ambiguous_bare_range(range_name):
     get_mock.assert_called_once_with(spreadsheetId="spreadsheet-123", range=range_name)
     assert "Successfully read 1 rows" in result
     assert "was clamped" not in result
+
+
+@pytest.mark.asyncio
+async def test_read_sheet_values_numbers_rows_from_the_sheet():
+    service = _create_mock_service(
+        {
+            "range": "Sheet1!C41:G700",
+            "values": [["Name", "Score", ""], [], ["Ann", "", "3"]],
+        }
+    )
+
+    result = await _call_read_sheet_values(service, range_name="Sheet1!C41:G700")
+
+    assert result.split("\n")[1:] == [
+        "Each line: sheet row number, then tab-separated cells from column C.",
+        "41\tName\tScore",
+        "42",
+        "43\tAnn\t\t3",
+    ]
+    assert "Row " not in result
+    assert "['" not in result
+
+
+@pytest.mark.asyncio
+async def test_read_sheet_values_escapes_tabs_and_line_breaks_in_cells():
+    service = _create_mock_service(
+        {"range": "'My Sheet'!A1:B1", "values": [["two\nlines", "a\tb\r\nc"]]}
+    )
+
+    result = await _call_read_sheet_values(service)
+
+    legend, row = result.split("\n")[1:]
+    assert legend == (
+        "Each line: sheet row number, then tab-separated cells from column A."
+        " Tabs and line breaks inside a cell are shown as \\t and \\n."
+    )
+    assert row == "1\ttwo\\nlines\ta\\tb\\r\\nc"
+
+
+@pytest.mark.asyncio
+async def test_read_sheet_values_falls_back_to_range_relative_numbers():
+    service = _create_mock_service({"values": [["x"], ["y"]]})
+
+    result = await _call_read_sheet_values(service, range_name="Totals")
+
+    assert result.split("\n")[1:] == [
+        "Each line: row number within the range, then tab-separated cells.",
+        "1\tx",
+        "2\ty",
+    ]

@@ -43,6 +43,12 @@ Get spreadsheet metadata: title, locale, and list of sheets.
 ### read_sheet_values
 Read values from a range in a spreadsheet.
 
+The response has one line per row: the sheet row number, then the row's cells
+separated by tabs, starting at the range's first column (the first line says
+which). Row numbers are the sheet's own, so reading `A41:G60` starts at row 41.
+Trailing empty cells are dropped; tabs and line breaks inside a cell are shown
+as `\t` and `\n`.
+
 Open-ended or oversized A1 ranges are clamped to at most **1000 rows** before
 the Sheets API request (same budget as the default `A1:Z1000`). When clamped,
 the response includes a note with the rewritten range so you can request the
