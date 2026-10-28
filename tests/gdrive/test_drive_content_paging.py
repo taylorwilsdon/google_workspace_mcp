@@ -160,6 +160,19 @@ async def test_base64_image_under_the_limit_ignores_offset(limit):
 
 
 @pytest.mark.asyncio
+async def test_attached_image_ignores_offset(limit):
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 50
+
+    result = await _get_content(png, mime_type="image/png", offset=5)
+
+    text, image = result.content
+    assert text.text == _HEADER.replace("text/plain", "image/png") + (
+        "[Image attached as image content - 58 bytes]"
+    )
+    assert image.mime_type == "image/png"
+
+
+@pytest.mark.asyncio
 async def test_later_svg_pages_do_not_repeat_its_images(limit):
     png = base64.b64encode(b"\x89PNG\r\n\x1a\n" + bytes(range(256)) * 40).decode()
     svg = (

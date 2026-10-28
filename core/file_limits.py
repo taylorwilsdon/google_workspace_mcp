@@ -57,25 +57,9 @@ DEFAULT_MAX_OFFICE_XML_BYTES = 25 * 1024 * 1024  # 25 MiB
 # Base64 inflates an inline payload by a third, so this is ~13.4 MiB on the wire.
 DEFAULT_STATELESS_INLINE_MAX_BYTES = 10 * 1024 * 1024  # 10 MiB
 
-# Returned text goes into the model's context and is re-read on every later
-# turn of the session, so a whole file costs far more than its one-off size.
-# Hosts also cap a single result (Claude Code at 25,000 tokens by default) and
-# save anything larger to a file the model has to search instead. Dense text
-# such as CSV, code or JSON runs at up to about half a token per character, so
-# 40,000 characters stays under that cap; English prose is about a quarter. Unlike
-# the download cap this is on by default, because truncation loses nothing: the
-# caller can read on by offset.
 DEFAULT_MAX_CONTENT_CHARS = 40_000
 
-# Reading content that is over that limit takes one call per page. The text is
-# kept in memory between calls so each page does not download and extract the
-# whole file again; this bounds the memory that takes per process.
-DEFAULT_PAGED_CONTENT_CACHE_BYTES = 32 * 1024 * 1024
-
-# When cutting a page, end it at the last line break in the window so a CSV
-# row or a paragraph is not split, unless that would drop more than half the
-# window.
-_MIN_PAGE_FRACTION_AT_LINE_BREAK = 0.5
+DEFAULT_PAGED_CONTENT_CACHE_BYTES = 32 * 1024 * 1024  # 32 MiB
 
 # Keep the uncapped path from asking httplib2 to materialize its 100 MiB
 # default response chunk. This does not impose a total-size limit; it only
@@ -203,13 +187,8 @@ def page_content_text(
     max_chars: Optional[int] = None,
     alternative: str = "",
 ) -> str:
-    """Return the part of ``text`` from ``offset``, at most ``max_chars`` long.
-
-    When text is left out after the page, a note at the end says which
-    characters are shown, the limit that applied and the offset to continue
-    from. ``alternative`` is appended to that note (for example, a tool that
-    returns the whole file). ``max_chars`` of ``None`` means no limit.
-    """
+    """Return up to ``max_chars`` of ``text`` from ``offset``, plus a read-on note
+    with the next offset when more follows. ``None`` means no limit."""
     total = len(text)
     if offset > total:
         return (
@@ -221,7 +200,7 @@ def page_content_text(
 
     page = text[offset : offset + max_chars]
     line_end = page.rfind("\n") + 1
-    if line_end >= max_chars * _MIN_PAGE_FRACTION_AT_LINE_BREAK:
+    if line_end >= max_chars / 2:
         page = page[:line_end]
     end = offset + len(page)
     return (
@@ -233,14 +212,9 @@ def page_content_text(
 
 
 class PagedContentCache:
-    """Keep content that is being read a page at a time, so reading on does
-    not fetch and extract it again.
+    """TTL and LRU cache of paged text, bounded by ``max_bytes`` of memory.
 
-    Callers key entries to the content's revision. Entries expire
-    ``ttl_seconds`` after they are stored. ``put`` keeps the memory the cached
-    strings take under the ``max_bytes`` it is given, dropping the least
-    recently used first, and does not keep a string that would take more than
-    a quarter of it, so one file cannot push out every other.
+    A single entry may take at most a quarter of ``max_bytes``.
     """
 
     def __init__(

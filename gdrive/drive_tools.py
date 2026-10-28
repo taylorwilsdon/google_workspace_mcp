@@ -114,8 +114,6 @@ from gdrive.drive_helpers import (
 
 logger = logging.getLogger(__name__)
 
-# Text that get_drive_file_content is returning a page at a time, kept for ten
-# minutes within WORKSPACE_MCP_PAGED_CONTENT_CACHE_BYTES.
 _paged_content_cache = PagedContentCache(ttl_seconds=600)
 
 
@@ -330,13 +328,10 @@ async def _read_drive_file_body(
     file_id: str,
     file_metadata: Dict[str, Any],
     export_mime_type: Optional[str],
+    max_chars: Optional[int],
 ) -> tuple[str, List[ImageContent], bool]:
-    """Download a Drive file and turn it into text for get_drive_file_content.
-
-    Returns the text, any images to attach, and whether the text can be paged
-    (a base64 image cannot). Raises FileTooLargeError when the file is over a
-    size limit.
-    """
+    """Download and extract a Drive file; return its text, attached images, and
+    whether the text is pageable. Raises FileTooLargeError over a size limit."""
     mime_type = file_metadata.get("mimeType", "")
     file_name = file_metadata.get("name", "Unknown File")
     web_view_link = file_metadata.get("webViewLink", "#")
@@ -410,6 +405,7 @@ async def _read_drive_file_body(
         body_text = (
             f"[Image attached as image content - {len(file_content_bytes)} bytes]"
         )
+        paged = False
     elif mime_type == SVG_MIME_TYPE:
         svg = svg_content(file_content_bytes)
         if svg is not None:
@@ -423,9 +419,7 @@ async def _read_drive_file_body(
             )
     elif mime_type in IMAGE_MIME_TYPES:
         body_text = encode_image_content(file_content_bytes, mime_type)
-        # Part of a base64 image is no use, so it is replaced, not paged.
         paged = False
-        max_chars = get_max_content_chars()
         if max_chars is not None and len(body_text) > max_chars:
             body_text = (
                 f"[Image is {len(file_content_bytes):,} bytes, {len(body_text):,} "
@@ -474,14 +468,14 @@ async def get_drive_file_content(
     • Images (PNG, JPEG, GIF, WebP) → returned as MCP image content after the
       metadata header. SVG → returned as its markup; raster images it embeds
       as base64 are attached as image content, numbered to match their place
-      in the markup. BMP and TIFF → still returned as base64 text.
+      in the markup. BMP and TIFF → base64 text, or a download hint when over
+      the per-call limit.
     • Any other file → downloaded; tries UTF-8 decode, else notes binary.
 
     Args:
         user_google_email: The user’s Google email address.
         file_id: Drive file ID.
-        offset: Character offset into the content to start from, for reading
-            on after a cut-off result. Defaults to 0.
+        offset: Character offset to read on from after a truncated result.
 
     Returns:
         str: The file content as plain text with metadata header. For images, a
@@ -509,9 +503,6 @@ async def get_drive_file_content(
     max_chars = get_max_content_chars()
     version = file_metadata.get("version")
     cache_bytes = get_paged_content_cache_bytes()
-    # Reading long content takes a call per page. Keep the text between calls,
-    # keyed to the user and the file's version, so later pages are not
-    # downloaded and extracted again.
     cache_key = (
         (user_google_email.lower(), file_id, version, export_mime_type)
         if cache_bytes
@@ -529,7 +520,7 @@ async def get_drive_file_content(
     else:
         try:
             body_text, images, paged = await _read_drive_file_body(
-                service, file_id, file_metadata, export_mime_type
+                service, file_id, file_metadata, export_mime_type, max_chars
             )
         except FileTooLargeError as e:
             return str(e)
@@ -543,9 +534,8 @@ async def get_drive_file_content(
             max_chars=max_chars,
             alternative=", or use get_drive_file_download_url for the whole file",
         )
-    # Later pages carry no images: the first page already returned them.
-    if offset:
-        images = []
+        if offset:
+            images = []
 
     # Assemble response
     header = (
