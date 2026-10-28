@@ -426,6 +426,7 @@ class SecureFastMCP(FastMCP):
         register = super().tool
         if kwargs.get("description") is not None:
             return register(name_or_fn, **kwargs)
+        kwargs.pop("description", None)
         if inspect.isroutine(name_or_fn):
             return register(
                 name_or_fn, description=docstring_description(name_or_fn), **kwargs

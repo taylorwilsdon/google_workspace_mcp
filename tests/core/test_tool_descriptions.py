@@ -125,6 +125,23 @@ async def test_every_registration_form_publishes_the_guidance():
 
     app.tool(direct, title="Direct")
 
+    @app.tool(description=None)
+    def none_decorated():
+        """None decorated.
+
+        Important:
+            None decorated guidance.
+        """
+
+    def none_direct():
+        """None direct.
+
+        Important:
+            None direct guidance.
+        """
+
+    app.tool(none_direct, description=None)
+
     @app.tool(description="Explicit.")
     def explicit():
         """Ignored.
@@ -138,6 +155,8 @@ async def test_every_registration_form_publishes_the_guidance():
         ("called", "Called guidance."),
         ("renamed", "Named guidance."),
         ("direct", "Direct guidance."),
+        ("none_decorated", "None decorated guidance."),
+        ("none_direct", "None direct guidance."),
     ]:
         assert guidance in await description_of(app, name)
     assert await description_of(app, "explicit") == "Explicit."
