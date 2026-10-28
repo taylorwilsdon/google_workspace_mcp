@@ -220,6 +220,22 @@ def _render_paginated_message_body(
 ) -> str:
     """Render the outer message body, excluding attachments and attached messages."""
     message = BytesParser(policy=default_email_policy).parsebytes(raw)
+    pending = [(message, 0)]
+    while pending:
+        part, depth = pending.pop()
+        if (
+            part.get_content_disposition() == "attachment"
+            or part.get_content_maintype() == "message"
+        ):
+            continue
+        if depth > 50:
+            raise ToolExecutionError("Message MIME nesting is too deep to paginate.")
+        if part.get_content_maintype() == "multipart" and not part.is_multipart():
+            raise ToolExecutionError(
+                "Malformed multipart message cannot be paginated completely."
+            )
+        if part.is_multipart():
+            pending.extend((child, depth + 1) for child in part.iter_parts())
 
     def decode(part):
         try:
@@ -232,7 +248,7 @@ def _render_paginated_message_body(
     def render(part):
         if (
             part.get_content_disposition() == "attachment"
-            or part.get_content_type() == "message/rfc822"
+            or part.get_content_maintype() == "message"
         ):
             return ""
         if part.get_content_type() == "multipart/alternative":
@@ -307,9 +323,14 @@ async def read_gmail_message_page(
         kind="message page",
         max_bytes=limit,
     )
-    text = await asyncio.to_thread(
-        _render_paginated_message_body, raw, body_format, formatter
-    )
+    try:
+        text = await asyncio.to_thread(
+            _render_paginated_message_body, raw, body_format, formatter
+        )
+    except RecursionError as exc:
+        raise ToolExecutionError(
+            "Message MIME nesting is too deep to paginate."
+        ) from exc
     encoded_body = text.encode("utf-8")
     ensure_within_file_size_limit(
         len(encoded_body),

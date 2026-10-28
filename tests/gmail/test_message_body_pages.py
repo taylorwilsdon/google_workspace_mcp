@@ -271,3 +271,49 @@ async def test_continuation_options_require_offset(options):
     with pytest.raises(UserInputError, match="require page_offset"):
         await read_message(service, "id", "reader@example.com", **options)
     service.users.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["missing-boundary", "deep-nesting"])
+async def test_malformed_or_deep_mime_does_not_claim_complete(case):
+    raw = b'Content-Type: multipart/mixed; boundary="missing"\n\nUNPARSED BODY'
+    expected = "Malformed multipart"
+    if case == "deep-nesting":
+        raw = b"Content-Type: text/plain\n\nDeep body"
+        for level in range(350):
+            raw = (
+                f'Content-Type: multipart/mixed; boundary="b{level}"\n\n--b{level}\n'.encode()
+                + raw
+                + f"\n--b{level}--\n".encode()
+            )
+        expected = "nesting is too deep"
+    service = Mock()
+    service.users.return_value.messages.return_value.get.return_value.execute.side_effect = [
+        {"sizeEstimate": len(raw)},
+        {"raw": base64.urlsafe_b64encode(raw).decode()},
+    ]
+    with pytest.raises(ToolError, match=expected):
+        await read_message(service, "id", "reader@example.com", page_offset=0)
+
+
+@pytest.mark.asyncio
+async def test_attached_international_message_is_excluded():
+    message = EmailMessage()
+    message.set_content("Visible outer body")
+    message.make_mixed()
+    nested = EmailMessage()
+    nested.set_content("Attached international message")
+    attachment = EmailMessage()
+    attachment["Content-Type"] = "message/global"
+    attachment.set_payload([nested])
+    message.attach(attachment)
+    page = json.loads(
+        await read_message(
+            gmail_service(message),
+            "id",
+            "reader@example.com",
+            page_offset=0,
+        )
+    )
+    assert page["body"] == "Visible outer body\n"
+    assert page["complete"]
