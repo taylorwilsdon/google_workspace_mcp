@@ -1935,8 +1935,9 @@ async def get_gmail_message_content(
     tool. Follow next_offset until complete=true, passing body_sha256 as
     expected_sha256 and keeping body_format/include_links unchanged. Offsets and
     page_size count Unicode characters, not bytes. Pages exclude attachments and
-    attached messages. Each call re-fetches the message under the current user's
-    authorization; no shared cache or download URL is used. Paginated reads have
+    attached messages. Every call checks current Gmail metadata access before using
+    the five-minute account-scoped body cache. The cache holds at most 128 entries
+    and 64 MiB of UTF-8 bodies plus entry allowances per process. Paginated reads have
     a 64 MiB raw/rendered size cap and also honor WORKSPACE_MCP_MAX_FILE_BYTES.
 
     Bodies are returned inline and truncated at 20,000 characters. Set full=True to
@@ -2044,6 +2045,8 @@ async def get_gmail_message_content(
             page_size,
             expected_sha256,
             partial(_format_body_content, include_links=include_links),
+            account=user_google_email,
+            include_links=include_links,
         )
         if include_headers:
             page["headers"] = {key: value[:1000] for key, value in headers.items()}

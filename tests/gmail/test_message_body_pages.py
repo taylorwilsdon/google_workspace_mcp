@@ -10,7 +10,15 @@ import pytest
 from core.utils import UserInputError
 from core.file_limits import FileTooLargeError
 from fastmcp.exceptions import ToolError
+import gmail.gmail_helpers as helpers
 from gmail.gmail_tools import _format_body_content, get_gmail_message_content
+
+
+@pytest.fixture(autouse=True)
+def clear_page_cache():
+    helpers._PAGE_CACHE.clear()
+    yield
+    helpers._PAGE_CACHE.clear()
 
 
 def unwrap(tool):
@@ -77,6 +85,12 @@ async def test_complete_unicode_body_in_bounded_pages(body_format):
     assert complete == _format_body_content(
         "Your client does not support HTML", html, body_format, truncate_limit=None
     )
+    formats = [
+        call.kwargs["format"]
+        for call in service.users.return_value.messages.return_value.get.call_args_list
+    ]
+    assert formats.count("raw") == 1
+    assert formats.count("metadata") == len(chunks)
 
 
 @pytest.mark.asyncio
@@ -186,6 +200,7 @@ async def test_empty_body_end_offset_and_changed_representation():
         await read_message(
             service, "id", "reader@example.com", page_offset=first["total_chars"] + 1
         )
+    helpers._PAGE_CACHE.clear()
     changed = EmailMessage()
     changed.set_content("Changed")
     with pytest.raises(UserInputError, match="representation changed"):
@@ -317,3 +332,114 @@ async def test_attached_international_message_is_excluded():
     )
     assert page["body"] == "Visible outer body\n"
     assert page["complete"]
+
+
+@pytest.mark.asyncio
+async def test_cache_expiration_refetches_and_checks_digest(monkeypatch):
+    now = [0]
+    monkeypatch.setattr(helpers, "monotonic", lambda: now[0])
+    message = EmailMessage()
+    message.set_content("Original")
+    original = json.loads(
+        await read_message(
+            gmail_service(message), "id", "user@example.com", page_offset=0
+        )
+    )
+    now[0] = helpers._PAGE_CACHE_TTL + 1
+    message.set_content("Changed")
+    service = gmail_service(message)
+    with pytest.raises(UserInputError, match="representation changed"):
+        await read_message(
+            service,
+            "id",
+            "user@example.com",
+            page_offset=0,
+            expected_sha256=original["body_sha256"],
+        )
+    assert service.users.return_value.messages.return_value.get.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_cache_separates_rendering_options():
+    message = EmailMessage()
+    message.set_content("Body")
+    message.add_alternative(
+        '<p>Body <a href="https://example.com">link</a></p>', subtype="html"
+    )
+    service = gmail_service(message)
+    plain = json.loads(
+        await read_message(service, "id", "user@example.com", page_offset=0)
+    )
+    linked = json.loads(
+        await read_message(
+            service, "id", "user@example.com", page_offset=0, include_links=True
+        )
+    )
+    html = json.loads(
+        await read_message(
+            service, "id", "user@example.com", page_offset=0, body_format="html"
+        )
+    )
+    again = json.loads(
+        await read_message(service, "id", "user@example.com", page_offset=0)
+    )
+    assert "https://example.com" not in plain["body"]
+    assert "https://example.com" in linked["body"]
+    assert "<p>" in html["body"]
+    assert plain == again
+    formats = [
+        call.kwargs["format"]
+        for call in service.users.return_value.messages.return_value.get.call_args_list
+    ]
+    assert formats.count("raw") == 3
+    assert formats.count("metadata") == 4
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bound", ["bytes", "entries"])
+async def test_cache_evicts_oldest_within_both_bounds(monkeypatch, bound):
+    message = EmailMessage()
+    message.set_content("x" * 100)
+    service = gmail_service(message)
+    monkeypatch.setattr(
+        helpers, "_PAGE_CACHE_BYTES", 800 if bound == "bytes" else 10000
+    )
+    monkeypatch.setattr(helpers, "_PAGE_CACHE_ENTRIES", 128 if bound == "bytes" else 2)
+    for message_id in ["first", "second", "third", "first"]:
+        await read_message(service, message_id, "user@example.com", page_offset=0)
+        assert len(helpers._PAGE_CACHE) <= 2
+        assert (
+            sum(len(entry[1][0]) + 256 for entry in helpers._PAGE_CACHE.values())
+            <= helpers._PAGE_CACHE_BYTES
+        )
+    assert service.users.return_value.messages.return_value.get.call_count == 8
+
+
+@pytest.mark.asyncio
+async def test_smaller_file_limit_applies_to_cached_body(monkeypatch):
+    message = EmailMessage()
+    message.set_content("x" * 2000)
+    await read_message(gmail_service(message), "id", "user@example.com", page_offset=0)
+    monkeypatch.setenv("WORKSPACE_MCP_MAX_FILE_BYTES", "1000")
+    service = Mock()
+    service.users.return_value.messages.return_value.get.return_value.execute.return_value = {
+        "sizeEstimate": 1
+    }
+    with pytest.raises(FileTooLargeError):
+        await read_message(service, "id", "user@example.com", page_offset=100)
+    assert service.users.return_value.messages.return_value.get.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_body_larger_than_cache_budget_is_not_retained(monkeypatch):
+    monkeypatch.setattr(helpers, "_PAGE_CACHE_BYTES", 300)
+    message = EmailMessage()
+    message.set_content("x" * 100)
+    service = gmail_service(message)
+    for offset in [0, 50]:
+        result = json.loads(
+            await read_message(service, "id", "user@example.com", page_offset=offset)
+        )
+        assert result["body"].startswith("x")
+        assert not helpers._PAGE_CACHE
+    assert service.users.return_value.messages.return_value.get.call_count == 4
