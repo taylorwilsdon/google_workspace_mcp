@@ -12,6 +12,7 @@ import json
 import re
 import mimetypes
 import html
+from functools import partial
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Annotated, Optional, List, Dict, Literal, Any, Union
@@ -96,6 +97,7 @@ from gmail.gmail_helpers import (
     format_filter_apply_result,
     format_html_links,
     format_thread_label_outcomes,
+    read_gmail_message_page,
     html_newlines_to_br,
     html_to_text_preserving_breaks,
     modify_gmail_thread_labels,
@@ -250,6 +252,7 @@ def _format_body_content(
     html_body: str,
     body_format: Literal["text", "html"] = "text",
     include_links: bool = False,
+    truncate_limit: Optional[int] = HTML_BODY_TRUNCATE_LIMIT,
 ) -> str:
     """
     Helper function to format message body content with HTML fallback and truncation.
@@ -260,6 +263,7 @@ def _format_body_content(
         html_body: HTML body content
         body_format: Output format - "text" converts HTML to plaintext (default),
                      "html" returns raw HTML body as-is
+        truncate_limit: Maximum HTML-derived body characters; None preserves the complete body.
         include_links: In text mode, append the HTML body's http(s) links missing from the text
 
     Returns:
@@ -268,11 +272,8 @@ def _format_body_content(
     if body_format == "html":
         html_stripped = html_body.strip()
         if html_stripped:
-            if len(html_stripped) > HTML_BODY_TRUNCATE_LIMIT:
-                return (
-                    html_stripped[:HTML_BODY_TRUNCATE_LIMIT]
-                    + "\n\n[Content truncated...]"
-                )
+            if truncate_limit is not None and len(html_stripped) > truncate_limit:
+                return html_stripped[:truncate_limit] + "\n\n[Content truncated...]"
             return html_stripped
         # Fall back to text body when no HTML is available
         text_stripped = text_body.strip()
@@ -302,13 +303,17 @@ def _format_body_content(
     )
 
     if use_html:
-        content = _truncate_content(html_text, HTML_BODY_TRUNCATE_LIMIT)
+        content = (
+            _truncate_content(html_text, truncate_limit)
+            if truncate_limit is not None
+            else html_text
+        )
     elif text_stripped:
         content = text_body
     else:
         content = "[No readable content found]"
     if include_links:
-        content += format_html_links(html_stripped, content, HTML_BODY_TRUNCATE_LIMIT)
+        content += format_html_links(html_stripped, content, truncate_limit)
     return content
 
 
@@ -1913,9 +1918,26 @@ async def get_gmail_message_content(
     include_links: Annotated[
         bool, Field(description=INCLUDE_LINKS_DESCRIPTION)
     ] = False,
+    page_offset: Annotated[
+        Optional[int],
+        Field(
+            ge=0,
+            description="Character offset in the complete rendered body. Start at 0 and follow next_offset.",
+        ),
+    ] = None,
+    page_size: Annotated[int, Field(ge=1, le=20000)] = 20000,
+    expected_sha256: Optional[str] = None,
 ) -> str:
     """
     Retrieves the full content (subject, sender, recipients, body) of a specific Gmail message.
+
+    Set page_offset=0 to read the rendered body in bounded JSON pages through this
+    tool. Follow next_offset until complete=true, passing body_sha256 as
+    expected_sha256 and keeping body_format/include_links unchanged. Offsets and
+    page_size count Unicode characters, not bytes. Pages exclude attachments and
+    attached messages. Each call re-fetches the message under the current user's
+    authorization; no shared cache or download URL is used. Paginated reads have
+    a 64 MiB raw/rendered size cap and also honor WORKSPACE_MCP_MAX_FILE_BYTES.
 
     Bodies are returned inline and truncated at 20,000 characters. Set full=True to
     get the complete, untruncated message instead: it is exported to storage and the
@@ -1926,6 +1948,10 @@ async def get_gmail_message_content(
     returns a signed download URL like any other HTTP deployment.
 
     Args:
+        page_offset (int): Start position in the complete rendered body. Requires
+            format="full", full=False, and body_format="text" or "html".
+        page_size (int): Maximum body characters per page, between 1 and 20,000.
+        expected_sha256 (str): Optional previous body_sha256; rejects changed content.
         message_id (str): The unique ID of the Gmail message to retrieve.
         user_google_email (str): The user's Google email address. Required.
         body_format (Literal["text", "html", "raw"]): Body output format (only applies
@@ -1961,6 +1987,22 @@ async def get_gmail_message_content(
         f"body_format='{body_format}', full={full}"
     )
     _validate_message_format_options(format, body_format)
+    if page_offset is not None:
+        if full or format != "full" or body_format == "raw":
+            raise UserInputError(
+                "Body pagination requires full=False, format='full', and body_format='text' or 'html'."
+            )
+        if (
+            type(page_offset) is not int
+            or page_offset < 0
+            or type(page_size) is not int
+            or not 1 <= page_size <= 20000
+        ):
+            raise UserInputError(
+                "page_offset must be nonnegative; page_size must be between 1 and 20000."
+            )
+    elif expected_sha256 is not None or page_size != 20000:
+        raise UserInputError("expected_sha256 and page_size require page_offset.")
     if format == "metadata" and full:
         raise UserInputError("full=True requires format='full'.")
     if format == "metadata" and not include_headers:
@@ -1991,6 +2033,21 @@ async def get_gmail_message_content(
     headers = _extract_headers(
         message_metadata.get("payload", {}), GMAIL_METADATA_HEADERS
     )
+
+    if page_offset is not None:
+        page = await read_gmail_message_page(
+            service,
+            message_id,
+            message_metadata.get("sizeEstimate"),
+            body_format,
+            page_offset,
+            page_size,
+            expected_sha256,
+            partial(_format_body_content, include_links=include_links),
+        )
+        if include_headers:
+            page["headers"] = {key: value[:1000] for key, value in headers.items()}
+        return json.dumps(page, ensure_ascii=False)
 
     content_lines = _format_message_header_lines(headers) if include_headers else []
     if format == "metadata":

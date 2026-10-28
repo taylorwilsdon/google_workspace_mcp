@@ -7,6 +7,7 @@ import base64
 import binascii
 import codecs
 import contextlib
+import hashlib
 import itertools
 import logging
 import re
@@ -16,6 +17,8 @@ from collections import Counter
 from datetime import datetime, timezone
 from email.header import Header
 from email.message import Message
+from email.parser import BytesParser
+from email.policy import default as default_email_policy
 from email.utils import getaddresses, parseaddr, parsedate_to_datetime
 from html.parser import HTMLParser
 from typing import Any, Callable, Dict, Iterable, List, Literal, Mapping, Optional
@@ -24,7 +27,11 @@ import httplib2
 from fastmcp.exceptions import ToolError as ToolExecutionError
 from googleapiclient.errors import HttpError
 
-from core.file_limits import FileTooLargeError, ensure_within_file_size_limit
+from core.file_limits import (
+    FileTooLargeError,
+    ensure_within_file_size_limit,
+    get_max_file_bytes,
+)
 from core.utils import UserInputError
 from gmail.gmail_web_mime import (
     TextDirection,
@@ -48,6 +55,9 @@ from gmail.gmail_web_mime import (
 logger = logging.getLogger(__name__)
 
 RAW_BODY_TRUNCATE_LIMIT = 20000
+MAX_PAGINATED_MESSAGE_BYTES = 64 * 1024 * 1024
+
+
 GMAIL_QUOTA_ERROR_MARKERS = (
     "dailyLimitExceeded",
     "quotaExceeded",
@@ -203,6 +213,129 @@ GMAIL_LABEL_COLORS = frozenset(
         "#ffffff",
     }
 )
+
+
+def _render_paginated_message_body(
+    raw: bytes, body_format: str, formatter: Callable
+) -> str:
+    """Render the outer message body, excluding attachments and attached messages."""
+    message = BytesParser(policy=default_email_policy).parsebytes(raw)
+
+    def decode(part):
+        try:
+            return part.get_content()
+        except LookupError:
+            return (part.get_payload(decode=True) or b"").decode(
+                "utf-8", errors="replace"
+            )
+
+    def render(part):
+        if (
+            part.get_content_disposition() == "attachment"
+            or part.get_content_type() == "message/rfc822"
+        ):
+            return ""
+        if part.get_content_type() == "multipart/alternative":
+            plain = part.get_body(preferencelist=("plain",))
+            html = part.get_body(preferencelist=("html",))
+            return formatter(
+                decode(plain) if plain is not None else "",
+                decode(html) if html is not None else "",
+                body_format=body_format,
+                truncate_limit=None,
+            )
+        if part.get_content_type() == "multipart/related":
+            children = list(part.iter_parts())
+            if not children:
+                return ""
+            start = part.get_param("start")
+            root = next(
+                (p for p in children if start and p.get("Content-ID") == start),
+                children[0],
+            )
+            return render(root)
+        if part.is_multipart():
+            return "\n".join(filter(None, (render(p) for p in part.iter_parts())))
+        if part.get_content_type() == "text/plain":
+            return decode(part)
+        if part.get_content_type() == "text/html":
+            return formatter(
+                "", decode(part), body_format=body_format, truncate_limit=None
+            )
+        return ""
+
+    return render(message)
+
+
+async def read_gmail_message_page(
+    service,
+    message_id: str,
+    declared_size: Optional[int],
+    body_format: str,
+    page_offset: int,
+    page_size: int,
+    expected_sha256: Optional[str],
+    formatter: Callable,
+) -> dict:
+    """Fetch an authorized body and return a bounded page without external storage."""
+    limit = min(
+        get_max_file_bytes() or MAX_PAGINATED_MESSAGE_BYTES, MAX_PAGINATED_MESSAGE_BYTES
+    )
+    ensure_within_file_size_limit(
+        declared_size,
+        file_id=message_id,
+        kind="message page",
+        max_bytes=limit,
+    )
+    response = await asyncio.to_thread(
+        service.users().messages().get(userId="me", id=message_id, format="raw").execute
+    )
+    encoded = response.get("raw")
+    if not isinstance(encoded, str) or not encoded:
+        raise ToolExecutionError("Gmail returned no raw message body to paginate.")
+    if len(encoded) > ((limit + 2) // 3) * 4:
+        raise ToolExecutionError("Message exceeds the paginated-read size limit.")
+    try:
+        raw = base64.b64decode(
+            encoded + "=" * (-len(encoded) % 4), altchars=b"-_", validate=True
+        )
+    except (binascii.Error, ValueError) as exc:
+        raise ToolExecutionError("Gmail returned invalid raw message data.") from exc
+    ensure_within_file_size_limit(
+        len(raw),
+        file_id=message_id,
+        kind="message page",
+        max_bytes=limit,
+    )
+    text = await asyncio.to_thread(
+        _render_paginated_message_body, raw, body_format, formatter
+    )
+    encoded_body = text.encode("utf-8")
+    ensure_within_file_size_limit(
+        len(encoded_body),
+        file_id=message_id,
+        kind="message page",
+        max_bytes=limit,
+    )
+    digest = hashlib.sha256(encoded_body).hexdigest()
+    if expected_sha256 is not None and digest != expected_sha256:
+        raise UserInputError(
+            "Message representation changed; restart at page_offset=0."
+        )
+    if page_offset > len(text):
+        raise UserInputError("page_offset exceeds total_chars.")
+    end = min(page_offset + page_size, len(text))
+    return {
+        "message_id": message_id,
+        "body_format": body_format,
+        "body": text[page_offset:end],
+        "page_offset": page_offset,
+        "next_offset": end if end < len(text) else None,
+        "total_chars": len(text),
+        "complete": end == len(text),
+        "body_sha256": digest,
+        "scope": "Decoded outer message body, excluding attachments and attached messages.",
+    }
 
 
 def _validate_label_color(field: str, value: str) -> str:
