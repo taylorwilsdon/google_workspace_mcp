@@ -417,12 +417,7 @@ async def _google_api_executor(server: FastMCP):
 # Custom FastMCP that adds secure middleware stack for OAuth 2.1
 class SecureFastMCP(FastMCP):
     def tool(self, name_or_fn=None, **kwargs):
-        """Register a tool whose description is its docstring's guidance text.
-
-        FastMCP publishes only the first free-text section of a docstring, so
-        guidance under headings such as ``Important:`` is otherwise dropped.
-        See core/tool_descriptions.py. An explicit ``description`` wins.
-        """
+        """Register a tool described by its docstring above ``Args:``, or ``description``."""
         register = super().tool
         if kwargs.get("description") is not None:
             return register(name_or_fn, **kwargs)

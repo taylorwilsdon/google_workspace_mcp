@@ -746,8 +746,9 @@ async def get_page(
 ) -> str:
     """
     Get one page (slide) of a presentation: its type and every element's
-    object ID, type and text, including elements inside groups and tables.
-    Flags add element placement or text styles, or return the raw API resource.
+    object ID, type and text, including elements inside groups. Flags add
+    element placement or text styles (both include table cell text), or
+    return the raw API resource.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
