@@ -1200,20 +1200,34 @@ def _fill_missing_body(plain: str, html_body: str) -> tuple[str, str]:
     return plain, html_body
 
 
+def _web_quote_attribution(
+    target: Mapping[str, Any],
+) -> Optional[tuple[str, str, datetime]]:
+    """Parse the (name, email, date) Gmail's reply attribution needs from ``target``.
+
+    Returns None when the parent lacks a usable sender address or date, in
+    which case no Gmail-web quote can be built.
+    """
+    parent_name, parent_email = parseaddr(target.get("from") or "")
+    parent_dt = _parse_message_date(target.get("date") or "")
+    if "@" not in parent_email or parent_dt is None:
+        return None
+    return parent_name.strip() or parent_email, parent_email, parent_dt
+
+
 def _build_web_reply_bodies(
     new_plain: str, new_html: str, target: Mapping[str, Any]
 ) -> tuple[str, str]:
     """Append a Gmail-web ``gmail_quote`` reply trail to both body parts.
 
     ``target`` is the parent message from the thread reply context. When it
-    lacks a usable sender address or date, the bodies are returned unchanged so
-    the reply still sends, just without a quote.
+    lacks a usable sender address or date (see ``_web_quote_attribution``), the
+    bodies are returned unchanged so the reply still sends, just without a quote.
     """
-    parent_name, parent_email = parseaddr(target.get("from") or "")
-    parent_dt = _parse_message_date(target.get("date") or "")
-    if "@" not in parent_email or parent_dt is None:
+    attribution = _web_quote_attribution(target)
+    if attribution is None:
         return new_plain, new_html
-    parent_name = parent_name.strip() or parent_email
+    parent_name, parent_email, parent_dt = attribution
     parent_text, parent_html = _fill_missing_body(
         target.get("text_body") or "", target.get("html_body") or ""
     )

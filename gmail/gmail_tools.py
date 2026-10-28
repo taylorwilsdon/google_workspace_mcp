@@ -88,6 +88,7 @@ from gmail.gmail_helpers import (
     _reply_subject,
     _retryable_result_ids,
     _signature_html_to_text,
+    _web_quote_attribution,
     _wrap_signature_html,
     apply_gmail_filter_to_existing,
     build_label_color,
@@ -746,6 +747,28 @@ def _build_quoted_reply_body(
     return f"{reply_body}{sig_block}\n\n{attribution}\n{quoted_lines}"
 
 
+def _resolve_quote_original(
+    quote_original: Optional[bool], thread_id: Optional[str]
+) -> bool:
+    """Replies quote the original unless the caller opts out, as Gmail web does."""
+    if quote_original is None:
+        return bool(thread_id)
+    return quote_original and bool(thread_id)
+
+
+def _quote_dropped_note(quote_target: Optional[Dict[str, Any]], web_path: bool) -> str:
+    """Explain in the tool result why a requested quote was left out, if it was."""
+    if quote_target is None:
+        reason = "the message being replied to could not be loaded from the thread"
+    elif quote_target.get("body_error"):
+        reason = f"its body could not be fetched ({quote_target['body_error']})"
+    elif web_path and _web_quote_attribution(quote_target) is None:
+        reason = "it has no parseable From address or Date header"
+    else:
+        return ""
+    return f" Note: the original message was not quoted because {reason}."
+
+
 def _format_attachment_result(attached_count: int, requested_count: int) -> str:
     """Format attachment result message for user-facing responses."""
     if requested_count <= 0:
@@ -1074,10 +1097,14 @@ async def _fetch_thread_reply_context(
         target_msg = next(
             msg for msg, context in zip(messages, message_contexts) if context is target
         )
-        await fetch_attachment_backed_bodies(service, [target_msg])
+        body_errors = await fetch_attachment_backed_bodies(service, [target_msg])
         bodies = _extract_message_bodies(target_msg.get("payload", {}))
         target["text_body"] = bodies.get("text", "")
         target["html_body"] = bodies.get("html", "")
+        # One missing part is derived from the other; only flag a parent with
+        # no usable body at all, so it is not quoted as an empty blockquote.
+        if body_errors and not (target["text_body"] or target["html_body"]):
+            target["body_error"] = "; ".join(body_errors)
 
     return {
         "messages": eligible_contexts,
@@ -2700,11 +2727,11 @@ async def send_gmail_message(
         TextDirection, Field(description=DIRECTION_DESCRIPTION)
     ] = "auto",
     quote_original: Annotated[
-        bool,
+        Optional[bool],
         Field(
-            description="Whether to include the message being replied to as a quoted original. Only has an effect when thread_id is provided. Defaults to false.",
+            description="Whether to include the message being replied to as a quoted original, as Gmail web does. Only has an effect when thread_id is provided. Omit to quote (the default for replies); pass false to send the reply without the quote.",
         ),
-    ] = False,
+    ] = None,
     reply_all: Annotated[
         bool,
         Field(
@@ -2768,8 +2795,10 @@ async def send_gmail_message(
             (e.g., missing gmail.settings.basic scope), the send proceeds without a signature.
             Non-benign failures such as quota/rate-limit or API errors raise ToolError and abort
             the send.
-        quote_original (bool): Whether to append the message being replied to as a quoted
-            original. Only has an effect when thread_id is provided.
+        quote_original (Optional[bool]): Whether to append the message being replied to as a
+            quoted original, as Gmail web does. Only has an effect when thread_id is provided.
+            Omitted means quote; pass False to reply without it. When the quote cannot be
+            built, the reply still sends and the result says why it was left out.
         reply_all (bool): Whether to derive reply-all recipients from the thread: To = the
             sender being replied to, Cc = the other participants, excluding the authenticated
             account and from_email. Requires thread_id. Explicit to/cc win over the derived
@@ -2842,14 +2871,13 @@ async def send_gmail_message(
             thread_id="thread_123"
         )
 
-        # Send a reply-all with the original quoted, deriving headers and
-        # recipients from the thread
+        # Send a reply-all, deriving headers and recipients from the thread
+        # (the original is quoted by default)
         send_gmail_message(
             subject="Re: Meeting tomorrow",
             body="Thanks for the update!",
             thread_id="thread_123",
-            reply_all=True,
-            quote_original=True
+            reply_all=True
         )
 
         # Forward a message with a note
@@ -2952,6 +2980,7 @@ async def send_gmail_message(
     # A reply's headers, recipients and quoted original are all derivable from the
     # thread, so a caller should not have to assemble them by hand. Mirrors
     # draft_gmail_message; one thread fetch serves all three.
+    quote_original = _resolve_quote_original(quote_original, thread_id)
     reply_context = None
     if thread_id and (
         quote_original
@@ -2999,8 +3028,17 @@ async def send_gmail_message(
         # caller's body, before any signature or quoted original is attached.
         body = html_newlines_to_br(body)
 
-    quote_target = target_reply if quote_original else None
+    quote_target = (
+        target_reply
+        if quote_original and not (target_reply or {}).get("body_error")
+        else None
+    )
     resolved_attachments = await _resolve_url_attachments(attachments)
+    quote_note = (
+        _quote_dropped_note(target_reply, web_path=not resolved_attachments)
+        if quote_original
+        else ""
+    )
     if resolved_attachments:
         if quote_target:
             send_body_content = _build_quoted_reply_body(
@@ -3068,8 +3106,8 @@ async def send_gmail_message(
         attachment_info = _format_attachment_result(
             attached_count, requested_attachment_count
         )
-        return f"Email sent{attachment_info}! Message ID: {message_id}"
-    return f"Email sent! Message ID: {message_id}"
+        return f"Email sent{attachment_info}! Message ID: {message_id}{quote_note}"
+    return f"Email sent! Message ID: {message_id}{quote_note}"
 
 
 # Internal implementation function for testing
@@ -3357,11 +3395,11 @@ async def draft_gmail_message(
         TextDirection, Field(description=DIRECTION_DESCRIPTION)
     ] = "auto",
     quote_original: Annotated[
-        bool,
+        Optional[bool],
         Field(
-            description="Whether to include the original message as a quoted reply. Only has an effect when thread_id is provided. Defaults to false.",
+            description="Whether to include the original message as a quoted reply, as Gmail web does. Only has an effect when thread_id is provided. Omit to quote (the default for replies); pass false to draft the reply without the quote.",
         ),
-    ] = False,
+    ] = None,
     reply_all: Annotated[
         bool,
         Field(
@@ -3428,9 +3466,11 @@ async def draft_gmail_message(
             authenticated sender and without a signature.
             Non-benign failures such as quota/rate-limit or API errors raise ToolError and abort
             the draft.
-        quote_original (bool): Whether to include the original message as a quoted reply.
-            Only has an effect when thread_id is provided. When enabled, fetches the
-            original message and appends it below the signature. Defaults to False.
+        quote_original (Optional[bool]): Whether to include the original message as a quoted
+            reply, as Gmail web does. Only has an effect when thread_id is provided. Omitted
+            means quote; pass False to draft without it. When enabled, fetches the original
+            message and appends it below the signature. When the quote cannot be built, the
+            draft is still created and the result says why it was left out.
         reply_all (bool): Whether to derive reply-all recipients from the thread: To = the
             sender being replied to, Cc = the other participants, excluding the authenticated
             account and from_email. Requires thread_id. Explicit to/cc win over the derived
@@ -3569,6 +3609,7 @@ async def draft_gmail_message(
     draft_body = html_newlines_to_br(body) if body_format == "html" else body
     signature_html = resolved_signature_html if include_signature else ""
 
+    quote_original = _resolve_quote_original(quote_original, thread_id)
     reply_context = None
     if thread_id and (
         quote_original
@@ -3609,8 +3650,17 @@ async def draft_gmail_message(
     if thread_id and not (subject or "").strip():
         subject = _inherit_reply_subject(thread_id, target_reply)
 
-    quote_target = target_reply if quote_original else None
+    quote_target = (
+        target_reply
+        if quote_original and not (target_reply or {}).get("body_error")
+        else None
+    )
     resolved_attachments = await _resolve_url_attachments(attachments)
+    quote_note = (
+        _quote_dropped_note(target_reply, web_path=not resolved_attachments)
+        if quote_original
+        else ""
+    )
     if resolved_attachments:
         if quote_target:
             draft_body = _build_quoted_reply_body(
@@ -3681,7 +3731,7 @@ async def draft_gmail_message(
     attachment_info = _format_attachment_result(
         attached_count, requested_attachment_count
     )
-    return f"Draft created{attachment_info}! Draft ID: {draft_id}"
+    return f"Draft created{attachment_info}! Draft ID: {draft_id}{quote_note}"
 
 
 def _format_thread_content(
