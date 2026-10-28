@@ -44,10 +44,10 @@ Get spreadsheet metadata: title, locale, and list of sheets.
 Read values from a range in a spreadsheet.
 
 The response has one line per row: the sheet row number, then the row's cells
-separated by tabs, starting at the range's first column (the first line says
+separated by tabs, starting at the range's first column (the line above the rows says
 which). Row numbers are the sheet's own, so reading `A41:G60` starts at row 41.
 If the API's response gives no A1 starting cell, rows are instead numbered from 1
-within the range, and the first line says so.
+within the range, and the line above the rows says so.
 Trailing empty cells are dropped. Tabs, line breaks and backslashes inside a
 cell are shown as `\t`, `\n`, `\r` and `\\`, so `\\n` is a backslash
 followed by `n`, not a line break.
