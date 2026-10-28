@@ -1,5 +1,6 @@
 """Tests for formula-aware sheet reads."""
 
+import re
 from unittest.mock import Mock
 
 import pytest
@@ -167,7 +168,10 @@ async def test_read_sheet_values_numbers_rows_from_the_sheet():
 @pytest.mark.asyncio
 async def test_read_sheet_values_escapes_tabs_and_line_breaks_in_cells():
     service = _create_mock_service(
-        {"range": "'My Sheet'!A1:B1", "values": [["two\nlines", "a\tb\r\nc"]]}
+        {
+            "range": "'My Sheet'!A1:C1",
+            "values": [["two\nlines", "a\tb\r\nc", "C:\\new\\n"]],
+        }
     )
 
     result = await _call_read_sheet_values(service)
@@ -175,9 +179,27 @@ async def test_read_sheet_values_escapes_tabs_and_line_breaks_in_cells():
     legend, row = result.split("\n")[1:]
     assert legend == (
         "Each line: sheet row number, then tab-separated cells from column A."
-        " Tabs and line breaks inside a cell are shown as \\t and \\n."
+        " Tabs, line breaks and backslashes inside a cell are shown as \\t, \\n,"
+        " \\r and \\\\."
     )
-    assert row == "1\ttwo\\nlines\ta\\tb\\r\\nc"
+    # A literal backslash is doubled, so a real line break (\n) and the
+    # characters backslash-n (\\n) stay distinguishable.
+    assert row == "1\ttwo\\nlines\ta\\tb\\r\\nc\tC:\\\\new\\\\n"
+
+
+@pytest.mark.asyncio
+async def test_read_sheet_values_escaped_cells_decode_to_the_original():
+    cells = ["two\nlines", "a\tb\r\nc", "C:\\new\\n", "\\\\\n", "plain"]
+    service = _create_mock_service({"range": "Sheet1!A1:E1", "values": [cells]})
+
+    result = await _call_read_sheet_values(service)
+
+    decode = {"\\": "\\", "t": "\t", "n": "\n", "r": "\r"}
+    decoded = [
+        re.sub(r"\\(.)", lambda m: decode[m.group(1)], cell)
+        for cell in result.split("\n")[2].split("\t")[1:]
+    ]
+    assert decoded == cells
 
 
 @pytest.mark.asyncio

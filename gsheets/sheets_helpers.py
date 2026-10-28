@@ -620,7 +620,7 @@ def _values_start(a1_range: str) -> Optional[tuple[int, int]]:
     return start_col or 0, start_row or 0
 
 
-_TSV_ESCAPES = str.maketrans({"\t": "\\t", "\r": "\\r", "\n": "\\n"})
+_TSV_ESCAPES = str.maketrans({"\\": "\\\\", "\t": "\\t", "\r": "\\r", "\n": "\\n"})
 
 
 def _format_sheet_values_rows(a1_range: str, values: List[List[object]]) -> str:
@@ -654,7 +654,10 @@ def _format_sheet_values_rows(a1_range: str, values: List[List[object]]) -> str:
         lines.append("\t".join([str(start_row + offset + 1), *escaped_cells]))
 
     if escaped:
-        legend += " Tabs and line breaks inside a cell are shown as \\t and \\n."
+        legend += (
+            " Tabs, line breaks and backslashes inside a cell are shown as \\t, "
+            "\\n, \\r and \\\\."
+        )
     return "\n".join([legend, *lines])
 
 

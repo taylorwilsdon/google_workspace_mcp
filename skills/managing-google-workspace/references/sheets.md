@@ -46,8 +46,9 @@ Read values from a range in a spreadsheet.
 The response has one line per row: the sheet row number, then the row's cells
 separated by tabs, starting at the range's first column (the first line says
 which). Row numbers are the sheet's own, so reading `A41:G60` starts at row 41.
-Trailing empty cells are dropped; tabs and line breaks inside a cell are shown
-as `\t` and `\n`.
+Trailing empty cells are dropped. Tabs, line breaks and backslashes inside a
+cell are shown as `\t`, `\n`, `\r` and `\\`, so `\\n` is a backslash
+followed by `n`, not a line break.
 
 Open-ended or oversized A1 ranges are clamped to at most **1000 rows** before
 the Sheets API request (same budget as the default `A1:Z1000`). When clamped,
