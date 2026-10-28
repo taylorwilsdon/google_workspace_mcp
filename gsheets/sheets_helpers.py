@@ -574,7 +574,10 @@ def _a1_range_for_values(a1_range: str, values: List[List[object]]) -> Optional[
         return None
 
     start_part = range_part.split(":", 1)[0]
-    start_col, start_row = _parse_a1_part(start_part)
+    try:
+        start_col, start_row = _parse_a1_part(start_part)
+    except UserInputError:
+        return None
     if start_col is None or start_row is None:
         return None
 
@@ -595,6 +598,57 @@ def _a1_range_for_values(a1_range: str, values: List[List[object]]) -> Optional[
     if sheet_name:
         return f"{_quote_sheet_title_for_a1(sheet_name)}!{range_ref}"
     return range_ref
+
+
+def _values_start(a1_range: str) -> Optional[tuple[int, int]]:
+    """Return the zero-based (column, row) of an A1 range's first cell, else None."""
+    _, range_part = _split_sheet_and_range(a1_range)
+    if not range_part:
+        return None
+    try:
+        start_col, start_row = _parse_a1_part(range_part.split(":", 1)[0])
+    except UserInputError:
+        return None
+    # A bare "Totals" is a named range, not column TOTALS.
+    if ":" not in range_part and (start_col is None or start_row is None):
+        return None
+    if start_col is None and start_row is None:
+        return None
+    return start_col or 0, start_row or 0
+
+
+_TSV_ESCAPES = str.maketrans({"\\": "\\\\", "\t": "\\t", "\r": "\\r", "\n": "\\n"})
+
+
+def _format_sheet_values_rows(a1_range: str, values: List[List[object]]) -> str:
+    """Render values as lines of sheet row number, then tab-separated cells."""
+    start = _values_start(a1_range)
+    if start is None:
+        start_col, start_row = 0, 0
+        legend = "Each line: row number within the range, then tab-separated cells."
+    else:
+        start_col, start_row = start
+        legend = (
+            "Each line: sheet row number, then tab-separated cells from column "
+            f"{_index_to_column(start_col)}."
+        )
+
+    lines = []
+    escaped = False
+    for offset, row in enumerate(values):
+        cells = ["" if cell is None else str(cell) for cell in row]
+        while cells and cells[-1] == "":
+            cells.pop()
+        escaped_cells = [cell.translate(_TSV_ESCAPES) for cell in cells]
+        escaped = escaped or escaped_cells != cells
+        lines.append("\t".join([str(start_row + offset + 1), *escaped_cells]))
+
+    if escaped:
+        legend += (
+            " Tabs, line breaks and backslashes inside a cell are shown as \\t, "
+            "\\n, \\r and \\\\."
+        )
+    return "\n".join([legend, *lines])
 
 
 def _a1_range_cell_count(a1_range: str) -> Optional[int]:
