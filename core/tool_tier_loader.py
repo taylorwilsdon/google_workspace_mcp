@@ -148,6 +148,23 @@ class ToolTierLoader:
 
         return services
 
+    def get_all_tool_names(self) -> Set[str]:
+        """
+        Get the union of every tool name across all services and tiers.
+
+        Returns:
+            Set of all tool names defined anywhere in the configuration.
+        """
+        config = self._load_config()
+        all_tools: Set[str] = set()
+
+        for service_config in config.values():
+            for tier_tools in service_config.values():
+                if tier_tools:  # Handle empty lists / None
+                    all_tools.update(tier_tools)
+
+        return all_tools
+
 
 def get_tools_for_tier(
     tier: TierLevel, services: Optional[List[str]] = None
