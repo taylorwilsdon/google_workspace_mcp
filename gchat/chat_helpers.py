@@ -273,3 +273,12 @@ def _extract_rich_links(msg: dict) -> List[str]:
             if uri and uri not in text:
                 urls.append(uri)
     return urls
+
+
+def _format_search_message_ids(message: dict) -> str:
+    identifiers = (
+        ("space_id", message.get("_space", {}).get("name")),
+        ("message_id", message.get("name")),
+        ("thread_id", message.get("thread", {}).get("name")),
+    )
+    return " ".join(f"[{label}: {value}]" for label, value in identifiers if value)
