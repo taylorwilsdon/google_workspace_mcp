@@ -24,6 +24,10 @@ from __future__ import annotations
 import asyncio
 import io
 import os
+import sys
+import time
+from collections import OrderedDict
+from collections.abc import Callable, Hashable
 from typing import Any, Optional
 
 import httpx
@@ -35,6 +39,7 @@ _ENV_NAME = "WORKSPACE_MCP_MAX_FILE_BYTES"
 _OFFICE_XML_ENV_NAME = "WORKSPACE_MCP_MAX_OFFICE_XML_BYTES"
 _STATELESS_INLINE_ENV_NAME = "WORKSPACE_MCP_STATELESS_INLINE_MAX_BYTES"
 _CONTENT_CHARS_ENV_NAME = "WORKSPACE_MCP_MAX_CONTENT_CHARS"
+_PAGED_CONTENT_CACHE_ENV_NAME = "WORKSPACE_MCP_PAGED_CONTENT_CACHE_BYTES"
 
 # Office files are ZIP archives, so the download cap above bounds only the
 # COMPRESSED size, and XML compresses by orders of magnitude. Unlike the
@@ -61,6 +66,11 @@ DEFAULT_STATELESS_INLINE_MAX_BYTES = 10 * 1024 * 1024  # 10 MiB
 # the download cap this is on by default, because truncation loses nothing: the
 # caller can read on by offset.
 DEFAULT_MAX_CONTENT_CHARS = 40_000
+
+# Reading content that is over that limit takes one call per page. The text is
+# kept in memory between calls so each page does not download and extract the
+# whole file again; this bounds the memory that takes per process.
+DEFAULT_PAGED_CONTENT_CACHE_BYTES = 32 * 1024 * 1024
 
 # When cutting a page, end it at the last line break in the window so a CSV
 # row or a paragraph is not split, unless that would drop more than half the
@@ -146,12 +156,26 @@ def get_max_content_chars() -> Optional[int]:
     return value or None
 
 
+def get_paged_content_cache_bytes() -> int:
+    """Return the memory paged content may be kept in between calls.
+
+    Parsing rules:
+    - unset or empty → ``DEFAULT_PAGED_CONTENT_CACHE_BYTES``
+    - ``0`` → nothing is kept
+    - positive int → that many bytes
+    - invalid or negative value → raise ``ValueError``
+    """
+    value = _byte_count_from_env(_PAGED_CONTENT_CACHE_ENV_NAME)
+    return DEFAULT_PAGED_CONTENT_CACHE_BYTES if value is None else value
+
+
 def validate_file_limit_settings() -> None:
     """Raise ``ValueError`` if any file-limit environment setting is invalid."""
     get_max_file_bytes()
     get_max_office_xml_bytes()
     get_stateless_inline_max_bytes()
     get_max_content_chars()
+    get_paged_content_cache_bytes()
 
 
 def _byte_count_from_env(name: str, *, unit: str = "byte") -> Optional[int]:
@@ -206,6 +230,64 @@ def page_content_text(
         f"set by {_CONTENT_CHARS_ENV_NAME}). Call again with offset={end} to "
         f"read on{alternative}.]"
     )
+
+
+class PagedContentCache:
+    """Keep content that is being read a page at a time, so reading on does
+    not fetch and extract it again.
+
+    Callers key entries to the content's revision. Entries expire
+    ``ttl_seconds`` after they are stored. ``put`` keeps the memory the cached
+    strings take under the ``max_bytes`` it is given, dropping the least
+    recently used first, and does not keep a string that would take more than
+    a quarter of it, so one file cannot push out every other.
+    """
+
+    def __init__(
+        self,
+        *,
+        ttl_seconds: float,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._ttl_seconds = ttl_seconds
+        self._clock = clock
+        self._entries: OrderedDict[Hashable, tuple[float, str, int]] = OrderedDict()
+        self._bytes = 0
+
+    def get(self, key: Hashable) -> Optional[str]:
+        entry = self._entries.get(key)
+        if entry is None:
+            return None
+        stored_at, text, _ = entry
+        if self._clock() - stored_at > self._ttl_seconds:
+            self._drop(key)
+            return None
+        self._entries.move_to_end(key)
+        return text
+
+    def put(self, key: Hashable, text: str, *, max_bytes: int) -> None:
+        now = self._clock()
+        for stale in [
+            k for k, (t, _, _) in self._entries.items() if now - t > self._ttl_seconds
+        ]:
+            self._drop(stale)
+        if key in self._entries:
+            self._drop(key)
+        size = sys.getsizeof(text)
+        if size > max_bytes // 4:
+            return
+        self._entries[key] = (now, text, size)
+        self._bytes += size
+        while self._bytes > max_bytes:
+            self._drop(next(iter(self._entries)))
+
+    def clear(self) -> None:
+        self._entries.clear()
+        self._bytes = 0
+
+    def _drop(self, key: Hashable) -> None:
+        _, _, size = self._entries.pop(key)
+        self._bytes -= size
 
 
 def format_file_too_large_message(

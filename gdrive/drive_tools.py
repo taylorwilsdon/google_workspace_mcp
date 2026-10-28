@@ -32,9 +32,11 @@ from auth.oauth_config import is_stateless_mode
 from core.attachment_storage import get_attachment_storage, get_attachment_url
 from core.file_limits import (
     FileTooLargeError,
+    PagedContentCache,
     download_media_bytes,
     ensure_within_file_size_limit,
     get_max_content_chars,
+    get_paged_content_cache_bytes,
     get_stateless_inline_max_bytes,
     page_content_text,
 )
@@ -111,6 +113,10 @@ from gdrive.drive_helpers import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Text that get_drive_file_content is returning a page at a time, kept for ten
+# minutes within WORKSPACE_MCP_PAGED_CONTENT_CACHE_BYTES.
+_paged_content_cache = PagedContentCache(ttl_seconds=600)
 
 
 def _stateless_too_large_message(
@@ -319,88 +325,38 @@ async def search_drive_files(
     return flag_incomplete_search("\n".join(formatted_files_text_parts), results)
 
 
-@server.tool(
-    title="Get Drive File Content",
-    annotations=ToolAnnotations(
-        readOnlyHint=True,
-        destructiveHint=False,
-        idempotentHint=True,
-        openWorldHint=True,
-    ),
-)
-@handle_http_errors("get_drive_file_content", is_read_only=True, service_type="drive")
-@require_google_service("drive", "drive_read")
-async def get_drive_file_content(
+async def _read_drive_file_body(
     service,
-    user_google_email: str,
     file_id: str,
-    offset: int = 0,
-) -> str:
+    file_metadata: Dict[str, Any],
+    export_mime_type: Optional[str],
+) -> tuple[str, List[ImageContent], bool]:
+    """Download a Drive file and turn it into text for get_drive_file_content.
+
+    Returns the text, any images to attach, and whether the text can be paged
+    (a base64 image cannot). Raises FileTooLargeError when the file is over a
+    size limit.
     """
-    Retrieves the content of a specific Google Drive file by ID, supporting files in shared drives.
-
-    • Native Google Docs, Sheets, Slides → exported as text / CSV.
-    • Office files (.docx, .xlsx, .pptx) → unzipped & parsed with std-lib to
-      extract readable text.
-    • PDFs → text extracted with pypdf when possible; scanned/image-only PDFs
-      fall back to a download hint.
-    • Images (PNG, JPEG, GIF, WebP) → returned as MCP image content after the
-      metadata header. SVG → returned as its markup; raster images it embeds
-      as base64 are attached as image content, numbered to match their place
-      in the markup. BMP and TIFF → still returned as base64 text.
-    • Any other file → downloaded; tries UTF-8 decode, else notes binary.
-
-    Args:
-        user_google_email: The user’s Google email address.
-        file_id: Drive file ID.
-        offset: Character offset into the content to start from, for reading
-            on after a cut-off result. Defaults to 0.
-
-    Returns:
-        str: The file content as plain text with metadata header. For images, a
-        ToolResult with that text followed by the image as image content.
-    """
-    logger.info(f"[get_drive_file_content] Invoked. File ID: '{file_id}'")
-    if offset < 0:
-        raise UserInputError(f"offset must be >= 0, got {offset}.")
-
-    resolved_file_id, file_metadata = await resolve_drive_item(
-        service,
-        file_id,
-        extra_fields="name, webViewLink, size",
-    )
-    file_id = resolved_file_id
     mime_type = file_metadata.get("mimeType", "")
     file_name = file_metadata.get("name", "Unknown File")
     web_view_link = file_metadata.get("webViewLink", "#")
-    export_mime_type = {
-        "application/vnd.google-apps.document": "text/plain",
-        "application/vnd.google-apps.spreadsheet": "text/csv",
-        "application/vnd.google-apps.presentation": "text/plain",
-    }.get(mime_type)
 
     # Declared Drive size is only meaningful for binary downloads (not exports).
     if not export_mime_type:
-        try:
-            ensure_within_file_size_limit(
-                file_metadata.get("size"),
-                file_name=file_name,
-                file_id=file_id,
-                web_view_link=web_view_link,
-            )
-        except FileTooLargeError as e:
-            return str(e)
-
-    request_obj = _media_request(service, file_id, export_mime_type)
-    try:
-        file_content_bytes = await download_media_bytes(
-            request_obj,
+        ensure_within_file_size_limit(
+            file_metadata.get("size"),
             file_name=file_name,
             file_id=file_id,
             web_view_link=web_view_link,
         )
-    except FileTooLargeError as e:
-        return str(e)
+
+    request_obj = _media_request(service, file_id, export_mime_type)
+    file_content_bytes = await download_media_bytes(
+        request_obj,
+        file_name=file_name,
+        file_id=file_id,
+        web_view_link=web_view_link,
+    )
 
     # Attempt Office XML extraction only for actual Office XML files
     office_mime_types = {
@@ -487,11 +443,104 @@ async def get_drive_file_content(
                 f"{len(file_content_bytes)} bytes]"
             )
 
+    return body_text, images, paged
+
+
+@server.tool(
+    title="Get Drive File Content",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("get_drive_file_content", is_read_only=True, service_type="drive")
+@require_google_service("drive", "drive_read")
+async def get_drive_file_content(
+    service,
+    user_google_email: str,
+    file_id: str,
+    offset: int = 0,
+) -> str:
+    """
+    Retrieves the content of a specific Google Drive file by ID, supporting files in shared drives.
+
+    • Native Google Docs, Sheets, Slides → exported as text / CSV.
+    • Office files (.docx, .xlsx, .pptx) → unzipped & parsed with std-lib to
+      extract readable text.
+    • PDFs → text extracted with pypdf when possible; scanned/image-only PDFs
+      fall back to a download hint.
+    • Images (PNG, JPEG, GIF, WebP) → returned as MCP image content after the
+      metadata header. SVG → returned as its markup; raster images it embeds
+      as base64 are attached as image content, numbered to match their place
+      in the markup. BMP and TIFF → still returned as base64 text.
+    • Any other file → downloaded; tries UTF-8 decode, else notes binary.
+
+    Args:
+        user_google_email: The user’s Google email address.
+        file_id: Drive file ID.
+        offset: Character offset into the content to start from, for reading
+            on after a cut-off result. Defaults to 0.
+
+    Returns:
+        str: The file content as plain text with metadata header. For images, a
+        ToolResult with that text followed by the image as image content.
+    """
+    logger.info(f"[get_drive_file_content] Invoked. File ID: '{file_id}'")
+    if offset < 0:
+        raise UserInputError(f"offset must be >= 0, got {offset}.")
+
+    resolved_file_id, file_metadata = await resolve_drive_item(
+        service,
+        file_id,
+        extra_fields="name, webViewLink, size, version",
+    )
+    file_id = resolved_file_id
+    mime_type = file_metadata.get("mimeType", "")
+    file_name = file_metadata.get("name", "Unknown File")
+    web_view_link = file_metadata.get("webViewLink", "#")
+    export_mime_type = {
+        "application/vnd.google-apps.document": "text/plain",
+        "application/vnd.google-apps.spreadsheet": "text/csv",
+        "application/vnd.google-apps.presentation": "text/plain",
+    }.get(mime_type)
+
+    max_chars = get_max_content_chars()
+    version = file_metadata.get("version")
+    cache_bytes = get_paged_content_cache_bytes()
+    # Reading long content takes a call per page. Keep the text between calls,
+    # keyed to the user and the file's version, so later pages are not
+    # downloaded and extracted again.
+    cache_key = (
+        (user_google_email.lower(), file_id, version, export_mime_type)
+        if cache_bytes
+        and user_google_email
+        and version is not None
+        and not is_stateless_mode()
+        else None
+    )
+    cached = _paged_content_cache.get(cache_key) if cache_key and offset else None
+    if cached is not None:
+        logger.debug(
+            "[get_drive_file_content] Reading on from kept text of %s", file_id
+        )
+        body_text, images, paged = cached, [], True
+    else:
+        try:
+            body_text, images, paged = await _read_drive_file_body(
+                service, file_id, file_metadata, export_mime_type
+            )
+        except FileTooLargeError as e:
+            return str(e)
+        if cache_key and paged and max_chars is not None and len(body_text) > max_chars:
+            _paged_content_cache.put(cache_key, body_text, max_bytes=cache_bytes)
+
     if paged:
         body_text = page_content_text(
             body_text,
             offset=offset,
-            max_chars=get_max_content_chars(),
+            max_chars=max_chars,
             alternative=", or use get_drive_file_download_url for the whole file",
         )
     # Later pages carry no images: the first page already returned them.

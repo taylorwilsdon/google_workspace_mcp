@@ -6,7 +6,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from core.utils import UserInputError
-from gdrive.drive_tools import get_drive_file_content
+from gdrive.drive_tools import _paged_content_cache, get_drive_file_content
 
 _HEADER = (
     'File: "notes.txt" (ID: file123, Type: text/plain)\n'
@@ -30,27 +30,43 @@ class _FakeDownloader:
         return None, True
 
 
-async def _get_content(content: bytes, mime_type: str = "text/plain", **kwargs):
+async def _get_content(
+    content: bytes,
+    mime_type: str = "text/plain",
+    *,
+    version: str | None = None,
+    downloads: list | None = None,
+    user_google_email: str = "user@example.com",
+    resolve_calls: list | None = None,
+    **kwargs,
+):
     metadata = {
         "name": "notes.txt",
         "mimeType": mime_type,
         "webViewLink": "https://drive.google.com/file/file123",
     }
+    if version is not None:
+        metadata["version"] = version
+
+    def downloader(fh, req, chunksize=None):
+        if downloads is not None:
+            downloads.append(req)
+        return _FakeDownloader(fh, content)
+
+    async def resolve(service, file_id, extra_fields=None):
+        if resolve_calls is not None:
+            resolve_calls.append(extra_fields)
+        return "file123", metadata
+
     service = Mock()
     service.files().get_media.return_value = "req"
     with (
-        patch(
-            "gdrive.drive_tools.resolve_drive_item",
-            return_value=("file123", metadata),
-        ),
-        patch(
-            "core.file_limits.MediaIoBaseDownload",
-            side_effect=lambda fh, req, chunksize=None: _FakeDownloader(fh, content),
-        ),
+        patch("gdrive.drive_tools.resolve_drive_item", side_effect=resolve),
+        patch("core.file_limits.MediaIoBaseDownload", side_effect=downloader),
     ):
         return await _unwrap(get_drive_file_content)(
             service=service,
-            user_google_email="user@example.com",
+            user_google_email=user_google_email,
             file_id="file123",
             **kwargs,
         )
@@ -156,3 +172,127 @@ async def test_later_svg_pages_do_not_repeat_its_images(limit):
     assert len(first.content) == 2  # the page's text, then the image
     assert "[Truncated: " in first.content[0].text
     assert isinstance(second, str)  # text only
+
+
+_LONG_TEXT = "".join(f"row {i:03d}\n" for i in range(30))  # 240 characters
+
+
+@pytest.mark.asyncio
+async def test_reading_on_reuses_the_text_instead_of_downloading_again(limit):
+    downloads = []
+
+    pages = [
+        await _get_content(
+            _LONG_TEXT.encode(), version="7", downloads=downloads, offset=offset
+        )
+        for offset in (0, 96, 192)
+    ]
+
+    assert len(downloads) == 1
+    assert pages[2] == _HEADER + _LONG_TEXT[192:]
+
+
+@pytest.mark.asyncio
+async def test_a_new_version_is_downloaded_again(limit):
+    downloads = []
+
+    await _get_content(_LONG_TEXT.encode(), version="7", downloads=downloads)
+    changed = "changed\n" + _LONG_TEXT
+    result = await _get_content(
+        changed.encode(), version="8", downloads=downloads, offset=96
+    )
+
+    assert len(downloads) == 2
+    assert result.startswith(_HEADER + changed[96:192] + "\n\n[Truncated: ")
+
+
+@pytest.mark.asyncio
+async def test_the_first_page_is_always_downloaded(limit):
+    downloads = []
+
+    for _ in range(2):
+        await _get_content(_LONG_TEXT.encode(), version="7", downloads=downloads)
+
+    assert len(downloads) == 2
+
+
+@pytest.mark.asyncio
+async def test_text_is_not_kept_without_a_version(limit):
+    downloads = []
+
+    await _get_content(_LONG_TEXT.encode(), downloads=downloads)
+    await _get_content(_LONG_TEXT.encode(), downloads=downloads, offset=96)
+
+    assert len(downloads) == 2
+
+
+@pytest.mark.asyncio
+async def test_text_that_fits_on_one_page_is_not_kept(monkeypatch):
+    monkeypatch.setenv("WORKSPACE_MCP_MAX_CONTENT_CHARS", "1000")
+
+    await _get_content(_LONG_TEXT.encode(), version="7")
+
+    assert _paged_content_cache.get(("user@example.com", "file123", "7", None)) is None
+
+
+@pytest.mark.asyncio
+async def test_text_is_not_kept_in_stateless_mode(limit):
+    downloads = []
+
+    with patch("gdrive.drive_tools.is_stateless_mode", return_value=True):
+        await _get_content(_LONG_TEXT.encode(), version="7", downloads=downloads)
+        await _get_content(
+            _LONG_TEXT.encode(), version="7", downloads=downloads, offset=96
+        )
+
+    assert len(downloads) == 2
+
+
+@pytest.mark.asyncio
+async def test_the_files_version_is_fetched_with_its_metadata(limit):
+    resolve_calls = []
+
+    await _get_content(_LONG_TEXT.encode(), resolve_calls=resolve_calls)
+
+    assert "version" in [field.strip() for field in resolve_calls[0].split(",")]
+
+
+@pytest.mark.asyncio
+async def test_text_kept_for_one_user_is_not_read_by_another(limit):
+    downloads = []
+
+    await _get_content(_LONG_TEXT.encode(), version="7", downloads=downloads)
+    await _get_content(
+        _LONG_TEXT.encode(),
+        version="7",
+        downloads=downloads,
+        user_google_email="other@example.com",
+        offset=96,
+    )
+
+    assert len(downloads) == 2
+
+
+@pytest.mark.asyncio
+async def test_zero_cache_bytes_keeps_nothing(limit, monkeypatch):
+    monkeypatch.setenv("WORKSPACE_MCP_PAGED_CONTENT_CACHE_BYTES", "0")
+    downloads = []
+
+    await _get_content(_LONG_TEXT.encode(), version="7", downloads=downloads)
+    await _get_content(_LONG_TEXT.encode(), version="7", downloads=downloads, offset=96)
+
+    assert len(downloads) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_base64_image_is_not_kept(monkeypatch):
+    monkeypatch.setenv("WORKSPACE_MCP_MAX_CONTENT_CHARS", "100")
+    downloads = []
+    bmp = b"BM" + b"\x00" * 200
+
+    await _get_content(bmp, mime_type="image/bmp", version="7", downloads=downloads)
+    await _get_content(
+        bmp, mime_type="image/bmp", version="7", downloads=downloads, offset=10
+    )
+
+    assert len(downloads) == 2
