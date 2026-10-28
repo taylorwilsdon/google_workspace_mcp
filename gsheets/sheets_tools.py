@@ -260,8 +260,7 @@ async def read_sheet_values(
             and People chips) for the range. Defaults to False to avoid expensive includeGridData requests.
 
     Returns:
-        str: The values, one line per row: the sheet row number, then the
-        row's cells separated by tabs, with trailing empty cells dropped.
+        str: The formatted values, with trailing empty cells dropped.
     """
     logger.info(
         f"[read_sheet_values] Invoked. Email: '{user_google_email}', Spreadsheet: {spreadsheet_id}, Range: {range_name}"

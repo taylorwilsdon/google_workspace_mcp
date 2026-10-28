@@ -574,7 +574,10 @@ def _a1_range_for_values(a1_range: str, values: List[List[object]]) -> Optional[
         return None
 
     start_part = range_part.split(":", 1)[0]
-    start_col, start_row = _parse_a1_part(start_part)
+    try:
+        start_col, start_row = _parse_a1_part(start_part)
+    except UserInputError:
+        return None
     if start_col is None or start_row is None:
         return None
 
@@ -598,12 +601,7 @@ def _a1_range_for_values(a1_range: str, values: List[List[object]]) -> Optional[
 
 
 def _values_start(a1_range: str) -> Optional[tuple[int, int]]:
-    """
-    Return the zero-based (column, row) of an A1 range's first cell.
-
-    A missing column or row (``2:10``, ``A:C``) starts at column A or row 1.
-    Returns None when the range is not A1 notation.
-    """
+    """Return the zero-based (column, row) of an A1 range's first cell, else None."""
     _, range_part = _split_sheet_and_range(a1_range)
     if not range_part:
         return None
@@ -611,8 +609,7 @@ def _values_start(a1_range: str) -> Optional[tuple[int, int]]:
         start_col, start_row = _parse_a1_part(range_part.split(":", 1)[0])
     except UserInputError:
         return None
-    # A single reference needs both a column and a row to be a cell; "Totals"
-    # is a named range, not column TOTALS.
+    # A bare "Totals" is a named range, not column TOTALS.
     if ":" not in range_part and (start_col is None or start_row is None):
         return None
     if start_col is None and start_row is None:
@@ -624,14 +621,7 @@ _TSV_ESCAPES = str.maketrans({"\\": "\\\\", "\t": "\\t", "\r": "\\r", "\n": "\\n
 
 
 def _format_sheet_values_rows(a1_range: str, values: List[List[object]]) -> str:
-    """
-    Render a values matrix as one line per row: the sheet row number, then the
-    row's cells separated by tabs, with trailing empty cells dropped.
-
-    Row numbers are the sheet's own when ``a1_range`` (the range the API
-    resolved) has a starting cell, so a read of ``A41:G700`` numbers its first
-    row 41. The first line says which column the cells start at.
-    """
+    """Render values as lines of sheet row number, then tab-separated cells."""
     start = _values_start(a1_range)
     if start is None:
         start_col, start_row = 0, 0

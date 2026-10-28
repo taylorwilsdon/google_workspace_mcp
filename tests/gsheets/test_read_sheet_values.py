@@ -203,10 +203,11 @@ async def test_read_sheet_values_escaped_cells_decode_to_the_original():
 
 
 @pytest.mark.asyncio
-async def test_read_sheet_values_falls_back_to_range_relative_numbers():
+@pytest.mark.parametrize("range_name", ["Totals", "Sales_Q1"])
+async def test_read_sheet_values_falls_back_to_range_relative_numbers(range_name):
     service = _create_mock_service({"values": [["x"], ["y"]]})
 
-    result = await _call_read_sheet_values(service, range_name="Totals")
+    result = await _call_read_sheet_values(service, range_name=range_name)
 
     assert result.split("\n")[1:] == [
         "Each line: row number within the range, then tab-separated cells.",
