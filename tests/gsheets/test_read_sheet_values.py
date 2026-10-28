@@ -26,13 +26,14 @@ def _create_mock_service(*responses_or_errors):
 
 async def _call_read_sheet_values(service, **overrides):
     """Call the undecorated implementation to keep auth out of unit tests."""
-    return await _unwrap(read_sheet_values)(
-        service=service,
-        user_google_email="user@example.com",
-        spreadsheet_id="spreadsheet-123",
-        range_name="Sheet1!A1:A1",
+    kwargs = {
+        "service": service,
+        "user_google_email": "user@example.com",
+        "spreadsheet_id": "spreadsheet-123",
+        "range_name": "Sheet1!A1:A1",
         **overrides,
-    )
+    }
+    return await _unwrap(read_sheet_values)(**kwargs)
 
 
 @pytest.mark.asyncio
@@ -60,7 +61,7 @@ async def test_read_sheet_values_tolerates_formula_fetch_failures():
     result = await _call_read_sheet_values(service, include_formulas=True)
 
     assert "Successfully read 1 rows" in result
-    assert "Row  1: ['1']" in result
+    assert "Row  1 (sheet row 1): ['1']" in result
     assert "Formula cells in range" not in result
 
 
@@ -76,9 +77,78 @@ async def test_read_sheet_values_renders_all_fetched_rows():
     assert "Successfully read 120 rows" in result
     # Every fetched row must be rendered, not just the endpoints.
     for i in range(1, 121):
-        assert f"Row {i:2d}: ['{i}']" in result
+        assert f"Row {i:2d} (sheet row {i}): ['{i}']" in result
     assert result.count("Row ") == 120
     assert "more rows" not in result
+
+
+@pytest.mark.asyncio
+async def test_read_sheet_values_labels_rows_with_sheet_row_numbers():
+    service = _create_mock_service(
+        {"range": "Sheet1!A13:B14", "values": [["a", "b"], ["c", "d"]]}
+    )
+
+    result = await _call_read_sheet_values(service, range_name="Sheet1!A13:B14")
+
+    assert "Row  1 (sheet row 13): ['a', 'b']" in result
+    assert "Row  2 (sheet row 14): ['c', 'd']" in result
+
+
+@pytest.mark.asyncio
+async def test_read_sheet_values_returns_every_hyperlink():
+    rows = [[f"SOP {r}", "x"] for r in range(13, 43)]
+    service = _create_mock_service({"range": "Sheet1!A13:B42", "values": rows})
+    service.spreadsheets().get().execute = Mock(
+        return_value={
+            "sheets": [
+                {
+                    "properties": {"title": "Sheet1"},
+                    "data": [
+                        {
+                            "startRow": 12,
+                            "startColumn": 0,
+                            "rowData": [
+                                {
+                                    "values": [
+                                        {},
+                                        {"hyperlink": f"https://example.com/{r}"},
+                                    ]
+                                }
+                                for r in range(13, 43)
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+
+    result = await _call_read_sheet_values(
+        service, range_name="Sheet1!A13:B42", include_hyperlinks=True
+    )
+
+    for r in range(13, 43):
+        assert f"Row {r - 12:2d} (sheet row {r}): ['SOP {r}', 'x']" in result
+        assert f"- Sheet1!B{r}: https://example.com/{r}" in result
+    assert "more hyperlinks" not in result
+
+
+@pytest.mark.asyncio
+async def test_read_sheet_values_reports_skipped_hyperlinks_for_large_ranges():
+    rows = [[str(c) for c in range(10)] for _ in range(600)]
+    service = _create_mock_service({"range": "Sheet1!A1:J600", "values": rows})
+    grid_get = Mock()
+    service.spreadsheets().get = grid_get
+
+    result = await _call_read_sheet_values(
+        service, range_name="Sheet1!A1:J600", include_hyperlinks=True
+    )
+
+    grid_get.assert_not_called()
+    assert (
+        "Hyperlinks not fetched for range 'Sheet1!A1:J600': 6000 cells exceeds "
+        "the 5000-cell limit. Read a smaller range."
+    ) in result
 
 
 @pytest.mark.asyncio

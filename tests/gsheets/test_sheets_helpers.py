@@ -11,11 +11,63 @@ import pytest
 
 from core.utils import UserInputError
 from gsheets.sheets_helpers import (
+    _a1_first_row_number,
     _clamp_a1_read_rows,
     _column_to_index,
+    _format_sheet_hyperlink_section,
+    _format_sheet_smart_chips_section,
     _parse_a1_part,
     _quote_sheet_title_for_a1,
 )
+
+
+@pytest.mark.parametrize(
+    ("a1_range", "expected"),
+    [
+        ("Sheet1!A13:J22", 13),
+        ("'My Sheet'!$B$7:C9", 7),
+        ("A1", 1),
+        ("Sheet1!3:10", 3),
+        ("Sheet1!A:B", None),
+        ("Sheet1!A1-B2", None),
+    ],
+)
+def test_a1_first_row_number(a1_range, expected):
+    assert _a1_first_row_number(a1_range) == expected
+
+
+def test_hyperlink_section_lists_every_link_by_default():
+    links = [{"cell": f"S!I{r}", "url": f"https://x/{r}"} for r in range(1, 31)]
+
+    section = _format_sheet_hyperlink_section(hyperlinks=links, range_label="S!I1:I30")
+
+    assert section.count("\n- ") == 30
+    assert "more hyperlinks" not in section
+
+
+def test_hyperlink_section_still_honours_explicit_cap():
+    links = [{"cell": f"S!I{r}", "url": f"https://x/{r}"} for r in range(1, 31)]
+
+    section = _format_sheet_hyperlink_section(
+        hyperlinks=links, range_label="S!I1:I30", max_details=5
+    )
+
+    assert section.count("\n- ") == 5
+    assert section.endswith("... and 25 more hyperlinks")
+
+
+def test_smart_chips_section_lists_every_chip_by_default():
+    chips = [
+        {"cell": f"S!I{r}", "type": "drive", "value": f"https://x/{r}"}
+        for r in range(1, 31)
+    ]
+
+    section = _format_sheet_smart_chips_section(
+        smart_chips=chips, range_label="S!I1:I30"
+    )
+
+    assert section.count("\n- ") == 30
+    assert "more smart chips" not in section
 
 
 def test_column_to_index_valid_letters():

@@ -597,6 +597,16 @@ def _a1_range_for_values(a1_range: str, values: List[List[object]]) -> Optional[
     return range_ref
 
 
+def _a1_first_row_number(a1_range: str) -> Optional[int]:
+    """Return the 1-based sheet row where an A1 range starts (e.g. 13 for B13:C20)."""
+    _, range_part = _split_sheet_and_range(a1_range)
+    try:
+        _, row_idx = _parse_a1_part(range_part.split(":", 1)[0])
+    except UserInputError:
+        return None
+    return None if row_idx is None else row_idx + 1
+
+
 def _a1_range_cell_count(a1_range: str) -> Optional[int]:
     """
     Return cell count for an explicit rectangular A1 range (e.g. A1:C10).
@@ -817,7 +827,10 @@ def _format_sheet_error_section(
 
 
 def _format_sheet_hyperlink_section(
-    *, hyperlinks: list[dict[str, str]], range_label: str, max_details: int = 25
+    *,
+    hyperlinks: list[dict[str, str]],
+    range_label: str,
+    max_details: Optional[int] = None,
 ) -> str:
     """
     Format a list of cell hyperlinks into a human-readable section.
@@ -825,17 +838,15 @@ def _format_sheet_hyperlink_section(
     if not hyperlinks:
         return ""
 
+    shown = hyperlinks if max_details is None else hyperlinks[:max_details]
     lines = []
-    for item in hyperlinks[:max_details]:
+    for item in shown:
         cell = item.get("cell") or "(unknown cell)"
         url = item.get("url") or "(missing url)"
         lines.append(f"- {cell}: {url}")
 
-    suffix = (
-        f"\n... and {len(hyperlinks) - max_details} more hyperlinks"
-        if len(hyperlinks) > max_details
-        else ""
-    )
+    omitted = len(hyperlinks) - len(shown)
+    suffix = f"\n... and {omitted} more hyperlinks" if omitted else ""
     return f"\n\nHyperlinks in range '{range_label}':\n" + "\n".join(lines) + suffix
 
 
@@ -1405,7 +1416,21 @@ async def _fetch_grid_metadata(
             cell_count,
             MAX_GRID_METADATA_CELLS,
         )
-        return "", "", ""
+        skipped = [
+            name
+            for name, requested in (
+                ("hyperlinks", include_hyperlinks),
+                ("notes", include_notes),
+                ("smart chips", include_smart_chips),
+            )
+            if requested
+        ]
+        notice = (
+            f"\n\n{', '.join(skipped).capitalize()} not fetched for range "
+            f"'{tight_range}': {cell_count} cells exceeds the "
+            f"{MAX_GRID_METADATA_CELLS}-cell limit. Read a smaller range."
+        )
+        return notice, "", ""
 
     # Build a combined fields selector so we hit the API at most once.
     value_fields: list[str] = []
@@ -1513,22 +1538,22 @@ def _extract_cell_smart_chips_from_grid(spreadsheet: dict) -> list[dict[str, str
 
 
 def _format_sheet_smart_chips_section(
-    *, smart_chips: list[dict[str, str]], range_label: str, max_details: int = 25
+    *,
+    smart_chips: list[dict[str, str]],
+    range_label: str,
+    max_details: Optional[int] = None,
 ) -> str:
     """Format a list of smart chips into a human-readable section."""
     if not smart_chips:
         return ""
 
+    shown = smart_chips if max_details is None else smart_chips[:max_details]
     labels = {"drive": "Drive Chip", "person": "Person Chip"}
     lines = [
-        f"- {item['cell']}: [{labels[item['type']]}] {item['value']}"
-        for item in smart_chips[:max_details]
+        f"- {item['cell']}: [{labels[item['type']]}] {item['value']}" for item in shown
     ]
-    suffix = (
-        f"\n... and {len(smart_chips) - max_details} more smart chips"
-        if len(smart_chips) > max_details
-        else ""
-    )
+    omitted = len(smart_chips) - len(shown)
+    suffix = f"\n... and {omitted} more smart chips" if omitted else ""
     return f"\n\nSmart Chips in range '{range_label}':\n" + "\n".join(lines) + suffix
 
 
