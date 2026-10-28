@@ -25,6 +25,7 @@ from core.utils import TransientNetworkError, UserInputError, handle_http_errors
 from gchat.chat_helpers import (
     _execute_chat_request,
     _extract_rich_links,
+    _format_search_message_ids,
     _name_spaces,
     _none_if_blank,
     _none_if_null_sentinel,
@@ -552,7 +553,7 @@ async def search_messages(
             for a in attachments
         )
         output.append(
-            f"- [{create_time}] {sender} in '{space_name}': {text_content}{links_suffix}{att_suffix}"
+            f"- [{create_time}] {sender} in '{space_name}': {text_content}{links_suffix}{att_suffix}\n  {_format_search_message_ids(msg)}"
         )
 
     return "\n".join(output)
