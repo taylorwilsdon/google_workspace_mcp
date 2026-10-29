@@ -488,7 +488,7 @@ async def get_drive_file_content(
     resolved_file_id, file_metadata = await resolve_drive_item(
         service,
         file_id,
-        extra_fields="name, webViewLink, size, version",
+        extra_fields="name, webViewLink, size, version, capabilities(canDownload)",
     )
     file_id = resolved_file_id
     mime_type = file_metadata.get("mimeType", "")
@@ -502,12 +502,15 @@ async def get_drive_file_content(
 
     max_chars = get_max_content_chars()
     version = file_metadata.get("version")
+    # Policy and DLP download restrictions can change without a new version.
+    can_download = (file_metadata.get("capabilities") or {}).get("canDownload")
     cache_bytes = get_paged_content_cache_bytes()
     cache_key = (
         (user_google_email.lower(), file_id, version, export_mime_type)
         if cache_bytes
         and user_google_email
         and version is not None
+        and can_download is True
         and not is_stateless_mode()
         else None
     )

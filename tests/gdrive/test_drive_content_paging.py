@@ -35,6 +35,7 @@ async def _get_content(
     mime_type: str = "text/plain",
     *,
     version: str | None = None,
+    can_download: bool = True,
     downloads: list | None = None,
     user_google_email: str = "user@example.com",
     resolve_calls: list | None = None,
@@ -44,6 +45,7 @@ async def _get_content(
         "name": "notes.txt",
         "mimeType": mime_type,
         "webViewLink": "https://drive.google.com/file/file123",
+        "capabilities": {"canDownload": can_download},
     }
     if version is not None:
         metadata["version"] = version
@@ -262,12 +264,30 @@ async def test_text_is_not_kept_in_stateless_mode(limit):
 
 
 @pytest.mark.asyncio
-async def test_the_files_version_is_fetched_with_its_metadata(limit):
+async def test_the_files_version_and_download_capability_are_fetched(limit):
     resolve_calls = []
 
     await _get_content(_LONG_TEXT.encode(), resolve_calls=resolve_calls)
 
-    assert "version" in [field.strip() for field in resolve_calls[0].split(",")]
+    fields = [field.strip() for field in resolve_calls[0].split(",")]
+    assert "version" in fields
+    assert "capabilities(canDownload)" in fields
+
+
+@pytest.mark.asyncio
+async def test_kept_text_is_not_read_once_download_is_restricted(limit):
+    downloads = []
+
+    await _get_content(_LONG_TEXT.encode(), version="7", downloads=downloads)
+    await _get_content(
+        _LONG_TEXT.encode(),
+        version="7",
+        can_download=False,
+        downloads=downloads,
+        offset=96,
+    )
+
+    assert len(downloads) == 2
 
 
 @pytest.mark.asyncio
