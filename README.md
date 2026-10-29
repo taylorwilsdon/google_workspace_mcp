@@ -212,6 +212,8 @@ uvx workspace-mcp --transport streamable-http --tool-tier core
 
 **Tool tiers** keep context windows lean: `core` is the essential set, `extended` adds management operations, `complete` loads everything. Combine with `--tools <service> ...`, `--read-only`, or per-service `--permissions`, and subtract individual tools with `--disabled-tools <name> ...` - details in the [server modes docs](https://workspacemcp.com/docs?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=tiers-server-modes#server-modes).
 
+**Upfront tools:** some clients defer tool definitions until the model searches for them. To keep a few common tools visible from the first turn, list them in `WORKSPACE_MCP_ALWAYS_LOAD_TOOLS` (comma-separated, e.g. `search_gmail_messages,get_events`). The server then sets `_meta["anthropic/alwaysLoad"]: true` on those tools in `tools/list`; Claude Code loads them upfront, and clients that don't read the key ignore it. Each upfront tool costs context on every turn, so keep the list short. Unset, no tool is marked.
+
 ## Connect Your Client
 
 **Claude Desktop, web & mobile** - run the server in HTTP mode and add it as a **Connector** (Settings → Connectors → Add custom connector). This is the recommended path; the [Connector guide](https://workspacemcp.com/guides/claude-connectors?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=clients-connectors) has step-by-step screenshots. Legacy stdio configuration remains available for clients without Connector support - see the [FAQ](https://workspacemcp.com/welcome/faq?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=clients-connectors-faq).
