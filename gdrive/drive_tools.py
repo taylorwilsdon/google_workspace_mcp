@@ -475,12 +475,8 @@ async def get_drive_file_content(
         f"Link: {web_view_link}\n\n--- CONTENT ---\n"
     )
     if images:
-        # structured_content mirrors the plain-string result so clients that
-        # validate against the tool's output schema still get a string.
-        text = header + body_text
         return ToolResult(
-            content=[TextContent(type="text", text=text), *images],
-            structured_content={"result": text},
+            content=[TextContent(type="text", text=header + body_text), *images]
         )
     return header + body_text
 
@@ -531,8 +527,7 @@ async def get_drive_file_download_url(
     Returns:
         str: File metadata with either a local file path or download URL. In
         stateless mode the same text comes back as a ToolResult that also
-        embeds the file; the annotation stays str so the advertised output
-        schema is unchanged.
+        embeds the file.
     """
     logger.info(
         f"[get_drive_file_download_url] Invoked. File ID: '{file_id}', Export format: {export_format}"
@@ -670,7 +665,6 @@ async def get_drive_file_download_url(
                     ),
                 ),
             ],
-            structured_content={"result": summary},
         )
 
     # Move the download into attachment storage and return its path/URL
