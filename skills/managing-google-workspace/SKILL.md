@@ -241,6 +241,8 @@ For parameters: [references/contacts.md](references/contacts.md)
 | Search messages | `search_messages` |
 | Send message | `send_message` |
 | Edit a message already sent | `send_message` (`message_name`) |
+| Create a space and post to it | `send_message` (`create_space_name`, `member_emails`) |
+| Pin a message | `send_message` (`pin=true`) |
 | React to message | `create_reaction` |
 | Download attachment | `download_chat_attachment` |
 
