@@ -75,6 +75,18 @@ def test_description_stops_at_examples_and_returns():
     assert docstring_description(returns_only) == "Summary."
 
 
+@pytest.mark.parametrize(
+    "heading", ["Arguments", "Parameters", "Params", "Return", "Yields", "Example"]
+)
+def test_description_stops_at_google_style_aliases(heading):
+    def aliased():
+        pass
+
+    aliased.__doc__ = f"Summary.\n\n{heading}:\n    x: A parameter.\n"
+
+    assert docstring_description(aliased) == "Summary."
+
+
 def test_description_is_none_without_a_docstring():
     def undocumented():
         pass
