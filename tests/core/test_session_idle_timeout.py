@@ -8,6 +8,13 @@ from core.server import SecureFastMCP, get_session_idle_timeout
 _ENV = "WORKSPACE_MCP_SESSION_IDLE_TIMEOUT"
 
 
+@pytest.fixture(autouse=True)
+def _disable_fastmcp_idle_timeout(monkeypatch):
+    # Pin FastMCP's fallback so deferral is observable regardless of the
+    # upstream default ("auto" resolves to the MCP SDK's 1800s since 4.1).
+    monkeypatch.setattr(fastmcp.settings, "http_session_idle_timeout", None)
+
+
 def _session_manager(app):
     for route in app.routes:
         endpoint = getattr(route, "endpoint", None)
