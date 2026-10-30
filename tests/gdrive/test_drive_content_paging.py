@@ -39,6 +39,7 @@ async def _get_content(
     downloads: list | None = None,
     user_google_email: str = "user@example.com",
     resolve_calls: list | None = None,
+    version_after_download: str | None = None,
     **kwargs,
 ):
     metadata = {
@@ -62,6 +63,9 @@ async def _get_content(
 
     service = Mock()
     service.files().get_media.return_value = "req"
+    service.files().get().execute.return_value = {
+        "version": version_after_download or version
+    }
     with (
         patch("gdrive.drive_tools.resolve_drive_item", side_effect=resolve),
         patch("core.file_limits.MediaIoBaseDownload", side_effect=downloader),
@@ -373,3 +377,27 @@ async def test_a_base64_image_is_not_kept(monkeypatch):
     )
 
     assert len(downloads) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_page_read_across_a_version_change_asks_for_a_restart(limit):
+    for offset in (0, 96):
+        result = await _get_content(
+            _LONG_TEXT.encode(),
+            version="7",
+            version_after_download="8",
+            offset=offset,
+        )
+
+        assert result == (
+            'File "notes.txt" (ID: file123) changed while it was being read. '
+            "Call again with offset=0 to read the current version from the start."
+        )
+    assert _paged_content_cache.get(("user@example.com", "file123", "7", None)) is None
+
+
+@pytest.mark.asyncio
+async def test_a_single_page_read_skips_the_version_recheck(limit):
+    result = await _get_content(b"short", version="7", version_after_download="8")
+
+    assert result == _versioned_header("7") + "short"

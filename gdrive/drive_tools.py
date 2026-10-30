@@ -533,7 +533,20 @@ async def get_drive_file_content(
             )
         except FileTooLargeError as e:
             return str(e)
-        if cache_key and paged and max_chars is not None and len(body_text) > max_chars:
+        truncated = max_chars is not None and len(body_text) > max_chars
+        if paged and (truncated or offset) and version is not None:
+            current = await asyncio.to_thread(
+                service.files()
+                .get(fileId=file_id, fields="version", supportsAllDrives=True)
+                .execute
+            )
+            if current.get("version") != version:
+                return (
+                    f'File "{file_name}" (ID: {file_id}) changed while it was '
+                    f"being read. Call again with offset=0 to read the current "
+                    f"version from the start."
+                )
+        if cache_key and paged and truncated:
             _paged_content_cache.put(cache_key, body_text, max_bytes=cache_bytes)
 
     if paged:
