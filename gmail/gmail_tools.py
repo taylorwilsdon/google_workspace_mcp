@@ -97,10 +97,10 @@ from gmail.gmail_helpers import (
     format_filter_apply_result,
     format_html_links,
     format_thread_label_outcomes,
-    read_gmail_message_page,
     html_newlines_to_br,
     html_to_text_preserving_breaks,
     modify_gmail_thread_labels,
+    read_gmail_message_page,
     send_message_once,
     update_gmail_filter,
 )
@@ -1931,14 +1931,10 @@ async def get_gmail_message_content(
     """
     Retrieves the full content (subject, sender, recipients, body) of a specific Gmail message.
 
-    Set page_offset=0 to read the rendered body in bounded JSON pages through this
-    tool. Follow next_offset until complete=true, passing body_sha256 as
-    expected_sha256 and keeping body_format/include_links unchanged. Offsets and
-    page_size count Unicode characters, not bytes. Pages exclude attachments and
-    attached messages. Every call checks current Gmail metadata access before using
-    the five-minute account-scoped body cache. The cache holds at most 128 entries
-    and 64 MiB of UTF-8 bodies plus entry allowances per process. Paginated reads have
-    a 64 MiB raw/rendered size cap and also honor WORKSPACE_MCP_MAX_FILE_BYTES.
+    Set page_offset=0 to read the complete rendered body, excluding attachments and
+    attached messages, as JSON pages of at most page_size characters. Follow
+    next_offset until complete=true, passing body_sha256 as expected_sha256 and
+    keeping body_format and include_links unchanged.
 
     Bodies are returned inline and truncated at 20,000 characters. Set full=True to
     get the complete, untruncated message instead: it is exported to storage and the
@@ -1949,10 +1945,6 @@ async def get_gmail_message_content(
     returns a signed download URL like any other HTTP deployment.
 
     Args:
-        page_offset (int): Start position in the complete rendered body. Requires
-            format="full", full=False, and body_format="text" or "html".
-        page_size (int): Maximum body characters per page, between 1 and 20,000.
-        expected_sha256 (str): Optional previous body_sha256; rejects changed content.
         message_id (str): The unique ID of the Gmail message to retrieve.
         user_google_email (str): The user's Google email address. Required.
         body_format (Literal["text", "html", "raw"]): Body output format (only applies
@@ -1975,6 +1967,10 @@ async def get_gmail_message_content(
             after the message ID. Requires format='full'; body_format='raw' is only
             allowed when the raw message is exported to a file.
         include_links (bool): Append the HTML body's http(s) links missing from the text output.
+        page_offset (int): Start position in the complete rendered body. Requires
+            format="full", full=False, and body_format="text" or "html".
+        page_size (int): Maximum body characters per page, between 1 and 20,000.
+        expected_sha256 (str): Optional previous body_sha256; rejects changed content.
 
     Returns:
         str: The message details including subject, sender, date, Message-ID, recipients
@@ -1992,15 +1988,6 @@ async def get_gmail_message_content(
         if full or format != "full" or body_format == "raw":
             raise UserInputError(
                 "Body pagination requires full=False, format='full', and body_format='text' or 'html'."
-            )
-        if (
-            type(page_offset) is not int
-            or page_offset < 0
-            or type(page_size) is not int
-            or not 1 <= page_size <= 20000
-        ):
-            raise UserInputError(
-                "page_offset must be nonnegative; page_size must be between 1 and 20000."
             )
     elif expected_sha256 is not None or page_size != 20000:
         raise UserInputError("expected_sha256 and page_size require page_offset.")
@@ -2049,7 +2036,7 @@ async def get_gmail_message_content(
             include_links=include_links,
         )
         if include_headers:
-            page["headers"] = {key: value[:1000] for key, value in headers.items()}
+            page["headers"] = headers
         return json.dumps(page, ensure_ascii=False)
 
     content_lines = _format_message_header_lines(headers) if include_headers else []

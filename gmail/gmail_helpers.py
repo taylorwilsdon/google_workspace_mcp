@@ -13,6 +13,7 @@ import logging
 import re
 import secrets
 import ssl
+import sys
 from collections import Counter, OrderedDict
 from datetime import datetime, timezone
 from email.header import Header
@@ -63,8 +64,6 @@ _PAGE_CACHE_ENTRIES = 128
 _PAGE_CACHE_TTL = 300
 _PAGE_CACHE = OrderedDict()
 _PAGE_CACHE_LOCK = Lock()
-
-
 GMAIL_QUOTA_ERROR_MARKERS = (
     "dailyLimitExceeded",
     "quotaExceeded",
@@ -329,7 +328,12 @@ async def _fetch_paginated_message_body(
         kind="message page",
         max_bytes=limit,
     )
-    return encoded_body, len(raw), hashlib.sha256(encoded_body).hexdigest()
+    return (
+        text,
+        len(raw),
+        len(encoded_body),
+        hashlib.sha256(encoded_body).hexdigest(),
+    )
 
 
 async def read_gmail_message_page(
@@ -367,24 +371,26 @@ async def read_gmail_message_page(
         body = await _fetch_paginated_message_body(
             service, message_id, body_format, formatter, limit
         )
-        cost = len(body[0]) + 256
+        cost = sys.getsizeof(body[0]) + 256
         if key is not None and cost <= _PAGE_CACHE_BYTES:
             with _PAGE_CACHE_LOCK:
                 _PAGE_CACHE.pop(key, None)
                 while _PAGE_CACHE and (
                     len(_PAGE_CACHE) >= _PAGE_CACHE_ENTRIES
-                    or sum(len(entry[1][0]) + 256 for entry in _PAGE_CACHE.values())
+                    or sum(
+                        sys.getsizeof(entry[1][0]) + 256
+                        for entry in _PAGE_CACHE.values()
+                    )
                     + cost
                     > _PAGE_CACHE_BYTES
                 ):
                     _PAGE_CACHE.popitem(last=False)
                 _PAGE_CACHE[key] = (monotonic() + _PAGE_CACHE_TTL, body)
-    encoded_body, raw_size, digest = body
-    for size in (raw_size, len(encoded_body)):
+    text, raw_size, encoded_size, digest = body
+    for size in (raw_size, encoded_size):
         ensure_within_file_size_limit(
             size, file_id=message_id, kind="message page", max_bytes=limit
         )
-    text = encoded_body.decode("utf-8")
     if expected_sha256 is not None and digest != expected_sha256:
         raise UserInputError(
             "Message representation changed; restart at page_offset=0."

@@ -2,15 +2,17 @@
 
 import base64
 import json
+import sys
 from email.message import EmailMessage
 from unittest.mock import Mock
 
 import pytest
+from fastmcp.exceptions import ToolError, ValidationError
 
-from core.utils import UserInputError
-from core.file_limits import FileTooLargeError
-from fastmcp.exceptions import ToolError
 import gmail.gmail_helpers as helpers
+from core.file_limits import FileTooLargeError
+from core.server import server
+from core.utils import UserInputError
 from gmail.gmail_tools import _format_body_content, get_gmail_message_content
 
 
@@ -31,13 +33,13 @@ def unwrap(tool):
 read_message = unwrap(get_gmail_message_content)
 
 
-def gmail_service(message):
+def gmail_service(message, headers=()):
     raw = message.as_bytes()
     service = Mock()
 
     def get(**kwargs):
         response = (
-            {"sizeEstimate": len(raw), "payload": {"headers": []}}
+            {"sizeEstimate": len(raw), "payload": {"headers": list(headers)}}
             if kwargs["format"] == "metadata"
             else {"raw": base64.urlsafe_b64encode(raw).decode()}
         )
@@ -100,9 +102,6 @@ async def test_complete_unicode_body_in_bounded_pages(body_format):
         {"full": True},
         {"format": "metadata"},
         {"body_format": "raw"},
-        {"page_offset": -1},
-        {"page_size": 0},
-        {"page_size": 20001},
     ],
 )
 async def test_invalid_page_options_fail_before_fetch(options):
@@ -112,6 +111,38 @@ async def test_invalid_page_options_fail_before_fetch(options):
             service, "message-1", "reader@example.com", **{"page_offset": 0, **options}
         )
     service.users.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "options", [{"page_offset": -1}, {"page_size": 0}, {"page_size": 20001}]
+)
+async def test_page_bounds_are_schema_validated(options):
+    tool = await server.get_tool("get_gmail_message_content")
+    with pytest.raises(ValidationError):
+        await tool.run(
+            {
+                "message_id": "message-1",
+                "user_google_email": "reader@example.com",
+                **{"page_offset": 0, **options},
+            }
+        )
+
+
+@pytest.mark.asyncio
+async def test_headers_are_returned_complete():
+    message = EmailMessage()
+    message.set_content("Body")
+    to = ", ".join(f"person{i}@example.com" for i in range(80))
+    page = json.loads(
+        await read_message(
+            gmail_service(message, [{"name": "To", "value": to}]),
+            "message-1",
+            "reader@example.com",
+            page_offset=0,
+        )
+    )
+    assert page["headers"]["To"] == to
 
 
 @pytest.mark.asyncio
@@ -402,14 +433,17 @@ async def test_cache_evicts_oldest_within_both_bounds(monkeypatch, bound):
     message.set_content("x" * 100)
     service = gmail_service(message)
     monkeypatch.setattr(
-        helpers, "_PAGE_CACHE_BYTES", 800 if bound == "bytes" else 10000
+        helpers, "_PAGE_CACHE_BYTES", 1000 if bound == "bytes" else 10000
     )
     monkeypatch.setattr(helpers, "_PAGE_CACHE_ENTRIES", 128 if bound == "bytes" else 2)
     for message_id in ["first", "second", "third", "first"]:
         await read_message(service, message_id, "user@example.com", page_offset=0)
         assert len(helpers._PAGE_CACHE) <= 2
         assert (
-            sum(len(entry[1][0]) + 256 for entry in helpers._PAGE_CACHE.values())
+            sum(
+                sys.getsizeof(entry[1][0]) + 256
+                for entry in helpers._PAGE_CACHE.values()
+            )
             <= helpers._PAGE_CACHE_BYTES
         )
     assert service.users.return_value.messages.return_value.get.call_count == 8

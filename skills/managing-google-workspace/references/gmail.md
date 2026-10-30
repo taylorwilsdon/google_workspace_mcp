@@ -41,17 +41,13 @@ Get full content of a single message (subject, sender, recipients, date, Message
 | expected_sha256 | string | no | null | Previous body_sha256; rejects a changed representation. Requires page_offset |
 
 Keep body_format and include_links unchanged while paging. The JSON includes body,
-page_offset, next_offset, total_chars, complete, and body_sha256. With include_headers=true,
-headers are included separately, capped at 1,000 characters each. Attachments and attached
-messages are excluded; use the existing attachment tools or full=true for exports.
-Every page checks current Gmail metadata access before using cached content. Bodies
-are cached per account, message, body format, and include_links option for five minutes.
-The process-local cache holds at most 128 entries and 64 MiB of UTF-8 body data plus
-entry allowances. Cache misses, expiration, or another replica re-fetch the message;
-expected_sha256 still detects a changed representation. Bodies too large for the cache
-are served without caching. No external file access is needed. Raw and rendered
-messages are capped at 64 MiB, or the configured
-WORKSPACE_MCP_MAX_FILE_BYTES limit when smaller.
+page_offset, next_offset, total_chars, complete, and body_sha256, plus a headers object
+when include_headers=true. Attachments and attached messages are excluded; use the
+attachment tools or full=true for exports. Every page checks current Gmail access, then
+reuses a process-local body cache (five minutes, at most 128 entries and 64 MiB) keyed by
+account, message, body_format, and include_links. A cache miss re-fetches the message, and
+expected_sha256 detects a changed representation. Raw and rendered messages are capped at
+64 MiB, or WORKSPACE_MCP_MAX_FILE_BYTES when smaller.
 
 ### get_gmail_messages_content_batch
 Get content of multiple messages in one request. Auto-batches in chunks of 25.
