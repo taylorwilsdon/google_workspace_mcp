@@ -423,8 +423,9 @@ async def _read_drive_file_body(
         if max_chars is not None and len(body_text) > max_chars:
             body_text = (
                 f"[Image is {len(file_content_bytes):,} bytes, {len(body_text):,} "
-                f"characters as base64, over the {max_chars:,}-character limit per "
-                f"call (set by WORKSPACE_MCP_MAX_CONTENT_CHARS). Use "
+                f"characters as base64, over the default page size of "
+                f"{max_chars:,} (set by WORKSPACE_MCP_MAX_CONTENT_CHARS). Pass "
+                f"full_content=True to get it anyway, or use "
                 f"get_drive_file_download_url to get the file instead.]"
             )
     else:
@@ -456,6 +457,7 @@ async def get_drive_file_content(
     user_google_email: str,
     file_id: str,
     offset: int = 0,
+    full_content: bool = False,
 ) -> str:
     """
     Retrieves the content of a specific Google Drive file by ID, supporting files in shared drives.
@@ -469,17 +471,21 @@ async def get_drive_file_content(
       metadata header. SVG → returned as its markup; raster images it embeds
       as base64 are attached as image content, numbered to match their place
       in the markup. BMP and TIFF → base64 text, or a download hint when over
-      the per-call limit.
+      the default page size.
     • Any other file → downloaded; tries UTF-8 decode, else notes binary.
 
     Args:
         user_google_email: The user’s Google email address.
         file_id: Drive file ID.
         offset: Character offset to read on from after a truncated result.
+        full_content: Return all content from offset onward in one call
+            instead of a page of the default size.
 
     Returns:
-        str: The file content as plain text with metadata header. For images, a
-        ToolResult with that text followed by the image as image content.
+        str: The file content as plain text with a metadata header that carries
+        the file's version, so a reader paging by offset can tell when it
+        changed and restart from offset=0. For images, a ToolResult with that
+        text followed by the image as image content.
     """
     logger.info(f"[get_drive_file_content] Invoked. File ID: '{file_id}'")
     if offset < 0:
@@ -500,7 +506,7 @@ async def get_drive_file_content(
         "application/vnd.google-apps.presentation": "text/plain",
     }.get(mime_type)
 
-    max_chars = get_max_content_chars()
+    max_chars = None if full_content else get_max_content_chars()
     version = file_metadata.get("version")
     # Policy and DLP download restrictions can change without a new version.
     can_download = (file_metadata.get("capabilities") or {}).get("canDownload")
@@ -535,14 +541,15 @@ async def get_drive_file_content(
             body_text,
             offset=offset,
             max_chars=max_chars,
-            alternative=", or use get_drive_file_download_url for the whole file",
+            alternative=", or pass full_content=True for the whole file",
         )
         if offset:
             images = []
 
     # Assemble response
+    version_text = f", Version: {version}" if version is not None else ""
     header = (
-        f'File: "{file_name}" (ID: {file_id}, Type: {mime_type})\n'
+        f'File: "{file_name}" (ID: {file_id}, Type: {mime_type}{version_text})\n'
         f"Link: {web_view_link}\n\n--- CONTENT ---\n"
     )
     if images:

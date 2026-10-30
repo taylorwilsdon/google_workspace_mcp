@@ -87,10 +87,28 @@ async def test_long_text_is_cut_off_with_a_note_on_how_to_read_on(limit):
 
     assert result == _HEADER + text[:96] + (
         "\n\n[Truncated: showing characters 0 to 96 of 240; 144 more follow "
-        "(limit 100 per call, set by WORKSPACE_MCP_MAX_CONTENT_CHARS). Call again "
-        "with offset=96 to read on, or use get_drive_file_download_url for the "
-        "whole file.]"
+        "(default page size 100, set by WORKSPACE_MCP_MAX_CONTENT_CHARS). Call "
+        "again with offset=96 to read on, or pass full_content=True for the whole "
+        "file.]"
     )
+
+
+@pytest.mark.asyncio
+async def test_full_content_skips_the_limit(limit):
+    text = "".join(f"row {i:03d}\n" for i in range(30))
+
+    assert await _get_content(text.encode(), full_content=True) == _HEADER + text
+    assert (
+        await _get_content(text.encode(), offset=96, full_content=True)
+        == _HEADER + text[96:]
+    )
+
+
+@pytest.mark.asyncio
+async def test_full_content_is_not_kept(limit):
+    await _get_content(("x" * 240).encode(), version="7", full_content=True)
+
+    assert _paged_content_cache.get(("user@example.com", "file123", "7", None)) is None
 
 
 @pytest.mark.asyncio
@@ -144,9 +162,21 @@ async def test_base64_image_over_the_limit_points_at_the_download_url(limit):
     result = await _get_content(bmp, mime_type="image/bmp")
 
     assert result.endswith(
-        "[Image is 202 bytes, 296 characters as base64, over the 100-character "
-        "limit per call (set by WORKSPACE_MCP_MAX_CONTENT_CHARS). Use "
-        "get_drive_file_download_url to get the file instead.]"
+        "[Image is 202 bytes, 296 characters as base64, over the default page "
+        "size of 100 (set by WORKSPACE_MCP_MAX_CONTENT_CHARS). Pass "
+        "full_content=True to get it anyway, or use get_drive_file_download_url "
+        "to get the file instead.]"
+    )
+
+
+@pytest.mark.asyncio
+async def test_full_content_returns_a_base64_image_over_the_page_size(limit):
+    bmp = b"BM" + b"\x00" * 200
+
+    result = await _get_content(bmp, mime_type="image/bmp", full_content=True)
+
+    assert result.endswith(
+        "[base64_image:image/bmp]" + base64.b64encode(bmp).decode("ascii")
     )
 
 
@@ -192,6 +222,18 @@ async def test_later_svg_pages_do_not_repeat_its_images(limit):
 _LONG_TEXT = "".join(f"row {i:03d}\n" for i in range(30))  # 240 characters
 
 
+def _versioned_header(version: str) -> str:
+    return _HEADER.replace("text/plain)", f"text/plain, Version: {version})")
+
+
+@pytest.mark.asyncio
+async def test_every_page_names_the_files_version(limit):
+    for offset in (0, 96):
+        result = await _get_content(_LONG_TEXT.encode(), version="7", offset=offset)
+
+        assert result.startswith(_versioned_header("7"))
+
+
 @pytest.mark.asyncio
 async def test_reading_on_reuses_the_text_instead_of_downloading_again(limit):
     downloads = []
@@ -204,7 +246,7 @@ async def test_reading_on_reuses_the_text_instead_of_downloading_again(limit):
     ]
 
     assert len(downloads) == 1
-    assert pages[2] == _HEADER + _LONG_TEXT[192:]
+    assert pages[2] == _versioned_header("7") + _LONG_TEXT[192:]
 
 
 @pytest.mark.asyncio
@@ -218,7 +260,9 @@ async def test_a_new_version_is_downloaded_again(limit):
     )
 
     assert len(downloads) == 2
-    assert result.startswith(_HEADER + changed[96:192] + "\n\n[Truncated: ")
+    assert result.startswith(
+        _versioned_header("8") + changed[96:192] + "\n\n[Truncated: "
+    )
 
 
 @pytest.mark.asyncio

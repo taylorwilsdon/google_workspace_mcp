@@ -14,9 +14,10 @@ from one Office file and the text extracted from it. It is on by default;
 download returns inline. It defaults to 10 MiB and never exceeds
 ``WORKSPACE_MCP_MAX_FILE_BYTES``.
 
-``WORKSPACE_MCP_MAX_CONTENT_CHARS`` caps the text ``get_drive_file_content``
-returns in one call; the rest is available by calling again with an offset. It
-is on by default; ``0`` disables it.
+``WORKSPACE_MCP_MAX_CONTENT_CHARS`` sets the default page size of the text
+``get_drive_file_content`` returns; the rest is available by calling again with
+an offset, and a client can pass ``full_content=True`` for all of it in one
+call. It defaults to 40,000 characters; ``0`` returns whole content by default.
 """
 
 from __future__ import annotations
@@ -126,11 +127,12 @@ def get_stateless_inline_max_bytes() -> int:
 
 
 def get_max_content_chars() -> Optional[int]:
-    """Return the most text characters one content read may return, or ``None``.
+    """Return the default page size for content reads in characters, or ``None``
+    for whole content.
 
     Parsing rules:
     - unset or empty → ``DEFAULT_MAX_CONTENT_CHARS``
-    - ``0`` → uncapped (``None``)
+    - ``0`` → whole content (``None``)
     - positive int → that many characters
     - invalid or negative value → raise ``ValueError``
     """
@@ -205,8 +207,8 @@ def page_content_text(
     end = offset + len(page)
     return (
         f"{page}\n\n[Truncated: showing characters {offset:,} to {end:,} of "
-        f"{total:,}; {total - end:,} more follow (limit {max_chars:,} per call, "
-        f"set by {_CONTENT_CHARS_ENV_NAME}). Call again with offset={end} to "
+        f"{total:,}; {total - end:,} more follow (default page size "
+        f"{max_chars:,}, set by {_CONTENT_CHARS_ENV_NAME}). Call again with offset={end} to "
         f"read on{alternative}.]"
     )
 

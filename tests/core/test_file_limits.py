@@ -383,7 +383,7 @@ def test_page_content_text_ends_a_page_at_a_line_break():
 
     assert page == (
         text[:96] + "\n\n[Truncated: showing characters 0 to 96 of 240; 144 more "
-        "follow (limit 100 per call, set by WORKSPACE_MCP_MAX_CONTENT_CHARS). "
+        "follow (default page size 100, set by WORKSPACE_MCP_MAX_CONTENT_CHARS). "
         "Call again with offset=96 to read on, or download it.]"
     )
 
