@@ -788,6 +788,7 @@ async def _delete_event_impl(
     event_id: str,
     calendar_id: str = "primary",
     send_updates: str = "all",
+    only_if_no_attendees: bool = False,
 ) -> str:
     """Internal implementation for deleting a calendar event."""
     logger.info(
@@ -801,12 +802,42 @@ async def _delete_event_impl(
 
     # Try to get the event first to verify it exists
     try:
-        await asyncio.to_thread(
+        existing_event = await asyncio.to_thread(
             lambda: (
                 service.events().get(calendarId=calendar_id, eventId=event_id).execute()
             )
         )
         logger.info("[delete_event] Successfully verified event exists before deletion")
+        if only_if_no_attendees:
+            try:
+                calendar = await asyncio.to_thread(
+                    lambda: service.calendarList().get(calendarId=calendar_id).execute()
+                )
+            except HttpError as calendar_error:
+                raise UserInputError(
+                    "Could not verify calendar ownership; refusing to delete."
+                ) from calendar_error
+            if calendar.get("accessRole") != "owner":
+                raise UserInputError(
+                    "Only the calendar owner can use this deletion guard; refusing to delete."
+                )
+
+            if existing_event.get("recurrence"):
+                raise UserInputError(
+                    "Cannot verify attendees for every instance in a recurring series; refusing to delete."
+                )
+
+            attendees = existing_event.get("attendees", [])
+            other_attendees = [
+                attendee
+                for attendee in attendees
+                if attendee.get("email")
+                and attendee["email"].casefold() != user_google_email.casefold()
+            ]
+            if other_attendees:
+                raise UserInputError(
+                    f"Event has {len(other_attendees)} attendee(s) besides the calendar owner; refusing to delete."
+                )
     except HttpError as get_error:
         if get_error.resp.status == 404:
             logger.error(
@@ -815,6 +846,10 @@ async def _delete_event_impl(
             message = f"Event not found during verification. The event with ID '{event_id}' could not be found in calendar '{calendar_id}'. This may be due to incorrect ID format or the event no longer exists."
             raise Exception(message)
         else:
+            if only_if_no_attendees:
+                raise UserInputError(
+                    "Could not verify event attendees; refusing to delete."
+                ) from get_error
             logger.warning(
                 f"[delete_event] Error during pre-delete verification, but proceeding with deletion: {get_error}"
             )
@@ -912,7 +947,7 @@ async def _rsvp_event_impl(
     ),
 )
 @handle_http_errors("manage_event", service_type="calendar")
-@require_google_service("calendar", "calendar_events")
+@require_google_service("calendar", ["calendar_events", "calendar_list_read"])
 async def manage_event(
     service,
     user_google_email: str,
@@ -949,6 +984,7 @@ async def manage_event(
     start_timezone: Optional[str] = None,
     end_timezone: Optional[str] = None,
     this_and_following: bool = False,
+    only_if_no_attendees: bool = False,
 ) -> str:
     """
     Manages calendar events. Supports creating, updating, deleting, and RSVP.
@@ -1009,6 +1045,7 @@ async def manage_event(
             series before it and starting a new series there; earlier instances are kept.
             Updating the series ID instead changes every instance, and moving its start or
             recurrence drops past instances that no longer match. Defaults to False.
+        only_if_no_attendees (bool): Delete only if the event has no attendees besides the calendar owner.
 
     Returns:
         str: Confirmation message with event details.
@@ -1114,6 +1151,7 @@ async def manage_event(
             event_id=event_id,
             calendar_id=calendar_id,
             send_updates=send_updates or "all",
+            only_if_no_attendees=only_if_no_attendees,
         )
     elif action_lower == "rsvp":
         if not event_id:
