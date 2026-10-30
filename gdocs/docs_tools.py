@@ -63,6 +63,8 @@ from gdocs.docs_structure import (
     analyze_document_complexity,
     summarize_paragraph_layout,
     truncate_preview,
+    find_text_ranges,
+    validate_find_text,
     find_heading_section,
 )
 from gdocs.docs_tables import extract_table_as_data
@@ -104,7 +106,8 @@ HEADER_FOOTER_RUNTIME_CANARY = "docs-hf-canary-20260328b"
 _STRUCTURE_CONTENT_FIELDS = (
     "content("
     "startIndex,endIndex,"
-    "paragraph(elements(startIndex,endIndex,textRun/content),paragraphStyle,bullet,"
+    "paragraph(elements(startIndex,endIndex,textRun(content,"
+    "suggestedInsertionIds,suggestedDeletionIds)),paragraphStyle,bullet,"
     "positionedObjectIds,suggestedPositionedObjectIds),"
     "table(tableRows/tableCells(startIndex,endIndex,content),tableStyle),"
     "sectionBreak/sectionStyle,"
@@ -1684,6 +1687,7 @@ async def inspect_doc_structure(
     detailed: bool = False,
     tab_id: Optional[str] = None,
     preview_chars: Optional[int] = 100,
+    find_text: Optional[str] = None,
 ) -> str:
     """
     Essential tool for finding safe insertion points and understanding document structure.
@@ -1740,10 +1744,17 @@ async def inspect_doc_structure(
     ranges to format.
 
     SUB-PARAGRAPH FORMATTING:
-    text_preview is truncated to 100 characters by default. To compute the index
-    of a token inside a longer paragraph, pass preview_chars=0 or None for untruncated
-    text, then add the token's UTF-16 offset within that text to the paragraph's
-    start_index (non-BMP characters such as emoji occupy two UTF-16 units).
+    Pass find_text to get the exact start_index and end_index of every occurrence
+    of a phrase in the inspected tab's body, including table cells and tables of
+    contents, under text_matches. Those ranges go straight into format_text,
+    update_paragraph_style or delete_text operations without offset arithmetic.
+    For delete_text, exclude protected final newlines of a body, table cell or
+    table of contents. A newline immediately before a table, table of contents
+    or section break can only be deleted together with that structural element.
+    Without find_text, text_preview is truncated to 100 characters by default; pass
+    preview_chars=0 or None for untruncated text and add the token's UTF-16 offset
+    within that text to the paragraph's start_index (non-BMP characters such as
+    emoji occupy two UTF-16 units).
 
     Args:
         user_google_email: User's Google email address
@@ -1753,13 +1764,23 @@ async def inspect_doc_structure(
         preview_chars: Maximum characters of paragraph, header and footer text
             preview. Pass 0 or None for the full text, needed to locate a token inside a
             paragraph longer than the default 100 characters.
+        find_text: Optional literal text to locate in the inspected tab's body. The
+            result gains text_matches with the index range of each occurrence (at
+            most 50; count stays exact), its paragraph range, whether it sits in a
+            table, whether it is pending suggestion text (in_suggestion: insertion,
+            deletion, mixed or null), and surrounding context with suggested text
+            marked as {++inserted++} or {--deleted--}.
 
     Returns:
         str: JSON string containing document structure and safe insertion indices
     """
+    find_text_error = validate_find_text(find_text)
+    if find_text_error:
+        return find_text_error
+
     logger.debug(
         f"[inspect_doc_structure] Doc={document_id}, detailed={detailed}, "
-        f"tab_id={tab_id}, preview_chars={preview_chars}"
+        f"tab_id={tab_id}, preview_chars={preview_chars}, find_text={find_text!r}"
     )
 
     # Get the document. The field mask keeps this summary call from paying to
@@ -1916,6 +1937,9 @@ async def inspect_doc_structure(
                         "end_index": table["end_index"],
                     }
                 )
+
+    if find_text is not None:
+        result["text_matches"] = find_text_ranges(analysis_doc, find_text)
 
     if structure["headers"]:
         result["headers"] = _build_segment_inspection_entries(
