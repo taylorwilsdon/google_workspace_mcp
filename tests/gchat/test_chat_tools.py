@@ -186,7 +186,7 @@ async def test_get_messages_resolves_senders_sequentially(monkeypatch):
     """get_messages should avoid concurrent People API sender resolution."""
     state = {"current": 0, "max": 0}
 
-    async def fake_resolve(_people_service, sender_obj):
+    async def fake_resolve(_people_service, sender_obj, _cache_owner=None):
         state["current"] += 1
         state["max"] = max(state["max"], state["current"])
         await asyncio.sleep(0.01)

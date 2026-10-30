@@ -8,14 +8,16 @@ resolution for Chat senders and spaces via the People API.
 import asyncio
 import logging
 import ssl
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from googleapiclient.errors import HttpError
 
 logger = logging.getLogger(__name__)
 
 _SENDER_CACHE_MAX_SIZE = 256
-_sender_name_cache: Dict[str, str] = {}
+# Keyed by (authenticated user, Chat user id): People API names can come from
+# the caller's own contacts, so one user's cached names must not reach another.
+_sender_name_cache: Dict[Tuple[str, str], str] = {}
 _UNNAMED_SPACE_FALLBACKS = {
     "DIRECT_MESSAGE": "Direct message",
     "GROUP_CHAT": "Group chat",
@@ -27,13 +29,28 @@ _SCOPE_ERROR_REASON = "ACCESS_TOKEN_SCOPE_INSUFFICIENT"
 _SEARCH_MESSAGES_RETRY_BASE_DELAY_SECONDS = 1
 
 
-def _cache_sender(user_id: str, name: str) -> None:
+def _cache_key(cache_owner: Optional[str], user_id: str) -> Optional[Tuple[str, str]]:
+    """Return the cache key for user_id as seen by cache_owner, or None to skip caching."""
+    if not cache_owner:
+        return None
+    return (cache_owner.strip().lower(), user_id)
+
+
+def _cached_name(cache_owner: Optional[str], user_id: str) -> Optional[str]:
+    key = _cache_key(cache_owner, user_id)
+    return _sender_name_cache.get(key) if key else None
+
+
+def _cache_sender(cache_owner: Optional[str], user_id: str, name: str) -> None:
     """Store a resolved sender name, evicting oldest entries if cache is full."""
+    key = _cache_key(cache_owner, user_id)
+    if key is None:
+        return
     if len(_sender_name_cache) >= _SENDER_CACHE_MAX_SIZE:
         to_remove = list(_sender_name_cache.keys())[: _SENDER_CACHE_MAX_SIZE // 2]
         for k in to_remove:
             del _sender_name_cache[k]
-    _sender_name_cache[user_id] = name
+    _sender_name_cache[key] = name
 
 
 def _person_name(person: dict) -> Optional[str]:
@@ -43,11 +60,14 @@ def _person_name(person: dict) -> Optional[str]:
     return names[0].get("displayName") or emails[0].get("value")
 
 
-async def _resolve_sender(people_service, sender_obj: dict) -> str:
+async def _resolve_sender(
+    people_service, sender_obj: dict, cache_owner: Optional[str] = None
+) -> str:
     """Resolve a Chat message sender to a display name.
 
     Fast path: use displayName if the API already provided it.
-    Slow path: look up the user via the People API directory and cache the result.
+    Slow path: look up the user via the People API directory and cache the result
+    for cache_owner, the authenticated user; without one nothing is cached.
     """
     display_name = sender_obj.get("displayName")
     if display_name:
@@ -57,8 +77,9 @@ async def _resolve_sender(people_service, sender_obj: dict) -> str:
     if not user_id:
         return "Unknown Sender"
 
-    if user_id in _sender_name_cache:
-        return _sender_name_cache[user_id]
+    cached = _cached_name(cache_owner, user_id)
+    if cached:
+        return cached
 
     # Chat API uses "users/ID" but People API expects "people/ID"
     people_resource = user_id.replace("users/", "people/", 1)
@@ -71,7 +92,7 @@ async def _resolve_sender(people_service, sender_obj: dict) -> str:
             )
             resolved = _person_name(person)
             if resolved:
-                _cache_sender(user_id, resolved)
+                _cache_sender(cache_owner, user_id, resolved)
                 return resolved
         except HttpError as e:
             logger.debug(f"People API lookup failed for {user_id}: {e}")
@@ -81,13 +102,16 @@ async def _resolve_sender(people_service, sender_obj: dict) -> str:
     return user_id
 
 
-async def _lookup_people_names(people_service, user_ids: List[str]) -> Dict[str, str]:
+async def _lookup_people_names(
+    people_service, user_ids: List[str], cache_owner: Optional[str] = None
+) -> Dict[str, str]:
     """Resolve Chat user ids to display names with batched People API calls."""
     names = {}
     missing = []
     for user_id in user_ids:
-        if user_id in _sender_name_cache:
-            names[user_id] = _sender_name_cache[user_id]
+        cached = _cached_name(cache_owner, user_id)
+        if cached:
+            names[user_id] = cached
         else:
             missing.append(user_id)
     for start in range(0, len(missing), _PEOPLE_BATCH_SIZE):
@@ -112,7 +136,7 @@ async def _lookup_people_names(people_service, user_ids: List[str]) -> Dict[str,
             if name and requested:
                 user_id = requested.replace("people/", "users/", 1)
                 names[user_id] = name
-                _cache_sender(user_id, name)
+                _cache_sender(cache_owner, user_id, name)
     return names
 
 
@@ -139,7 +163,10 @@ async def _list_memberships(chat_service, space_name: str) -> List[dict]:
 
 
 async def _name_spaces(
-    chat_service, people_service, spaces: List[dict]
+    chat_service,
+    people_service,
+    spaces: List[dict],
+    cache_owner: Optional[str] = None,
 ) -> Dict[str, str]:
     """Map space resource names to labels, naming unnamed spaces after their members."""
     labels = {}
@@ -204,7 +231,7 @@ async def _name_spaces(
         for user_id in others[:_SPACE_NAME_MAX_MEMBERS]:
             if user_id not in shown_ids:
                 shown_ids.append(user_id)
-    people_names = await _lookup_people_names(people_service, shown_ids)
+    people_names = await _lookup_people_names(people_service, shown_ids, cache_owner)
 
     for space_name, others in others_by_space.items():
         shown = others[:_SPACE_NAME_MAX_MEMBERS]

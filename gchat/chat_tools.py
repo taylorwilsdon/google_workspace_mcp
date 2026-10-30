@@ -96,7 +96,9 @@ async def list_spaces(
     if not spaces:
         return f"No Chat spaces found for type '{space_type}'."
 
-    space_labels = await _name_spaces(chat_service, people_service, spaces)
+    space_labels = await _name_spaces(
+        chat_service, people_service, spaces, user_google_email
+    )
     output = [f"Found {len(spaces)} Chat spaces (type: {space_type}):"]
     for space in spaces:
         space_id = space.get("name", "")
@@ -156,7 +158,9 @@ async def get_messages(
     space_info = await asyncio.to_thread(
         chat_service.spaces().get(name=space_id).execute
     )
-    space_labels = await _name_spaces(chat_service, people_service, [space_info])
+    space_labels = await _name_spaces(
+        chat_service, people_service, [space_info], user_google_email
+    )
     space_name = space_labels[space_info.get("name")]
 
     # Get messages
@@ -181,14 +185,16 @@ async def get_messages(
             sender_lookup[key] = s
     sender_map = {}
     for key, sender_obj in sender_lookup.items():
-        sender_map[key] = await _resolve_sender(people_service, sender_obj)
+        sender_map[key] = await _resolve_sender(
+            people_service, sender_obj, user_google_email
+        )
 
     output = [f"Messages from '{space_name}' (ID: {space_id}):\n"]
     for msg in messages:
         sender_obj = msg.get("sender", {})
         sender_key = sender_obj.get("name", "")
         sender = sender_map.get(sender_key) or await _resolve_sender(
-            people_service, sender_obj
+            people_service, sender_obj, user_google_email
         )
         create_time = msg.get("createTime", "Unknown Time")
         text_content = msg.get("text", "No text content")
@@ -521,12 +527,15 @@ async def search_messages(
             sender_lookup[key] = s
     sender_map = {}
     for key, sender_obj in sender_lookup.items():
-        sender_map[key] = await _resolve_sender(people_service, sender_obj)
+        sender_map[key] = await _resolve_sender(
+            people_service, sender_obj, user_google_email
+        )
 
     space_names = await _name_spaces(
         chat_service,
         people_service,
         [msg["_space"] for msg in messages if msg.get("_space")],
+        user_google_email,
     )
 
     output = [f"Found {len(messages)} messages matching '{search_desc}' in {context}:"]
@@ -534,7 +543,7 @@ async def search_messages(
         sender_obj = msg.get("sender", {})
         sender_key = sender_obj.get("name", "")
         sender = sender_map.get(sender_key) or await _resolve_sender(
-            people_service, sender_obj
+            people_service, sender_obj, user_google_email
         )
         create_time = msg.get("createTime", "Unknown Time")
         text_content = msg.get("text", "No text content")
