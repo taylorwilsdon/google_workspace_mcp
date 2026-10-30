@@ -2783,7 +2783,9 @@ async def get_doc_as_markdown(
         include_resolved: Whether to include resolved comments (default: False)
         suggestions_view_mode: How to render suggestions in the returned content:
             - "DEFAULT_FOR_CURRENT_ACCESS": Default based on user's access level
-            - "SUGGESTIONS_INLINE": Suggested changes appear inline in the document
+            - "SUGGESTIONS_INLINE": Suggested changes appear inline, marked as
+              {++inserted text++} and {--deleted text--} with a legend at the top;
+              suggested formatting is shown as if accepted
             - "PREVIEW_SUGGESTIONS_ACCEPTED": Preview as if all suggestions were accepted
             - "PREVIEW_WITHOUT_SUGGESTIONS": Preview as if all suggestions were rejected
         tab_id: Optional ID of a single tab to read (from inspect_doc_structure).
