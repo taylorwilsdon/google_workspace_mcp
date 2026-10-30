@@ -45,6 +45,8 @@ gmail/
 
 **Keep tool files thin.** A `*_tools.py` file should contain tool function signatures, docstrings, and a call into the corresponding `*_helpers.py`. Helper functions, API interaction logic, response formatting, and anything reusable belongs in the helpers module. PRs that drop utility functions into tool files will be asked to refactor before merge. This is the single most common reason PRs need revision.
 
+**Tool descriptions come from docstrings.** Everything above a tool docstring's first `Args:`, `Returns:`, `Raises:` or `Examples:` section (or a Google-style alias such as `Parameters:`, `Yields:` or `Example:`) is published verbatim as its description, including headed blocks such as `Important:` or `Actions:`. `Args:` entries become parameter descriptions; nothing below them is published. Put what the model needs above `Args:` and keep it short, since every published word is sent with the tool list.
+
 ## Pull Request Guidelines
 
 - Keep changes focused. One bug fix or one improvement per PR.
