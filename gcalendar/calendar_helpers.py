@@ -358,11 +358,8 @@ def _format_event_detail_lines(
     if status and status != "confirmed":
         lines.append(f"{prefix}Status: {status}")
 
-    # Reminders, visibility and transparency are set by create/update but were
-    # never read back, so a caller could not confirm them. Like eventType and
-    # status they are omitted at their API defaults.
     reminders = item.get("reminders") or {}
-    if reminders and not reminders.get("useDefault", True):
+    if not reminders.get("useDefault", True):
         lines.append(f"{prefix}Reminders: {json.dumps(reminders.get('overrides', []))}")
 
     visibility = item.get("visibility")
