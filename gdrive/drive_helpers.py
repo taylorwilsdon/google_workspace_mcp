@@ -1090,7 +1090,10 @@ DRAWING_EXPORT_FORMATS = {
 
 
 def drawing_export_target(export_format: Optional[str]) -> Tuple[str, str]:
-    """(file extension, export MIME type) for a Google Drawing; PNG unless export_format names another."""
+    """(file extension, export MIME type) for a Google Drawing.
+
+    PNG unless export_format names another supported format.
+    """
     return DRAWING_EXPORT_FORMATS.get(
         (export_format or "").lower(), DRAWING_EXPORT_FORMATS["png"]
     )

@@ -1,7 +1,7 @@
 """Tests that get_drive_file_download_url exports Google Drawings.
 
-Drive refuses get_media on a Drawing, so without an export target the download
-failed. A Drawing exports as PNG by default, or as PDF, JPEG or SVG.
+Drive refuses get_media on a Drawing, so it must be exported: PNG by default,
+or PDF, JPEG or SVG.
 """
 
 import base64
