@@ -47,18 +47,20 @@ def test_drawing_export_target(export_format, expected):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "export_format, mime_type, filename",
+    "name, export_format, mime_type, filename",
     [
-        (None, "image/png", "Sketch.png"),
-        ("pdf", "application/pdf", "Sketch.pdf"),
-        ("svg", "image/svg+xml", "Sketch.svg"),
+        ("Sketch", None, "image/png", "Sketch.png"),
+        ("Sketch", "pdf", "application/pdf", "Sketch.pdf"),
+        ("Sketch", "svg", "image/svg+xml", "Sketch.svg"),
+        ("Blueprint.v2", None, "image/png", "Blueprint.v2.png"),
+        ("Sketch.png", "png", "image/png", "Sketch.png"),
     ],
 )
-async def test_download_url_exports_drawing(export_format, mime_type, filename):
+async def test_download_url_exports_drawing(name, export_format, mime_type, filename):
     mock_service = Mock()
     mock_service.files().export_media.return_value = "req"
     metadata = {
-        "name": "Sketch",
+        "name": name,
         "mimeType": "application/vnd.google-apps.drawing",
         "webViewLink": "https://docs.google.com/drawings/d/draw123",
     }
@@ -70,6 +72,8 @@ async def test_download_url_exports_drawing(export_format, mime_type, filename):
         ),
         patch("gdrive.drive_helpers.MediaIoBaseDownload", _FakeDownloader),
         patch("gdrive.drive_tools.is_stateless_mode", return_value=True),
+        patch("gdrive.drive_tools.gcs_files_enabled", return_value=False),
+        patch("gdrive.drive_tools.get_stateless_inline_max_bytes", return_value=1024),
     ):
         result = await _unwrap(get_drive_file_download_url)(
             service=mock_service,

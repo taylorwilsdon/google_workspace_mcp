@@ -702,7 +702,7 @@ async def get_drive_file_download_url(
         extension, export_mime_type = drawing_export_target(export_format)
         output_mime_type = export_mime_type
         if not output_filename.endswith(f".{extension}"):
-            output_filename = f"{Path(output_filename).stem}.{extension}"
+            output_filename = f"{output_filename}.{extension}"
 
     # Stateless mode has no attachment storage to hand out a URL from, so the
     # file itself goes back as an embedded resource, up to inline_max_bytes.
