@@ -182,6 +182,59 @@ async def test_get_messages_exposes_message_filter_and_forwards_it(mock_resolve)
 
 
 @pytest.mark.asyncio
+@patch("gchat.chat_tools._resolve_sender", new_callable=AsyncMock)
+async def test_get_messages_forwards_page_token_and_returns_the_next_one(mock_resolve):
+    """get_messages should page with page_token and report the next page's token."""
+    mock_resolve.return_value = "Test User"
+
+    chat_service = Mock()
+    chat_service.spaces().get().execute.return_value = {"displayName": "Test Space"}
+    chat_service.spaces().messages().list().execute.return_value = {
+        "messages": [_make_message(text="Second page")],
+        "nextPageToken": "page-3",
+    }
+
+    from gchat.chat_tools import get_messages
+
+    result = await _unwrap(get_messages)(
+        chat_service=chat_service,
+        people_service=Mock(),
+        user_google_email="test@example.com",
+        space_id="spaces/S",
+        page_token="page-2",
+    )
+
+    assert "Second page" in result
+    assert result.endswith("Next page token: page-3")
+    list_kwargs = chat_service.spaces().messages().list.call_args.kwargs
+    assert list_kwargs["pageToken"] == "page-2"
+
+
+@pytest.mark.asyncio
+@patch("gchat.chat_tools._resolve_sender", new_callable=AsyncMock)
+async def test_get_messages_empty_page_with_token_says_more_remain(mock_resolve):
+    """An empty page with a next token should not read as an empty space."""
+    chat_service = Mock()
+    chat_service.spaces().get().execute.return_value = {"displayName": "Test Space"}
+    chat_service.spaces().messages().list().execute.return_value = {
+        "nextPageToken": "page-2",
+    }
+
+    from gchat.chat_tools import get_messages
+
+    result = await _unwrap(get_messages)(
+        chat_service=chat_service,
+        people_service=Mock(),
+        user_google_email="test@example.com",
+        space_id="spaces/S",
+    )
+
+    assert "No messages found" not in result
+    assert "more pages remain" in result
+    assert result.endswith("Next page token: page-2")
+
+
+@pytest.mark.asyncio
 async def test_get_messages_resolves_senders_sequentially(monkeypatch):
     """get_messages should avoid concurrent People API sender resolution."""
     state = {"current": 0, "max": 0}
