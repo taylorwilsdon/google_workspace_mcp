@@ -302,8 +302,11 @@ async def _fetch_paginated_message_body(
     if len(encoded) > ((limit + 2) // 3) * 4:
         raise ToolExecutionError("Message exceeds the paginated-read size limit.")
     try:
-        raw = base64.b64decode(
-            encoded + "=" * (-len(encoded) % 4), altchars=b"-_", validate=True
+        raw = await asyncio.to_thread(
+            base64.b64decode,
+            encoded + "=" * (-len(encoded) % 4),
+            altchars=b"-_",
+            validate=True,
         )
     except (binascii.Error, ValueError) as exc:
         raise ToolExecutionError("Gmail returned invalid raw message data.") from exc
@@ -321,19 +324,15 @@ async def _fetch_paginated_message_body(
         raise ToolExecutionError(
             "Message MIME nesting is too deep to paginate."
         ) from exc
-    encoded_body = text.encode("utf-8")
+    encoded_body = await asyncio.to_thread(text.encode, "utf-8")
     ensure_within_file_size_limit(
         len(encoded_body),
         file_id=message_id,
         kind="message page",
         max_bytes=limit,
     )
-    return (
-        text,
-        len(raw),
-        len(encoded_body),
-        hashlib.sha256(encoded_body).hexdigest(),
-    )
+    digest = await asyncio.to_thread(hashlib.sha256, encoded_body)
+    return text, len(raw), len(encoded_body), digest.hexdigest()
 
 
 async def read_gmail_message_page(
