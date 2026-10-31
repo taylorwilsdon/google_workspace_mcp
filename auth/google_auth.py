@@ -225,11 +225,13 @@ def _find_any_credentials(
     return None, None
 
 
-def save_credentials_to_session(session_id: str, credentials: Credentials):
+def save_credentials_to_session(
+    session_id: str, credentials: Credentials, user_email: Optional[str] = None
+):
     """Saves user credentials using OAuth21SessionStore."""
-    # Get user email from credentials if possible
-    user_email = None
-    if credentials and credentials.id_token:
+    # Credentials loaded from the file credential store carry no id_token,
+    # so only decode it as a fallback when the caller did not supply an email.
+    if not user_email and credentials and credentials.id_token:
         try:
             decoded_token = jwt.decode(
                 credentials.id_token, options={"verify_signature": False}
@@ -1005,7 +1007,7 @@ async def handle_auth_callback(
 
         # If session_id is provided, also save to session cache for compatibility
         if session_id:
-            save_credentials_to_session(session_id, credentials)
+            save_credentials_to_session(session_id, credentials, user_google_email)
 
         return user_google_email, credentials
 
@@ -1204,7 +1206,7 @@ def get_credentials(
                 )
                 if not skip_session_cache:
                     save_credentials_to_session(
-                        session_id, credentials
+                        session_id, credentials, user_google_email
                     )  # Cache for current session
 
         if not credentials:
@@ -1290,7 +1292,7 @@ def get_credentials(
 
             if session_id and (persist_succeeded or is_stateless_mode()):
                 # Update session cache if it was the source or is active
-                save_credentials_to_session(session_id, credentials)
+                save_credentials_to_session(session_id, credentials, user_google_email)
         except RefreshError as e:
             logger.warning(
                 f"[get_credentials] RefreshError - token expired/revoked: {e}. User: '{user_google_email}', Session: '{session_id}'"
