@@ -609,6 +609,8 @@ async def test_callback_binds_credentials_to_originating_session_when_session_mi
 
     assert oauth_store.store_calls == 1
     assert oauth_store.store_kwargs[-1]["mcp_session_id"] == "originating-mcp-session"
-    assert session_cache_writes == [("originating-mcp-session", callback_credentials)]
+    assert session_cache_writes == [
+        ("originating-mcp-session", callback_credentials, "user@gmail.com")
+    ]
     assert "originating-mcp-session" not in caplog.text
     assert "sha256:" in caplog.text
