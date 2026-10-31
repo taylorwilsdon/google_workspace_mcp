@@ -6,6 +6,7 @@ This module provides MCP tools for interacting with Google Drive API.
 
 import asyncio
 import base64
+import json
 import logging
 import io
 
@@ -36,6 +37,7 @@ from core.file_limits import (
     download_media_bytes,
     ensure_within_file_size_limit,
     get_max_content_chars,
+    get_max_file_bytes,
     get_paged_content_cache_bytes,
     get_stateless_inline_max_bytes,
     page_content_text,
@@ -81,6 +83,7 @@ from gdrive.drive_helpers import (
     _decode_base64_upload,
     _download_file_bytes,
     _download_file_to_temp,
+    download_drive_revision_to_temp,
     _get_content_update_lock,
     _import_with_conversion,
     _list_shared_drives_impl,
@@ -100,6 +103,7 @@ from gdrive.drive_helpers import (
     get_drive_image_url,
     has_explicit_trashed_clause,
     initiate_resumable_upload_session,
+    list_drive_file_revisions_data,
     native_replace_format_map,
     normalize_drive_query_v2_compat,
     reject_sources_with_upload_url,
@@ -120,15 +124,27 @@ _paged_content_cache = PagedContentCache(ttl_seconds=600)
 
 
 def _stateless_too_large_message(
-    file_name: str, file_id: str, size_bytes: int, mime_type: str, limit: int
+    file_name: str,
+    file_id: str,
+    size_bytes: Optional[int],
+    mime_type: Optional[str],
+    limit: int,
+    *,
+    revision_id: Optional[str] = None,
+    revision_modified_time: Optional[str] = None,
 ) -> str:
     """Explain why a stateless-mode download was not returned inline."""
-    return "\n".join(
+    lines = [f"File: {file_name}", f"File ID: {file_id}"]
+    if revision_id:
+        lines.append(
+            f"Revision: {revision_id} ({revision_modified_time or 'modified time unavailable'})"
+        )
+    lines.extend(
         [
-            f"File: {file_name}",
-            f"File ID: {file_id}",
-            f"Size: {size_bytes / 1024:.1f} KB ({size_bytes} bytes)",
-            f"MIME Type: {mime_type}",
+            f"Size: {size_bytes / 1024:.1f} KB ({size_bytes} bytes)"
+            if size_bytes is not None
+            else f"Size: exceeds {limit} bytes (exact size unavailable)",
+            f"MIME Type: {mime_type or 'unavailable'}",
             "",
             "Not returned: stateless mode has no file storage, and this file "
             f"exceeds the inline limit of {limit} bytes "
@@ -137,23 +153,33 @@ def _stateless_too_large_message(
             "get_drive_file_content for its text, or raise the limit.",
         ]
     )
+    return "\n".join(lines)
 
 
 def _stateless_inline_disabled_message(
-    file_name: str, file_id: str, mime_type: str
+    file_name: str,
+    file_id: str,
+    mime_type: Optional[str],
+    *,
+    revision_id: Optional[str] = None,
+    revision_modified_time: Optional[str] = None,
 ) -> str:
     """Explain that stateless-mode downloads are not returned inline at all."""
-    return "\n".join(
+    lines = [f"File: {file_name}", f"File ID: {file_id}"]
+    if revision_id:
+        lines.append(
+            f"Revision: {revision_id} ({revision_modified_time or 'modified time unavailable'})"
+        )
+    lines.extend(
         [
-            f"File: {file_name}",
-            f"File ID: {file_id}",
-            f"MIME Type: {mime_type}",
+            f"MIME Type: {mime_type if mime_type is not None else 'unavailable'}",
             "",
             "Not returned: stateless mode has no file storage, and inline "
             "returns are disabled (WORKSPACE_MCP_STATELESS_INLINE_MAX_BYTES=0). "
             "Use get_drive_file_content for its text, or raise the limit.",
         ]
     )
+    return "\n".join(lines)
 
 
 @server.tool(
@@ -331,29 +357,37 @@ async def _read_drive_file_body(
     file_metadata: Dict[str, Any],
     export_mime_type: Optional[str],
     max_chars: Optional[int],
+    *,
+    file_content_bytes: Optional[bytes] = None,
 ) -> tuple[str, List[ImageContent], bool]:
     """Download and extract a Drive file; return its text, attached images, and
-    whether the text is pageable. Raises FileTooLargeError over a size limit."""
+    whether the text is pageable. Raises FileTooLargeError over a size limit.
+
+    file_content_bytes may supply an already acquired payload, such as a
+    historical revision, without requesting the current file body.
+    """
     mime_type = file_metadata.get("mimeType", "")
+    parse_mime_type = mime_type
     file_name = file_metadata.get("name", "Unknown File")
     web_view_link = file_metadata.get("webViewLink", "#")
 
-    # Declared Drive size is only meaningful for binary downloads (not exports).
-    if not export_mime_type:
-        ensure_within_file_size_limit(
-            file_metadata.get("size"),
+    if file_content_bytes is None:
+        # Declared Drive size is only meaningful for binary downloads (not exports).
+        if not export_mime_type:
+            ensure_within_file_size_limit(
+                file_metadata.get("size"),
+                file_name=file_name,
+                file_id=file_id,
+                web_view_link=web_view_link,
+            )
+
+        request_obj = _media_request(service, file_id, export_mime_type)
+        file_content_bytes = await download_media_bytes(
+            request_obj,
             file_name=file_name,
             file_id=file_id,
             web_view_link=web_view_link,
         )
-
-    request_obj = _media_request(service, file_id, export_mime_type)
-    file_content_bytes = await download_media_bytes(
-        request_obj,
-        file_name=file_name,
-        file_id=file_id,
-        web_view_link=web_view_link,
-    )
 
     # Attempt Office XML extraction only for actual Office XML files
     office_mime_types = {
@@ -364,18 +398,18 @@ async def _read_drive_file_body(
 
     images: List[ImageContent] = []
     paged = True
-    if mime_type in office_mime_types:
+    if parse_mime_type in office_mime_types:
         # Offload Office XML extraction to a thread to avoid blocking the event loop
         try:
             office_text = await asyncio.to_thread(
-                extract_office_xml_text, file_content_bytes, mime_type
+                extract_office_xml_text, file_content_bytes, parse_mime_type
             )
         except OfficeXmlTooLargeError as e:
             # Not damaged, and not to be retried as raw text: say what happened.
-            office_text = f"[Could not read '{mime_type}' file - {e}]"
+            office_text = f"[Could not read '{parse_mime_type}' file - {e}]"
         except OfficeXmlExtractionError as e:
             office_text = (
-                f"[Could not read '{mime_type}' file - it appears damaged or is "
+                f"[Could not read '{parse_mime_type}' file - it appears damaged or is "
                 f"not a valid Office document: {e}]"
             )
         if office_text:
@@ -386,10 +420,10 @@ async def _read_drive_file_body(
                 body_text = file_content_bytes.decode("utf-8")
             except UnicodeDecodeError:
                 body_text = (
-                    f"[Binary or unsupported text encoding for mimeType '{mime_type}' - "
+                    f"[Binary or unsupported text encoding for mimeType '{parse_mime_type}' - "
                     f"{len(file_content_bytes)} bytes]"
                 )
-    elif mime_type == "application/pdf":
+    elif parse_mime_type == "application/pdf":
         # Offload PDF text extraction to a thread to avoid blocking the event loop
         pdf_text = await asyncio.to_thread(extract_pdf_text, file_content_bytes)
         if pdf_text:
@@ -400,7 +434,7 @@ async def _read_drive_file_body(
                 f"- the file may be scanned/image-only. "
                 f"Use get_drive_file_download_url to get a direct download link instead.]"
             )
-    elif mime_type in INLINE_IMAGE_MIME_TYPES and (
+    elif parse_mime_type in INLINE_IMAGE_MIME_TYPES and (
         inline_mime_type := sniff_inline_image_mime_type(file_content_bytes)
     ):
         images.append(image_content_from_bytes(file_content_bytes, inline_mime_type))
@@ -408,7 +442,7 @@ async def _read_drive_file_body(
             f"[Image attached as image content - {len(file_content_bytes)} bytes]"
         )
         paged = False
-    elif mime_type == SVG_MIME_TYPE:
+    elif parse_mime_type == SVG_MIME_TYPE:
         svg = svg_content(file_content_bytes)
         if svg is not None:
             body_text = svg.markup
@@ -419,8 +453,8 @@ async def _read_drive_file_body(
                 f"{len(file_content_bytes)} bytes. "
                 f"Use get_drive_file_download_url to get the file instead.]"
             )
-    elif mime_type in IMAGE_MIME_TYPES:
-        body_text = encode_image_content(file_content_bytes, mime_type)
+    elif parse_mime_type in IMAGE_MIME_TYPES:
+        body_text = encode_image_content(file_content_bytes, parse_mime_type)
         paged = False
         if max_chars is not None and len(body_text) > max_chars:
             body_text = (
@@ -436,7 +470,7 @@ async def _read_drive_file_body(
             body_text = file_content_bytes.decode("utf-8")
         except UnicodeDecodeError:
             body_text = (
-                f"[Binary or unsupported text encoding for mimeType '{mime_type}' - "
+                f"[Binary or unsupported text encoding for mimeType '{parse_mime_type}' - "
                 f"{len(file_content_bytes)} bytes]"
             )
 
@@ -460,6 +494,7 @@ async def get_drive_file_content(
     file_id: str,
     offset: int = 0,
     full_content: bool = False,
+    revision_id: Optional[str] = None,
 ) -> str:
     """
     Retrieves the content of a specific Google Drive file by ID, supporting files in shared drives.
@@ -475,6 +510,7 @@ async def get_drive_file_content(
       in the markup. BMP and TIFF → base64 text, or a download hint when over
       the default page size.
     • Any other file → downloaded; tries UTF-8 decode, else notes binary.
+    • Historical revisions → pass revision_id from list_drive_items(resource_type="revisions", file_id=...).
 
     Args:
         user_google_email: The user’s Google email address.
@@ -482,14 +518,24 @@ async def get_drive_file_content(
         offset: Character offset to read on from after a truncated result.
         full_content: Return all content from offset onward in one call
             instead of a page of the default size.
+        revision_id: Optional nonblank historical revision ID to read instead of the current file.
+            Keep the same revision ID when reading subsequent pages by offset.
 
     Returns:
         str: The file content as plain text with a metadata header that carries
-        the file's version, so a reader paging by offset can tell when it
-        changed and restart from offset=0. For images, a ToolResult with that
-        text followed by the image as image content.
+        the current file's version or the selected historical revision and its
+        modification time. If the current version changes between pages,
+        restart from offset=0. For images, a ToolResult with that text followed
+        by the image as image content.
     """
-    logger.info(f"[get_drive_file_content] Invoked. File ID: '{file_id}'")
+    if revision_id is not None:
+        revision_id = revision_id.strip()
+        if not revision_id:
+            raise UserInputError("revision_id cannot be blank.")
+
+    logger.info(
+        f"[get_drive_file_content] Invoked. File ID: '{file_id}', Revision: {revision_id}"
+    )
     if offset < 0:
         raise UserInputError(f"offset must be >= 0, got {offset}.")
 
@@ -510,46 +556,88 @@ async def get_drive_file_content(
 
     max_chars = None if full_content else get_max_content_chars()
     version = file_metadata.get("version")
-    # Policy and DLP download restrictions can change without a new version.
-    can_download = (file_metadata.get("capabilities") or {}).get("canDownload")
-    cache_bytes = get_paged_content_cache_bytes()
-    cache_key = (
-        (user_google_email.lower(), file_id, version, export_mime_type)
-        if cache_bytes
-        and user_google_email
-        and version is not None
-        and can_download is True
-        and not is_stateless_mode()
-        else None
-    )
-    cached = _paged_content_cache.get(cache_key) if cache_key and offset else None
-    if cached is not None:
-        logger.debug(
-            "[get_drive_file_content] Reading on from kept text of %s", file_id
-        )
-        body_text, images, paged = cached, [], True
-    else:
+    revision_modified_time = None
+    response_mime_type = mime_type
+
+    if revision_id:
+        revision_path = None
+        max_bytes = get_max_file_bytes()
         try:
-            body_text, images, paged = await _read_drive_file_body(
-                service, file_id, file_metadata, export_mime_type, max_chars
+            revision_download = await download_drive_revision_to_temp(
+                service,
+                file_id,
+                revision_id,
+                max_bytes=max_bytes,
+                for_content=True,
             )
+            revision_path = revision_download["path"]
+            ensure_within_file_size_limit(
+                revision_path.stat().st_size,
+                file_name=file_name,
+                file_id=file_id,
+                web_view_link=web_view_link,
+                max_bytes=max_bytes,
+            )
+            file_content_bytes = await asyncio.to_thread(revision_path.read_bytes)
+            response_mime_type = revision_download["output_mime_type"]
+            revision_modified_time = revision_download["revision_modified_time"]
         except FileTooLargeError as e:
             return str(e)
-        truncated = max_chars is not None and len(body_text) > max_chars
-        if paged and (truncated or offset) and version is not None:
-            current = await asyncio.to_thread(
-                service.files()
-                .get(fileId=file_id, fields="version", supportsAllDrives=True)
-                .execute
+        finally:
+            if revision_path is not None:
+                revision_path.unlink(missing_ok=True)
+
+        revision_metadata = dict(file_metadata)
+        revision_metadata["mimeType"] = response_mime_type
+        body_text, images, paged = await _read_drive_file_body(
+            service,
+            file_id,
+            revision_metadata,
+            None,
+            max_chars,
+            file_content_bytes=file_content_bytes,
+        )
+    else:
+        # Policy and DLP download restrictions can change without a new version.
+        can_download = (file_metadata.get("capabilities") or {}).get("canDownload")
+        cache_bytes = get_paged_content_cache_bytes()
+        cache_key = (
+            (user_google_email.lower(), file_id, version, export_mime_type)
+            if cache_bytes
+            and user_google_email
+            and version is not None
+            and can_download is True
+            and not is_stateless_mode()
+            else None
+        )
+        cached = _paged_content_cache.get(cache_key) if cache_key and offset else None
+        if cached is not None:
+            logger.debug(
+                "[get_drive_file_content] Reading on from kept text of %s", file_id
             )
-            if current.get("version") != version:
-                return (
-                    f'File "{file_name}" (ID: {file_id}) changed while it was '
-                    f"being read. Call again with offset=0 to read the current "
-                    f"version from the start."
+            body_text, images, paged = cached, [], True
+        else:
+            try:
+                body_text, images, paged = await _read_drive_file_body(
+                    service, file_id, file_metadata, export_mime_type, max_chars
                 )
-        if cache_key and paged and truncated:
-            _paged_content_cache.put(cache_key, body_text, max_bytes=cache_bytes)
+            except FileTooLargeError as e:
+                return str(e)
+            truncated = max_chars is not None and len(body_text) > max_chars
+            if paged and (truncated or offset) and version is not None:
+                current = await asyncio.to_thread(
+                    service.files()
+                    .get(fileId=file_id, fields="version", supportsAllDrives=True)
+                    .execute
+                )
+                if current.get("version") != version:
+                    return (
+                        f'File "{file_name}" (ID: {file_id}) changed while it was '
+                        f"being read. Call again with offset=0 to read the current "
+                        f"version from the start."
+                    )
+            if cache_key and paged and truncated:
+                _paged_content_cache.put(cache_key, body_text, max_bytes=cache_bytes)
 
     if paged:
         body_text = page_content_text(
@@ -562,9 +650,17 @@ async def get_drive_file_content(
             images = []
 
     # Assemble response
-    version_text = f", Version: {version}" if version is not None else ""
+    revision_line = (
+        f"Revision: {revision_id} ({revision_modified_time or 'modified time unavailable'})\n"
+        if revision_id
+        else ""
+    )
+    version_text = (
+        f", Version: {version}" if version is not None and not revision_id else ""
+    )
     header = (
-        f'File: "{file_name}" (ID: {file_id}, Type: {mime_type}{version_text})\n'
+        f'File: "{file_name}" (ID: {file_id}, Type: {response_mime_type}{version_text})\n'
+        f"{revision_line}"
         f"Link: {web_view_link}\n\n--- CONTENT ---\n"
     )
     if images:
@@ -596,6 +692,7 @@ async def get_drive_file_download_url(
     user_google_email: str,
     file_id: str,
     export_format: Optional[str] = None,
+    revision_id: Optional[str] = None,
 ) -> str:
     """
     Downloads a Google Drive file and saves it to local disk.
@@ -613,6 +710,7 @@ async def get_drive_file_download_url(
     - Google Drawings -> PNG (default), or PDF, JPG or SVG if export_format='pdf', 'jpg' or 'svg'
 
     For other files, downloads the original file format.
+    Pass revision_id to download a Drive-visible historical revision.
 
     Args:
         user_google_email: The user's Google email address. Required.
@@ -622,6 +720,7 @@ async def get_drive_file_download_url(
                       If not specified, uses sensible defaults (PDF for Docs/Slides, XLSX for Sheets,
                       PNG for Drawings).
                       For Sheets: supports 'csv', 'pdf', or 'xlsx' (default).
+        revision_id: Optional nonblank revision ID from list_drive_items(resource_type="revisions", file_id=...).
 
     Returns:
         str: File metadata with either a local file path or download URL. In
@@ -629,8 +728,14 @@ async def get_drive_file_download_url(
         embeds the file; the annotation stays str so the advertised output
         schema is unchanged.
     """
+    if revision_id is not None:
+        revision_id = revision_id.strip()
+        if not revision_id:
+            raise UserInputError("revision_id cannot be blank.")
+
     logger.info(
-        f"[get_drive_file_download_url] Invoked. File ID: '{file_id}', Export format: {export_format}"
+        f"[get_drive_file_download_url] Invoked. File ID: '{file_id}', "
+        f"Export format: {export_format}, Revision: {revision_id}"
     )
 
     # Resolve shortcuts and get file metadata
@@ -648,7 +753,7 @@ async def get_drive_file_download_url(
     output_filename = file_name
     output_mime_type = mime_type
 
-    if mime_type == "application/vnd.google-apps.document":
+    if not revision_id and mime_type == "application/vnd.google-apps.document":
         # Google Docs
         if export_format == "docx":
             export_mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -662,7 +767,7 @@ async def get_drive_file_download_url(
             if not output_filename.endswith(".pdf"):
                 output_filename = f"{Path(output_filename).stem}.pdf"
 
-    elif mime_type == "application/vnd.google-apps.spreadsheet":
+    elif not revision_id and mime_type == "application/vnd.google-apps.spreadsheet":
         # Google Sheets
         if export_format == "csv":
             export_mime_type = "text/csv"
@@ -683,7 +788,7 @@ async def get_drive_file_download_url(
             if not output_filename.endswith(".xlsx"):
                 output_filename = f"{Path(output_filename).stem}.xlsx"
 
-    elif mime_type == "application/vnd.google-apps.presentation":
+    elif not revision_id and mime_type == "application/vnd.google-apps.presentation":
         # Google Slides
         if export_format == "pptx":
             export_mime_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
@@ -697,12 +802,14 @@ async def get_drive_file_download_url(
             if not output_filename.endswith(".pdf"):
                 output_filename = f"{Path(output_filename).stem}.pdf"
 
-    elif mime_type == GOOGLE_DRAWINGS_MIME_TYPE:
+    elif not revision_id and mime_type == GOOGLE_DRAWINGS_MIME_TYPE:
         # Google Drawings
         extension, export_mime_type = drawing_export_target(export_format)
         output_mime_type = export_mime_type
         if not output_filename.endswith(f".{extension}"):
             output_filename = f"{output_filename}.{extension}"
+
+    revision_modified_time = None
 
     # Stateless mode has no attachment storage to hand out a URL from, so the
     # file itself goes back as an embedded resource, up to inline_max_bytes.
@@ -713,12 +820,19 @@ async def get_drive_file_download_url(
         else None
     )
     if inline_max_bytes == 0:
-        return _stateless_inline_disabled_message(file_name, file_id, output_mime_type)
+        return _stateless_inline_disabled_message(
+            file_name,
+            file_id,
+            None if revision_id else output_mime_type,
+            revision_id=revision_id,
+            revision_modified_time=revision_modified_time,
+        )
     # Drive's declared size is the download size only for binary files; an
     # export's size is unknown until it has been downloaded.
-    declared_size = int(file_metadata.get("size") or 0)
+    declared_size = int(file_metadata.get("size") or 0) if not revision_id else 0
     if (
         inline_max_bytes is not None
+        and not revision_id
         and not export_mime_type
         and declared_size > inline_max_bytes
     ):
@@ -728,31 +842,78 @@ async def get_drive_file_download_url(
 
     # Stream the download straight to disk. Outside the capped stateless inline
     # return, the payload is never held in memory as a whole.
-    tmp_path = await _download_file_to_temp(service, file_id, export_mime_type)
-    size_bytes = tmp_path.stat().st_size
+    if revision_id:
+        try:
+            revision_download = await download_drive_revision_to_temp(
+                service,
+                file_id,
+                revision_id,
+                export_format=export_format,
+                max_bytes=inline_max_bytes,
+            )
+        except FileTooLargeError:
+            if inline_max_bytes is None:
+                raise
+            # Revision metadata is returned only after a successful download.
+            return _stateless_too_large_message(
+                file_name,
+                file_id,
+                None,
+                None,
+                inline_max_bytes,
+                revision_id=revision_id,
+            )
+        file_id = revision_download["file_id"]
+        file_name = revision_download["file_name"]
+        output_filename = revision_download["output_filename"]
+        output_mime_type = revision_download["output_mime_type"]
+        export_mime_type = revision_download.get("export_mime_type")
+        revision_modified_time = revision_download["revision_modified_time"]
+        tmp_path = revision_download["path"]
+    else:
+        tmp_path = await _download_file_to_temp(service, file_id, export_mime_type)
+    try:
+        size_bytes = tmp_path.stat().st_size
+    except BaseException:
+        if revision_id:
+            tmp_path.unlink(missing_ok=True)
+        raise
     size_kb = size_bytes / 1024 if size_bytes else 0
 
     if inline_max_bytes is not None:
         try:
             if size_bytes > inline_max_bytes:
                 return _stateless_too_large_message(
-                    file_name, file_id, size_bytes, output_mime_type, inline_max_bytes
+                    file_name,
+                    file_id,
+                    size_bytes,
+                    output_mime_type,
+                    inline_max_bytes,
+                    revision_id=revision_id,
+                    revision_modified_time=revision_modified_time,
                 )
             with tmp_path.open("rb") as fh:
                 payload = fh.read()
         finally:
             tmp_path.unlink(missing_ok=True)
-        summary = "\n".join(
+        summary_lines = [
+            "File downloaded successfully!",
+            f"File: {file_name}",
+            f"File ID: {file_id}",
+        ]
+        if revision_id:
+            summary_lines.append(
+                f"Revision: {revision_id} ({revision_modified_time or 'modified time unavailable'})"
+            )
+        summary_lines.extend(
             [
-                "File downloaded successfully!",
-                f"File: {file_name}",
-                f"File ID: {file_id}",
                 f"Size: {size_kb:.1f} KB ({size_bytes} bytes)",
                 f"MIME Type: {output_mime_type}",
                 "\nStateless mode: the file is attached to this result as an "
                 f"embedded resource ({output_filename}).",
             ]
         )
+        summary = "\n".join(summary_lines)
         if export_mime_type:
             summary += (
                 f"\n\nNote: Google native file exported to {output_mime_type} format."
@@ -796,6 +957,12 @@ async def get_drive_file_download_url(
             f"MIME Type: {output_mime_type}",
         ]
 
+        if revision_id:
+            result_lines.insert(
+                3,
+                f"Revision: {revision_id} ({revision_modified_time or 'modified time unavailable'})",
+            )
+
         if get_transport_mode() == "stdio":
             result_lines.append(f"\n📎 Saved to: {result.path}")
             result_lines.append(
@@ -816,16 +983,29 @@ async def get_drive_file_download_url(
         )
         return "\n".join(result_lines)
 
+    except asyncio.CancelledError:
+        if revision_id:
+            tmp_path.unlink(missing_ok=True)
+        raise
     except Exception as e:
         # save_attachment_from_path consumes tmp_path on success only; if it
         # raised before the move completed the temp file is still ours to drop.
         tmp_path.unlink(missing_ok=True)
         logger.error(f"[get_drive_file_download_url] Failed to save file: {e}")
-        return (
+        result = (
             f"Error: Failed to save file for download.\n"
             f"File was downloaded successfully ({size_kb:.1f} KB) but could not be saved.\n\n"
             f"Error details: {str(e)}"
         )
+        if revision_id:
+            result = result.replace(
+                "\n\nError details:",
+                f"\n\nRevision: {revision_id} "
+                f"({revision_modified_time or 'modified time unavailable'})\n"
+                "Error details:",
+                1,
+            )
+        return result
 
 
 @server.tool(
@@ -854,18 +1034,25 @@ async def list_drive_items(
     resource_type: str = "items",
     query: Optional[str] = None,
     include_organizers: bool = False,
+    file_id: Optional[str] = None,
 ) -> str:
     """
-    Lists files/folders or shared drive containers, supporting shared drives.
+    Lists files/folders, shared drive containers, or a file's revision history.
     If `drive_id` is specified, lists items within that shared drive. `folder_id` is then relative to that drive (or use drive_id as folder_id for root).
     If `drive_id` is not specified, lists items from user's "My Drive" and accessible shared drives (if `include_items_from_all_drives` is True).
     Set `resource_type` to "shared_drives" to list shared drive containers instead of folder contents.
+    Set `resource_type` to "revisions" and provide `file_id` to list one page of
+    Drive-visible revision history. Use a returned revision ID with
+    get_drive_file_content or get_drive_file_download_url to preview that version.
+    Google can compact or omit older revisions, so this is not a complete audit log.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
         folder_id (str): The ID of the Google Drive folder. Defaults to 'root'. For a shared drive, this can be the shared drive's ID to list its root, or a folder ID within that shared drive.
         page_size (int): The maximum number of items to return. Defaults to 100.
-        page_token (Optional[str]): Page token from a previous response's nextPageToken to retrieve the next page of results.
+                         For resource_type="revisions", must be between 1 and 1000.
+        page_token (Optional[str]): Page token from a previous response's nextPageToken
+                                   (next_page_token for revisions) to retrieve the next page.
         drive_id (Optional[str]): ID of the shared drive. If provided, the listing is scoped to this drive.
         include_items_from_all_drives (bool): Whether items from all accessible shared drives should be included if `drive_id` is not set. Defaults to True.
         corpora (Optional[str]): Corpus to query ('user', 'drive', 'allDrives'). If `drive_id` is set and `corpora` is None, 'drive' is used. If None and no `drive_id`, 'allDrives' is used when `include_items_from_all_drives` is True.
@@ -881,16 +1068,23 @@ async def list_drive_items(
                                   'starred', 'viewedByMeTime'. Example: 'modifiedTime desc' or 'folder,modifiedTime desc,name'.
                                   Defaults to None (Drive API default ordering).
         resource_type (str): What to list. Use "items" for folder contents or
-                             "shared_drives" for shared drive containers. Defaults to "items".
+                             "shared_drives" for shared drive containers, or "revisions"
+                             for a file's revision history. Defaults to "items".
         query (Optional[str]): Shared drive query used only when resource_type="shared_drives",
                                e.g. "name contains 'Engineering'".
         include_organizers (bool): When resource_type="shared_drives", include principals
                                    with the organizer role. This costs one extra permissions.list
                                    API call per shared drive returned. Defaults to False.
+        file_id (Optional[str]): Drive file ID or shortcut. Required only with
+                                 resource_type="revisions". Folder, search, sorting, shared
+                                 drive and detailed-output options do not apply to revisions.
 
     Returns:
         str: A formatted list of files/folders in the specified folder or shared drives.
              Includes a nextPageToken line when more results are available.
+             Revisions return a JSON string with file metadata, revision IDs, timestamps,
+             editor information, MIME/size and retention metadata, download_available,
+             next_page_token, and a history_scope caveat.
     """
     logger.info(
         f"[list_drive_items] Invoked. Email: '{user_google_email}', Folder ID: '{folder_id}', "
@@ -898,6 +1092,20 @@ async def list_drive_items(
     )
 
     normalized_resource_type = resource_type.lower().strip()
+    if file_id is not None and normalized_resource_type != "revisions":
+        raise UserInputError(
+            "file_id is only supported when resource_type='revisions'."
+        )
+    if normalized_resource_type == "revisions":
+        if not file_id or not file_id.strip():
+            raise UserInputError("file_id is required when resource_type='revisions'.")
+        revisions = await list_drive_file_revisions_data(
+            service,
+            file_id,
+            page_size=page_size,
+            page_token=page_token,
+        )
+        return json.dumps(revisions, ensure_ascii=False)
     if normalized_resource_type == "shared_drives":
         return await _list_shared_drives_impl(
             service=service,
@@ -908,7 +1116,9 @@ async def list_drive_items(
             include_organizers=include_organizers,
         )
     if normalized_resource_type != "items":
-        raise ValueError("resource_type must be either 'items' or 'shared_drives'")
+        raise ValueError(
+            "resource_type must be 'items', 'shared_drives', or 'revisions'"
+        )
 
     resolved_folder_id = await resolve_folder_id(service, folder_id)
     final_query = f"'{resolved_folder_id}' in parents and trashed=false"
