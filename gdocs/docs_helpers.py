@@ -1320,7 +1320,8 @@ def create_insert_date_request(
 
     ``date`` is ``YYYY-MM-DD`` or an ISO 8601 timestamp that carries a time zone.
     A date-only value is sent as noon in ``timezone`` (UTC when none is given), so
-    the chip never displays a neighbouring day.
+    the chip never displays a neighbouring day. ``timezone`` is sent to Docs only
+    with ``TIME_FORMAT_HOUR_MINUTE_TIMEZONE``.
     """
     if "T" in date:
         timestamp = date
@@ -1339,7 +1340,8 @@ def create_insert_date_request(
     }
     if time_format:
         props["timeFormat"] = time_format
-    if timezone:
+    # The Docs API rejects timeZoneId unless the time format shows a zone.
+    if timezone and time_format == "TIME_FORMAT_HOUR_MINUTE_TIMEZONE":
         props["timeZoneId"] = timezone
     return {
         "insertDate": {
