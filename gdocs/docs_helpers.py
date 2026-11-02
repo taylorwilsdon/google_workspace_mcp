@@ -1324,7 +1324,12 @@ def create_insert_date_request(
     with ``TIME_FORMAT_HOUR_MINUTE_TIMEZONE``.
     """
     if "T" in date:
-        timestamp = date
+        # Docs wants RFC 3339 with seconds; accept any zoned ISO form and send UTC.
+        timestamp = (
+            datetime.fromisoformat(date.replace("Z", "+00:00"))
+            .astimezone(dt_timezone.utc)
+            .strftime("%Y-%m-%dT%H:%M:%SZ")
+        )
     elif timezone:
         local_noon = datetime.strptime(date, "%Y-%m-%d").replace(
             hour=12, tzinfo=ZoneInfo(timezone)

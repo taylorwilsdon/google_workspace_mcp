@@ -98,3 +98,21 @@ def test_insert_date_rejects_unknown_timezone():
                 "timezone": "Mars/Base",
             }
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "given, expected",
+    [
+        ("2026-11-03T09:30Z", "2026-11-03T09:30:00Z"),
+        ("2026-11-03T20:30:00+11:00", "2026-11-03T09:30:00Z"),
+        ("2026-11-03T09:30:00.250Z", "2026-11-03T09:30:00Z"),
+    ],
+)
+async def test_timestamps_are_normalised_to_utc_with_seconds(given, expected):
+    operation = TypeAdapter(BatchDocOperation).validate_python(
+        {"type": "insert_date", "date": given, "index": 1}
+    )
+    requests = await _execute(operation.model_dump(exclude_none=True))
+    props = requests[0]["insertDate"]["dateElementProperties"]
+    assert props["timestamp"] == expected
