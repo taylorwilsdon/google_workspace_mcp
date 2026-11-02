@@ -8,9 +8,17 @@ LLMs receive a machine-readable contract instead of a free-form object array.
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import Annotated, Any, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, BeforeValidator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    BeforeValidator,
+    field_validator,
+    model_validator,
+)
 
 
 ParagraphBorderEdge = Literal["top", "bottom", "left", "right", "between"]
@@ -407,6 +415,35 @@ class InsertPersonOperation(InsertionLocationOperation, SegmentTargetDocOperatio
     )
 
 
+class InsertDateOperation(InsertionLocationOperation, SegmentTargetDocOperation):
+    type: Literal["insert_date"]
+    date: str = Field(
+        min_length=1,
+        description="Date for the smart chip, YYYY-MM-DD or a full ISO 8601 timestamp.",
+    )
+    date_format: Optional[str] = Field(
+        default=None,
+        description="Docs API DateFormat enum, e.g. DATE_FORMAT_MONTH_DAY_YEAR_ABBREVIATED (default) or DATE_FORMAT_ISO8601.",
+    )
+    time_format: Optional[str] = Field(
+        default=None,
+        description="Docs API TimeFormat enum, e.g. TIME_FORMAT_DISABLED or TIME_FORMAT_HOUR_MINUTE.",
+    )
+    timezone: Optional[str] = Field(default=None, description="IANA time zone ID.")
+
+    @field_validator("date")
+    @classmethod
+    def _validate_date(cls, value: str) -> str:
+        """Reject anything that is not YYYY-MM-DD or an ISO 8601 timestamp."""
+        try:
+            datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError(
+                "date must be YYYY-MM-DD or an ISO 8601 timestamp"
+            ) from exc
+        return value
+
+
 class InsertDocTabOperation(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -461,6 +498,7 @@ BatchDocOperation = Annotated[
         CreateHeaderFooterOperation,
         InsertImageOperation,
         InsertPersonOperation,
+        InsertDateOperation,
         InsertDocTabOperation,
         DeleteDocTabOperation,
         UpdateDocTabOperation,
