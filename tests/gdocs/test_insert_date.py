@@ -58,9 +58,42 @@ async def test_insert_date_at_end_of_segment_with_timezone():
     assert "endOfSegmentLocation" in requests[0]["insertDate"]
 
 
-@pytest.mark.parametrize("bad_date", ["", "tomorrow", "2026-13-45"])
+@pytest.mark.parametrize(
+    "bad_date",
+    ["", "tomorrow", "2026-13-45", "2026-11-03T09:30:00", "2026-11-03 09:30:00Z"],
+)
 def test_insert_date_rejects_invalid_dates(bad_date):
     with pytest.raises(ValidationError):
         TypeAdapter(BatchDocOperation).validate_python(
             {"type": "insert_date", "date": bad_date, "index": 1}
+        )
+
+
+@pytest.mark.asyncio
+async def test_date_only_with_timezone_is_local_noon_in_that_zone():
+    operation = TypeAdapter(BatchDocOperation).validate_python(
+        {
+            "type": "insert_date",
+            "date": "2026-11-03",
+            "index": 5,
+            "timezone": "Pacific/Auckland",
+        }
+    )
+    requests = await _execute(operation.model_dump(exclude_none=True))
+    props = requests[0]["insertDate"]["dateElementProperties"]
+    # Noon in Auckland (+13:00 in November) is 23:00 UTC the day before, so the chip
+    # still shows 3 Nov in its own zone.
+    assert props["timestamp"] == "2026-11-02T23:00:00Z"
+    assert props["timeZoneId"] == "Pacific/Auckland"
+
+
+def test_insert_date_rejects_unknown_timezone():
+    with pytest.raises(ValidationError):
+        TypeAdapter(BatchDocOperation).validate_python(
+            {
+                "type": "insert_date",
+                "date": "2026-11-03",
+                "index": 1,
+                "timezone": "Mars/Base",
+            }
         )

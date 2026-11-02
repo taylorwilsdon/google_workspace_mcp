@@ -954,7 +954,7 @@
             "type": "string"
           },
           "date": {
-            "description": "Date for the smart chip, YYYY-MM-DD or a full ISO 8601 timestamp.",
+            "description": "Date for the smart chip, YYYY-MM-DD or an ISO 8601 timestamp with a time zone.",
             "minLength": 1,
             "type": "string"
           },

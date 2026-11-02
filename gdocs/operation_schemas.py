@@ -11,6 +11,8 @@ import json
 from datetime import datetime
 from typing import Annotated, Any, Literal, Optional, Union
 
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -419,7 +421,7 @@ class InsertDateOperation(InsertionLocationOperation, SegmentTargetDocOperation)
     type: Literal["insert_date"]
     date: str = Field(
         min_length=1,
-        description="Date for the smart chip, YYYY-MM-DD or a full ISO 8601 timestamp.",
+        description="Date for the smart chip, YYYY-MM-DD or an ISO 8601 timestamp with a time zone.",
     )
     date_format: Optional[str] = Field(
         default=None,
@@ -434,13 +436,31 @@ class InsertDateOperation(InsertionLocationOperation, SegmentTargetDocOperation)
     @field_validator("date")
     @classmethod
     def _validate_date(cls, value: str) -> str:
-        """Reject anything that is not YYYY-MM-DD or an ISO 8601 timestamp."""
+        """Accept YYYY-MM-DD or an ISO 8601 timestamp that carries a time zone."""
         try:
-            datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if len(value) == 10:
+                datetime.strptime(value, "%Y-%m-%d")
+            else:
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                if "T" not in value or parsed.tzinfo is None:
+                    raise ValueError(value)
         except ValueError as exc:
             raise ValueError(
-                "date must be YYYY-MM-DD or an ISO 8601 timestamp"
+                "date must be YYYY-MM-DD or an ISO 8601 timestamp with a time zone, "
+                "e.g. 2026-11-03T09:30:00Z"
             ) from exc
+        return value
+
+    @field_validator("timezone")
+    @classmethod
+    def _validate_timezone(cls, value: Optional[str]) -> Optional[str]:
+        """Reject names the IANA time zone database does not know."""
+        if value is None:
+            return value
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError(f"unknown IANA time zone: {value}") from exc
         return value
 
 
