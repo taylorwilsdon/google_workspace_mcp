@@ -992,7 +992,7 @@
               }
             ],
             "default": null,
-            "description": "IANA time zone ID."
+            "description": "IANA time zone ID. Sent to Docs only with TIME_FORMAT_HOUR_MINUTE_TIMEZONE; otherwise it only picks local noon for a date-only value."
           }
         },
         "required": [
