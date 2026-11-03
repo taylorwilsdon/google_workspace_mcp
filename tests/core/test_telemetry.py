@@ -377,3 +377,35 @@ def test_record_google_principal_skips_non_recording_span(
     telemetry.record_google_principal("oauth2.1", "alice@example.com")
 
     assert span.attributes == {}
+
+
+def _in_memory_tracer():
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+        InMemorySpanExporter,
+    )
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    return provider.get_tracer(__name__), exporter
+
+
+def test_record_degraded_failure_marks_span_as_error() -> None:
+    from opentelemetry.trace import StatusCode
+
+    tracer, exporter = _in_memory_tracer()
+    with tracer.start_as_current_span("tools/call get_gmail_attachment_content"):
+        telemetry.record_degraded_failure(OSError(30, "Read-only file system"))
+
+    (span,) = exporter.get_finished_spans()
+    assert span.status.status_code is StatusCode.ERROR
+    assert span.status.description == "OSError: [Errno 30] Read-only file system"
+    (event,) = span.events
+    assert event.name == "exception"
+    assert event.attributes["exception.type"] == "OSError"
+
+
+def test_record_degraded_failure_is_noop_without_recording_span() -> None:
+    telemetry.record_degraded_failure(RuntimeError("no span"))  # must not raise
