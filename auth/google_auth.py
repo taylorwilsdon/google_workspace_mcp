@@ -242,6 +242,8 @@ def save_credentials_to_session(
 
     if user_email:
         store = get_oauth21_session_store()
+        # Keep the issuer an earlier write (for example the OAuth callback) recorded.
+        existing = store.get_session_info(user_email)
         store.store_session(
             user_email=user_email,
             access_token=credentials.token,
@@ -252,6 +254,7 @@ def save_credentials_to_session(
             scopes=credentials.scopes,
             expiry=credentials.expiry,
             mcp_session_id=session_id,
+            issuer=existing.get("issuer") if existing else None,
         )
         logger.debug(
             f"Credentials saved to OAuth21SessionStore for session_id: {session_id}, user: {user_email}"
