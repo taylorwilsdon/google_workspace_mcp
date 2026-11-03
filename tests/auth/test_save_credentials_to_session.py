@@ -39,6 +39,14 @@ class _SessionStore:
     def store_session(self, **kwargs):
         self.store_calls.append(kwargs)
 
+    def get_session_info(self, user_email):
+        issuers = {
+            call["user_email"]: call.get("issuer") for call in self.store_calls
+        }
+        if user_email in issuers:
+            return {"issuer": issuers[user_email]}
+        return None
+
     def get_user_by_mcp_session(self, session_id):  # noqa: ARG002
         return None
 
