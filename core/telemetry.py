@@ -71,15 +71,21 @@ def record_degraded_failure(error: BaseException) -> None:
     FastMCP only sets an error status when an exception escapes the tool. A tool
     that catches one and returns a fallback (a preview, an ``Error:`` message)
     therefore ends on a span that looks successful, and span metrics never count
-    the failure. Records the exception and sets the span status to ERROR. Safe to
-    call unconditionally: it no-ops when no span is recording.
+    the failure. Sets the span status to ERROR and adds an ``exception`` event.
+    Only the exception type and errno are recorded: the message of a storage
+    error carries the file path, and saved filenames come from email subjects
+    and attachment names. Safe to call unconditionally: it no-ops when no span
+    is recording.
     """
     span = trace.get_current_span()
-    if span.is_recording():
-        span.record_exception(error)
-        span.set_status(
-            trace.Status(trace.StatusCode.ERROR, f"{type(error).__name__}: {error}")
-        )
+    if not span.is_recording():
+        return
+    error_type = type(error).__name__
+    attributes = {"exception.type": error_type}
+    if isinstance(getattr(error, "errno", None), int):
+        attributes["exception.errno"] = error.errno
+    span.add_event("exception", attributes)
+    span.set_status(trace.Status(trace.StatusCode.ERROR, error_type))
 
 
 def _set_span_attribute(key: str, value: str) -> None:
