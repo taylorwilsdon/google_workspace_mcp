@@ -206,6 +206,44 @@ async def test_batch_update_allows_insert_text_targeting_created_shape():
 
 
 @pytest.mark.asyncio
+async def test_batch_update_reports_replace_all_text_counts():
+    """replaceAllText replies report how many occurrences changed, including none."""
+    service, _ = _build_slides_service(
+        batch_update_response={
+            "replies": [
+                {"replaceAllText": {"occurrencesChanged": 3}},
+                {"replaceAllText": {}},
+            ]
+        }
+    )
+    requests = [
+        {
+            "replaceAllText": {
+                "containsText": {"text": "{{name}}"},
+                "replaceText": "Ada",
+            }
+        },
+        {
+            "replaceAllText": {
+                "containsText": {"text": "{{missing}}"},
+                "replaceText": "x",
+            }
+        },
+    ]
+
+    result = await _unwrap(batch_update_presentation)(
+        service=service,
+        user_google_email="user@example.com",
+        presentation_id="presentation-1",
+        requests=requests,
+    )
+
+    assert "Request 1: Replaced 3 occurrence(s)" in result
+    assert "Request 2: Replaced 0 occurrence(s)" in result
+    assert "Operation completed" not in result
+
+
+@pytest.mark.asyncio
 async def test_batch_update_rejects_insert_text_targeting_new_slide_id():
     service, presentations = _build_slides_service(presentation={"slides": []})
 
