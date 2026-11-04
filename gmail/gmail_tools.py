@@ -1807,7 +1807,7 @@ async def _resolve_web_recipient_names(
     """
     name_cache: Dict[str, Optional[str]] = {}
     missing_scopes: set = set()
-    if people_service is not None:
+    if people_service is not None and _has_bare_recipient(to, cc, bcc):
         await _warmup_people_cache(people_service)
     to, cc, bcc = [
         await _format_address_list_with_names(

@@ -994,3 +994,24 @@ async def test_reply_with_explicit_headers_still_names_bare_recipient(as_draft):
 
     raw = _raw_drafted(gmail) if as_draft else _raw_sent(gmail)
     assert "To: MG Carroll <mg@example.com>" in raw
+
+
+@pytest.mark.asyncio
+async def test_send_skips_people_warmup_when_every_recipient_is_named():
+    """The People cache warmup costs API calls; skip it when nothing is looked up."""
+    gmail = _gmail_service()
+    people = _people_service_tiers()
+
+    await _unwrap(send_gmail_message)(
+        service=gmail,
+        people_service=people,
+        user_google_email="grace@example.org",
+        to="Ada Lovelace <ada@example.com>",
+        subject="Project sync",
+        body="Hello there",
+        include_signature=False,
+    )
+
+    search = people.people.return_value.searchContacts
+    assert not [c for c in search.call_args_list if c.kwargs.get("query") == ""]
+    assert "To: Ada Lovelace <ada@example.com>" in _raw_sent(gmail)
