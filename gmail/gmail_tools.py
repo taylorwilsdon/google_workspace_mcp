@@ -984,6 +984,14 @@ def _harvest_thread_display_names(messages: List[Dict[str, Any]]) -> Dict[str, s
     return names
 
 
+def _has_bare_recipient(*headers: Optional[str]) -> bool:
+    """Whether any address in the headers lacks a display name to look up."""
+    return any(
+        addr and not name.strip()
+        for name, addr in getaddresses([header for header in headers if header])
+    )
+
+
 def _match_person_name(persons: List[Dict[str, Any]], key: str) -> Optional[str]:
     """Return the displayName of the person whose emails include ``key``."""
     for person in persons:
@@ -3508,7 +3516,8 @@ async def send_gmail_message(
 
     # A reply's headers, recipients and quoted original are all derivable from the
     # thread, so a caller should not have to assemble them by hand. Mirrors
-    # draft_gmail_message; one thread fetch serves all three.
+    # draft_gmail_message; one thread fetch serves all three, and also supplies
+    # the conversation's names for bare recipients.
     reply_context = None
     if thread_id and (
         quote_original
@@ -3516,6 +3525,7 @@ async def send_gmail_message(
         or not (subject or "").strip()
         or not in_reply_to
         or not references
+        or _has_bare_recipient(to, cc, bcc)
     ):
         reply_context = await _fetch_thread_reply_context(
             service,
@@ -4140,6 +4150,7 @@ async def draft_gmail_message(
         or not in_reply_to
         or not references
         or not to
+        or _has_bare_recipient(to, cc, bcc)
     ):
         reply_context = await _fetch_thread_reply_context(
             service,
