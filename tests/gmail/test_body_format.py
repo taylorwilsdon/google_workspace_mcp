@@ -1708,6 +1708,7 @@ async def test_forward_includes_attachment_backed_bodies():
 
     await _forward_gmail_message_impl(
         service=service,
+        people_service=None,
         message_id="msg-1",
         to="recipient@example.com",
         user_google_email="user@example.com",
@@ -1742,6 +1743,7 @@ async def test_forward_aborts_when_a_body_cannot_be_fetched(
     with pytest.raises(ToolError, match="original message body"):
         await _forward_gmail_message_impl(
             service=service,
+            people_service=None,
             message_id="msg-1",
             to="recipient@example.com",
             user_google_email="user@example.com",

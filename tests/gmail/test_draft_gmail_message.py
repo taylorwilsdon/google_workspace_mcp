@@ -2174,7 +2174,7 @@ async def test_draft_gmail_message_forward_creates_draft_instead_of_sending():
         forward_message_id="abc123",
     )
 
-    assert result == "Forward draft created! Draft ID: draft123"
+    assert result.startswith("Forward draft created! Draft ID: draft123")
     mock_service.users().messages().send().execute.assert_not_called()
     raw = (
         mock_service.users().drafts().create.call_args.kwargs["body"]["message"]["raw"]

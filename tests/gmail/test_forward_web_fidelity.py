@@ -29,6 +29,7 @@ async def _forward_raw(message, **kwargs) -> bytes:
     service = create_mock_service(message)
     await _forward_gmail_message_impl(
         service=service,
+        people_service=None,
         message_id="msg1",
         to="recipient@example.com",
         user_google_email="me@example.com",
@@ -129,6 +130,7 @@ async def test_forward_with_attachment_mime_shape():
 
     await _forward_gmail_message_impl(
         service=svc,
+        people_service=None,
         message_id="msg2",
         to="recipient@example.com",
         include_attachments=True,
@@ -186,6 +188,7 @@ async def test_forward_refuses_to_send_when_builder_drops_an_attachment(monkeypa
     with pytest.raises(UserInputError, match="0/1 attached.*report.pdf: boom"):
         await _forward_gmail_message_impl(
             service=svc,
+            people_service=None,
             message_id="msg_drop",
             to="recipient@example.com",
             include_attachments=True,
@@ -222,6 +225,7 @@ async def test_forward_html_probes_with_attachment():
 
     await _forward_gmail_message_impl(
         service=svc,
+        people_service=None,
         message_id="msg4",
         to="recipient@example.com",
         include_attachments=True,
