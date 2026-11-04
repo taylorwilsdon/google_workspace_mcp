@@ -97,7 +97,6 @@ from gmail.gmail_helpers import (
     _prepare_gmail_message_web,
     _reject_entity_escaped_html_body,
     _reply_subject,
-    _is_quota_or_rate_limit_error,
     _retryable_result_ids,
     _signature_html_to_text,
     _wrap_signature_html,
@@ -1002,6 +1001,15 @@ def _match_person_name(persons: List[Dict[str, Any]], key: str) -> Optional[str]
     return None
 
 
+# Lowercased markers of Google's insufficient-scope 403: the legacy error reason,
+# the ErrorInfo reason, and the message text.
+_PEOPLE_SCOPE_ERROR_MARKERS = (
+    "insufficientpermissions",
+    "access_token_scope_insufficient",
+    "insufficient authentication scopes",
+)
+
+
 async def _people_search_tier(
     request_factory,
     params: Dict[str, Any],
@@ -1014,10 +1022,10 @@ async def _people_search_tier(
 ) -> Optional[str]:
     """Run one People search tier and extract a matching display name.
 
-    Best-effort: a 401, or a 403 that is neither a quota/rate-limit error nor
-    ``accessNotConfigured`` (People API disabled for the project), means the scope
-    is not granted and records ``scope`` in ``missing_scopes``; any other failure
-    is logged. Either way it returns None. ``wrap_key``
+    Best-effort: a 401, or a 403 whose reason says the token lacks a scope, records
+    ``scope`` in ``missing_scopes``; any other failure (quota, API disabled, an
+    admin policy) is logged, since granting the scope would not fix it. Either
+    way it returns None. ``wrap_key``
     is the per-result wrapper field (``person`` for searchContacts/otherContacts,
     None for searchDirectoryPeople where results are person objects directly).
     """
@@ -1025,10 +1033,10 @@ async def _people_search_tier(
         result = await asyncio.to_thread(request_factory(**params).execute)
     except HttpError as e:
         status = _http_error_status(e)
+        details = f"{e} {e.content!r}".lower()
         scope_error = status == 401 or (
             status == 403
-            and not _is_quota_or_rate_limit_error(e)
-            and "accessnotconfigured" not in f"{e} {e.content!r}".lower()
+            and any(marker in details for marker in _PEOPLE_SCOPE_ERROR_MARKERS)
         )
         if scope_error:
             if missing_scopes is not None:

@@ -512,7 +512,10 @@ class _FakeResp:
 def _http_error(status: int):
     from googleapiclient.errors import HttpError
 
-    return HttpError(_FakeResp(status), b'{"error":{"message":"insufficient scope"}}')
+    return HttpError(
+        _FakeResp(status),
+        b'{"error":{"message":"Request had insufficient authentication scopes."}}',
+    )
 
 
 def _people_service_tiers(*, contacts=None, other=None, directory=None):
@@ -822,7 +825,11 @@ def _people_http_error(status: int, reason: str):
     [
         (401, "authError", True),
         (403, "insufficientPermissions", True),
+        (403, "ACCESS_TOKEN_SCOPE_INSUFFICIENT", True),
         (403, "accessNotConfigured", False),
+        # An admin policy or other forbidden 403 is not fixed by granting scopes.
+        (403, "forbidden", False),
+        (403, "domainPolicy", False),
         (403, "rateLimitExceeded", False),
         (403, "quotaExceeded", False),
     ],
