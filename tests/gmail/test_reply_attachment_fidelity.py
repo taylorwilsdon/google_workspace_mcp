@@ -412,6 +412,26 @@ def test_split_classifies_inline_and_regular():
     assert attach_parts[0]["filename"] == "doc.pdf"
 
 
+def test_split_prefers_path_over_content(tmp_path, monkeypatch):
+    """With both keys set, the file at ``path`` wins, as on the pre-web path."""
+    monkeypatch.setenv("ALLOWED_FILE_DIRS", str(tmp_path))
+    path = tmp_path / "notes.txt"
+    path.write_bytes(b"from disk")
+
+    _, attach_parts, count, errors = _split_resolved_attachments(
+        [
+            {
+                "path": str(path),
+                "content": base64.b64encode(b"from content").decode(),
+                "filename": "notes.txt",
+            }
+        ]
+    )
+
+    assert (count, errors) == (1, [])
+    assert attach_parts[0]["data"] == b"from disk"
+
+
 def test_split_skips_error_entries():
     """Error entries must be reported in errors and not counted."""
     inline_parts, attach_parts, count, errors = _split_resolved_attachments(

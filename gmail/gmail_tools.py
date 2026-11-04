@@ -1205,7 +1205,8 @@ def _split_resolved_attachments(
                     filename = "attachment"
                 if not mime_type:
                     mime_type = "application/octet-stream"
-            elif content_base64:
+            # A file path wins over inline content, as in _prepare_gmail_message.
+            elif content_base64 and not file_path:
                 if not filename:
                     logger.warning("Skipping attachment: missing filename")
                     attachment_errors.append(
