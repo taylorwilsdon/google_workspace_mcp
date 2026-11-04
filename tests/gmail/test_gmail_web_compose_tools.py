@@ -963,3 +963,34 @@ async def test_draft_derived_reply_recipient_prefers_saved_contact(
     )
 
     assert f"To: {expected_to} <mg@example.com>" in _raw_drafted(gmail)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("as_draft", [False, True])
+async def test_reply_with_explicit_headers_still_names_bare_recipient(as_draft):
+    """Explicit subject/In-Reply-To/References make the thread fetch optional for
+    the headers, but a bare recipient still needs the thread's names."""
+    from gmail.gmail_tools import draft_gmail_message
+
+    gmail = _gmail_service()
+    gmail.users().drafts().create().execute.return_value = {"id": "d1"}
+    gmail.users().threads().get().execute.return_value = _thread_with_parent(
+        "MG Carroll <mg@example.com>"
+    )
+    tool = draft_gmail_message if as_draft else send_gmail_message
+
+    await _unwrap(tool)(
+        service=gmail,
+        people_service=None,
+        user_google_email="you@example.org",
+        to="mg@example.com",
+        subject="Re: Project",
+        body="Thanks!",
+        thread_id="thread123",
+        in_reply_to="<parent@example.com>",
+        references="<parent@example.com>",
+        include_signature=False,
+    )
+
+    raw = _raw_drafted(gmail) if as_draft else _raw_sent(gmail)
+    assert "To: MG Carroll <mg@example.com>" in raw
