@@ -1015,3 +1015,40 @@ async def test_send_skips_people_warmup_when_every_recipient_is_named():
     search = people.people.return_value.searchContacts
     assert not [c for c in search.call_args_list if c.kwargs.get("query") == ""]
     assert "To: Ada Lovelace <ada@example.com>" in _raw_sent(gmail)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("as_draft", [False, True])
+async def test_forward_resolves_recipient_display_name(as_draft):
+    """A forward names its recipients the same way as any other send or draft."""
+    from gmail.gmail_tools import draft_gmail_message
+
+    gmail = _gmail_service()
+    gmail.users().drafts().create().execute.return_value = {"id": "d1"}
+    gmail.users().messages().get().execute.return_value = {
+        "id": "orig1",
+        "payload": {
+            "headers": [
+                {"name": "From", "value": "Grace Hopper <grace@example.org>"},
+                {"name": "To", "value": "you@example.org"},
+                {"name": "Subject", "value": "Notes"},
+                {"name": "Date", "value": "Tue, 7 Apr 2026 19:19:00 +0000"},
+            ],
+            "mimeType": "text/plain",
+            "body": {"data": _encode("Original")},
+        },
+    }
+    tool = draft_gmail_message if as_draft else send_gmail_message
+
+    await _unwrap(tool)(
+        service=gmail,
+        people_service=_people_service_with("Ada Lovelace", "ada@example.com"),
+        user_google_email="you@example.org",
+        to="ada@example.com",
+        forward_message_id="orig1",
+        body="FYI",
+        include_signature=False,
+    )
+
+    raw = _raw_drafted(gmail) if as_draft else _raw_sent(gmail)
+    assert "To: Ada Lovelace <ada@example.com>" in raw

@@ -3438,6 +3438,7 @@ async def send_gmail_message(
             user_google_email=user_google_email,
             direction=direction,
             priority=priority,
+            people_service=people_service,
         )
 
     if body is None or (not thread_id and not (subject or "").strip()):
@@ -3625,13 +3626,16 @@ async def _forward_gmail_message_impl(
     as_draft: bool = False,
     attachments: Optional[List[Dict[str, Any]]] = None,
     priority: MessagePriority = "normal",
+    *,
+    people_service,
 ) -> str:
     """Build a forward of an existing Gmail message and send it or save it as a draft.
 
     Shared by the forward paths of send_gmail_message and draft_gmail_message. An
     explicit ``subject`` overrides the auto-derived 'Fwd: <original subject>'.
     ``direction`` sets the base text direction of the prepended note ('auto'
-    detects it from the note text).
+    detects it from the note text). Recipient display names are resolved from
+    ``people_service`` (None when the contacts scope is missing) as on any send.
     """
     # Fetch the original message with full payload
     original_message = await asyncio.to_thread(
@@ -3734,6 +3738,19 @@ async def _forward_gmail_message_impl(
     inline_parts, attachment_parts, attached_count, attachment_errors = (
         _split_resolved_attachments(attachments_to_send)
     )
+    to, cc, bcc, had_unresolved, missing_scopes = await _resolve_web_recipient_names(
+        people_service,
+        to=to,
+        cc=cc,
+        bcc=bcc,
+        from_email=sender_email,
+        thread_names=None,
+    )
+    name_note = (
+        _build_name_fallback_note(people_service is None, missing_scopes)
+        if had_unresolved
+        else ""
+    )
     raw_message = _prepare_gmail_message_web(
         subject=forward_subject,
         plain_body=forward_plain,
@@ -3772,12 +3789,14 @@ async def _forward_gmail_message_impl(
             num_retries=GOOGLE_API_WRITE_RETRIES,
         )
         draft_id = created_draft.get("id")
-        return f"Forward draft created{attachment_info}! Draft ID: {draft_id}"
+        return (
+            f"Forward draft created{attachment_info}! Draft ID: {draft_id}{name_note}"
+        )
 
     # Send the message
     sent_message = await send_message_once(service, send_body)
     sent_message_id = sent_message.get("id")
-    return f"Email forwarded{attachment_info}! Message ID: {sent_message_id}"
+    return f"Email forwarded{attachment_info}! Message ID: {sent_message_id}{name_note}"
 
 
 @server.tool(
@@ -4075,6 +4094,7 @@ async def draft_gmail_message(
             direction=direction,
             as_draft=True,
             priority=priority,
+            people_service=people_service,
         )
 
     if body is None or (not thread_id and not (subject or "").strip()):

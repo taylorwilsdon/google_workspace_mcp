@@ -102,6 +102,7 @@ async def test_forward_attachment_preserves_original_plain_part(
     )
     await _forward_gmail_message_impl(
         service=service,
+        people_service=None,
         message_id="original",
         to="you@example.com",
         user_google_email="me@example.com",
