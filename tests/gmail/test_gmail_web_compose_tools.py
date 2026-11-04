@@ -900,3 +900,66 @@ async def test_send_resolves_long_non_ascii_display_name():
     assert "Email sent" in result
     to_header = message_from_string(_raw_sent(gmail))["To"]
     assert str(make_header(decode_header(to_header))) == f"{name} <ada@example.com>"
+
+
+def _thread_with_parent(from_value: str) -> dict:
+    return {
+        "messages": [
+            {
+                "id": "p1",
+                "labelIds": ["INBOX"],
+                "payload": {
+                    "headers": [
+                        {"name": "Message-ID", "value": "<parent@example.com>"},
+                        {"name": "From", "value": from_value},
+                        {"name": "Subject", "value": "Project"},
+                        {"name": "Date", "value": "Tue, 7 Apr 2026 19:19:00 +0000"},
+                    ],
+                    "mimeType": "text/plain",
+                    "body": {"data": _encode("Hi")},
+                },
+            }
+        ]
+    }
+
+
+def _raw_drafted(mock_service) -> str:
+    kwargs = mock_service.users.return_value.drafts.return_value.create.call_args.kwargs
+    raw = kwargs["body"]["message"]["raw"]
+    return base64.urlsafe_b64decode(raw.encode()).decode("utf-8")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("contacts", "expected_to"),
+    [
+        # A saved contact wins over the parent's sender-supplied name.
+        (_person_results("Maggie Carroll", "mg@example.com"), "Maggie Carroll"),
+        # Not a saved contact: the thread's name still applies.
+        (None, "MG Carroll"),
+    ],
+)
+async def test_draft_derived_reply_recipient_prefers_saved_contact(
+    contacts, expected_to
+):
+    """A draft reply with no 'to' addresses the parent's sender; the name is
+    resolved like any reply recipient, not copied from the parent header."""
+    from gmail.gmail_tools import draft_gmail_message
+
+    gmail = _gmail_service()
+    gmail.users().drafts().create().execute.return_value = {"id": "d1"}
+    gmail.users().threads().get().execute.return_value = _thread_with_parent(
+        "MG Carroll <mg@example.com>"
+    )
+
+    await _unwrap(draft_gmail_message)(
+        service=gmail,
+        people_service=_people_service_tiers(contacts=contacts),
+        user_google_email="you@example.org",
+        subject="Project",
+        body="Thanks!",
+        thread_id="thread123",
+        include_signature=False,
+    )
+
+    assert f"To: {expected_to} <mg@example.com>" in _raw_drafted(gmail)
