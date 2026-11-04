@@ -212,20 +212,33 @@ def _format_attribution_when(dt: datetime) -> str:
     return f"On {format_gmail_date(dt)}"
 
 
-def format_attribution_plain(name: str, email: str, dt: datetime) -> str:
-    """Plain-text reply attribution line."""
-    return f"{_format_attribution_when(dt)}, {name} <{email}> wrote:"
+def _attribution_lead(dt: Optional[datetime]) -> str:
+    """The ``On <date>, `` lead, or "" when the parent's date is unknown."""
+    return f"{_format_attribution_when(dt)}, " if dt is not None else ""
 
 
-def format_attribution_html(name: str, email: str, dt: datetime) -> str:
-    """HTML reply attribution div (the ``gmail_attr`` div, trailing ``<br>``)."""
-    when = _format_attribution_when(dt)
-    safe_name = _escape_body(name)
-    safe_email = _html.escape(email)
+def format_attribution_plain(name: str, email: str, dt: Optional[datetime]) -> str:
+    """Plain-text reply attribution line.
+
+    An empty ``email`` or a None ``dt`` drops that part, so a parent with an
+    unusable From or Date still gets a quote.
+    """
+    sender = f"{name} <{email}>" if email else name
+    return f"{_attribution_lead(dt)}{sender} wrote:"
+
+
+def format_attribution_html(name: str, email: str, dt: Optional[datetime]) -> str:
+    """HTML reply attribution div (the ``gmail_attr`` div, trailing ``<br>``).
+
+    Degrades like :func:`format_attribution_plain`.
+    """
+    sender = _escape_body(name)
+    if email:
+        safe_email = _html.escape(email)
+        sender += f' &lt;<a href="mailto:{safe_email}">{safe_email}</a>&gt;'
     return (
         '<div dir="ltr" class="gmail_attr">'
-        f"{when}, {safe_name} "
-        f'&lt;<a href="mailto:{safe_email}">{safe_email}</a>&gt; wrote:<br></div>'
+        f"{_attribution_lead(dt)}{sender} wrote:<br></div>"
     )
 
 
