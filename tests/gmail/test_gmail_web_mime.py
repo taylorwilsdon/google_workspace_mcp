@@ -404,14 +404,27 @@ class TestWebReplyBodies:
         assert "> Second paragraph." in plain
 
     @pytest.mark.parametrize(
-        "target",
+        ("target", "attribution"),
         [
-            {"from": "Ada Lovelace", "date": "Fri, 27 Mar 2026 10:00:00 +0000"},
-            {"date": "not a date"},
+            # No address in From: the name alone, still dated.
+            (
+                {"from": "Ada Lovelace", "date": "Fri, 27 Mar 2026 10:00:00 +0000"},
+                "On Fri, 27 Mar 2026 at 10:00, Ada Lovelace wrote:",
+            ),
+            # Unparseable Date: the sender alone, undated.
+            ({"date": "not a date"}, "Ada Lovelace <ada@example.com> wrote:"),
+            # Neither usable.
+            ({"from": "", "date": ""}, "unknown wrote:"),
         ],
     )
-    def test_unusable_parent_leaves_bodies_unchanged(self, target):
-        assert self._bodies(**target) == ("Reply", "<div>Reply</div>")
+    def test_unusable_parent_keeps_quote_with_fallback_attribution(
+        self, target, attribution
+    ):
+        plain, html = self._bodies(text_body="Original line", **target)
+        assert plain == f"Reply\n\n{attribution}\n\n> Original line"
+        assert html.startswith("<div>Reply</div><br>")
+        assert 'class="gmail_quote' in html
+        assert "wrote:" in html
 
 
 class TestFormatAddressListParsing:
