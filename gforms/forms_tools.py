@@ -368,8 +368,15 @@ async def get_form_response(
     answer_details = []
     for question_id, answer_data in answers.items():
         question_response = answer_data.get("textAnswers", {}).get("answers", [])
+        uploaded_files = answer_data.get("fileUploadAnswers", {}).get("answers", [])
         if question_response:
             answer_text = ", ".join([ans.get("value", "") for ans in question_response])
+            answer_details.append(f"  Question ID {question_id}: {answer_text}")
+        elif uploaded_files:
+            answer_text = ", ".join(
+                f"{f.get('fileName', 'Unnamed file')} (file ID: {f.get('fileId', 'Unknown')})"
+                for f in uploaded_files
+            )
             answer_details.append(f"  Question ID {question_id}: {answer_text}")
         else:
             answer_details.append(f"  Question ID {question_id}: No answer provided")
