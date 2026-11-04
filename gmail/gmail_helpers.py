@@ -1406,14 +1406,15 @@ def _build_web_reply_bodies(
     """Append a Gmail-web ``gmail_quote`` reply trail to both body parts.
 
     ``target`` is the parent message from the thread reply context. When it
-    lacks a usable sender address or date, the bodies are returned unchanged so
-    the reply still sends, just without a quote.
+    lacks a usable sender address or date, the quote is still appended and the
+    attribution leaves out what is missing.
     """
-    parent_name, parent_email = parseaddr(target.get("from") or "")
+    raw_from = (target.get("from") or "").strip()
+    parent_name, parent_email = parseaddr(raw_from)
+    if "@" not in parent_email:
+        parent_email = ""
     parent_dt = _parse_message_date(target.get("date") or "")
-    if "@" not in parent_email or parent_dt is None:
-        return new_plain, new_html
-    parent_name = parent_name.strip() or parent_email
+    parent_name = parent_name.strip() or parent_email or raw_from or "unknown"
     parent_text, parent_html = _fill_missing_body(
         target.get("text_body") or "", target.get("html_body") or ""
     )
