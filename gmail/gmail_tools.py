@@ -4175,7 +4175,10 @@ async def draft_gmail_message(
             target_reply, {user_google_email, sender_email}, to, cc
         )
     elif thread_id and not to and target_reply:
-        to = target_reply.get("reply_to") or target_reply.get("from") or to
+        # Bare addresses, so the name is resolved like any reply recipient (a
+        # saved contact wins over the sender-supplied name in the header).
+        sender = target_reply.get("reply_to") or target_reply.get("from") or ""
+        to = ", ".join(addr for _name, addr in getaddresses([sender]) if addr) or to
     if thread_id and not (subject or "").strip():
         subject = _inherit_reply_subject(thread_id, target_reply)
 
