@@ -647,3 +647,16 @@ def test_pin_flag_tolerates_surrounding_whitespace(monkeypatch):
     monkeypatch.setenv("WORKSPACE_MCP_PIN_USER_EMAIL", " true ")
 
     assert server_module._user_email_is_pinned() is True
+
+
+@pytest.mark.asyncio
+async def test_pinned_email_replaces_camel_case_email(monkeypatch):
+    _pinned(monkeypatch)
+    server = _echo_server()
+
+    result = await server.call_tool(
+        "echo_email",
+        {"query": "inbox", "userGoogleEmail": "guessed@example.com"},
+    )
+
+    assert _result_text(result) == "configured@example.com:inbox"

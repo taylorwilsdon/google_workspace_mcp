@@ -552,15 +552,24 @@ class SecureFastMCP(FastMCP):
         elif _user_email_is_pinned():
             # The parameter is hidden from clients; one sent anyway (for example
             # from a schema cached before pinning) is replaced, never honoured.
-            requested = arguments.get("user_google_email")
-            if requested and requested != USER_GOOGLE_EMAIL:
-                logger.warning(
-                    "[%s] Ignoring user_google_email %r: pinned to %s",
-                    name,
-                    requested,
-                    USER_GOOGLE_EMAIL,
-                )
-            arguments = {**arguments, "user_google_email": USER_GOOGLE_EMAIL}
+            # The camelCase spelling goes too, or CamelCaseArgumentsMiddleware
+            # would leave it beside the injected key and validation would fail.
+            for key in ("user_google_email", "userGoogleEmail"):
+                requested = arguments.get(key)
+                if requested and requested != USER_GOOGLE_EMAIL:
+                    logger.warning(
+                        "[%s] Ignoring %s %r: pinned to %s",
+                        name,
+                        key,
+                        requested,
+                        USER_GOOGLE_EMAIL,
+                    )
+            arguments = {
+                key: value
+                for key, value in arguments.items()
+                if key not in ("user_google_email", "userGoogleEmail")
+            }
+            arguments["user_google_email"] = USER_GOOGLE_EMAIL
         elif (
             not is_oauth21_enabled()
             and USER_GOOGLE_EMAIL
@@ -579,7 +588,7 @@ _server_instructions = None
 if _user_email_pin_requested():
     _server_instructions = f"""Connected Google account: {USER_GOOGLE_EMAIL}
 
-Every Google Workspace tool acts on this account. Do not ask the user for their email address."""
+Do not ask the user for their email address."""
     logger.info(f"Server instructions configured for user: {USER_GOOGLE_EMAIL}")
 elif USER_GOOGLE_EMAIL and not is_trust_gateway_identity():
     _server_instructions = f"""Connected Google account: {USER_GOOGLE_EMAIL}
