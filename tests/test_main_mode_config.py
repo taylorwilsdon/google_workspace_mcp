@@ -69,17 +69,18 @@ def test_insecure_transport_warns_for_any_value_oauthlib_honors(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "pin,single_user,expected",
-    [("true", None, True), ("true", "1", False), (None, None, False)],
+    "requested,single_user,expected",
+    [(True, None, True), (True, "1", False), (False, None, False)],
 )
-def test_pin_user_email_needs_single_user(monkeypatch, pin, single_user, expected):
-    for name, value in (
-        ("WORKSPACE_MCP_PIN_USER_EMAIL", pin),
-        ("MCP_SINGLE_USER_MODE", single_user),
-    ):
-        if value is None:
-            monkeypatch.delenv(name, raising=False)
-        else:
-            monkeypatch.setenv(name, value)
+def test_pin_user_email_needs_single_user(
+    monkeypatch, requested, single_user, expected
+):
+    import core.server
+
+    monkeypatch.setattr(core.server, "_user_email_pin_requested", lambda: requested)
+    if single_user is None:
+        monkeypatch.delenv("MCP_SINGLE_USER_MODE", raising=False)
+    else:
+        monkeypatch.setenv("MCP_SINGLE_USER_MODE", single_user)
 
     assert main.pin_user_email_needs_single_user() is expected

@@ -470,19 +470,17 @@ def describe_credential_config() -> list[tuple[str, str, str]]:
 
 
 def pin_user_email_needs_single_user() -> bool:
-    """True when WORKSPACE_MCP_PIN_USER_EMAIL is set outside single-user mode.
+    """True when WORKSPACE_MCP_PIN_USER_EMAIL applies but single-user mode is off.
 
     Pinning replaces the user_google_email a client sends, but only single-user
     credential lookup is limited to the requested account; elsewhere a session
-    can still act on whichever account it authorized.
+    can still act on whichever account it authorized. Uses the server's own
+    check, so OAuth 2.1 and trusted-gateway deployments (where the flag is
+    ignored) still start.
     """
-    pinned = os.getenv("WORKSPACE_MCP_PIN_USER_EMAIL", "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
-    )
-    return pinned and os.getenv("MCP_SINGLE_USER_MODE") != "1"
+    from core.server import _user_email_pin_requested
+
+    return _user_email_pin_requested() and os.getenv("MCP_SINGLE_USER_MODE") != "1"
 
 
 def describe_mode_config(

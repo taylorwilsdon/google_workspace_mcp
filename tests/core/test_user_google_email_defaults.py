@@ -640,3 +640,10 @@ def test_pinning_needs_single_user_mode(monkeypatch):
 
     assert server_module._user_email_pin_requested() is True
     assert server_module._user_email_is_pinned() is False
+
+
+def test_pin_flag_tolerates_surrounding_whitespace(monkeypatch):
+    _pinned(monkeypatch)
+    monkeypatch.setenv("WORKSPACE_MCP_PIN_USER_EMAIL", " true ")
+
+    assert server_module._user_email_is_pinned() is True

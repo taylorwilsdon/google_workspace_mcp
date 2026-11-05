@@ -132,7 +132,7 @@ def _user_email_pin_requested() -> bool:
     """
     return (
         bool(USER_GOOGLE_EMAIL)
-        and _parse_bool_env(os.getenv(_PIN_USER_EMAIL_ENV, ""))
+        and _parse_bool_env(os.getenv(_PIN_USER_EMAIL_ENV, "").strip())
         and not is_oauth21_enabled()
         and not is_trust_gateway_identity()
     )

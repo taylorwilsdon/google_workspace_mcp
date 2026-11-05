@@ -90,7 +90,7 @@ Manually start the legacy OAuth 2.0 browser flow, e.g. to re-authenticate with d
 
 | Parameter | Type | Required | Default | Notes |
 |-----------|------|----------|---------|-------|
-| user_google_email | string | no | `USER_GOOGLE_EMAIL` env | |
+| user_google_email | string | no | `USER_GOOGLE_EMAIL` env | Not a parameter when the email is pinned (`WORKSPACE_MCP_PIN_USER_EMAIL`) |
 | service_name | string | yes | | Service to authorize, e.g. `"gmail"`, `"drive"` |
 
 ## Credential loading priority
