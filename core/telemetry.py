@@ -65,6 +65,29 @@ def record_google_principal(auth_mode: str, email: Optional[str]) -> None:
         _set_span_attribute("workspace_mcp.google.principal", email)
 
 
+def record_degraded_failure(error: BaseException) -> None:
+    """Mark the active span as failed when a tool handles an error itself.
+
+    FastMCP only sets an error status when an exception escapes the tool. A tool
+    that catches one and returns a fallback (a preview, an ``Error:`` message)
+    therefore ends on a span that looks successful, and span metrics never count
+    the failure. Sets the span status to ERROR and adds an ``exception`` event.
+    Only the exception type and errno are recorded: the message of a storage
+    error carries the file path, and saved filenames come from email subjects
+    and attachment names. Safe to call unconditionally: it no-ops when no span
+    is recording.
+    """
+    span = trace.get_current_span()
+    if not span.is_recording():
+        return
+    error_type = type(error).__name__
+    attributes = {"exception.type": error_type}
+    if isinstance(getattr(error, "errno", None), int):
+        attributes["exception.errno"] = error.errno
+    span.add_event("exception", attributes)
+    span.set_status(trace.Status(trace.StatusCode.ERROR, error_type))
+
+
 def _set_span_attribute(key: str, value: str) -> None:
     """Set an attribute on the active span if one is recording."""
     span = trace.get_current_span()
