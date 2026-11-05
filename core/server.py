@@ -121,14 +121,14 @@ def _parse_bool_env(value: str) -> bool:
     return value.lower() in ("1", "true", "yes", "on")
 
 
-def _user_email_is_pinned() -> bool:
-    """True when every tool must act on USER_GOOGLE_EMAIL.
+def _user_email_pin_requested() -> bool:
+    """True when WORKSPACE_MCP_PIN_USER_EMAIL asks to pin tools to USER_GOOGLE_EMAIL.
 
-    Opt-in with WORKSPACE_MCP_PIN_USER_EMAIL for single-account deployments:
-    user_google_email is then not a tool parameter at all, so a client cannot
-    pass a guessed or aliased address and get an authorization prompt for an
-    account the server was never meant to serve. OAuth 2.1 and trusted-gateway
-    modes already take the email from a verified identity and ignore this.
+    Opt-in for single-account deployments: user_google_email is then not a tool
+    parameter at all, so a client cannot pass a guessed or aliased address and
+    get an authorization prompt for an account the server was never meant to
+    serve. OAuth 2.1 and trusted-gateway modes already take the email from a
+    verified identity and ignore this.
     """
     return (
         bool(USER_GOOGLE_EMAIL)
@@ -136,6 +136,16 @@ def _user_email_is_pinned() -> bool:
         and not is_oauth21_enabled()
         and not is_trust_gateway_identity()
     )
+
+
+def _user_email_is_pinned() -> bool:
+    """True when every tool call must act on USER_GOOGLE_EMAIL.
+
+    Pinning only holds in single-user mode, whose credential lookup loads the
+    requested account and nothing else; other modes can serve a session's own
+    credentials whatever email is passed. main refuses to start otherwise.
+    """
+    return _user_email_pin_requested() and os.getenv("MCP_SINGLE_USER_MODE") == "1"
 
 
 def _normalize_parsed(parsed: ParseResult) -> Optional[str]:
@@ -564,7 +574,9 @@ class SecureFastMCP(FastMCP):
 # Skipped in trusted-gateway mode: the verified principal supersedes the configured
 # default, and user_google_email is no longer a tool parameter clients can pass.
 _server_instructions = None
-if _user_email_is_pinned():
+# Decided at import, before main sets MCP_SINGLE_USER_MODE; main exits when
+# pinning is requested without single-user mode.
+if _user_email_pin_requested():
     _server_instructions = f"""Connected Google account: {USER_GOOGLE_EMAIL}
 
 Every Google Workspace tool acts on this account. Do not ask the user for their email address."""

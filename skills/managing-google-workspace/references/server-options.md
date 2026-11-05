@@ -16,7 +16,7 @@ These mirror the MCP server's own flags. **Default setup**: use stdio transport 
 | Mode | Flag / Env | Use case |
 |------|-----------|----------|
 | Single-user | `--single-user` | One user, cached credentials, CLI or local MCP. Cannot combine with OAuth 2.1. Note: this flag only affects credential lookup; `user_google_email` stays a tool parameter (defaulting to `USER_GOOGLE_EMAIL` when set) unless the email is pinned |
-| Pinned email | `USER_GOOGLE_EMAIL` + `WORKSPACE_MCP_PIN_USER_EMAIL=true` | Single-account servers: `user_google_email` is removed from every tool and any value a client sends is replaced by `USER_GOOGLE_EMAIL`. Ignored with OAuth 2.1 or trusted gateway identity |
+| Pinned email | `--single-user` + `USER_GOOGLE_EMAIL` + `WORKSPACE_MCP_PIN_USER_EMAIL=true` | Single-account servers (the server will not start with it outside single-user mode): `user_google_email` is removed from every tool and any value a client sends is replaced by `USER_GOOGLE_EMAIL`. Ignored with OAuth 2.1 or trusted gateway identity |
 | OAuth 2.0 (default) | _(no flag)_ | Multi-user with browser OAuth flow per session |
 | OAuth 2.1 | `MCP_ENABLE_OAUTH21=true` | Multi-user HTTP deployment, per-session tokens |
 | External OAuth | `EXTERNAL_OAUTH21_PROVIDER=true` | External OAuth flow with bearer tokens. Requires OAuth 2.1 |

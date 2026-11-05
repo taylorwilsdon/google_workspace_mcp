@@ -546,6 +546,7 @@ def _pinned(monkeypatch, *, oauth21=False, gateway=False):
     monkeypatch.setattr(server_module, "is_oauth21_enabled", lambda: oauth21)
     monkeypatch.setattr(server_module, "is_trust_gateway_identity", lambda: gateway)
     monkeypatch.setenv("WORKSPACE_MCP_PIN_USER_EMAIL", "true")
+    monkeypatch.setenv("MCP_SINGLE_USER_MODE", "1")
 
 
 def _echo_server():
@@ -630,4 +631,12 @@ def test_pinning_is_off_without_email_or_with_managed_identity(
     _pinned(monkeypatch, oauth21=oauth21, gateway=gateway)
     monkeypatch.setattr(server_module, "USER_GOOGLE_EMAIL", configured)
 
+    assert server_module._user_email_is_pinned() is False
+
+
+def test_pinning_needs_single_user_mode(monkeypatch):
+    _pinned(monkeypatch)
+    monkeypatch.delenv("MCP_SINGLE_USER_MODE")
+
+    assert server_module._user_email_pin_requested() is True
     assert server_module._user_email_is_pinned() is False
