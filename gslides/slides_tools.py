@@ -484,7 +484,7 @@ async def create_presentation(
     service, user_google_email: str, title: str = "Untitled Presentation"
 ) -> str:
     """
-    Create a new Google Slides presentation.
+    Create a new Google Slides presentation and return its ID and URL.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
@@ -535,7 +535,9 @@ async def get_presentation(
     raw: bool = False,
 ) -> str:
     """
-    Get details about a Google Slides presentation.
+    Get a Google Slides presentation's title, URL, page size and slides, with
+    each slide's object ID, element count and text. Flags add speaker notes,
+    element placement or text styles, or return the raw API resource.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
@@ -743,7 +745,10 @@ async def get_page(
     raw: bool = False,
 ) -> str:
     """
-    Get details about a specific page (slide) in a presentation.
+    Get one page (slide) of a presentation: its type and every element's
+    object ID, type and text, including elements inside groups. Flags add
+    element placement or text styles (both include table cell text), or
+    return the raw API resource.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
@@ -856,6 +861,9 @@ async def render_page_to_image(
 ) -> str:
     """
     Render a slide (or any page, including notes pages) to an image and return it as image content, for looking at a slide's layout and visuals.
+
+    This is the way to see a slide: use it instead of exporting the
+    presentation to PPTX or PDF and rendering that.
 
     Args:
         user_google_email (str): The user's Google email address. Required.

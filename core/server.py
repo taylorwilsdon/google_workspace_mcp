@@ -3,6 +3,7 @@
 import asyncio
 import gc
 import hashlib
+import inspect
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
@@ -17,6 +18,7 @@ install_startup_warning_filters()
 from auth.auth_info_middleware import AuthInfoMiddleware
 from core.camel_case_middleware import CamelCaseArgumentsMiddleware
 from core.portable_schema_middleware import PortableSchemaMiddleware
+from core.tool_descriptions import docstring_description
 from auth.google_auth import (
     check_client_secrets,
     get_google_api_timeout,
@@ -414,6 +416,29 @@ async def _google_api_executor(server: FastMCP):
 
 # Custom FastMCP that adds secure middleware stack for OAuth 2.1
 class SecureFastMCP(FastMCP):
+    def tool(self, name_or_fn=None, **kwargs):
+        """Register a tool described by its docstring above ``Args:``, or ``description``."""
+        register = super().tool
+        if kwargs.get("description") is not None:
+            return register(name_or_fn, **kwargs)
+        kwargs.pop("description", None)
+        if inspect.isroutine(name_or_fn):
+            return register(
+                name_or_fn, description=docstring_description(name_or_fn), **kwargs
+            )
+        if name_or_fn is None or (
+            isinstance(name_or_fn, str) and kwargs.get("name") is None
+        ):
+            if name_or_fn is not None:
+                kwargs["name"] = name_or_fn
+
+            def register_with_description(fn):
+                return register(fn, description=docstring_description(fn), **kwargs)
+
+            return register_with_description
+        # Let FastMCP raise its usual error for unsupported arguments.
+        return register(name_or_fn, **kwargs)
+
     def http_app(self, **kwargs) -> "Starlette":
         """Override to add secure middleware stack for OAuth 2.1."""
         # Bound memory retained by abandoned stateful sessions. Resolve an omitted
