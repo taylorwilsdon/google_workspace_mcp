@@ -113,11 +113,29 @@ _SESSION_IDLE_TIMEOUT_ENV = "WORKSPACE_MCP_SESSION_IDLE_TIMEOUT"
 _DEFAULT_SESSION_IDLE_TIMEOUT_SECONDS = 60 * 60 + 60
 _GOOGLE_API_WORKERS_ENV = "WORKSPACE_MCP_GOOGLE_API_WORKERS"
 _ALLOWED_HOSTS_ENV = "WORKSPACE_MCP_ALLOWED_HOSTS"
+_PIN_USER_EMAIL_ENV = "WORKSPACE_MCP_PIN_USER_EMAIL"
 
 
 def _parse_bool_env(value: str) -> bool:
     """Parse environment variable string to boolean."""
     return value.lower() in ("1", "true", "yes", "on")
+
+
+def _user_email_is_pinned() -> bool:
+    """True when every tool must act on USER_GOOGLE_EMAIL.
+
+    Opt-in with WORKSPACE_MCP_PIN_USER_EMAIL for single-account deployments:
+    user_google_email is then not a tool parameter at all, so a client cannot
+    pass a guessed or aliased address and get an authorization prompt for an
+    account the server was never meant to serve. OAuth 2.1 and trusted-gateway
+    modes already take the email from a verified identity and ignore this.
+    """
+    return (
+        bool(USER_GOOGLE_EMAIL)
+        and _parse_bool_env(os.getenv(_PIN_USER_EMAIL_ENV, ""))
+        and not is_oauth21_enabled()
+        and not is_trust_gateway_identity()
+    )
 
 
 def _normalize_parsed(parsed: ParseResult) -> Optional[str]:
@@ -469,6 +487,22 @@ class SecureFastMCP(FastMCP):
                 schema.update(required=required, properties=properties)
                 patched.append(tool.model_copy(update={"parameters": schema}))
             return patched
+        if _user_email_is_pinned():
+            patched = []
+            for tool in tools:
+                properties = tool.parameters.get("properties", {})
+                if "user_google_email" not in properties:
+                    patched.append(tool)
+                    continue
+                schema = dict(tool.parameters)
+                schema["properties"] = {
+                    k: v for k, v in properties.items() if k != "user_google_email"
+                }
+                schema["required"] = [
+                    r for r in schema.get("required", []) if r != "user_google_email"
+                ]
+                patched.append(tool.model_copy(update={"parameters": schema}))
+            return patched
         if not USER_GOOGLE_EMAIL or is_oauth21_enabled():
             return tools
         patched = []
@@ -505,6 +539,18 @@ class SecureFastMCP(FastMCP):
                 for key, value in arguments.items()
                 if key != "user_google_email"
             }
+        elif _user_email_is_pinned():
+            # The parameter is hidden from clients; one sent anyway (for example
+            # from a schema cached before pinning) is replaced, never honoured.
+            requested = arguments.get("user_google_email")
+            if requested and requested != USER_GOOGLE_EMAIL:
+                logger.warning(
+                    "[%s] Ignoring user_google_email %r: pinned to %s",
+                    name,
+                    requested,
+                    USER_GOOGLE_EMAIL,
+                )
+            arguments = {**arguments, "user_google_email": USER_GOOGLE_EMAIL}
         elif (
             not is_oauth21_enabled()
             and USER_GOOGLE_EMAIL
@@ -518,7 +564,12 @@ class SecureFastMCP(FastMCP):
 # Skipped in trusted-gateway mode: the verified principal supersedes the configured
 # default, and user_google_email is no longer a tool parameter clients can pass.
 _server_instructions = None
-if USER_GOOGLE_EMAIL and not is_trust_gateway_identity():
+if _user_email_is_pinned():
+    _server_instructions = f"""Connected Google account: {USER_GOOGLE_EMAIL}
+
+Every Google Workspace tool acts on this account. Do not ask the user for their email address."""
+    logger.info(f"Server instructions configured for user: {USER_GOOGLE_EMAIL}")
+elif USER_GOOGLE_EMAIL and not is_trust_gateway_identity():
     _server_instructions = f"""Connected Google account: {USER_GOOGLE_EMAIL}
 
 When using Google Workspace tools, always use `{USER_GOOGLE_EMAIL}` as the `user_google_email` parameter. Do not ask the user for their email address."""

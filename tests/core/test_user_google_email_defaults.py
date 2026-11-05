@@ -539,3 +539,95 @@ async def test_oauth_records_resolved_principal_on_span(
 
     assert (service, actual_user) == (fake_service, "resolved@example.com")
     assert recorded == [(mode, "resolved@example.com")]
+
+
+def _pinned(monkeypatch, *, oauth21=False, gateway=False):
+    monkeypatch.setattr(server_module, "USER_GOOGLE_EMAIL", "configured@example.com")
+    monkeypatch.setattr(server_module, "is_oauth21_enabled", lambda: oauth21)
+    monkeypatch.setattr(server_module, "is_trust_gateway_identity", lambda: gateway)
+    monkeypatch.setenv("WORKSPACE_MCP_PIN_USER_EMAIL", "true")
+
+
+def _echo_server():
+    server = SecureFastMCP(name="test_server")
+
+    def echo_email(user_google_email: str, query: str = "q") -> str:
+        return f"{user_google_email}:{query}"
+
+    server.tool()(echo_email)
+    return server
+
+
+@pytest.mark.asyncio
+async def test_pinned_email_is_not_a_tool_parameter(monkeypatch):
+    _pinned(monkeypatch)
+    server = _echo_server()
+
+    tool = next(
+        t
+        for t in await server.list_tools(run_middleware=False)
+        if t.name == "echo_email"
+    )
+
+    assert "user_google_email" not in tool.parameters["properties"]
+    assert "user_google_email" not in tool.parameters.get("required", [])
+    assert "query" in tool.parameters["properties"]
+
+
+@pytest.mark.asyncio
+async def test_pinned_email_replaces_caller_supplied_email(monkeypatch):
+    _pinned(monkeypatch)
+    server = _echo_server()
+
+    result = await server.call_tool(
+        "echo_email",
+        {"query": "inbox", "user_google_email": "guessed@example.com"},
+    )
+
+    assert _result_text(result) == "configured@example.com:inbox"
+
+
+@pytest.mark.asyncio
+async def test_pinned_email_is_injected_when_omitted(monkeypatch):
+    _pinned(monkeypatch)
+    server = _echo_server()
+
+    result = await server.call_tool("echo_email", {"query": "inbox"})
+
+    assert _result_text(result) == "configured@example.com:inbox"
+
+
+@pytest.mark.asyncio
+async def test_pinning_needs_the_opt_in(monkeypatch):
+    _pinned(monkeypatch)
+    monkeypatch.delenv("WORKSPACE_MCP_PIN_USER_EMAIL")
+    server = _echo_server()
+
+    tool = next(
+        t
+        for t in await server.list_tools(run_middleware=False)
+        if t.name == "echo_email"
+    )
+    result = await server.call_tool(
+        "echo_email", {"user_google_email": "other@example.com"}
+    )
+
+    assert "user_google_email" in tool.parameters["properties"]
+    assert _result_text(result) == "other@example.com:q"
+
+
+@pytest.mark.parametrize(
+    "configured,oauth21,gateway",
+    [
+        (None, False, False),
+        ("configured@example.com", True, False),
+        ("configured@example.com", False, True),
+    ],
+)
+def test_pinning_is_off_without_email_or_with_managed_identity(
+    monkeypatch, configured, oauth21, gateway
+):
+    _pinned(monkeypatch, oauth21=oauth21, gateway=gateway)
+    monkeypatch.setattr(server_module, "USER_GOOGLE_EMAIL", configured)
+
+    assert server_module._user_email_is_pinned() is False
