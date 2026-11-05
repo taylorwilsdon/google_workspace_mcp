@@ -66,6 +66,7 @@ from gappsscript.apps_script_tools import (
     get_script_activity,
     run_script_function,
 )
+from gdrive.drive_helpers import INCOMPLETE_SEARCH_WARNING
 
 
 def _parameters_adapter():
@@ -129,6 +130,7 @@ async def test_list_script_projects_searches_shared_drives():
     assert kwargs["corpora"] == "allDrives"
     assert kwargs["supportsAllDrives"] is True
     assert kwargs["includeItemsFromAllDrives"] is True
+    assert "incompleteSearch" in kwargs["fields"]
 
 
 @pytest.mark.asyncio
@@ -138,6 +140,7 @@ async def test_list_script_projects_keeps_page_token_on_empty_page():
     mock_service.files().list().execute.return_value = {
         "files": [],
         "nextPageToken": "page-2",
+        "incompleteSearch": True,
     }
 
     result = await _list_script_projects_impl(
@@ -146,6 +149,7 @@ async def test_list_script_projects_keeps_page_token_on_empty_page():
 
     assert "No Apps Script projects found" not in result
     assert "page-2" in result
+    assert INCOMPLETE_SEARCH_WARNING in result
 
 
 @pytest.mark.asyncio
