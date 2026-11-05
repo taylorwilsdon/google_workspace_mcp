@@ -368,6 +368,7 @@ Execute multiple operations atomically in a single API call. Each operation is a
 | `insert_table` | `index`, `rows`, `columns` | |
 | `insert_page_break` | `index` | |
 | `insert_person` | `email`, plus one of `index`, `end_of_segment=true`, `after_heading`, `before_heading` or `anchor_text` | `anchor_position`, `segment_id` (inserts an @mention smart chip) |
+| `insert_date` | `date` (`YYYY-MM-DD` or ISO 8601 with a time zone), plus one of `index`, `end_of_segment=true`, `after_heading`, `before_heading` or `anchor_text` | `anchor_position`, `segment_id`, `date_format`, `time_format`, `timezone` (inserts a date smart chip) |
 | `find_replace` | `find_text`, `replace_text` | `match_case` |
 | `create_bullet_list` | `start_index`, `end_index` | `list_type` (`UNORDERED`/`ORDERED`/`NONE`), `nesting_level` (0-8), `paragraph_start_indices` |
 | `insert_doc_tab` | `title`, `index` | `parent_tab_id` |

@@ -8,9 +8,19 @@ LLMs receive a machine-readable contract instead of a free-form object array.
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import Annotated, Any, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, BeforeValidator, model_validator
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    BeforeValidator,
+    field_validator,
+    model_validator,
+)
 
 
 ParagraphBorderEdge = Literal["top", "bottom", "left", "right", "between"]
@@ -407,6 +417,56 @@ class InsertPersonOperation(InsertionLocationOperation, SegmentTargetDocOperatio
     )
 
 
+class InsertDateOperation(InsertionLocationOperation, SegmentTargetDocOperation):
+    type: Literal["insert_date"]
+    date: str = Field(
+        min_length=1,
+        description="Date for the smart chip, YYYY-MM-DD or an ISO 8601 timestamp with a time zone.",
+    )
+    date_format: Optional[str] = Field(
+        default=None,
+        description="Docs API DateFormat enum, e.g. DATE_FORMAT_MONTH_DAY_YEAR_ABBREVIATED (default) or DATE_FORMAT_ISO8601.",
+    )
+    time_format: Optional[str] = Field(
+        default=None,
+        description="Docs API TimeFormat enum, e.g. TIME_FORMAT_DISABLED or TIME_FORMAT_HOUR_MINUTE.",
+    )
+    timezone: Optional[str] = Field(
+        default=None,
+        description="IANA time zone ID. Sent to Docs only with TIME_FORMAT_HOUR_MINUTE_TIMEZONE; otherwise it only picks local noon for a date-only value.",
+    )
+
+    @field_validator("date")
+    @classmethod
+    def _validate_date(cls, value: str) -> str:
+        """Accept YYYY-MM-DD or an ISO 8601 timestamp that carries a time zone."""
+        try:
+            if len(value) == 10:
+                datetime.strptime(value, "%Y-%m-%d")
+            else:
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                if "T" not in value or parsed.tzinfo is None:
+                    raise ValueError(value)
+        except ValueError as exc:
+            raise ValueError(
+                "date must be YYYY-MM-DD or an ISO 8601 timestamp with a time zone, "
+                "e.g. 2026-11-03T09:30:00Z"
+            ) from exc
+        return value
+
+    @field_validator("timezone")
+    @classmethod
+    def _validate_timezone(cls, value: Optional[str]) -> Optional[str]:
+        """Reject names the IANA time zone database does not know."""
+        if value is None:
+            return value
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError(f"unknown IANA time zone: {value}") from exc
+        return value
+
+
 class InsertDocTabOperation(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -461,6 +521,7 @@ BatchDocOperation = Annotated[
         CreateHeaderFooterOperation,
         InsertImageOperation,
         InsertPersonOperation,
+        InsertDateOperation,
         InsertDocTabOperation,
         DeleteDocTabOperation,
         UpdateDocTabOperation,
