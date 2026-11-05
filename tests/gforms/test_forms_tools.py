@@ -368,7 +368,12 @@ async def test_get_form_response_lists_uploaded_files():
                             "fileId": "file_1",
                             "fileName": "receipt.pdf",
                             "mimeType": "application/pdf",
-                        }
+                        },
+                        {
+                            "fileId": "file_2",
+                            "fileName": "invoice.pdf",
+                            "mimeType": "application/pdf",
+                        },
                     ]
                 },
             }
@@ -379,7 +384,10 @@ async def test_get_form_response_lists_uploaded_files():
         mock_service, "user@example.com", "form_1", "resp_1"
     )
 
-    assert "Question ID q_upload: receipt.pdf (file ID: file_1)" in result
+    assert (
+        "Question ID q_upload: receipt.pdf (file ID: file_1), "
+        "invoice.pdf (file ID: file_2)" in result
+    )
     assert "No answer provided" not in result
 
 
