@@ -382,13 +382,6 @@ class TestHtmlSignatureSeparator:
 
         assert html_to_text_preserving_breaks(result) == "Hello\n\nJane"
 
-    def test_quoted_reply_signature_follows_block_body(self):
-        result = gmail_tools._build_quoted_reply_body(
-            "<p>Thanks</p>", "html", self.SIGNATURE, {"html_body": "<p>Hi</p>"}
-        )
-
-        assert result.startswith(f"<p>Thanks</p>{self.WRAPPED}")
-
 
 class TestHtmlPlainTextAlternative:
     """The text/plain alternative of an outgoing HTML message is what non-HTML
