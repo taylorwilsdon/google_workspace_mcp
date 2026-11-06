@@ -243,7 +243,7 @@ async def test_get_drive_file_content_image(mock_resolve_image, mime_type, magic
     assert image_block.mime_type == mime_type
     assert base64.b64decode(image_block.data) == image_bytes
 
-    assert result.structured_content == {"result": text_block.text}
+    assert result.structured_content is None
 
 
 @pytest.mark.asyncio
@@ -385,7 +385,7 @@ async def test_get_drive_file_content_svg_attaches_embedded_images(mock_resolve_
         ("image/png", png),
         ("image/jpeg", jpeg),
     ]
-    assert result.structured_content == {"result": text_block.text}
+    assert result.structured_content is None
 
 
 @pytest.mark.asyncio

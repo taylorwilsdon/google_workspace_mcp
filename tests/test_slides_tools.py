@@ -972,7 +972,7 @@ class TestRenderPageToImage:
         assert "30 minutes" in text.text
         assert image.type == "image" and image.mime_type == "image/png"
         assert base64.b64decode(image.data) == png
-        assert out.structured_content == {"result": text.text}
+        assert out.structured_content is None
         get_thumbnail = (
             service.presentations.return_value.pages.return_value.getThumbnail
         )
@@ -1067,7 +1067,7 @@ class TestRenderPageToImage:
         text = out.content[0].text
         assert self.URL in text
         assert "Image unavailable" in text
-        assert out.structured_content == {"result": text}
+        assert out.structured_content is None
 
     @pytest.mark.asyncio
     async def test_fetch_failure_keeps_url_out_of_logs(self, monkeypatch, caplog):

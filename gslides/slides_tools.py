@@ -918,8 +918,7 @@ async def render_page_to_image(
     if image is not None:
         content.append(image)
     logger.info(f"Page rendered for {user_google_email}")
-    # structured_content mirrors the text to satisfy the `str` output schema.
-    return ToolResult(content=content, structured_content={"result": text})
+    return ToolResult(content=content)
 
 
 # Create comment management tools for slides

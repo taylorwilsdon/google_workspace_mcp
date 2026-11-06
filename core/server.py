@@ -414,6 +414,11 @@ async def _google_api_executor(server: FastMCP):
 
 # Custom FastMCP that adds secure middleware stack for OAuth 2.1
 class SecureFastMCP(FastMCP):
+    def tool(self, name_or_fn=None, **kwargs):
+        """Register a tool with no output schema unless one is passed."""
+        kwargs.setdefault("output_schema", None)
+        return super().tool(name_or_fn, **kwargs)
+
     def http_app(self, **kwargs) -> "Starlette":
         """Override to add secure middleware stack for OAuth 2.1."""
         # Bound memory retained by abandoned stateful sessions. Resolve an omitted

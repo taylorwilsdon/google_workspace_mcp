@@ -242,7 +242,7 @@ async def test_download_url_stateless_mode_returns_whole_file_and_cleans_up(
     assert resource.type == "resource"
     assert resource.resource.mime_type == "video/mp4"
     assert base64.b64decode(resource.resource.blob) == payload
-    assert result.structured_content == {"result": text.text}
+    assert result.structured_content is None
     assert not Path(_FakeDownloader.handles[0].name).exists()
 
 
