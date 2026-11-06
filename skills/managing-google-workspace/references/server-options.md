@@ -61,6 +61,8 @@ Plugin users cannot pass CLI args directly. Use `WORKSPACE_MCP_TOOLS`, `WORKSPAC
 
 `WORKSPACE_MCP_TOOLS` accepts a comma-separated list of services. `WORKSPACE_MCP_TOOL_TIER` accepts `core`, `extended`, or `complete`. `WORKSPACE_MCP_DISABLED_TOOLS` accepts a comma-separated list of exact tool names. CLI args take precedence if both are provided.
 
+`WORKSPACE_MCP_ALWAYS_LOAD_TOOLS` takes tool names in the same form and marks them `_meta["anthropic/alwaysLoad"]: true`, so Claude Code loads them upfront while tool search defers the rest. It has no CLI equivalent.
+
 ## MCP config examples
 
 ```json
