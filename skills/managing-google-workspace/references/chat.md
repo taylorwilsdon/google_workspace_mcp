@@ -43,16 +43,19 @@ Searches for messages in Google Chat spaces by text content and/or time range.
 | max_spaces | integer | no | 10 | Spaces searched when space_id is omitted; pages through the space list until this many are found |
 
 ### send_message
-Sends a message to a Google Chat space. Can reply to existing threads, or edit a message already sent.
+Sends a message to a Google Chat space. Can reply to existing threads, edit a message already sent, create a new named space to post into, and pin the sent or edited message.
 
 | Parameter | Type | Required | Default | Notes |
 |-----------|------|----------|---------|-------|
 | user_google_email | string | yes | | |
-| space_id | string | yes | | |
 | message_text | string | yes | | |
+| space_id | string | no | | Required unless `create_space_name` is set |
 | thread_key | string | no | | App-defined key; creates thread if not found |
 | thread_name | string | no | | Resource name, e.g. `spaces/X/threads/Y` |
 | message_name | string | no | | Edit this message in place, e.g. `spaces/X/messages/Y`; must sit in `space_id`, own messages only, cannot be combined with a thread parameter |
+| create_space_name | string | no | | Create a named space with this display name and send into it; cannot be combined with `space_id`, `message_name` or `thread_name`. Display names must be unique in the Workspace org. Needs the `chat.spaces` scope (in the default Chat scopes); if the first message then fails, the error names the new space so the retry can use `space_id` |
+| member_emails | list[string] | no | | With `create_space_name`: email addresses of people (not groups) to add to the new space, at most 49 (the caller is added automatically); each is checked afterwards, and pending invitations or members not confirmed are named in the result |
+| pin | boolean | no | false | Pin the sent or edited message; needs the `chat.spaces` scope; a pin failure is reported in the result without undoing the send |
 
 ---
 
@@ -80,7 +83,7 @@ Downloads an attachment from a Chat message. Returns a local file path (stdio mo
 
 ## Tips
 
-**Space IDs**: Call `list_spaces` first to discover available spaces and their IDs. You need the space ID for all message operations.
+**Space IDs**: Call `list_spaces` first to discover available spaces and their IDs. You need the space ID for all message operations on existing spaces; the exception is `send_message` with `create_space_name`, which creates the space and returns its ID.
 
 **Unnamed spaces**: Direct messages and group chats have no name of their own, so `list_spaces`, `get_messages` and `search_messages` label them after up to three other members (e.g. `Alice Smith, Bob Jones and 2 others`). Naming needs the `chat.memberships.readonly` and `contacts.readonly` scopes (requested with the Chat scopes) and the People API enabled in the Google Cloud project. Tokens granted before `chat.memberships.readonly` was added keep working without re-consent. If the member lookup fails, for example because that scope is missing, the label falls back to `Direct message` or `Group chat`; if only a member's name cannot be resolved, their user ID (e.g. `users/123`) is shown in its place.
 
