@@ -9,12 +9,27 @@ import logging
 from collections.abc import Iterator
 from typing import Any, Optional
 
+from gdocs.docs_helpers import _paragraph_element_text, utf16_length
+
 from core.utils import UserInputError
 
 logger = logging.getLogger(__name__)
 
 # Limit returned ranges; the count remains exact.
 EMPTY_PARAGRAPH_RANGE_LIMIT = 100
+
+# Limit returned text matches; the count remains exact.
+TEXT_MATCH_LIMIT = 50
+
+# Characters of surrounding text shown with each match.
+TEXT_MATCH_CONTEXT_CHARS = 40
+
+# Pending suggestions (the default view for an editor) keep old and new text side
+# by side; context marks them so a caller knows what is only proposed.
+SUGGESTION_MARKERS = {
+    "insertion": ("{++", "++}"),
+    "deletion": ("{--", "--}"),
+}
 
 
 def truncate_preview(text: str, preview_chars: Optional[int]) -> str:
@@ -222,6 +237,151 @@ def _parse_segment(
         "end_index": content[-1].get("endIndex", 0) if content else 0,
         "text_preview": truncate_preview("".join(text_parts), preview_chars),
         "element_count": len(content),
+    }
+
+
+def _iter_body_paragraphs(
+    body: dict[str, Any], in_table: bool = False
+) -> Iterator[tuple[dict[str, Any], bool]]:
+    """Yield body paragraphs, including table cells and tables of contents."""
+    for element in body.get("content", []):
+        if "paragraph" in element:
+            yield element, in_table
+        elif "table" in element:
+            for row in element["table"].get("tableRows", []):
+                for cell in row.get("tableCells", []):
+                    yield from _iter_body_paragraphs(cell, in_table=True)
+        elif "tableOfContents" in element:
+            yield from _iter_body_paragraphs(element["tableOfContents"], in_table)
+
+
+def validate_find_text(find_text: Optional[str]) -> Optional[str]:
+    """Return an error message when find_text is given but blank, else None."""
+    if find_text is not None and not find_text.strip():
+        return "Error: find_text must not be empty."
+    return None
+
+
+def _paragraph_segments(paragraph: dict[str, Any]) -> list[tuple[str, Optional[str]]]:
+    """Index-aligned text of a paragraph as (text, suggestion kind) segments.
+
+    The kind is "insertion" or "deletion" for a text run that belongs to a
+    pending suggestion, "mixed" for a run that is both (inserted by one
+    suggestion and deleted by another), else None. Inline objects contribute
+    placeholder characters with no kind.
+    """
+    segments: list[tuple[str, Optional[str]]] = []
+    for part in paragraph.get("elements", []):
+        text_run = part.get("textRun")
+        kind = None
+        if text_run:
+            inserted = bool(text_run.get("suggestedInsertionIds"))
+            deleted = bool(text_run.get("suggestedDeletionIds"))
+            if inserted and deleted:
+                kind = "mixed"
+            elif inserted:
+                kind = "insertion"
+            elif deleted:
+                kind = "deletion"
+        segments.append((_paragraph_element_text(part), kind))
+    return segments
+
+
+def _suggestion_state(
+    segments: list[tuple[str, Optional[str]]], start: int, end: int
+) -> Optional[str]:
+    """How the characters [start, end) relate to pending suggestions.
+
+    None when none of them is suggested text; "insertion" or "deletion" when all
+    of them are; "mixed" when the span crosses suggested and settled text.
+    """
+    kinds: set[Optional[str]] = set()
+    offset = 0
+    for text, kind in segments:
+        seg_end = offset + len(text)
+        if seg_end > start and offset < end and text:
+            kinds.add(kind)
+        offset = seg_end
+        if offset >= end:
+            break
+    if not kinds or kinds == {None}:
+        return None
+    if len(kinds) == 1:
+        return kinds.pop()
+    return "mixed"
+
+
+def _render_context(
+    segments: list[tuple[str, Optional[str]]], start: int, end: int
+) -> str:
+    """Text of [start, end) with suggested spans wrapped in their markers."""
+    parts: list[str] = []
+    offset = 0
+    for text, kind in segments:
+        seg_end = offset + len(text)
+        if seg_end > start and offset < end:
+            piece = text[max(start - offset, 0) : min(end - offset, len(text))]
+            if piece and kind is not None:
+                piece = piece.rstrip(chr(10))
+                kinds = ("insertion", "deletion") if kind == "mixed" else (kind,)
+                for marked in kinds:
+                    opening, closing = SUGGESTION_MARKERS[marked]
+                    piece = f"{opening}{piece}{closing}"
+            parts.append(piece)
+        offset = seg_end
+        if offset >= end:
+            break
+    return "".join(parts).rstrip("\n")
+
+
+def find_text_ranges(
+    doc_data: dict[str, Any],
+    needle: str,
+    limit: int = TEXT_MATCH_LIMIT,
+    context_chars: int = TEXT_MATCH_CONTEXT_CHARS,
+) -> dict[str, Any]:
+    """
+    Locate needle in body paragraphs, table cells and tables of contents.
+
+    Offsets are converted to UTF-16 code units, and inline objects are counted
+    by their index span, so the ranges can be used directly in format_text,
+    update_paragraph_style or comment requests without further arithmetic. The
+    search runs per paragraph, so text spanning a paragraph break does not match.
+    Text that belongs to a pending suggestion is still searched (the document's
+    indices include it); each match says so in in_suggestion, and the context
+    marks it as {++inserted++} or {--deleted--}.
+    """
+    matches: list[dict[str, Any]] = []
+    count = 0
+    for element, in_table in _iter_body_paragraphs(doc_data.get("body", {})):
+        segments = _paragraph_segments(element["paragraph"])
+        text = "".join(segment_text for segment_text, _ in segments)
+        paragraph_start = element.get("startIndex", 0)
+        offset = text.find(needle)
+        while offset != -1:
+            count += 1
+            if len(matches) < limit:
+                start = paragraph_start + utf16_length(text[:offset])
+                match_end = offset + len(needle)
+                context_from = max(0, offset - context_chars)
+                context_to = match_end + context_chars
+                matches.append(
+                    {
+                        "start_index": start,
+                        "end_index": start + utf16_length(needle),
+                        "paragraph_start_index": paragraph_start,
+                        "paragraph_end_index": element.get("endIndex", 0),
+                        "in_table": in_table,
+                        "in_suggestion": _suggestion_state(segments, offset, match_end),
+                        "context": _render_context(segments, context_from, context_to),
+                    }
+                )
+            offset = text.find(needle, offset + 1)
+    return {
+        "query": needle,
+        "count": count,
+        "matches": matches,
+        "truncated": count > len(matches),
     }
 
 
