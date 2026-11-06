@@ -182,6 +182,37 @@ async def test_get_messages_exposes_message_filter_and_forwards_it(mock_resolve)
 
 
 @pytest.mark.asyncio
+@patch("gchat.chat_tools._resolve_sender", new_callable=AsyncMock)
+async def test_get_messages_accepts_bare_space_id(mock_resolve):
+    """get_messages should normalize a bare space id to spaces/<id>."""
+    mock_resolve.return_value = "Test User"
+
+    msg = _make_message(text="Normalized")
+    chat_service = Mock()
+    chat_service.spaces().get().execute.return_value = {"displayName": "Test Space"}
+    chat_service.spaces().messages().list().execute.return_value = {"messages": [msg]}
+    people_service = Mock()
+
+    from gchat.chat_tools import get_messages
+
+    await _unwrap(get_messages)(
+        chat_service=chat_service,
+        people_service=people_service,
+        user_google_email="test@example.com",
+        space_id="AAQAGqUsooo",
+    )
+
+    assert (
+        chat_service.spaces().get.call_args.kwargs["name"]
+        == "spaces/AAQAGqUsooo"
+    )
+    assert (
+        chat_service.spaces().messages().list.call_args.kwargs["parent"]
+        == "spaces/AAQAGqUsooo"
+    )
+
+
+@pytest.mark.asyncio
 async def test_get_messages_resolves_senders_sequentially(monkeypatch):
     """get_messages should avoid concurrent People API sender resolution."""
     state = {"current": 0, "max": 0}
@@ -320,6 +351,40 @@ async def test_search_messages_fetches_newest_messages_first(mock_resolve, space
 
 
 @pytest.mark.asyncio
+@patch("gchat.chat_tools._resolve_sender", new_callable=AsyncMock)
+async def test_search_messages_accepts_bare_space_id(mock_resolve):
+    """search_messages should normalize a bare space id to spaces/<id>."""
+    mock_resolve.return_value = "Test User"
+
+    chat_service = Mock()
+    space = {"name": "spaces/AAQAGqUsooo", "displayName": "General"}
+    chat_service.spaces().get().execute.return_value = space
+    chat_service.spaces().messages().list().execute.return_value = {
+        "messages": [_make_message(text="Deploy finished")]
+    }
+    people_service = Mock()
+
+    from gchat.chat_tools import search_messages
+
+    await _unwrap(search_messages)(
+        chat_service=chat_service,
+        people_service=people_service,
+        user_google_email="test@example.com",
+        query="deploy",
+        space_id="AAQAGqUsooo",
+    )
+
+    assert (
+        chat_service.spaces().messages().list.call_args.kwargs["parent"]
+        == "spaces/AAQAGqUsooo"
+    )
+    assert (
+        chat_service.spaces().get.call_args.kwargs["name"]
+        == "spaces/AAQAGqUsooo"
+    )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "space_count, list_extra, expected",
     [
@@ -357,6 +422,30 @@ async def test_search_messages_reports_how_many_spaces_it_searched(
     )
 
     assert f"in {expected}." in result
+
+
+@pytest.mark.asyncio
+async def test_send_message_accepts_bare_space_id():
+    """send_message should normalize a bare space id to spaces/<id>."""
+    chat_service = Mock()
+    chat_service.spaces().messages().create().execute.return_value = {
+        "name": "spaces/AAQAGqUsooo/messages/M1",
+        "createTime": "2025-01-01T00:00:00Z",
+    }
+
+    from gchat.chat_tools import send_message
+
+    await _unwrap(send_message)(
+        service=chat_service,
+        user_google_email="test@example.com",
+        space_id="AAQAGqUsooo",
+        message_text="Hello",
+    )
+
+    assert (
+        chat_service.spaces().messages().create.call_args.kwargs["parent"]
+        == "spaces/AAQAGqUsooo"
+    )
 
 
 @pytest.mark.asyncio
