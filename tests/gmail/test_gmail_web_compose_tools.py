@@ -285,3 +285,770 @@ async def test_send_html_body_plain_part_keeps_paragraph_breaks():
     plain = _part(_raw_sent(gmail), "text/plain")
     assert "First.Second." not in plain
     assert "First.\nSecond." in plain.replace("\r\n", "\n")
+
+
+@pytest.mark.asyncio
+async def test_send_with_attachments_derives_reply_headers(monkeypatch):
+    """Thread replies with attachments derive In-Reply-To/References too."""
+    import gmail.gmail_tools as gt
+
+    gmail = _gmail_service()
+
+    async def fake_context(service, thread_id, in_reply_to=None, include_bodies=False):
+        return {"message_ids": ["<first@example.com>", "<second@example.com>"]}
+
+    captured = {}
+
+    def fake_build(**kwargs):
+        captured.update(kwargs)
+        return "cmF3"
+
+    monkeypatch.setattr(gt, "_fetch_thread_reply_context", fake_context)
+    monkeypatch.setattr(gt, "_build_web_compose_raw", fake_build)
+
+    await _unwrap(send_gmail_message)(
+        service=gmail,
+        user_google_email="grace@example.org",
+        to="ada@example.com",
+        subject="Re: Project sync",
+        body="See attached",
+        thread_id="thread123",
+        attachments=[{"filename": "a.txt", "content": "eA=="}],
+        include_signature=False,
+    )
+
+    assert captured["in_reply_to"] == "<second@example.com>"
+    assert "<first@example.com>" in captured["references"]
+    assert "<second@example.com>" in captured["references"]
+    assert [p["filename"] for p in captured["attachment_parts"]] == ["a.txt"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body_format", ["plain", "html"])
+async def test_send_with_attachment_honors_direction(body_format):
+    """Attachments take the web path too, so direction still applies."""
+    gmail = _gmail_service()
+    body = "<div>OK שלום</div>" if body_format == "html" else "OK שלום"
+
+    await _unwrap(send_gmail_message)(
+        service=gmail,
+        user_google_email="grace@example.org",
+        to="ada@example.com",
+        subject="Project sync",
+        body=body,
+        body_format=body_format,
+        direction="rtl",
+        attachments=[{"filename": "a.txt", "content": "eA=="}],
+        include_signature=False,
+    )
+
+    assert '<div dir="rtl">' in _part(_raw_sent(gmail), "text/html")
+
+
+def _people_service_with(name: str, email: str):
+    service = Mock()
+    service.people().searchContacts().execute.return_value = {
+        "results": [
+            {
+                "person": {
+                    "names": [{"displayName": name}],
+                    "emailAddresses": [{"value": email}],
+                }
+            }
+        ]
+    }
+    # Warmup call (query="") is not used by our resolver, but keep it harmless.
+    return service
+
+
+def _people_service_empty():
+    service = Mock()
+    service.people().searchContacts().execute.return_value = {"results": []}
+    return service
+
+
+@pytest.mark.asyncio
+async def test_send_resolves_display_names_on_to():
+    gmail = _gmail_service()
+    people = _people_service_with("Ada Lovelace", "ada@example.com")
+
+    result = await _unwrap(send_gmail_message)(
+        service=gmail,
+        people_service=people,
+        user_google_email="grace@example.org",
+        to="ada@example.com",
+        subject="Project sync",
+        body="Hello there",
+        include_signature=False,
+    )
+
+    raw = _raw_sent(gmail)
+    assert "Email sent" in result
+    assert "To: Ada Lovelace <ada@example.com>" in raw
+    assert 'Content-Type: multipart/alternative; boundary="000000000000' in raw
+
+
+@pytest.mark.asyncio
+async def test_send_falls_back_to_bare_addr_when_unresolved():
+    gmail = _gmail_service()
+    people = _people_service_empty()
+
+    await _unwrap(send_gmail_message)(
+        service=gmail,
+        people_service=people,
+        user_google_email="grace@example.org",
+        to="ada@example.com",
+        subject="Project sync",
+        body="Hello there",
+        include_signature=False,
+    )
+
+    raw = _raw_sent(gmail)
+    assert "To: ada@example.com" in raw
+    # Still a full multipart/alternative.
+    assert 'text/plain; charset="UTF-8"' in raw
+    assert 'text/html; charset="UTF-8"' in raw
+
+
+@pytest.mark.asyncio
+async def test_send_degrades_when_name_lookup_raises():
+    gmail = _gmail_service()
+    people = Mock()
+    people.people().searchContacts().execute.side_effect = RuntimeError("boom")
+
+    await _unwrap(send_gmail_message)(
+        service=gmail,
+        people_service=people,
+        user_google_email="grace@example.org",
+        to="ada@example.com",
+        subject="Project sync",
+        body="Hello there",
+        include_signature=False,
+    )
+
+    raw = _raw_sent(gmail)
+    assert "To: ada@example.com" in raw
+    assert "multipart/alternative" in raw
+
+
+@pytest.mark.asyncio
+async def test_send_without_people_service_appends_fallback_note(monkeypatch):
+    """When the People (Contacts) scope is absent the decorator injects
+    people_service=None; the send still succeeds with bare addresses AND the
+    result tells the user resolution was skipped + how to enable it."""
+    monkeypatch.setenv("GMAIL_EXTENDED_NAME_LOOKUP", "1")
+    gmail = _gmail_service()
+
+    result = await _unwrap(send_gmail_message)(
+        service=gmail,
+        people_service=None,
+        user_google_email="grace@example.org",
+        to="ada@example.com",
+        subject="Project sync",
+        body="Hello there",
+        include_signature=False,
+    )
+
+    raw = _raw_sent(gmail)
+    assert "Email sent" in result
+    assert "To: ada@example.com" in raw  # bare fallback, send not broken
+    # The fallback is surfaced with the remediation path; with no People service
+    # at all, all three resolution scopes are listed.
+    assert "could not be resolved" in result
+    assert "contacts.readonly" in result
+    assert "contacts.other.readonly" in result
+    assert "directory.readonly" in result
+    assert "start_google_auth" in result
+
+
+@pytest.mark.asyncio
+async def test_send_no_note_when_people_service_present():
+    """A present People service (even if it finds nothing) is not a missing-scope
+    condition, so no fallback note is appended."""
+    gmail = _gmail_service()
+    people = _people_service_empty()
+
+    result = await _unwrap(send_gmail_message)(
+        service=gmail,
+        people_service=people,
+        user_google_email="grace@example.org",
+        to="ada@example.com",
+        subject="Project sync",
+        body="Hello there",
+        include_signature=False,
+    )
+
+    assert "Email sent" in result
+    assert "could not be resolved" not in result
+
+
+@pytest.mark.asyncio
+async def test_send_no_note_when_all_names_supplied_inline():
+    """No People service, but the caller supplied every display name inline, so
+    resolution was never needed and the note must not fire."""
+    gmail = _gmail_service()
+
+    result = await _unwrap(send_gmail_message)(
+        service=gmail,
+        people_service=None,
+        user_google_email="grace@example.org",
+        from_name="Grace Hopper",
+        to="Ada Lovelace <ada@example.com>",
+        subject="Project sync",
+        body="Hello there",
+        include_signature=False,
+    )
+
+    assert "Email sent" in result
+    assert "could not be resolved" not in result
+
+
+class _FakeResp:
+    def __init__(self, status):
+        self.status = status
+        self.reason = "Forbidden"
+
+
+def _http_error(status: int):
+    from googleapiclient.errors import HttpError
+
+    return HttpError(
+        _FakeResp(status),
+        b'{"error":{"message":"Request had insufficient authentication scopes."}}',
+    )
+
+
+def _people_service_tiers(*, contacts=None, other=None, directory=None):
+    """People mock with independently-configurable tiers (each a results payload,
+    an HttpError to raise, or None for 'no match')."""
+    service = Mock()
+
+    def _wire(node, payload, person_wrapped=True):
+        if isinstance(payload, Exception):
+            node.execute.side_effect = payload
+        elif payload is None:
+            node.execute.return_value = {"results": [] if person_wrapped else []}
+        else:
+            node.execute.return_value = payload
+
+    _wire(service.people().searchContacts(), contacts)
+    _wire(service.otherContacts().search(), other)
+    _wire(service.people().searchDirectoryPeople(), directory)
+    return service
+
+
+def _person_results(name, email, *, key="results", wrapped=True):
+    person = {
+        "names": [{"displayName": name}],
+        "emailAddresses": [{"value": email}],
+    }
+    return {key: [{"person": person} if wrapped else person]}
+
+
+@pytest.mark.asyncio
+async def test_saved_contact_name_wins_over_thread_name():
+    """Per Google's documented compose/reply resolution: when a reply recipient
+    is BOTH a saved contact (under one name) AND in the thread under a different
+    name, the saved Contacts name wins."""
+    gmail = _gmail_service()
+    # Thread says "MG Carroll"; saved contact says "Margaret C.".
+    thread_full = {
+        "messages": [
+            {
+                "id": "p1",
+                "labelIds": ["INBOX"],
+                "payload": {
+                    "headers": [
+                        {"name": "Message-ID", "value": "<parent@example.com>"},
+                        {"name": "From", "value": "MG Carroll <mg@example.com>"},
+                        {"name": "Subject", "value": "Project"},
+                        {"name": "Date", "value": "Tue, 7 Apr 2026 19:19:00 +0000"},
+                    ],
+                    "mimeType": "text/plain",
+                    "body": {"data": _encode("Hi")},
+                },
+            }
+        ]
+    }
+    gmail.users().threads().get().execute.return_value = thread_full
+    gmail.users.return_value.threads.return_value.get.reset_mock()
+    people = _people_service_tiers(
+        contacts=_person_results("Maggie Carroll", "mg@example.com")
+    )
+
+    await _unwrap(send_gmail_message)(
+        service=gmail,
+        people_service=people,
+        user_google_email="you@example.org",
+        to="mg@example.com",
+        subject="Project",
+        body="Thanks!",
+        thread_id="thread123",
+        include_signature=False,
+        quote_original=True,
+    )
+
+    raw = _raw_sent(gmail)
+    # Saved contact wins in the To header...
+    assert "To: Maggie Carroll <mg@example.com>" in raw
+    assert "To: MG Carroll" not in raw
+    # ...but the quote attribution still uses the thread's original sender name.
+    assert "MG Carroll <mg@example.com> wrote:" in raw
+
+
+@pytest.mark.asyncio
+async def test_send_resolves_name_from_other_contacts(monkeypatch):
+    """Scenario 2: a freshly-addressed external recipient not in saved contacts
+    resolves via auto-collected 'Other contacts' (contacts.other.readonly)."""
+    monkeypatch.setenv("GMAIL_EXTENDED_NAME_LOOKUP", "1")
+    gmail = _gmail_service()
+    people = _people_service_tiers(
+        contacts={"results": []},
+        other=_person_results("MG Carroll", "mg@anthropic.example"),
+    )
+
+    result = await _unwrap(send_gmail_message)(
+        service=gmail,
+        people_service=people,
+        user_google_email="grace@example.org",
+        to="mg@anthropic.example",
+        subject="Intro",
+        body="Hi",
+        include_signature=False,
+    )
+
+    raw = _raw_sent(gmail)
+    assert "To: MG Carroll <mg@anthropic.example>" in raw
+    assert "could not be resolved" not in result
+
+
+@pytest.mark.asyncio
+async def test_send_resolves_name_from_directory(monkeypatch):
+    """Scenario 2: an internal colleague resolves via the Workspace directory
+    (directory.readonly) when not in contacts or other-contacts."""
+    monkeypatch.setenv("GMAIL_EXTENDED_NAME_LOOKUP", "1")
+    gmail = _gmail_service()
+    people = _people_service_tiers(
+        contacts={"results": []},
+        other={"results": []},
+        directory=_person_results(
+            "David Fishman", "david@example.org", key="people", wrapped=False
+        ),
+    )
+
+    result = await _unwrap(send_gmail_message)(
+        service=gmail,
+        people_service=people,
+        user_google_email="grace@example.org",
+        to="david@example.org",
+        subject="Sync",
+        body="Hi",
+        include_signature=False,
+    )
+
+    raw = _raw_sent(gmail)
+    assert "To: David Fishman <david@example.org>" in raw
+    assert "could not be resolved" not in result
+
+
+@pytest.mark.asyncio
+async def test_send_note_lists_only_the_scope_that_errored(monkeypatch):
+    """A 403 on the other-contacts tier records that scope; the note lists it
+    (and directory if it also errors) but not tiers that simply found nothing."""
+    monkeypatch.setenv("GMAIL_EXTENDED_NAME_LOOKUP", "1")
+    gmail = _gmail_service()
+    people = _people_service_tiers(
+        contacts={"results": []},
+        other=_http_error(403),
+        directory={"people": []},
+    )
+
+    result = await _unwrap(send_gmail_message)(
+        service=gmail,
+        people_service=people,
+        user_google_email="grace@example.org",
+        to="stranger@example.com",
+        subject="Hello",
+        body="Hi",
+        include_signature=False,
+    )
+
+    raw = _raw_sent(gmail)
+    assert "To: stranger@example.com" in raw  # bare
+    assert "could not be resolved" in result
+    assert "contacts.other.readonly" in result
+    # Directory returned an empty result (not a scope error), so it is NOT listed.
+    assert "directory.readonly" not in result
+
+
+def test_harvest_thread_display_names_first_name_wins():
+    from gmail.gmail_tools import _harvest_thread_display_names
+
+    messages = [
+        {"from": "MG Carroll <mg@example.com>", "to": "you@example.org", "cc": ""},
+        {"from": "mg@example.com", "to": "David Fishman <david@example.org>", "cc": ""},
+    ]
+    names = _harvest_thread_display_names(messages)
+    assert names["mg@example.com"] == "MG Carroll"
+    assert names["david@example.org"] == "David Fishman"
+    # Bare address with no name anywhere is absent (caller emits it bare).
+    assert "you@example.org" not in names
+
+
+@pytest.mark.asyncio
+async def test_reply_resolves_recipient_name_from_thread_without_people():
+    """Scenario 1: replying without editing recipients resolves their names from
+    the thread's own headers -- even with NO People service (zero extra scope),
+    mirroring how Gmail shows an unsaved sender like 'MG Carroll'."""
+    gmail = _gmail_service()
+    thread_full = {
+        "messages": [
+            {
+                "id": "p1",
+                "labelIds": ["INBOX"],
+                "payload": {
+                    "headers": [
+                        {"name": "Message-ID", "value": "<parent@example.com>"},
+                        {"name": "From", "value": "MG Carroll <mg@example.com>"},
+                        {"name": "Subject", "value": "Project"},
+                        {"name": "Date", "value": "Tue, 7 Apr 2026 19:19:00 +0000"},
+                    ],
+                    "mimeType": "text/plain",
+                    "body": {"data": _encode("Hi there")},
+                },
+            }
+        ]
+    }
+    gmail.users().threads().get().execute.return_value = thread_full
+    gmail.users.return_value.threads.return_value.get.reset_mock()
+
+    result = await _unwrap(send_gmail_message)(
+        service=gmail,
+        people_service=None,  # no contacts scope at all
+        user_google_email="you@example.org",
+        to="mg@example.com",
+        subject="Project",
+        body="Thanks!",
+        thread_id="thread123",
+        include_signature=False,
+    )
+
+    raw = _raw_sent(gmail)
+    assert "To: MG Carroll <mg@example.com>" in raw
+    # Name resolved from the thread, so no scope-fallback note.
+    assert "could not be resolved" not in result
+
+
+@pytest.mark.asyncio
+async def test_send_rejects_recipient_header_with_no_parseable_address():
+    """A non-empty To that parses to no address (semicolon separators) must be
+    rejected, not silently dropped from the message."""
+    from core.utils import UserInputError
+
+    gmail = _gmail_service()
+
+    with pytest.raises(UserInputError, match="Separate recipients with commas"):
+        await _unwrap(send_gmail_message)(
+            service=gmail,
+            people_service=_people_service_empty(),
+            user_google_email="grace@example.org",
+            to="ada@example.com; alan@example.com",
+            subject="Project sync",
+            body="Hello there",
+            include_signature=False,
+        )
+    send_calls = gmail.users.return_value.messages.return_value.send.call_args_list
+    assert not [c for c in send_calls if "body" in c.kwargs]
+
+
+@pytest.mark.asyncio
+async def test_send_rejects_semicolon_recipients_even_with_permissive_parser(
+    monkeypatch,
+):
+    """Python < 3.10.15 getaddresses splits "a; b" into addresses; the syntax
+    must still be rejected rather than sent."""
+    import gmail.gmail_tools as gmail_tools
+    from core.utils import UserInputError
+
+    monkeypatch.setattr(
+        gmail_tools,
+        "getaddresses",
+        lambda values: [("", "ada@example.com"), ("", ""), ("", "alan@example.com")],
+    )
+    gmail = _gmail_service()
+
+    with pytest.raises(UserInputError, match="Separate recipients with commas"):
+        await _unwrap(send_gmail_message)(
+            service=gmail,
+            people_service=_people_service_empty(),
+            user_google_email="grace@example.org",
+            to="ada@example.com; alan@example.com",
+            subject="Project sync",
+            body="Hello there",
+            include_signature=False,
+        )
+    send_calls = gmail.users.return_value.messages.return_value.send.call_args_list
+    assert not [c for c in send_calls if "body" in c.kwargs]
+
+
+@pytest.mark.asyncio
+async def test_send_keeps_group_and_trailing_comma_recipients():
+    gmail = _gmail_service()
+    await _unwrap(send_gmail_message)(
+        service=gmail,
+        people_service=_people_service_empty(),
+        user_google_email="grace@example.org",
+        to="Team: ada@example.com, alan@example.com;, bob@example.com,",
+        subject="Project sync",
+        body="Hello there",
+        include_signature=False,
+    )
+    headers = _raw_sent(gmail).split("\r\n\r\n", 1)[0]
+    assert "To: Team: ada@example.com, alan@example.com;, bob@example.com" in headers
+
+
+def _people_http_error(status: int, reason: str):
+    import json
+
+    import httplib2
+    from googleapiclient.errors import HttpError
+
+    content = json.dumps(
+        {"error": {"code": status, "errors": [{"reason": reason}], "message": reason}}
+    ).encode()
+    return HttpError(httplib2.Response({"status": status}), content)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status,reason,recorded",
+    [
+        (401, "authError", True),
+        (403, "insufficientPermissions", True),
+        (403, "ACCESS_TOKEN_SCOPE_INSUFFICIENT", True),
+        (403, "accessNotConfigured", False),
+        # An admin policy or other forbidden 403 is not fixed by granting scopes.
+        (403, "forbidden", False),
+        (403, "domainPolicy", False),
+        (403, "rateLimitExceeded", False),
+        (403, "quotaExceeded", False),
+    ],
+)
+async def test_people_tier_records_scope_only_for_auth_errors(status, reason, recorded):
+    from gmail.gmail_tools import _people_search_tier
+
+    request = Mock()
+    request.return_value.execute.side_effect = _people_http_error(status, reason)
+    missing: set = set()
+
+    name = await _people_search_tier(
+        request,
+        {},
+        "ada@example.com",
+        results_key="results",
+        wrap_key="person",
+        scope="scope-x",
+        missing_scopes=missing,
+    )
+
+    assert name is None
+    assert (missing == {"scope-x"}) is recorded
+
+
+def test_name_fallback_note_is_neutral_for_drafts(monkeypatch):
+    from gmail import gmail_tools
+
+    monkeypatch.setattr(gmail_tools, "is_oauth21_enabled", lambda: False)
+    note = gmail_tools._build_name_fallback_note(True, None)
+    assert "written as bare addresses" in note
+    assert "sent as bare" not in note
+    assert "start_google_auth" in note
+
+
+def test_name_fallback_note_uses_oauth21_instruction(monkeypatch):
+    from gmail import gmail_tools
+
+    monkeypatch.setattr(gmail_tools, "is_oauth21_enabled", lambda: True)
+    monkeypatch.setattr(gmail_tools, "is_external_oauth21_provider", lambda: False)
+    note = gmail_tools._build_name_fallback_note(True, None)
+    assert "start_google_auth" not in note
+    assert "OAuth 2.1" in note
+
+    monkeypatch.setattr(gmail_tools, "is_external_oauth21_provider", lambda: True)
+    note = gmail_tools._build_name_fallback_note(True, None)
+    assert "bearer token" in note
+
+
+@pytest.mark.asyncio
+async def test_send_resolves_long_non_ascii_display_name():
+    """A resolved name long enough to fold must not trip the CR/LF check."""
+    from email.header import decode_header, make_header
+
+    name = "ישראל ישראלי בן אברהם יצחק ויעקב"
+    gmail = _gmail_service()
+
+    result = await _unwrap(send_gmail_message)(
+        service=gmail,
+        people_service=_people_service_with(name, "ada@example.com"),
+        user_google_email="grace@example.org",
+        to="ada@example.com",
+        subject="Project sync",
+        body="Hello there",
+        include_signature=False,
+    )
+
+    assert "Email sent" in result
+    to_header = message_from_string(_raw_sent(gmail))["To"]
+    assert str(make_header(decode_header(to_header))) == f"{name} <ada@example.com>"
+
+
+def _thread_with_parent(from_value: str) -> dict:
+    return {
+        "messages": [
+            {
+                "id": "p1",
+                "labelIds": ["INBOX"],
+                "payload": {
+                    "headers": [
+                        {"name": "Message-ID", "value": "<parent@example.com>"},
+                        {"name": "From", "value": from_value},
+                        {"name": "Subject", "value": "Project"},
+                        {"name": "Date", "value": "Tue, 7 Apr 2026 19:19:00 +0000"},
+                    ],
+                    "mimeType": "text/plain",
+                    "body": {"data": _encode("Hi")},
+                },
+            }
+        ]
+    }
+
+
+def _raw_drafted(mock_service) -> str:
+    kwargs = mock_service.users.return_value.drafts.return_value.create.call_args.kwargs
+    raw = kwargs["body"]["message"]["raw"]
+    return base64.urlsafe_b64decode(raw.encode()).decode("utf-8")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("contacts", "expected_to"),
+    [
+        # A saved contact wins over the parent's sender-supplied name.
+        (_person_results("Maggie Carroll", "mg@example.com"), "Maggie Carroll"),
+        # Not a saved contact: the thread's name still applies.
+        (None, "MG Carroll"),
+    ],
+)
+async def test_draft_derived_reply_recipient_prefers_saved_contact(
+    contacts, expected_to
+):
+    """A draft reply with no 'to' addresses the parent's sender; the name is
+    resolved like any reply recipient, not copied from the parent header."""
+    from gmail.gmail_tools import draft_gmail_message
+
+    gmail = _gmail_service()
+    gmail.users().drafts().create().execute.return_value = {"id": "d1"}
+    gmail.users().threads().get().execute.return_value = _thread_with_parent(
+        "MG Carroll <mg@example.com>"
+    )
+
+    await _unwrap(draft_gmail_message)(
+        service=gmail,
+        people_service=_people_service_tiers(contacts=contacts),
+        user_google_email="you@example.org",
+        subject="Project",
+        body="Thanks!",
+        thread_id="thread123",
+        include_signature=False,
+    )
+
+    assert f"To: {expected_to} <mg@example.com>" in _raw_drafted(gmail)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("as_draft", [False, True])
+async def test_reply_with_explicit_headers_still_names_bare_recipient(as_draft):
+    """Explicit subject/In-Reply-To/References make the thread fetch optional for
+    the headers, but a bare recipient still needs the thread's names."""
+    from gmail.gmail_tools import draft_gmail_message
+
+    gmail = _gmail_service()
+    gmail.users().drafts().create().execute.return_value = {"id": "d1"}
+    gmail.users().threads().get().execute.return_value = _thread_with_parent(
+        "MG Carroll <mg@example.com>"
+    )
+    tool = draft_gmail_message if as_draft else send_gmail_message
+
+    await _unwrap(tool)(
+        service=gmail,
+        people_service=None,
+        user_google_email="you@example.org",
+        to="mg@example.com",
+        subject="Re: Project",
+        body="Thanks!",
+        thread_id="thread123",
+        in_reply_to="<parent@example.com>",
+        references="<parent@example.com>",
+        include_signature=False,
+    )
+
+    raw = _raw_drafted(gmail) if as_draft else _raw_sent(gmail)
+    assert "To: MG Carroll <mg@example.com>" in raw
+
+
+@pytest.mark.asyncio
+async def test_send_skips_people_warmup_when_every_recipient_is_named():
+    """The People cache warmup costs API calls; skip it when nothing is looked up."""
+    gmail = _gmail_service()
+    people = _people_service_tiers()
+
+    await _unwrap(send_gmail_message)(
+        service=gmail,
+        people_service=people,
+        user_google_email="grace@example.org",
+        to="Ada Lovelace <ada@example.com>",
+        subject="Project sync",
+        body="Hello there",
+        include_signature=False,
+    )
+
+    search = people.people.return_value.searchContacts
+    assert not [c for c in search.call_args_list if c.kwargs.get("query") == ""]
+    assert "To: Ada Lovelace <ada@example.com>" in _raw_sent(gmail)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("as_draft", [False, True])
+async def test_forward_resolves_recipient_display_name(as_draft):
+    """A forward names its recipients the same way as any other send or draft."""
+    from gmail.gmail_tools import draft_gmail_message
+
+    gmail = _gmail_service()
+    gmail.users().drafts().create().execute.return_value = {"id": "d1"}
+    gmail.users().messages().get().execute.return_value = {
+        "id": "orig1",
+        "payload": {
+            "headers": [
+                {"name": "From", "value": "Grace Hopper <grace@example.org>"},
+                {"name": "To", "value": "you@example.org"},
+                {"name": "Subject", "value": "Notes"},
+                {"name": "Date", "value": "Tue, 7 Apr 2026 19:19:00 +0000"},
+            ],
+            "mimeType": "text/plain",
+            "body": {"data": _encode("Original")},
+        },
+    }
+    tool = draft_gmail_message if as_draft else send_gmail_message
+
+    await _unwrap(tool)(
+        service=gmail,
+        people_service=_people_service_with("Ada Lovelace", "ada@example.com"),
+        user_google_email="you@example.org",
+        to="ada@example.com",
+        forward_message_id="orig1",
+        body="FYI",
+        include_signature=False,
+    )
+
+    raw = _raw_drafted(gmail) if as_draft else _raw_sent(gmail)
+    assert "To: Ada Lovelace <ada@example.com>" in raw

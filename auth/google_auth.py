@@ -1367,6 +1367,14 @@ class GoogleAuthenticationError(Exception):
         self.auth_url = auth_url
 
 
+class GoogleServiceBuildError(GoogleAuthenticationError):
+    """Credentials were valid but building the API client failed.
+
+    Subclasses GoogleAuthenticationError so existing handlers keep working, but
+    lets callers tell a construction failure apart from missing credentials.
+    """
+
+
 async def get_authenticated_google_service(
     service_name: str,  # "gmail", "calendar", "drive", "docs"
     version: str,  # "v1", "v3"
@@ -1374,6 +1382,8 @@ async def get_authenticated_google_service(
     user_google_email: str,  # Required - no more Optional
     required_scopes: List[str],
     session_id: Optional[str] = None,  # Session context for logging
+    *,
+    allow_auth_flow: bool,
 ) -> tuple[Any, str]:
     """
     Centralized Google service authentication for all MCP tools.
@@ -1385,6 +1395,8 @@ async def get_authenticated_google_service(
         tool_name: The name of the calling tool (for logging/debugging)
         user_google_email: The user's Google email address (required)
         required_scopes: List of required OAuth scopes
+        allow_auth_flow: Whether missing or insufficient credentials may start an
+            OAuth flow. False for optional services, which degrade instead.
 
     Returns:
         tuple[service, user_email] on success
@@ -1457,6 +1469,11 @@ async def get_authenticated_google_service(
         logger.warning(
             f"[{tool_name}] No valid credentials. Email: '{user_google_email}'."
         )
+        if not allow_auth_flow:
+            raise GoogleAuthenticationError(
+                f"No valid credentials with the required scopes for {service_name}; "
+                "not starting OAuth for an optional service."
+            )
         logger.info(
             f"[{tool_name}] Valid email '{user_google_email}' provided, initiating auth flow."
         )
@@ -1514,4 +1531,4 @@ async def get_authenticated_google_service(
     except Exception as e:
         error_msg = f"[{tool_name}] Failed to build {service_name} service: {str(e)}"
         logger.error(error_msg, exc_info=True)
-        raise GoogleAuthenticationError(error_msg)
+        raise GoogleServiceBuildError(error_msg) from e

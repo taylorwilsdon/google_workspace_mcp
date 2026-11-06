@@ -40,4 +40,35 @@ async def test_get_authenticated_google_service_skips_preflight_outside_stdio(
             tool_name="test_tool",
             user_google_email="user@gmail.com",
             required_scopes=["scope.a"],
+            allow_auth_flow=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_get_authenticated_google_service_skips_oauth_flow_when_disallowed(
+    monkeypatch,
+):
+    """An optional service whose credentials lack its scope must not start an
+    OAuth flow (which opens a browser in stdio); it fails so the caller degrades."""
+
+    async def fake_to_thread(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    async def fail_start_auth_flow(**kwargs):  # noqa: ARG001
+        raise AssertionError("OAuth flow must not start for an optional service")
+
+    monkeypatch.setattr("auth.google_auth.get_fastmcp_session_id", lambda: None)
+    monkeypatch.setattr("auth.google_auth.get_fastmcp_context", None)
+    monkeypatch.setattr("auth.google_auth.asyncio.to_thread", fake_to_thread)
+    monkeypatch.setattr("auth.google_auth.get_credentials", lambda **kwargs: None)
+    monkeypatch.setattr("auth.google_auth.start_auth_flow", fail_start_auth_flow)
+
+    with pytest.raises(GoogleAuthenticationError, match="not starting OAuth"):
+        await get_authenticated_google_service(
+            service_name="people",
+            version="v1",
+            tool_name="test_tool",
+            user_google_email="user@gmail.com",
+            required_scopes=["scope.a"],
+            allow_auth_flow=False,
         )

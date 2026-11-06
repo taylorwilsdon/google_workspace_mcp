@@ -7,6 +7,8 @@ Separated from service_decorator.py to avoid circular imports.
 
 import logging
 
+from core.config import is_extended_name_lookup_enabled
+
 logger = logging.getLogger(__name__)
 
 # Global variable to store enabled tools (set by main.py)
@@ -68,6 +70,13 @@ TASKS_READONLY_SCOPE = "https://www.googleapis.com/auth/tasks.readonly"
 # Google Contacts (People API) scopes
 CONTACTS_SCOPE = "https://www.googleapis.com/auth/contacts"
 CONTACTS_READONLY_SCOPE = "https://www.googleapis.com/auth/contacts.readonly"
+# Auto-collected "Other contacts" and the Workspace directory -- read-only sources
+# Gmail itself uses to resolve recipient display names during compose/reply.
+# Requested only when GMAIL_EXTENDED_NAME_LOOKUP is enabled.
+CONTACTS_OTHER_READONLY_SCOPE = (
+    "https://www.googleapis.com/auth/contacts.other.readonly"
+)
+DIRECTORY_READONLY_SCOPE = "https://www.googleapis.com/auth/directory.readonly"
 
 # Google Custom Search API scope
 CUSTOM_SEARCH_SCOPE = "https://www.googleapis.com/auth/cse"
@@ -189,6 +198,16 @@ SLIDES_SCOPES = [SLIDES_SCOPE, SLIDES_READONLY_SCOPE]
 TASKS_SCOPES = [TASKS_SCOPE, TASKS_READONLY_SCOPE]
 
 CONTACTS_SCOPES = [CONTACTS_SCOPE, CONTACTS_READONLY_SCOPE]
+CONTACTS_READONLY_SCOPES = [CONTACTS_READONLY_SCOPE]
+
+# Opt-in extra name sources for Gmail compose; off by default so a default
+# deployment asks for no new consent scopes.
+if is_extended_name_lookup_enabled():
+    CONTACTS_SCOPES += [CONTACTS_OTHER_READONLY_SCOPE, DIRECTORY_READONLY_SCOPE]
+    CONTACTS_READONLY_SCOPES += [
+        CONTACTS_OTHER_READONLY_SCOPE,
+        DIRECTORY_READONLY_SCOPE,
+    ]
 
 CUSTOM_SEARCH_SCOPES = [CUSTOM_SEARCH_SCOPE]
 
@@ -236,7 +255,7 @@ TOOL_READONLY_SCOPES_MAP = {
     "forms": [FORMS_BODY_READONLY_SCOPE, FORMS_RESPONSES_READONLY_SCOPE],
     "slides": [SLIDES_READONLY_SCOPE],
     "tasks": [TASKS_READONLY_SCOPE],
-    "contacts": [CONTACTS_READONLY_SCOPE],
+    "contacts": CONTACTS_READONLY_SCOPES,
     "search": CUSTOM_SEARCH_SCOPES,
     "appscript": [
         SCRIPT_PROJECTS_READONLY_SCOPE,
