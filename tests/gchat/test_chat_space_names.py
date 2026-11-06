@@ -163,11 +163,11 @@ def _clear_name_cache():
     chat_helpers._sender_name_cache.clear()
 
 
-async def _list_spaces(chat_service, people_service=None):
+async def _list_spaces(chat_service, people_service=None, owner=SELF_EMAIL):
     return await _unwrap(list_spaces)(
         chat_service=chat_service,
         people_service=people_service or _people_service(),
-        user_google_email=SELF_EMAIL,
+        user_google_email=owner,
     )
 
 
@@ -268,12 +268,30 @@ async def test_list_spaces_splits_batch_lookup_into_chunks(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_list_spaces_uses_cached_names_without_batch_lookup():
-    chat_helpers._sender_name_cache["users/200"] = "Alice (cached)"
+    chat_helpers._cache_sender(SELF_EMAIL, "users/200", "Alice (cached)")
     people_service = _people_service()
 
     result = await _list_spaces(_chat_service([DM_SPACE]), people_service)
 
     assert "- Alice (cached) (ID: spaces/DM1" in result
+    people_service.people().getBatchGet.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_list_spaces_uses_each_users_own_cached_name():
+    chat_helpers._cache_sender("alice@example.com", "users/200", "Alice (to Alice)")
+    chat_helpers._cache_sender("carol@example.com", "users/200", "Alice (to Carol)")
+    people_service = _people_service()
+
+    for owner, label in [
+        ("alice@example.com", "Alice (to Alice)"),
+        ("carol@example.com", "Alice (to Carol)"),
+    ]:
+        result = await _list_spaces(
+            _chat_service([DM_SPACE]), people_service, owner=owner
+        )
+        assert f"- {label} (ID: spaces/DM1" in result
+
     people_service.people().getBatchGet.assert_not_called()
 
 
@@ -505,6 +523,89 @@ async def test_resolve_sender_falls_back_to_email_when_person_has_no_name():
     name = await chat_helpers._resolve_sender(people_service, {"name": "users/200"})
 
     assert name == "alice@example.com"
+
+
+def _capture_cache_owners(monkeypatch):
+    owners = []
+
+    async def fake_resolve(_people_service, sender_obj, cache_owner=None):
+        owners.append(cache_owner)
+        return sender_obj.get("name", "")
+
+    monkeypatch.setattr("gchat.chat_tools._resolve_sender", fake_resolve)
+    return owners
+
+
+@pytest.mark.asyncio
+async def test_get_messages_caches_sender_names_for_the_authenticated_user(
+    monkeypatch,
+):
+    owners = _capture_cache_owners(monkeypatch)
+    chat_service = _chat_service(
+        [DM_SPACE], messages={"spaces/DM1": [_message("spaces/DM1", "hi")]}
+    )
+
+    await _unwrap(get_messages)(
+        chat_service=chat_service,
+        people_service=_people_service(),
+        user_google_email=SELF_EMAIL,
+        space_id="spaces/DM1",
+    )
+
+    assert owners and set(owners) == {SELF_EMAIL}
+
+
+@pytest.mark.asyncio
+async def test_search_messages_caches_sender_names_for_the_authenticated_user(
+    monkeypatch,
+):
+    owners = _capture_cache_owners(monkeypatch)
+    chat_service = _chat_service(
+        [DM_SPACE], messages={"spaces/DM1": [_message("spaces/DM1", "deploy?")]}
+    )
+
+    await _unwrap(search_messages)(
+        chat_service=chat_service,
+        people_service=_people_service(),
+        user_google_email=SELF_EMAIL,
+        query="deploy",
+    )
+
+    assert owners and set(owners) == {SELF_EMAIL}
+
+
+@pytest.mark.asyncio
+async def test_cached_names_are_isolated_per_authenticated_user():
+    alice_contacts = Mock()
+    alice_contacts.people().get.side_effect = lambda **kw: _request(
+        {"names": [{"displayName": "Bob (my private nickname)"}]}
+    )
+    sender = {"name": "users/300"}
+
+    assert (
+        await chat_helpers._resolve_sender(alice_contacts, sender, "Alice@Example.com")
+        == "Bob (my private nickname)"
+    )
+
+    other_user = _people_service()
+    name = await chat_helpers._resolve_sender(other_user, sender, "carol@example.com")
+    assert name == "Bob Jones"
+    names = await chat_helpers._lookup_people_names(
+        other_user, ["users/300"], "carol@example.com"
+    )
+    assert names == {"users/300": "Bob Jones"}
+    assert (
+        await chat_helpers._resolve_sender(Mock(), sender, "alice@example.com")
+        == "Bob (my private nickname)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_names_are_not_cached_without_an_authenticated_user():
+    await chat_helpers._resolve_sender(_people_service(), {"name": "users/300"})
+    await chat_helpers._lookup_people_names(_people_service(), ["users/400"])
+
+    assert chat_helpers._sender_name_cache == {}
 
 
 @pytest.mark.asyncio
