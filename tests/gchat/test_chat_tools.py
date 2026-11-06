@@ -1034,3 +1034,48 @@ async def test_send_message_rejects_empty_message_name():
 
     assert messages.create.call_count == 0
     assert messages.patch.call_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("space_id", [None, "spaces/S"])
+@pytest.mark.parametrize("space_label", ["General", "users/123"])
+@pytest.mark.parametrize("thread", [None, "spaces/S/threads/T"])
+@patch("gchat.chat_tools._name_spaces", new_callable=AsyncMock)
+@patch("gchat.chat_tools._resolve_sender", new_callable=AsyncMock)
+async def test_search_results_include_retrievable_resource_names(
+    mock_resolve, mock_names, space_id, space_label, thread
+):
+    from gchat.chat_tools import get_messages, search_messages
+
+    mock_resolve.return_value = "Test User"
+    mock_names.return_value = {"spaces/S": space_label}
+    message = _make_message(text="needle " + "x" * 200)
+    if thread:
+        message["thread"] = {"name": thread}
+    chat_service = Mock()
+    space = {"name": "spaces/S"}
+    chat_service.spaces().list().execute.return_value = {"spaces": [space]}
+    chat_service.spaces().get().execute.return_value = space
+    chat_service.spaces().messages().list().execute.return_value = {
+        "messages": [message]
+    }
+
+    result = await _unwrap(search_messages)(
+        chat_service, Mock(), "test@example.com", query="needle", space_id=space_id
+    )
+
+    assert f"in '{space_label}'" in result
+    assert "[space_id: spaces/S]" in result
+    assert "[message_id: spaces/S/messages/M]" in result
+    if thread:
+        assert "[thread_id: spaces/S/threads/T]" in result
+    else:
+        assert "[thread_id:" not in result
+    returned_space = result.split("[space_id: ", 1)[1].split("]", 1)[0]
+    read = await _unwrap(get_messages)(
+        chat_service, Mock(), "test@example.com", returned_space
+    )
+    assert message["text"] in read
+    assert (
+        chat_service.spaces().messages().list.call_args.kwargs["parent"] == "spaces/S"
+    )
