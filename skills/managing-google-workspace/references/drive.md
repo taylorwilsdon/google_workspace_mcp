@@ -32,23 +32,30 @@ Search for files and folders across My Drive and shared drives.
 | include_trashed | boolean | no | false | Include files in the trash. A `trashed` clause (`=` or `!=`) written into `query` always wins over this flag |
 
 ### list_drive_items
-List files and folders in a specific folder, or list shared drive containers with `resource_type="shared_drives"`.
+List files and folders in a specific folder, shared drive containers with `resource_type="shared_drives"`, or a file's revision history with `resource_type="revisions"` and `file_id`.
 
 | Parameter | Type | Required | Default | Notes |
 |-----------|------|----------|---------|-------|
 | user_google_email | string | yes | | |
 | folder_id | string | no | root | Folder ID. Use shared drive ID for its root |
-| page_size | integer | no | 100 | Max items to return |
-| page_token | any | no | | Pagination token |
+| page_size | integer | no | 100 | Max items to return; 1-1000 for revisions |
+| page_token | any | no | | Pagination token; use `next_page_token` from revision responses |
 | drive_id | string | no | | Shared drive ID to scope listing |
 | include_items_from_all_drives | boolean | no | true | Include shared drive items when no drive_id set |
 | corpora | string | no | | `user`, `drive`, `allDrives` |
 | file_type | string | no | | Same friendly names as search_drive_files |
 | detailed | boolean | no | true | Include size, modified time, and link |
 | order_by | string | no | | Sort order (see Sort Order below) |
-| resource_type | string | no | items | `items` (folder contents) or `shared_drives` (shared drive containers) |
+| resource_type | string | no | items | `items` (folder contents), `shared_drives` (shared drive containers), or `revisions` (a file's history) |
 | query | string | no | | Shared drive query, e.g. `name contains 'Engineering'`. Only with `resource_type="shared_drives"` |
 | include_organizers | boolean | no | false | Include organizer principals per shared drive (one extra API call each). Only with `resource_type="shared_drives"` |
+| file_id | string | with revisions | | Drive file ID or shortcut; only with `resource_type="revisions"` |
+
+#### Revision history
+
+Use `list_drive_items(resource_type="revisions", file_id=...)` to retrieve one page of Drive-visible history. This mode returns a JSON string with `file`, `revisions`, `next_page_token`, and `history_scope`. Folder, search, sorting, shared-drive and `detailed` options do not apply. Drive can compact or omit older revisions, especially for frequently edited Google Workspace files, so this is not guaranteed to be a complete audit log.
+
+Each revision includes its ID, modified time, last modifying user, MIME/size metadata, keep-forever status where applicable, and a `download_available` flag. Pass its `id` to `get_drive_file_content(revision_id=...)` to read the historical text, or to `get_drive_file_download_url(revision_id=...)` to download that version. No new MCP tool is required.
 
 ---
 
@@ -63,6 +70,7 @@ Retrieve file content as text.
 | file_id | string | yes | | Drive file ID |
 | offset | integer | no | 0 | Character offset to start from, to read on after a cut-off result |
 | full_content | boolean | no | false | Return everything from `offset` onward in one call instead of a page |
+| revision_id | string | no | | Nonblank historical revision ID returned by `list_drive_items(resource_type="revisions", file_id=...)`; supports the same paging options |
 
 Content handling:
 - Google Docs/Sheets/Slides: exported as text/CSV
@@ -73,7 +81,7 @@ Content handling:
 - BMP, TIFF: returned as base64 text after the header, or a pointer to `get_drive_file_download_url` when that text would be over the default page size below and `full_content` is not set
 - Other files: downloaded, UTF-8 decoded if possible
 
-By default, long content comes back a page at a time: at most 40,000 characters per call (the server sets this with `WORKSPACE_MCP_MAX_CONTENT_CHARS`; `0` returns whole content by default). A page ends at a line break where possible, with a note giving the range shown, how much follows, and the `offset` to call again with. To get the whole file in one call instead, pass `full_content=true`. The header names the file's version; if it changes between pages, start again from `offset=0`.
+By default, long content comes back a page at a time: at most 40,000 characters per call (the server sets this with `WORKSPACE_MCP_MAX_CONTENT_CHARS`; `0` returns whole content by default). A page ends at a line break where possible, with a note giving the range shown, how much follows, and the `offset` to call again with. To get the whole file in one call instead, pass `full_content=true`. Current-file headers name the file's version; if it changes between pages, start again from `offset=0`. When `revision_id` is supplied, keep that ID on subsequent page requests. Historical headers identify the selected revision and its modification time rather than the current file's version.
 
 ### get_drive_file_download_url
 Download a file to local disk (stdio mode) or get a temporary URL (HTTP mode, valid 1 hour).
@@ -83,12 +91,15 @@ Download a file to local disk (stdio mode) or get a temporary URL (HTTP mode, va
 | user_google_email | string | yes | | |
 | file_id | string | yes | | Drive file ID |
 | export_format | string | no | | `pdf`, `docx`, `xlsx`, `csv`, `pptx`, `png`, `jpg`, `svg` |
+| revision_id | string | no | | Nonblank historical revision ID returned by `list_drive_items(resource_type="revisions", file_id=...)` |
 
 Default export formats for Google native files:
 - Docs: PDF (or `docx`)
 - Sheets: XLSX (or `pdf`, `csv`)
 - Slides: PDF (or `pptx`)
 - Drawings: PNG (or `pdf`, `jpg`, `svg`)
+
+When `revision_id` is set, the tool retrieves that historical Drive revision. Export selection follows the selected revision's type even if the current file has changed format. Native Docs, Sheets, and Slides revisions are exported in the requested format; historical Drawing exports are not supported. For uploaded/blob files, older content is only downloadable when Drive still retains it, normally because the revision is the current head or has `keepForever=true`.
 
 ---
 

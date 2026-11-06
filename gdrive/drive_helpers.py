@@ -27,7 +27,10 @@ from googleapiclient.errors import HttpError
 from googleapiclient.http import HttpRequest, MediaIoBaseDownload, MediaIoBaseUpload
 
 from auth.service_decorator import require_google_service
-from core.file_limits import download_media_bytes
+from core.file_limits import (
+    download_media_bytes,
+    ensure_within_file_size_limit,
+)
 from core.http_utils import (
     PrivateHostError,
     redact_url as _redact_url,
@@ -539,6 +542,319 @@ async def resolve_drive_item(
                 f"Shortcut resolution exceeded {max_depth} hops starting from '{file_id}'."
             )
         current_id = target_id
+
+
+async def list_drive_file_revisions_data(
+    service,
+    file_id: str,
+    *,
+    page_size: int = 100,
+    page_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Return one Drive-visible page of revision history for a file.
+
+    Drive may compact or omit older revisions, especially for frequently edited
+    Google Workspace documents, so callers must not treat this as a complete
+    immutable audit log.
+    """
+    if (
+        isinstance(page_size, bool)
+        or not isinstance(page_size, int)
+        or not 1 <= page_size <= 1000
+    ):
+        raise UserInputError("page_size must be between 1 and 1000.")
+
+    resolved_file_id, metadata = await resolve_drive_item(
+        service,
+        file_id,
+        extra_fields="name, mimeType, headRevisionId",
+    )
+    mime_type = metadata.get("mimeType", "")
+    head_revision_id = metadata.get("headRevisionId")
+
+    response = await asyncio.to_thread(
+        service.revisions()
+        .list(
+            fileId=resolved_file_id,
+            pageSize=page_size,
+            pageToken=page_token,
+            fields=(
+                "nextPageToken, revisions(id,modifiedTime,"
+                "lastModifyingUser(displayName,emailAddress),mimeType,size,"
+                "keepForever,originalFilename)"
+            ),
+        )
+        .execute
+    )
+
+    revisions = []
+    for revision in response.get("revisions", []):
+        revision_id = revision.get("id")
+        revision_mime_type = revision.get("mimeType") or mime_type
+        native_revision = revision_mime_type.startswith(GOOGLE_APPS_MIME_PREFIX)
+        native_exportable = revision_mime_type in (
+            GOOGLE_DOCS_MIME_TYPE,
+            GOOGLE_SHEETS_MIME_TYPE,
+            GOOGLE_SLIDES_MIME_TYPE,
+        )
+        editor = revision.get("lastModifyingUser") or {}
+        can_download = (
+            native_exportable
+            if native_revision
+            else bool(revision.get("keepForever") or revision_id == head_revision_id)
+        )
+        revisions.append(
+            {
+                "id": revision_id,
+                "modified_time": revision.get("modifiedTime"),
+                "last_modifying_user": {
+                    "display_name": editor.get("displayName"),
+                    "email_address": editor.get("emailAddress"),
+                },
+                "mime_type": revision_mime_type,
+                "size": revision.get("size"),
+                "original_filename": revision.get("originalFilename"),
+                "keep_forever": revision.get("keepForever"),
+                "is_head": revision_id == head_revision_id
+                if head_revision_id
+                else None,
+                "download_available": can_download,
+            }
+        )
+
+    return {
+        "file": {
+            "id": resolved_file_id,
+            "name": metadata.get("name", "Unknown File"),
+            "mime_type": mime_type,
+            "head_revision_id": head_revision_id,
+        },
+        "revisions": revisions,
+        "next_page_token": response.get("nextPageToken"),
+        "history_scope": (
+            "Drive-visible revision history only. Google Drive can compact or omit "
+            "older revisions, so this is not guaranteed to be a complete audit log."
+        ),
+    }
+
+
+def _revision_export_target(
+    mime_type: str, export_format: Optional[str]
+) -> Tuple[str, str]:
+    """Resolve and validate the export MIME type and extension for a native revision."""
+    options = {
+        GOOGLE_DOCS_MIME_TYPE: {
+            "pdf": "application/pdf",
+            "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        },
+        GOOGLE_SHEETS_MIME_TYPE: {
+            "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "pdf": "application/pdf",
+            "csv": "text/csv",
+        },
+        GOOGLE_SLIDES_MIME_TYPE: {
+            "pdf": "application/pdf",
+            "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        },
+    }
+    defaults = {
+        GOOGLE_DOCS_MIME_TYPE: "pdf",
+        GOOGLE_SHEETS_MIME_TYPE: "xlsx",
+        GOOGLE_SLIDES_MIME_TYPE: "pdf",
+    }
+    if mime_type not in options:
+        raise UserInputError(
+            f"Historical export is not supported for MIME type '{mime_type}'."
+        )
+
+    selected = export_format.lower() if export_format else defaults[mime_type]
+    if selected not in options[mime_type]:
+        allowed = ", ".join(sorted(options[mime_type]))
+        raise UserInputError(
+            f"Unsupported export_format '{export_format}' for this file. Use one of: {allowed}."
+        )
+    return options[mime_type][selected], selected
+
+
+async def _download_http_request_to_temp(
+    request,
+    *,
+    max_bytes: Optional[int] = None,
+    file_name: Optional[str] = None,
+    file_id: Optional[str] = None,
+    web_view_link: Optional[str] = None,
+) -> Path:
+    """Download an authenticated Google API request to a temporary file.
+
+    With an explicit ``max_bytes``, bound the in-memory acquisition before
+    writing the resulting bytes. Otherwise preserve the streamed-to-disk path.
+    """
+    if max_bytes is not None:
+        payload = await download_media_bytes(
+            request,
+            file_name=file_name,
+            file_id=file_id,
+            web_view_link=web_view_link,
+            max_bytes=max_bytes,
+        )
+        tmp_file = NamedTemporaryFile(prefix="wsmcp_revision_", delete=False)
+        tmp_path = Path(tmp_file.name)
+        try:
+            with tmp_file:
+                await asyncio.to_thread(tmp_file.write, payload)
+        except BaseException:
+            tmp_path.unlink(missing_ok=True)
+            raise
+        return tmp_path
+
+    tmp_file = NamedTemporaryFile(prefix="wsmcp_revision_", delete=False)
+    tmp_path = Path(tmp_file.name)
+    loop = asyncio.get_event_loop()
+    try:
+        with tmp_file:
+            downloader = MediaIoBaseDownload(
+                tmp_file, request, chunksize=8 * 1024 * 1024
+            )
+            done = False
+            while not done:
+                _status, done = await loop.run_in_executor(None, downloader.next_chunk)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+    return tmp_path
+
+
+async def download_drive_revision_to_temp(
+    service,
+    file_id: str,
+    revision_id: str,
+    *,
+    export_format: Optional[str] = None,
+    max_bytes: Optional[int] = None,
+    for_content: bool = False,
+) -> Dict[str, Any]:
+    """Download a Drive-visible historical revision to a temporary file.
+
+    for_content selects extraction-friendly formats for supported native
+    revisions and overrides export_format. Otherwise, export_format selects
+    the native export; blob revisions always use their original bytes.
+    """
+    resolved_file_id, metadata = await resolve_drive_item(
+        service,
+        file_id,
+        extra_fields="name, mimeType, headRevisionId, webViewLink",
+    )
+    file_name = metadata.get("name", "Unknown File")
+    current_mime_type = metadata.get("mimeType", "")
+    head_revision_id = metadata.get("headRevisionId")
+
+    try:
+        revision = await asyncio.to_thread(
+            service.revisions()
+            .get(
+                fileId=resolved_file_id,
+                revisionId=revision_id,
+                fields=(
+                    "id,modifiedTime,mimeType,exportLinks,keepForever,size,originalFilename"
+                ),
+            )
+            .execute
+        )
+    except HttpError as exc:
+        if exc.resp.status == 404:
+            raise UserInputError(
+                f"Revision {revision_id} is unavailable for file {resolved_file_id}. "
+                "Google Drive may have merged or removed it, or your account may "
+                "not have access. List the file's revisions again to choose an "
+                "available revision."
+            ) from exc
+        raise
+    revision_mime_type = revision.get("mimeType") or current_mime_type
+    tmp_path = None
+    try:
+        export_mime_type = None
+        if revision_mime_type.startswith(GOOGLE_APPS_MIME_PREFIX):
+            content_formats = {
+                GOOGLE_DOCS_MIME_TYPE: "docx",
+                GOOGLE_SHEETS_MIME_TYPE: "xlsx",
+                GOOGLE_SLIDES_MIME_TYPE: "pptx",
+            }
+            selected_export_format = (
+                content_formats.get(revision_mime_type)
+                if for_content
+                else export_format
+            )
+            target_mime, extension = _revision_export_target(
+                revision_mime_type, selected_export_format
+            )
+            export_links = revision.get("exportLinks") or {}
+            export_url = export_links.get(target_mime)
+            if not export_url:
+                available = ", ".join(sorted(export_links)) or "none"
+                raise UserInputError(
+                    f"Revision {revision_id} cannot be exported as {extension}. "
+                    f"Drive reported these MIME types: {available}."
+                )
+            request = HttpRequest(
+                service._http,
+                lambda response, content: content,
+                export_url,
+                method="GET",
+            )
+            tmp_path = await _download_http_request_to_temp(
+                request,
+                max_bytes=max_bytes,
+                file_name=file_name,
+                file_id=resolved_file_id,
+                web_view_link=metadata.get("webViewLink"),
+            )
+            output_mime_type = target_mime
+            export_mime_type = target_mime
+            output_filename = f"{Path(file_name).stem}_rev{revision_id}.{extension}"
+        else:
+            original_name = revision.get("originalFilename") or file_name
+            if revision_id != head_revision_id and not revision.get("keepForever"):
+                raise UserInputError(
+                    f"Blob revision {revision_id} is not downloadable because it is not "
+                    "the current head revision and was not pinned with keepForever."
+                )
+            if max_bytes is not None:
+                ensure_within_file_size_limit(
+                    revision.get("size"),
+                    file_name=original_name,
+                    file_id=resolved_file_id,
+                    web_view_link=metadata.get("webViewLink"),
+                    max_bytes=max_bytes,
+                )
+            request = service.revisions().get_media(
+                fileId=resolved_file_id,
+                revisionId=revision_id,
+            )
+            tmp_path = await _download_http_request_to_temp(
+                request,
+                max_bytes=max_bytes,
+                file_name=original_name,
+                file_id=resolved_file_id,
+                web_view_link=metadata.get("webViewLink"),
+            )
+            output_mime_type = revision_mime_type
+            path = Path(original_name)
+            output_filename = f"{path.stem}_rev{revision_id}{path.suffix}"
+
+        return {
+            "path": tmp_path,
+            "file_id": resolved_file_id,
+            "file_name": file_name,
+            "revision_id": revision_id,
+            "revision_modified_time": revision.get("modifiedTime"),
+            "output_filename": output_filename,
+            "output_mime_type": output_mime_type,
+            "export_mime_type": export_mime_type,
+        }
+    except BaseException:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
+        raise
 
 
 async def resolve_folder_id(
