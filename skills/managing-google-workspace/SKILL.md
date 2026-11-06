@@ -223,7 +223,7 @@ For parameters: [references/tasks.md](references/tasks.md)
 |------|------|
 | Search contacts | `search_contacts` |
 | Get contact | `get_contact` |
-| Manage contact (CRUD) | `manage_contact` |
+| Manage contact (CRUD, set/remove photo) | `manage_contact` |
 | Batch manage contacts | `manage_contacts_batch` |
 | List contact groups | `list_contact_groups` |
 | Get contact group | `get_contact_group` |
