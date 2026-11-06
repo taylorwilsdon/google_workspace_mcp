@@ -237,6 +237,7 @@ For parameters: [references/contacts.md](references/contacts.md)
 | Task | Tool |
 |------|------|
 | List spaces | `list_spaces` |
+| List a space's members | `list_spaces` with `space_id` |
 | Get messages | `get_messages` |
 | Search messages | `search_messages` |
 | Send message | `send_message` |
