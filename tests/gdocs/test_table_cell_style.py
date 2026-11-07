@@ -49,6 +49,35 @@ class TestBuildTableCellStyle:
             }
         assert fields == ["borderTop", "borderBottom", "borderLeft", "borderRight"]
 
+    @pytest.mark.parametrize(
+        ("kwargs", "expected_width", "expected_color"),
+        [
+            ({"border_color": "#FF0000"}, 1, {"red": 1.0, "green": 0.0, "blue": 0.0}),
+            ({"border_width": 2.0}, 2.0, {"red": 0.0, "green": 0.0, "blue": 0.0}),
+        ],
+    )
+    def test_partial_border_inputs_build_complete_solid_border(
+        self, kwargs, expected_width, expected_color
+    ):
+        style, _ = build_table_cell_style(**kwargs)
+
+        for border in style.values():
+            assert border["dashStyle"] == "SOLID"
+            assert border["width"] == {"magnitude": expected_width, "unit": "PT"}
+            assert border["color"]["color"]["rgbColor"] == expected_color
+
+    def test_border_edges_limit_updated_sides(self):
+        style, fields = build_table_cell_style(
+            border_color="#FF0000", border_edges=["bottom"]
+        )
+
+        assert fields == ["borderBottom"]
+        assert set(style) == {"borderBottom"}
+
+    def test_empty_border_edges_rejected(self):
+        with pytest.raises(ValueError, match="at least one edge"):
+            build_table_cell_style(border_edges=[], border_color="#FF0000")
+
 
 class TestCreateUpdateTableCellStyleRequest:
     def test_entire_table_request(self):
@@ -108,6 +137,11 @@ class TestValidateTableCellStyle:
             }
         ]
         assert vm.validate_batch_operations(ops)[0]
+
+    def test_empty_border_edges_rejected(self, vm):
+        is_valid, msg = vm.validate_table_cell_style_params(border_edges=[])
+        assert not is_valid
+        assert "at least one edge" in msg
 
 
 class TestBuildTableCellStylePadding:
@@ -205,8 +239,22 @@ class TestBatchManagerIntegration:
         assert "backgroundColor" in inner["fields"]
         assert "table cell style at 42" in desc
 
+    def test_build_request_accepts_zero_border_width(self, manager):
+        request, _ = manager._build_operation_request(
+            {
+                "type": "update_table_cell_style",
+                "table_start_index": 42,
+                "border_width": 0,
+                "border_edges": ["bottom"],
+            },
+            "update_table_cell_style",
+        )
+
+        style = request["updateTableCellStyle"]["tableCellStyle"]
+        assert style["borderBottom"]["width"] == {"magnitude": 0, "unit": "PT"}
+
     def test_build_request_rejects_invalid_table_cell_style_params(self, manager):
-        with pytest.raises(ValueError, match="border_width must be positive"):
+        with pytest.raises(ValueError, match="border_width must be non-negative"):
             manager._build_operation_request(
                 {
                     "type": "update_table_cell_style",
@@ -215,6 +263,41 @@ class TestBatchManagerIntegration:
                 },
                 "update_table_cell_style",
             )
+
+    def test_build_request_rejects_boolean_border_width(self, manager):
+        with pytest.raises(ValueError, match="border_width must be a number"):
+            manager._build_operation_request(
+                {
+                    "type": "update_table_cell_style",
+                    "table_start_index": 42,
+                    "border_width": False,
+                },
+                "update_table_cell_style",
+            )
+
+    @pytest.mark.parametrize("width", [float("nan"), float("inf")])
+    def test_build_request_rejects_non_finite_border_width(self, manager, width):
+        with pytest.raises(ValueError, match="border_width must be finite"):
+            manager._build_operation_request(
+                {
+                    "type": "update_table_cell_style",
+                    "table_start_index": 42,
+                    "border_width": width,
+                },
+                "update_table_cell_style",
+            )
+
+    def test_border_edges_are_in_description(self, manager):
+        _, desc = manager._build_operation_request(
+            {
+                "type": "update_table_cell_style",
+                "table_start_index": 42,
+                "border_edges": ["bottom"],
+            },
+            "update_table_cell_style",
+        )
+
+        assert "border edges: ['bottom']" in desc
 
     @pytest.mark.asyncio
     async def test_end_to_end_execute_table_cell_style(self, manager):
@@ -245,7 +328,7 @@ class TestBatchManagerIntegration:
             ],
         )
         assert not success
-        assert "border_width must be positive" in message
+        assert "border_width must be non-negative" in message
         assert meta == {}
 
     def test_supported_operations_include_table_cell_style(self, manager):

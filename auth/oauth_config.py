@@ -8,10 +8,52 @@ sensible defaults for all OAuth-related settings.
 Supports both OAuth 2.0 and OAuth 2.1 with automatic client capability detection.
 """
 
+import logging
 import os
+from ipaddress import ip_address
 from threading import RLock
 from urllib.parse import urlparse
 from typing import List, Optional, Dict, Any
+
+from auth.client_secrets import get_client_secrets_path, load_client_secrets_file
+
+logger = logging.getLogger(__name__)
+
+
+_ASYMMETRIC_JWT_ALGORITHM_FAMILIES = {
+    "ES": frozenset({"ES256", "ES256K", "ES384", "ES512", "ES521"}),
+    "EdDSA": frozenset({"EdDSA"}),
+    "PS": frozenset({"PS256", "PS384", "PS512"}),
+    "RS": frozenset({"RS256", "RS384", "RS512"}),
+}
+
+
+def _is_loopback_host(hostname: Optional[str]) -> bool:
+    """Return whether a JWKS hostname is explicitly local-only."""
+    if not hostname:
+        return False
+    if hostname.lower() == "localhost":
+        return True
+    try:
+        return ip_address(hostname).is_loopback
+    except ValueError:
+        return False
+
+
+def _is_secure_gateway_jwks_url(url: str) -> bool:
+    """Require HTTPS except for explicit HTTP loopback development endpoints."""
+    try:
+        parsed = urlparse(url)
+        hostname = parsed.hostname
+    except ValueError:
+        return False
+    return bool(
+        hostname
+        and (
+            parsed.scheme == "https"
+            or (parsed.scheme == "http" and _is_loopback_host(hostname))
+        )
+    )
 
 
 class OAuthConfig:
@@ -35,9 +77,12 @@ class OAuthConfig:
         # External URL for reverse proxy scenarios
         self.external_url = os.getenv("WORKSPACE_EXTERNAL_URL")
 
-        # OAuth client configuration
+        # OAuth client configuration. Environment variables take precedence;
+        # values missing from the environment fall back to the client secrets file
+        # (resolved below, once the OAuth 2.1 flag is known).
         self.client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID")
         self.client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET")
+        self.client_secrets_file: Optional[str] = None
 
         # Branding for the OAuth consent page. FastMCP's OAuth proxy renders the
         # server's name / icon / website on the consent screen; these env vars feed
@@ -55,7 +100,10 @@ class OAuthConfig:
             ["S256", "plain"] if not self.oauth21_enabled else ["S256"]
         )
 
-        # External OAuth 2.1 provider configuration
+        # External OAuth 2.1 provider configuration. Evaluated before client
+        # secrets resolution so it can relax the startup requirement below: in
+        # external-provider mode the Google provider is suppressed, so an
+        # unreadable GOOGLE_CLIENT_SECRET_PATH is merely logged.
         self.external_oauth21_provider = (
             os.getenv("EXTERNAL_OAUTH21_PROVIDER", "false").lower() == "true"
         )
@@ -63,6 +111,112 @@ class OAuthConfig:
             raise ValueError(
                 "EXTERNAL_OAUTH21_PROVIDER requires MCP_ENABLE_OAUTH21=true"
             )
+
+        # Only OAuth 2.1 needs client credentials resolved at startup, so an
+        # unusable configured path is fatal there and merely logged in the modes
+        # that resolve credentials lazily (stdio, service account, legacy 2.0).
+        # External-provider mode also suppresses the Google provider, so it does
+        # not require readable client secrets either.
+        self._apply_client_secrets_file_fallback(
+            required=self.oauth21_enabled and not self.external_oauth21_provider
+        )
+
+        # Trusted-gateway identity (provider-agnostic).
+        # An MCP-aware reverse proxy (e.g. Pomerium, oauth2-proxy, Cloudflare Access,
+        # Istio/Envoy, Traefik ForwardAuth) authenticates the user and injects a SIGNED
+        # identity assertion (a JWT) on every upstream request. This server verifies that
+        # assertion against the proxy's JWKS and uses the asserted email as the per-request
+        # principal — WITHOUT terminating MCP OAuth itself (MCP_ENABLE_OAUTH21 stays off), so
+        # it composes with the proxy instead of fighting it for the single MCP auth handshake.
+        # Credentials are still the legacy per-user Google grants (keyed by email); the asserted
+        # identity just selects/locks which user's grant a request may use (true per-user isolation).
+        # Defaults target Pomerium; override the header/algorithm for other providers.
+        self.trust_gateway_identity = (
+            os.getenv("TRUST_GATEWAY_IDENTITY", "false").lower() == "true"
+        )
+        self.gateway_identity_jwks_url = (
+            os.getenv("GATEWAY_IDENTITY_JWKS_URL", "").strip() or None
+        )
+        # Header carrying the signed assertion (default: Pomerium's x-pomerium-jwt-assertion;
+        # e.g. cf-access-jwt-assertion for Cloudflare Access).
+        self.gateway_identity_header = (
+            os.getenv("GATEWAY_IDENTITY_HEADER", "x-pomerium-jwt-assertion")
+            .strip()
+            .lower()
+        )
+        # Allowed signing algorithm(s), comma-separated (default ES256 — Pomerium; use
+        # RS256 for Cloudflare Access, etc.). Pinned to block alg-confusion/none attacks.
+        self.gateway_identity_algorithms = [
+            a.strip()
+            for a in os.getenv("GATEWAY_IDENTITY_ALGORITHMS", "ES256").split(",")
+            if a.strip()
+        ]
+        # Audience binds assertions to this relying party and is mandatory. Issuer
+        # pinning remains optional for gateways whose JWKS URL is the trust boundary.
+        self.gateway_identity_issuer = (
+            os.getenv("GATEWAY_IDENTITY_ISSUER", "").strip() or None
+        )
+        self.gateway_identity_audience = (
+            os.getenv("GATEWAY_IDENTITY_AUDIENCE", "").strip() or None
+        )
+        if self.trust_gateway_identity:
+            if self.oauth21_enabled:
+                raise ValueError(
+                    "TRUST_GATEWAY_IDENTITY is incompatible with MCP_ENABLE_OAUTH21=true. "
+                    "In trusted-gateway mode the proxy owns the MCP handshake; keep "
+                    "MCP_ENABLE_OAUTH21=false."
+                )
+            if not self.gateway_identity_jwks_url:
+                raise ValueError(
+                    "TRUST_GATEWAY_IDENTITY=true requires GATEWAY_IDENTITY_JWKS_URL "
+                    "(the gateway's JWKS endpoint used to verify the identity assertion)."
+                )
+            if not _is_secure_gateway_jwks_url(self.gateway_identity_jwks_url):
+                raise ValueError(
+                    "GATEWAY_IDENTITY_JWKS_URL must use HTTPS; HTTP is permitted "
+                    "only for loopback development endpoints."
+                )
+            if not self.gateway_identity_algorithms:
+                raise ValueError(
+                    "TRUST_GATEWAY_IDENTITY=true requires GATEWAY_IDENTITY_ALGORITHMS "
+                    "to list at least one signing algorithm (e.g. ES256)."
+                )
+            algorithm_families = {
+                family
+                for family, algorithms in _ASYMMETRIC_JWT_ALGORITHM_FAMILIES.items()
+                if any(
+                    algorithm in algorithms
+                    for algorithm in self.gateway_identity_algorithms
+                )
+            }
+            allowed_algorithms = set().union(
+                *_ASYMMETRIC_JWT_ALGORITHM_FAMILIES.values()
+            )
+            invalid_algorithms = [
+                algorithm
+                for algorithm in self.gateway_identity_algorithms
+                if algorithm not in allowed_algorithms
+            ]
+            if invalid_algorithms:
+                raise ValueError(
+                    "GATEWAY_IDENTITY_ALGORITHMS must contain only supported "
+                    "asymmetric JWT algorithms."
+                )
+            if len(algorithm_families) != 1:
+                raise ValueError(
+                    "GATEWAY_IDENTITY_ALGORITHMS must use a single asymmetric "
+                    "JWT algorithm family."
+                )
+            if not self.gateway_identity_header:
+                raise ValueError(
+                    "TRUST_GATEWAY_IDENTITY=true requires a non-empty "
+                    "GATEWAY_IDENTITY_HEADER."
+                )
+            if not self.gateway_identity_audience:
+                raise ValueError(
+                    "TRUST_GATEWAY_IDENTITY=true requires GATEWAY_IDENTITY_AUDIENCE "
+                    "(the audience that identifies this MCP deployment)."
+                )
 
         # Stateless mode configuration
         self.stateless_mode = (
@@ -106,8 +260,64 @@ class OAuthConfig:
         self.redirect_uri = self._get_redirect_uri()
         self.redirect_path = self._get_redirect_path(self.redirect_uri)
 
-        # Ensure FastMCP's Google provider picks up our existing configuration
-        self._apply_fastmcp_google_env()
+    def _apply_client_secrets_file_fallback(self, required: bool) -> None:
+        """Fill missing client credentials from the client secrets file.
+
+        Environment variables always take precedence; the file
+        (GOOGLE_CLIENT_SECRET_PATH, the legacy GOOGLE_CLIENT_SECRETS alias, or
+        <repo root>/client_secret.json) is only consulted for values the
+        environment does not provide, so a fully env-configured client never
+        touches the file.
+
+        Args:
+            required: Whether startup depends on these credentials. When True, a
+                file at an explicitly configured path that cannot be read is
+                fatal; otherwise the failure is logged and startup continues.
+        """
+        if self.client_id and self.client_secret:
+            return
+
+        path = get_client_secrets_path()
+        explicit = bool(
+            os.getenv("GOOGLE_CLIENT_SECRET_PATH") or os.getenv("GOOGLE_CLIENT_SECRETS")
+        )
+        try:
+            section = load_client_secrets_file(path)
+        except (OSError, ValueError) as exc:
+            if explicit and required:
+                raise ValueError(
+                    f"Failed to load client secrets file {path}: {exc}. Set a valid "
+                    "GOOGLE_CLIENT_SECRET_PATH, or provide GOOGLE_OAUTH_CLIENT_ID and "
+                    "GOOGLE_OAUTH_CLIENT_SECRET environment variables."
+                ) from exc
+            log = logger.warning if explicit else logger.debug
+            log("Ignoring client secrets file %s: %s", path, exc)
+            return
+
+        file_client_id = section.get("client_id") or None
+        file_client_secret = section.get("client_secret") or None
+        if self.client_id and file_client_id and file_client_id != self.client_id:
+            # The file describes a different OAuth client, so its secret cannot
+            # authenticate the configured client id. Pairing them would turn a
+            # public client into a confidential one that Google always rejects.
+            logger.warning(
+                "Ignoring client secrets file %s: it configures client id %s, not the "
+                "GOOGLE_OAUTH_CLIENT_ID this server runs as.",
+                path,
+                file_client_id,
+            )
+            return
+
+        loaded = False
+        if not self.client_id and file_client_id:
+            self.client_id = file_client_id
+            loaded = True
+        if not self.client_secret and file_client_secret:
+            self.client_secret = file_client_secret
+            loaded = True
+        if loaded:
+            self.client_secrets_file = path
+            logger.info("Loaded OAuth client credentials from file: %s", path)
 
     def _get_redirect_uri(self) -> str:
         """
@@ -131,33 +341,6 @@ class OAuthConfig:
             # If the value was already a path, ensure it starts with '/'
             path = uri if uri.startswith("/") else f"/{uri}"
         return path or "/oauth2callback"
-
-    def _apply_fastmcp_google_env(self) -> None:
-        """Mirror legacy GOOGLE_* env vars into FastMCP Google provider settings."""
-        if not self.client_id:
-            return
-
-        def _set_if_absent(key: str, value: Optional[str]) -> None:
-            if value and key not in os.environ:
-                os.environ[key] = value
-
-        # Don't set FASTMCP_SERVER_AUTH if using external OAuth provider
-        # (external OAuth means protocol-level auth is disabled, only tool-level auth)
-        if not self.external_oauth21_provider:
-            _set_if_absent(
-                "FASTMCP_SERVER_AUTH",
-                "fastmcp.server.auth.providers.google.GoogleProvider"
-                if self.oauth21_enabled
-                else None,
-            )
-
-        _set_if_absent("FASTMCP_SERVER_AUTH_GOOGLE_CLIENT_ID", self.client_id)
-        if self.client_secret:
-            _set_if_absent(
-                "FASTMCP_SERVER_AUTH_GOOGLE_CLIENT_SECRET", self.client_secret
-            )
-        _set_if_absent("FASTMCP_SERVER_AUTH_GOOGLE_BASE_URL", self.get_oauth_base_url())
-        _set_if_absent("FASTMCP_SERVER_AUTH_GOOGLE_REDIRECT_PATH", self.redirect_path)
 
     def is_public_client(self) -> bool:
         """Return True when only a client_id is configured (no client_secret)."""
@@ -498,6 +681,11 @@ def is_stateless_mode() -> bool:
 def is_external_oauth21_provider() -> bool:
     """Check if external OAuth 2.1 provider mode is enabled."""
     return get_oauth_config().is_external_oauth21_provider()
+
+
+def is_trust_gateway_identity() -> bool:
+    """Check if trusted-gateway identity (signed assertion) mode is enabled."""
+    return get_oauth_config().trust_gateway_identity
 
 
 def is_service_account_enabled() -> bool:

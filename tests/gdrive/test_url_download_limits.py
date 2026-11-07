@@ -36,7 +36,7 @@ async def test_download_url_to_bytes_streams_content(monkeypatch):
     )
 
     data_file, content_type = await drive_helpers._download_url_to_bytes(
-        "https://example.com/file.pdf"
+        "https://example.com/file.pdf", upload_type_param="mime_type"
     )
 
     with data_file:
@@ -56,4 +56,6 @@ async def test_download_url_to_bytes_enforces_max_size(monkeypatch):
         ValueError,
         match=r"Download from example\.com/file\.bin exceeded 6 byte limit",
     ):
-        await drive_helpers._download_url_to_bytes("https://example.com/file.bin")
+        await drive_helpers._download_url_to_bytes(
+            "https://example.com/file.bin", upload_type_param="mime_type"
+        )

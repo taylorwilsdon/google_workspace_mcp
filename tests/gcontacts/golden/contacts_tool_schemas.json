@@ -17,18 +17,6 @@
             "default": null,
             "description": "Email address value."
           },
-          "type": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Email type such as work, home, or other."
-          },
           "value": {
             "anyOf": [
               {
@@ -40,6 +28,18 @@
             ],
             "default": null,
             "description": "Backward-compatible alias for the email address value."
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Email type such as work, home, or other."
           }
         },
         "type": "object"
@@ -48,6 +48,10 @@
         "additionalProperties": false,
         "description": "Typed input for a nickname entry.",
         "properties": {
+          "value": {
+            "description": "Nickname value. Used for bilingual contacts (e.g. Hebrew alternative form).",
+            "type": "string"
+          },
           "type": {
             "anyOf": [
               {
@@ -59,10 +63,6 @@
             ],
             "default": null,
             "description": "Nickname type such as default, alternate_name, maiden_name, initials, or other."
-          },
-          "value": {
-            "description": "Nickname value. Used for bilingual contacts (e.g. Hebrew alternative form).",
-            "type": "string"
           }
         },
         "required": [
@@ -74,30 +74,6 @@
         "additionalProperties": false,
         "description": "Typed input for an organization entry.",
         "properties": {
-          "department": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Department name."
-          },
-          "jobDescription": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Optional organization job description."
-          },
           "name": {
             "anyOf": [
               {
@@ -121,6 +97,30 @@
             ],
             "default": null,
             "description": "Job title."
+          },
+          "department": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Department name."
+          },
+          "jobDescription": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional organization job description."
           },
           "type": {
             "anyOf": [
@@ -153,18 +153,6 @@
             "default": null,
             "description": "Phone number value."
           },
-          "type": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Phone type such as mobile, work, home, or internal."
-          },
           "value": {
             "anyOf": [
               {
@@ -176,6 +164,18 @@
             ],
             "default": null,
             "description": "Backward-compatible alias for the phone number value."
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Phone type such as mobile, work, home, or internal."
           }
         },
         "type": "object"
@@ -210,6 +210,10 @@
         "additionalProperties": false,
         "description": "Typed input for a URL entry.",
         "properties": {
+          "value": {
+            "description": "The URL value (e.g. https://example.com).",
+            "type": "string"
+          },
           "type": {
             "anyOf": [
               {
@@ -221,10 +225,6 @@
             ],
             "default": null,
             "description": "URL type such as homepage, blog, profile, work, ftp, reservations, or other. Custom values allowed."
-          },
-          "value": {
-            "description": "The URL value (e.g. https://example.com).",
-            "type": "string"
           }
         },
         "required": [
@@ -254,38 +254,18 @@
     },
     "additionalProperties": false,
     "properties": {
+      "user_google_email": {
+        "type": "string",
+        "description": "The user's Google email address. Required."
+      },
       "action": {
-        "description": "The action to perform: \"create\", \"update\", or \"delete\".",
         "enum": [
           "create",
           "update",
           "delete"
         ],
-        "type": "string"
-      },
-      "address": {
-        "anyOf": [
-          {
-            "type": "string"
-          },
-          {
-            "type": "null"
-          }
-        ],
-        "default": null,
-        "description": "Street address (for create/update)."
-      },
-      "birthday": {
-        "anyOf": [
-          {
-            "type": "string"
-          },
-          {
-            "type": "null"
-          }
-        ],
-        "default": null,
-        "description": "Birthday as 'YYYY-MM-DD', 'MM-DD' (no year), or 'clear'/'' to remove."
+        "type": "string",
+        "description": "The action to perform: \"create\", \"update\", or \"delete\"."
       },
       "contact_id": {
         "anyOf": [
@@ -299,55 +279,6 @@
         "default": null,
         "description": "The contact ID. Required for \"update\" and \"delete\" actions."
       },
-      "email": {
-        "anyOf": [
-          {
-            "type": "string"
-          },
-          {
-            "type": "null"
-          }
-        ],
-        "default": null,
-        "description": "[DEPRECATED] Email address. Use emails=[{\"address\":..., \"type\":\"other\"}]."
-      },
-      "emails": {
-        "anyOf": [
-          {
-            "items": {
-              "$ref": "#/$defs/EmailInput"
-            },
-            "type": "array"
-          },
-          {
-            "type": "null"
-          }
-        ],
-        "default": null,
-        "description": "List of email dicts {address, type?}."
-      },
-      "emails_mode": {
-        "default": "merge",
-        "description": "How to update emails on \"update\": \"merge\" (default), \"replace\", or \"remove\".",
-        "enum": [
-          "merge",
-          "replace",
-          "remove"
-        ],
-        "type": "string"
-      },
-      "family_name": {
-        "anyOf": [
-          {
-            "type": "string"
-          },
-          {
-            "type": "null"
-          }
-        ],
-        "default": null,
-        "description": "Last name (for create/update)."
-      },
       "given_name": {
         "anyOf": [
           {
@@ -360,7 +291,7 @@
         "default": null,
         "description": "First name (for create/update)."
       },
-      "job_title": {
+      "family_name": {
         "anyOf": [
           {
             "type": "string"
@@ -370,93 +301,7 @@
           }
         ],
         "default": null,
-        "description": "[DEPRECATED] Job title. Use organizations=[{\"title\":...}]."
-      },
-      "nicknames": {
-        "anyOf": [
-          {
-            "items": {
-              "$ref": "#/$defs/NicknameInput"
-            },
-            "type": "array"
-          },
-          {
-            "type": "null"
-          }
-        ],
-        "default": null,
-        "description": "List of nickname dicts {value, type?}.\nUseful for bilingual contacts (e.g. Hebrew/English alternative forms). Android dialer\nand WhatsApp search both index nicknames, enabling cross-script lookup.\nSupported types: default, alternate_name, maiden_name, initials, other, etc."
-      },
-      "nicknames_mode": {
-        "default": "merge",
-        "description": "How to update nicknames on \"update\": \"merge\" (default), \"replace\", or \"remove\".",
-        "enum": [
-          "merge",
-          "replace",
-          "remove"
-        ],
-        "type": "string"
-      },
-      "notes": {
-        "anyOf": [
-          {
-            "type": "string"
-          },
-          {
-            "type": "null"
-          }
-        ],
-        "default": null,
-        "description": "Additional notes (for create/update)."
-      },
-      "organization": {
-        "anyOf": [
-          {
-            "type": "string"
-          },
-          {
-            "type": "null"
-          }
-        ],
-        "default": null,
-        "description": "[DEPRECATED] Company name. Use organizations=[{\"name\":...}]."
-      },
-      "organizations": {
-        "anyOf": [
-          {
-            "items": {
-              "$ref": "#/$defs/OrganizationInput"
-            },
-            "type": "array"
-          },
-          {
-            "type": "null"
-          }
-        ],
-        "default": null,
-        "description": "List of org dicts {name?, title?, department?, jobDescription?, type?}."
-      },
-      "organizations_mode": {
-        "default": "merge",
-        "description": "How to update orgs on \"update\": \"merge\" (default), \"replace\", or \"remove\".",
-        "enum": [
-          "merge",
-          "replace",
-          "remove"
-        ],
-        "type": "string"
-      },
-      "phone": {
-        "anyOf": [
-          {
-            "type": "string"
-          },
-          {
-            "type": "null"
-          }
-        ],
-        "default": null,
-        "description": "[DEPRECATED] Single phone number. Use phones=[{\"number\":..., \"type\":\"mobile\"}]."
+        "description": "Last name (for create/update)."
       },
       "phones": {
         "anyOf": [
@@ -473,21 +318,11 @@
         "default": null,
         "description": "List of phone dicts {number, type?}.\nSupported types: mobile, work, home, main, workMobile, internal, other, etc.\nUse type=\"internal\" for internal PBX/ATS short numbers (e.g. 250, 301) \u2014 stored\nas a standalone number without + prefix, displayed as \"Internal: 250\"."
       },
-      "phones_mode": {
-        "default": "merge",
-        "description": "How to update phones on \"update\": \"merge\" (default), \"replace\", or \"remove\".\nmerge = read-modify-write with dedup by canonicalForm/normalized value.\nreplace = overwrite all phones with provided list.\nremove = delete phones matching provided numbers.",
-        "enum": [
-          "merge",
-          "replace",
-          "remove"
-        ],
-        "type": "string"
-      },
-      "relations": {
+      "emails": {
         "anyOf": [
           {
             "items": {
-              "$ref": "#/$defs/RelationInput"
+              "$ref": "#/$defs/EmailInput"
             },
             "type": "array"
           },
@@ -496,17 +331,37 @@
           }
         ],
         "default": null,
-        "description": "List of relation dicts {person, type?}.\nSupported types: spouse, child, parent, friend, manager, assistant, etc."
+        "description": "List of email dicts {address, type?}."
       },
-      "relations_mode": {
-        "default": "merge",
-        "description": "How to update relations on \"update\": \"merge\" (default), \"replace\", or \"remove\".",
-        "enum": [
-          "merge",
-          "replace",
-          "remove"
+      "organizations": {
+        "anyOf": [
+          {
+            "items": {
+              "$ref": "#/$defs/OrganizationInput"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
         ],
-        "type": "string"
+        "default": null,
+        "description": "List of org dicts {name?, title?, department?, jobDescription?, type?}."
+      },
+      "nicknames": {
+        "anyOf": [
+          {
+            "items": {
+              "$ref": "#/$defs/NicknameInput"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "List of nickname dicts {value, type?}.\nUseful for bilingual contacts (e.g. Hebrew/English alternative forms). Android dialer\nand WhatsApp search both index nicknames, enabling cross-script lookup.\nSupported types: default, alternate_name, maiden_name, initials, other, etc."
       },
       "urls": {
         "anyOf": [
@@ -523,16 +378,6 @@
         "default": null,
         "description": "List of URL dicts {value, type?}.\nSupported types: homepage, blog, profile, work, ftp, reservations, other, etc."
       },
-      "urls_mode": {
-        "default": "merge",
-        "description": "How to update urls on \"update\": \"merge\" (default), \"replace\", or \"remove\".\nmerge dedups by normalized URL (lowercased, trailing slash stripped).",
-        "enum": [
-          "merge",
-          "replace",
-          "remove"
-        ],
-        "type": "string"
-      },
       "user_defined": {
         "anyOf": [
           {
@@ -548,19 +393,174 @@
         "default": null,
         "description": "List of custom field dicts {key, value}.\nUseful for structured data like account numbers, IDs, or custom dates."
       },
-      "user_defined_mode": {
+      "relations": {
+        "anyOf": [
+          {
+            "items": {
+              "$ref": "#/$defs/RelationInput"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "List of relation dicts {person, type?}.\nSupported types: spouse, child, parent, friend, manager, assistant, etc."
+      },
+      "notes": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Additional notes (for create/update)."
+      },
+      "address": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Street address, replacing any existing addresses. \"\" clears them (for create/update)."
+      },
+      "birthday": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Birthday as 'YYYY-MM-DD', 'MM-DD' (no year), or 'clear'/'' to remove."
+      },
+      "phones_mode": {
         "default": "merge",
-        "description": "How to update custom fields on \"update\": \"merge\" (default), \"replace\", or \"remove\".\nmerge overrides value on matching key; new keys appended.",
         "enum": [
           "merge",
           "replace",
           "remove"
         ],
-        "type": "string"
+        "type": "string",
+        "description": "How to update phones on \"update\": \"merge\" (default), \"replace\", or \"remove\".\nmerge = read-modify-write with dedup by canonicalForm/normalized value.\nreplace = overwrite all phones with provided list.\nremove = delete phones matching provided numbers."
       },
-      "user_google_email": {
-        "description": "The user's Google email address. Required.",
-        "type": "string"
+      "emails_mode": {
+        "default": "merge",
+        "enum": [
+          "merge",
+          "replace",
+          "remove"
+        ],
+        "type": "string",
+        "description": "How to update emails on \"update\": \"merge\" (default), \"replace\", or \"remove\"."
+      },
+      "organizations_mode": {
+        "default": "merge",
+        "enum": [
+          "merge",
+          "replace",
+          "remove"
+        ],
+        "type": "string",
+        "description": "How to update orgs on \"update\": \"merge\" (default), \"replace\", or \"remove\"."
+      },
+      "nicknames_mode": {
+        "default": "merge",
+        "enum": [
+          "merge",
+          "replace",
+          "remove"
+        ],
+        "type": "string",
+        "description": "How to update nicknames on \"update\": \"merge\" (default), \"replace\", or \"remove\"."
+      },
+      "urls_mode": {
+        "default": "merge",
+        "enum": [
+          "merge",
+          "replace",
+          "remove"
+        ],
+        "type": "string",
+        "description": "How to update urls on \"update\": \"merge\" (default), \"replace\", or \"remove\".\nmerge dedups by normalized URL (lowercased, trailing slash stripped)."
+      },
+      "user_defined_mode": {
+        "default": "merge",
+        "enum": [
+          "merge",
+          "replace",
+          "remove"
+        ],
+        "type": "string",
+        "description": "How to update custom fields on \"update\": \"merge\" (default), \"replace\", or \"remove\".\nmerge overrides value on matching key; new keys appended."
+      },
+      "relations_mode": {
+        "default": "merge",
+        "enum": [
+          "merge",
+          "replace",
+          "remove"
+        ],
+        "type": "string",
+        "description": "How to update relations on \"update\": \"merge\" (default), \"replace\", or \"remove\"."
+      },
+      "phone": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "[DEPRECATED] Single phone number. Use phones=[{\"number\":..., \"type\":\"mobile\"}]."
+      },
+      "email": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "[DEPRECATED] Email address. Use emails=[{\"address\":..., \"type\":\"other\"}]."
+      },
+      "organization": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "[DEPRECATED] Company name. Use organizations=[{\"name\":...}]."
+      },
+      "job_title": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "[DEPRECATED] Job title. Use organizations=[{\"title\":...}]."
       }
     },
     "required": [
@@ -575,65 +575,6 @@
         "additionalProperties": false,
         "description": "Typed batch-create input for a contact.",
         "properties": {
-          "address": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null
-          },
-          "birthday": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Birthday as 'YYYY-MM-DD', 'MM-DD' (no year), or 'clear'/'' to remove."
-          },
-          "email": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null
-          },
-          "emails": {
-            "anyOf": [
-              {
-                "items": {
-                  "$ref": "#/$defs/EmailInput"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null
-          },
-          "family_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null
-          },
           "given_name": {
             "anyOf": [
               {
@@ -645,68 +586,7 @@
             ],
             "default": null
           },
-          "job_title": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null
-          },
-          "nicknames": {
-            "anyOf": [
-              {
-                "items": {
-                  "$ref": "#/$defs/NicknameInput"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null
-          },
-          "notes": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null
-          },
-          "organization": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null
-          },
-          "organizations": {
-            "anyOf": [
-              {
-                "items": {
-                  "$ref": "#/$defs/OrganizationInput"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null
-          },
-          "phone": {
+          "family_name": {
             "anyOf": [
               {
                 "type": "string"
@@ -731,11 +611,39 @@
             ],
             "default": null
           },
-          "relations": {
+          "emails": {
             "anyOf": [
               {
                 "items": {
-                  "$ref": "#/$defs/RelationInput"
+                  "$ref": "#/$defs/EmailInput"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "organizations": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/OrganizationInput"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "nicknames": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/NicknameInput"
                 },
                 "type": "array"
               },
@@ -766,6 +674,98 @@
                   "$ref": "#/$defs/UserDefinedInput"
                 },
                 "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "relations": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/RelationInput"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "birthday": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Birthday as 'YYYY-MM-DD', 'MM-DD' (no year), or 'clear'/'' to remove."
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "organization": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "job_title": {
+            "anyOf": [
+              {
+                "type": "string"
               },
               {
                 "type": "null"
@@ -780,69 +780,6 @@
         "additionalProperties": false,
         "description": "Typed batch-update input for a contact.",
         "properties": {
-          "address": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null
-          },
-          "birthday": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Birthday as 'YYYY-MM-DD', 'MM-DD' (no year), or 'clear'/'' to remove."
-          },
-          "contact_id": {
-            "description": "Contact ID like \"c123\" or full resource name like \"people/c123\".",
-            "type": "string"
-          },
-          "email": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null
-          },
-          "emails": {
-            "anyOf": [
-              {
-                "items": {
-                  "$ref": "#/$defs/EmailInput"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null
-          },
-          "family_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null
-          },
           "given_name": {
             "anyOf": [
               {
@@ -854,68 +791,7 @@
             ],
             "default": null
           },
-          "job_title": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null
-          },
-          "nicknames": {
-            "anyOf": [
-              {
-                "items": {
-                  "$ref": "#/$defs/NicknameInput"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null
-          },
-          "notes": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null
-          },
-          "organization": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null
-          },
-          "organizations": {
-            "anyOf": [
-              {
-                "items": {
-                  "$ref": "#/$defs/OrganizationInput"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null
-          },
-          "phone": {
+          "family_name": {
             "anyOf": [
               {
                 "type": "string"
@@ -940,11 +816,39 @@
             ],
             "default": null
           },
-          "relations": {
+          "emails": {
             "anyOf": [
               {
                 "items": {
-                  "$ref": "#/$defs/RelationInput"
+                  "$ref": "#/$defs/EmailInput"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "organizations": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/OrganizationInput"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "nicknames": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/NicknameInput"
                 },
                 "type": "array"
               },
@@ -981,6 +885,102 @@
               }
             ],
             "default": null
+          },
+          "relations": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/RelationInput"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "birthday": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Birthday as 'YYYY-MM-DD', 'MM-DD' (no year), or 'clear'/'' to remove."
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "organization": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "job_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "contact_id": {
+            "description": "Contact ID like \"c123\" or full resource name like \"people/c123\".",
+            "type": "string"
           }
         },
         "required": [
@@ -1004,18 +1004,6 @@
             "default": null,
             "description": "Email address value."
           },
-          "type": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Email type such as work, home, or other."
-          },
           "value": {
             "anyOf": [
               {
@@ -1027,6 +1015,18 @@
             ],
             "default": null,
             "description": "Backward-compatible alias for the email address value."
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Email type such as work, home, or other."
           }
         },
         "type": "object"
@@ -1035,6 +1035,10 @@
         "additionalProperties": false,
         "description": "Typed input for a nickname entry.",
         "properties": {
+          "value": {
+            "description": "Nickname value. Used for bilingual contacts (e.g. Hebrew alternative form).",
+            "type": "string"
+          },
           "type": {
             "anyOf": [
               {
@@ -1046,10 +1050,6 @@
             ],
             "default": null,
             "description": "Nickname type such as default, alternate_name, maiden_name, initials, or other."
-          },
-          "value": {
-            "description": "Nickname value. Used for bilingual contacts (e.g. Hebrew alternative form).",
-            "type": "string"
           }
         },
         "required": [
@@ -1061,30 +1061,6 @@
         "additionalProperties": false,
         "description": "Typed input for an organization entry.",
         "properties": {
-          "department": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Department name."
-          },
-          "jobDescription": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Optional organization job description."
-          },
           "name": {
             "anyOf": [
               {
@@ -1108,6 +1084,30 @@
             ],
             "default": null,
             "description": "Job title."
+          },
+          "department": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Department name."
+          },
+          "jobDescription": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional organization job description."
           },
           "type": {
             "anyOf": [
@@ -1140,18 +1140,6 @@
             "default": null,
             "description": "Phone number value."
           },
-          "type": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Phone type such as mobile, work, home, or internal."
-          },
           "value": {
             "anyOf": [
               {
@@ -1163,6 +1151,18 @@
             ],
             "default": null,
             "description": "Backward-compatible alias for the phone number value."
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Phone type such as mobile, work, home, or internal."
           }
         },
         "type": "object"
@@ -1197,6 +1197,10 @@
         "additionalProperties": false,
         "description": "Typed input for a URL entry.",
         "properties": {
+          "value": {
+            "description": "The URL value (e.g. https://example.com).",
+            "type": "string"
+          },
           "type": {
             "anyOf": [
               {
@@ -1208,10 +1212,6 @@
             ],
             "default": null,
             "description": "URL type such as homepage, blog, profile, work, ftp, reservations, or other. Custom values allowed."
-          },
-          "value": {
-            "description": "The URL value (e.g. https://example.com).",
-            "type": "string"
           }
         },
         "required": [
@@ -1241,14 +1241,48 @@
     },
     "additionalProperties": false,
     "properties": {
+      "user_google_email": {
+        "type": "string",
+        "description": "The user's Google email address. Required."
+      },
       "action": {
-        "description": "The action to perform: \"create\", \"update\", or \"delete\".",
         "enum": [
           "create",
           "update",
           "delete"
         ],
-        "type": "string"
+        "type": "string",
+        "description": "The action to perform: \"create\", \"update\", or \"delete\"."
+      },
+      "contacts": {
+        "anyOf": [
+          {
+            "items": {
+              "$ref": "#/$defs/ContactInput"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "List of contact dicts for \"create\" action.\nEach dict may contain: given_name, family_name, phones, emails,\norganizations, nicknames, urls, user_defined, relations, notes, address,\nbirthday. Deprecated: phone, email, organization, job_title."
+      },
+      "updates": {
+        "anyOf": [
+          {
+            "items": {
+              "$ref": "#/$defs/ContactUpdateInput"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "List of update dicts for \"update\" action.\nEach dict must contain contact_id and may contain the same fields as contacts."
       },
       "contact_ids": {
         "anyOf": [
@@ -1264,21 +1298,6 @@
         ],
         "default": null,
         "description": "List of contact IDs for \"delete\" action."
-      },
-      "contacts": {
-        "anyOf": [
-          {
-            "items": {
-              "$ref": "#/$defs/ContactInput"
-            },
-            "type": "array"
-          },
-          {
-            "type": "null"
-          }
-        ],
-        "default": null,
-        "description": "List of contact dicts for \"create\" action.\nEach dict may contain: given_name, family_name, phones, emails, organizations,\nnotes, address. Deprecated: phone, email, organization, job_title."
       },
       "field": {
         "anyOf": [
@@ -1303,26 +1322,7 @@
           }
         ],
         "default": null,
-        "description": "For \"update\" action \u2014 the single People API field to update across\nall contacts in this batch. Required. Must be one of: names, phoneNumbers,\nemailAddresses, organizations, nicknames, urls, userDefined, relations,\nbiographies, addresses, birthdays. Using a single field per batch call prevents\nunintentional data loss from a union updateMask overwriting unrelated fields."
-      },
-      "updates": {
-        "anyOf": [
-          {
-            "items": {
-              "$ref": "#/$defs/ContactUpdateInput"
-            },
-            "type": "array"
-          },
-          {
-            "type": "null"
-          }
-        ],
-        "default": null,
-        "description": "List of update dicts for \"update\" action.\nEach dict must contain contact_id and may contain the same fields as contacts."
-      },
-      "user_google_email": {
-        "description": "The user's Google email address. Required.",
-        "type": "string"
+        "description": "For \"update\" action, the single People API field to update across\nall contacts in this batch. Required. Must be one of: names, phoneNumbers,\nemailAddresses, organizations, nicknames, urls, userDefined, relations,\nbiographies, addresses, birthdays. Using a single field per batch call prevents\nunintentional data loss from a union updateMask overwriting unrelated fields."
       }
     },
     "required": [

@@ -218,9 +218,7 @@ async def get_task_list(
 - Updated: {task_list.get("updated", "N/A")}
 - Self Link: {task_list.get("selfLink", "N/A")}"""
 
-        logger.info(
-            f"Retrieved task list '{task_list['title']}' for {user_google_email}"
-        )
+        logger.info(f"Retrieved task list {task_list_id} for {user_google_email}")
         return response
 
     except HttpError as error:
@@ -241,7 +239,7 @@ async def _create_task_list_impl(
 ) -> str:
     """Implementation for creating a new task list."""
     logger.info(
-        f"[create_task_list] Invoked. Email: '{user_google_email}', Title: '{title}'"
+        f"[create_task_list] Invoked. Email: '{user_google_email}', title_len={len(title)}"
     )
 
     body = {"title": title}
@@ -254,9 +252,7 @@ async def _create_task_list_impl(
 - Created: {result.get("updated", "N/A")}
 - Self Link: {result.get("selfLink", "N/A")}"""
 
-    logger.info(
-        f"Created task list '{title}' with ID {result['id']} for {user_google_email}"
-    )
+    logger.info(f"Created task list with ID {result['id']} for {user_google_email}")
     return response
 
 
@@ -265,7 +261,7 @@ async def _update_task_list_impl(
 ) -> str:
     """Implementation for updating an existing task list."""
     logger.info(
-        f"[update_task_list] Invoked. Email: '{user_google_email}', Task List ID: {task_list_id}, New Title: '{title}'"
+        f"[update_task_list] Invoked. Email: '{user_google_email}', Task List ID: {task_list_id}, new_title_len={len(title)}"
     )
 
     body = {"id": task_list_id, "title": title}
@@ -279,9 +275,7 @@ async def _update_task_list_impl(
 - ID: {result["id"]}
 - Updated: {result.get("updated", "N/A")}"""
 
-    logger.info(
-        f"Updated task list {task_list_id} with new title '{title}' for {user_google_email}"
-    )
+    logger.info(f"Updated task list {task_list_id} for {user_google_email}")
     return response
 
 
@@ -704,9 +698,7 @@ async def get_task(
         if task.get("webViewLink"):
             response += f"\n- Web View Link: {task['webViewLink']}"
 
-        logger.info(
-            f"Retrieved task '{task.get('title', 'Untitled')}' for {user_google_email}"
-        )
+        logger.info(f"Retrieved task {task_id} for {user_google_email}")
         return response
 
     except HttpError as error:
@@ -734,7 +726,7 @@ async def _create_task_impl(
 ) -> str:
     """Implementation for creating a new task in a task list."""
     logger.info(
-        f"[create_task] Invoked. Email: '{user_google_email}', Task List ID: {task_list_id}, Title: '{title}'"
+        f"[create_task] Invoked. Email: '{user_google_email}', Task List ID: {task_list_id}, title_len={len(title)}"
     )
 
     body = {"title": title}
@@ -764,9 +756,7 @@ async def _create_task_impl(
     if result.get("webViewLink"):
         response += f"\n- Web View Link: {result['webViewLink']}"
 
-    logger.info(
-        f"Created task '{title}' with ID {result['id']} for {user_google_email}"
-    )
+    logger.info(f"Created task with ID {result['id']} for {user_google_email}")
     return response
 
 

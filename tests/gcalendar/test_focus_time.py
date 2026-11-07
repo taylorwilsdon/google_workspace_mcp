@@ -13,13 +13,13 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
+from core.utils import UserInputError
+from gcalendar.calendar_helpers import _status_event_time_entry, _validate_chat_status
 from gcalendar.calendar_tools import (
     _create_focus_time_event_impl,
     _delete_focus_time_event_impl,
-    _focus_time_time_entry,
     _list_focus_time_events_impl,
     _update_focus_time_event_impl,
-    _validate_chat_status,
 )
 
 
@@ -43,14 +43,14 @@ class TestValidateChatStatus:
         assert _validate_chat_status("doNotDisturb", "test") == "doNotDisturb"
 
     def test_rejects_invalid_value(self):
-        with pytest.raises(ValueError, match="Invalid chat_status"):
+        with pytest.raises(UserInputError, match="Invalid chat_status"):
             _validate_chat_status("busy", "test")
 
 
 class TestFocusTimeTimeEntry:
     def test_date_only_start_converts_to_midnight_when_timezone_provided(self):
-        result = _focus_time_time_entry(
-            "2026-04-05", is_end=False, timezone="America/New_York"
+        result = _status_event_time_entry(
+            "2026-04-05", "Focus Time", "America/New_York"
         )
         assert result == {
             "dateTime": "2026-04-05T00:00:00",
@@ -58,8 +58,8 @@ class TestFocusTimeTimeEntry:
         }
 
     def test_rejects_naive_datetime_without_timezone(self):
-        with pytest.raises(ValueError, match="require either a timezone"):
-            _focus_time_time_entry("2026-04-05T09:00:00", is_end=False, timezone=None)
+        with pytest.raises(UserInputError, match="Focus Time events require"):
+            _status_event_time_entry("2026-04-05T09:00:00", "Focus Time")
 
 
 @pytest.mark.asyncio
@@ -165,6 +165,101 @@ async def test_list_focus_time_passes_event_type_filter_and_expands_recurring_in
     assert "focus-instance-1" in result
     assert "In focus time" in result
     assert "doNotDisturb" in result
+
+
+@pytest.mark.asyncio
+async def test_list_focus_time_full_page_reports_next_page_token():
+    mock_service = _create_mock_service()
+    mock_service.events().list().execute = Mock(
+        return_value={
+            "items": [
+                {
+                    "id": "focus-page-1",
+                    "start": {"dateTime": "2026-04-06T09:00:00Z"},
+                    "end": {"dateTime": "2026-04-06T11:00:00Z"},
+                    "focusTimeProperties": {},
+                }
+            ],
+            "nextPageToken": "tok-next",
+        }
+    )
+
+    result = await _list_focus_time_events_impl(
+        service=mock_service,
+        user_google_email="user@example.com",
+        time_min="2026-04-01T00:00:00Z",
+    )
+
+    assert "focus-page-1" in result
+    assert result.endswith(
+        "Next page token: tok-next\nPagination time_min: 2026-04-01T00:00:00Z"
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_focus_time_empty_page_with_token_continues_to_next_page():
+    """The API can return an empty page alongside a nextPageToken."""
+    mock_service = _create_mock_service()
+    mock_service.events().list().execute = Mock(
+        side_effect=[
+            {"items": [], "nextPageToken": "tok-next"},
+            {
+                "items": [
+                    {
+                        "id": "focus-page-2",
+                        "start": {"dateTime": "2026-04-06T09:00:00Z"},
+                        "end": {"dateTime": "2026-04-06T11:00:00Z"},
+                        "focusTimeProperties": {},
+                    }
+                ]
+            },
+        ]
+    )
+
+    first_page = await _list_focus_time_events_impl(
+        service=mock_service,
+        user_google_email="user@example.com",
+    )
+    first_params = mock_service.events().list.call_args[1].copy()
+
+    assert "No Focus Time events found" not in first_page
+    assert "more pages remain" in first_page
+    continuation = dict(
+        line.split(": ", 1)
+        for line in first_page.splitlines()
+        if line.startswith(("Next page token: ", "Pagination time_min: "))
+    )
+    assert continuation["Next page token"] == "tok-next"
+
+    last_page = await _list_focus_time_events_impl(
+        service=mock_service,
+        user_google_email="user@example.com",
+        time_min=continuation["Pagination time_min"],
+        page_token=continuation["Next page token"],
+    )
+
+    assert mock_service.events().list.call_args[1] == {
+        **first_params,
+        "pageToken": "tok-next",
+    }
+    assert "focus-page-2" in last_page
+    assert "Next page token" not in last_page
+
+
+@pytest.mark.asyncio
+async def test_list_focus_time_page_token_requires_time_min():
+    """Without time_min the range starts at "now", which moves between calls."""
+    mock_service = _create_mock_service()
+    mock_service.events().list.reset_mock()
+
+    with pytest.raises(UserInputError, match="page_token requires time_min"):
+        await _list_focus_time_events_impl(
+            service=mock_service,
+            user_google_email="user@example.com",
+            page_token="tok-next",
+        )
+
+    mock_service.events().list.assert_not_called()
 
 
 @pytest.mark.asyncio

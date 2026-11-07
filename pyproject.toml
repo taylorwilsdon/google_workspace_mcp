@@ -4,28 +4,30 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "workspace-mcp"
-version = "1.22.1"
+version = "2.3.0"
 description = "Comprehensive, highly performant Google Workspace Streamable HTTP & SSE MCP Server for Calendar, Gmail, Docs, Sheets, Slides & Drive"
 readme = "README.md"
 keywords = [ "mcp", "google", "workspace", "llm", "ai", "claude", "model", "context", "protocol", "server"]
 license = "MIT"
 requires-python = ">=3.10"
 dependencies = [
- "fastapi>=0.115.12",
- "fastmcp>=3.4.4",
- "google-api-python-client>=2.168.0",
+ "fastapi>=0.133.0",
+ "fastmcp>=4.1.2",
+ "google-api-python-client>=2.201.0",
  "google-auth-httplib2>=0.2.0",
  "google-auth-oauthlib>=1.2.2",
  "httpx>=0.28.1",
- "urllib3>=2.7.0",
+ "urllib3>=2.8.0",
  "py-key-value-aio>=0.3.0",
- "pyjwt>=2.12.0",
+ "pyjwt>=2.15.0",
  "python-dotenv>=1.1.0",
  "pyyaml>=6.0.2",
- "cryptography>=48.0.1",
+ "cryptography>=50.0.0",
  "defusedxml>=0.7.1",
- "pypdf>=6.13.3",
+ "email-validator>=2.0.0",
+ "pypdf>=6.21.2",
  "pytz>=2026.1.post1",
+ "tzdata>=2026.1",
  "markdown-it-py>=3.0.0",
 ]
 classifiers = [
@@ -38,6 +40,7 @@ classifiers = [
     "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
     "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
     "Topic :: Software Development :: Libraries :: Application Frameworks",
@@ -71,12 +74,20 @@ disk = [
 ]
 valkey = [
     "py-key-value-aio[valkey]>=0.3.0",
+    "valkey-glide>=2.3.0",
+]
+otel = [
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-exporter-otlp>=1.20.0",
 ]
 test = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.23.0",
     "google-cloud-storage>=2.18.0",
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-exporter-otlp>=1.20.0",
     "requests>=2.32.3",
+    "httpx2>=2.12.0",
 ]
 release = [
     "tomlkit>=0.13.3",
@@ -86,8 +97,11 @@ dev = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.23.0",
     "google-cloud-storage>=2.18.0",
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-exporter-otlp>=1.20.0",
     "requests>=2.32.3",
-    "ruff>=0.12.4",
+    "httpx2>=2.12.0",
+    "ruff>=0.15.22,<0.16",
     "tomlkit>=0.13.3",
     "twine>=5.0.0",
 ]
@@ -98,12 +112,16 @@ disk = [
 ]
 valkey = [
     "py-key-value-aio[valkey]>=0.3.0",
+    "valkey-glide>=2.3.0",
 ]
 test = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.23.0",
     "google-cloud-storage>=2.18.0",
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-exporter-otlp>=1.20.0",
     "requests>=2.32.3",
+    "httpx2>=2.12.0",
 ]
 release = [
     "tomlkit>=0.13.3",
@@ -113,8 +131,11 @@ dev = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.23.0",
     "google-cloud-storage>=2.18.0",
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-exporter-otlp>=1.20.0",
     "requests>=2.32.3",
-    "ruff>=0.12.4",
+    "httpx2>=2.12.0",
+    "ruff>=0.15.22,<0.16",
     "tomlkit>=0.13.3",
     "twine>=5.0.0",
 ]
@@ -139,3 +160,14 @@ filterwarnings = [
 
 [tool.setuptools.package-data]
 core = ["tool_tiers.yaml"]
+
+[tool.uv]
+# Security floors for transitive deps
+constraint-dependencies = [
+    "mcp>=2.2.0",
+    "pyasn1>=0.6.4",
+    "oauthlib>=4.0.0",
+    "opentelemetry-api>=1.45.1",
+    "authlib>=1.9.1",
+    "dnspython>=2.9.0; python_version >= '3.11'",
+]

@@ -6,6 +6,7 @@ based on tier configuration, replacing direct @server.tool() decorators.
 """
 
 import logging
+import os
 from typing import Set, Optional, Callable
 
 from auth.oauth_config import is_oauth21_enabled
@@ -17,6 +18,9 @@ logger = logging.getLogger(__name__)
 # Global registry of enabled tools
 _enabled_tools: Optional[Set[str]] = None
 
+# Tools explicitly blocked regardless of tier or permission selection
+_disabled_tools: Set[str] = set()
+
 
 def set_enabled_tools(tool_names: Optional[Set[str]]):
     """Set the globally enabled tools."""
@@ -27,6 +31,37 @@ def set_enabled_tools(tool_names: Optional[Set[str]]):
 def get_enabled_tools() -> Optional[Set[str]]:
     """Get the set of enabled tools, or None if all tools are enabled."""
     return _enabled_tools
+
+
+def set_disabled_tools(tool_names: Set[str]):
+    """Set the globally blocked tools."""
+    global _disabled_tools
+    _disabled_tools = tool_names
+
+
+def get_disabled_tools() -> Set[str]:
+    """Get the set of explicitly blocked tools."""
+    return _disabled_tools
+
+
+def resolve_disabled_tools(cli_names: Optional[list[str]] = None) -> Set[str]:
+    """Resolve the per-tool block list from CLI names, falling back to the env var.
+
+    Names are normalized to lowercase because tool names are lowercase snake_case.
+
+    Args:
+        cli_names: Tool names from --disabled-tools, or None to read the
+            WORKSPACE_MCP_DISABLED_TOOLS env var instead.
+
+    Returns:
+        The set of tool names to block, empty when nothing is configured.
+    """
+    raw = (
+        cli_names
+        if cli_names
+        else os.getenv("WORKSPACE_MCP_DISABLED_TOOLS", "").split(",")
+    )
+    return {name.strip().lower() for name in raw if name.strip()}
 
 
 def is_tool_enabled(tool_name: str) -> bool:
@@ -101,18 +136,23 @@ def get_tool_components(server) -> dict:
     return tools
 
 
-def filter_server_tools(server):
-    """Remove disabled tools from the server after registration."""
+def filter_server_tools(server) -> int:
+    """Remove disabled tools from the server after registration.
+
+    Returns the number of tools removed so callers can report it.
+    """
     enabled_tools = get_enabled_tools()
     oauth21_enabled = is_oauth21_enabled()
     permissions_mode = is_permissions_mode()
+    disabled_tools = get_disabled_tools()
     if (
         enabled_tools is None
         and not oauth21_enabled
         and not is_read_only_mode()
         and not permissions_mode
+        and not disabled_tools
     ):
-        return
+        return 0
 
     tools_removed = 0
     tool_components = get_tool_components(server)
@@ -149,7 +189,7 @@ def filter_server_tools(server):
             if required_scopes:
                 # If ANY required scope is not in the allowed read-only scopes, disable the tool
                 if not all(scope in allowed_scopes for scope in required_scopes):
-                    logger.info(
+                    logger.debug(
                         f"Read-only mode: Disabling tool '{tool_name}' (requires write scopes: {required_scopes})"
                     )
                     tools_to_remove.add(tool_name)
@@ -173,12 +213,26 @@ def filter_server_tools(server):
             required_scopes = getattr(func_to_check, "_required_google_scopes", [])
             if required_scopes:
                 if not all(scope in perm_allowed for scope in required_scopes):
-                    logger.info(
+                    logger.debug(
                         "Permissions mode: Disabling tool '%s' (requires: %s)",
                         tool_name,
                         required_scopes,
                     )
                     tools_to_remove.add(tool_name)
+
+    # 5. Explicit per-tool block list (subtractive, so it wins over tier and
+    # permission selection). Unmatched entries only warn: a name is legitimately
+    # absent when its service was not loaded by --tools or --tool-tier.
+    for tool_name in sorted(disabled_tools):
+        if tool_name in tool_components:
+            logger.info("Block list: disabling tool '%s'", tool_name)
+            tools_to_remove.add(tool_name)
+        else:
+            logger.warning(
+                "Block list entry '%s' matches no registered tool - check spelling, "
+                "or its service may not be loaded by the current tool selection",
+                tool_name,
+            )
 
     for tool_name in tools_to_remove:
         try:
@@ -206,6 +260,9 @@ def filter_server_tools(server):
             mode = "Read-Only"
         else:
             mode = "Full"
-        logger.info(
+        # Debug level: main.py reports the filtered count on the startup screen.
+        logger.debug(
             f"Tool filtering: removed {tools_removed} tools, {enabled_count} enabled. Mode: {mode}"
         )
+
+    return tools_removed

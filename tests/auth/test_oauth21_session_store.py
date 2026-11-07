@@ -23,6 +23,9 @@ def test_oauth_state_persists_across_store_instances(tmp_path):
         "shared-state",
         session_id="session-123",
         code_verifier="verifier-123",
+        expected_user_email="user@example.com",
+        enforce_user_email_match=True,
+        principal_source="gateway_assertion",
     )
 
     state_info = store_b.validate_and_consume_oauth_state(
@@ -32,6 +35,9 @@ def test_oauth_state_persists_across_store_instances(tmp_path):
 
     assert state_info["session_id"] == "session-123"
     assert state_info["code_verifier"] == "verifier-123"
+    assert state_info["expected_user_email"] == "user@example.com"
+    assert state_info["enforce_user_email_match"] is True
+    assert state_info["principal_source"] == "gateway_assertion"
 
 
 def test_consume_latest_oauth_state_reads_from_shared_file(tmp_path):
@@ -146,6 +152,20 @@ def test_deserialize_oauth_state_entry_normalizes_invalid_and_naive_timestamps(
     assert deserialized["expires_at"] is None
 
 
+def test_serialize_oauth_state_preserves_missing_enforcement_marker(tmp_path):
+    store = OAuth21SessionStore(oauth_state_file=str(tmp_path / "oauth_states.json"))
+
+    serialized = store._serialize_oauth_state_entry(
+        {
+            "session_id": "session-123",
+            "code_verifier": "verifier",
+            "user_email": "old-gateway@example.com",
+        }
+    )
+
+    assert "enforce_user_email_match" not in serialized
+
+
 def test_store_session_rejects_mcp_session_rebind_by_default(tmp_path):
     state_file = tmp_path / "oauth_states.json"
     store = OAuth21SessionStore(oauth_state_file=str(state_file))
@@ -162,6 +182,30 @@ def test_store_session_rejects_mcp_session_rebind_by_default(tmp_path):
             access_token="token-b",
             mcp_session_id="session-123",
         )
+
+
+def test_store_session_stays_bounded_for_sessionless_clients(tmp_path):
+    # Sessionless (2026-07-28) clients get a fresh MCP session ID per request.
+    store = OAuth21SessionStore(oauth_state_file=str(tmp_path / "oauth_states.json"))
+
+    for call in range(50):
+        store.store_session(
+            user_email="user@example.com",
+            access_token="token",
+            mcp_session_id=f"per-request-{call}",
+        )
+
+    stats = store.get_stats()
+    assert stats["mcp_session_mappings"] == 1
+    assert len(store._session_auth_binding) == 1
+    assert store.get_user_by_mcp_session("per-request-49") == "user@example.com"
+    # Access is authorized by the verified token's email, not session continuity.
+    credentials = store.get_credentials_with_validation(
+        "user@example.com",
+        session_id="per-request-0",
+        auth_token_email="user@example.com",
+    )
+    assert credentials.token == "token"
 
 
 def test_store_session_skips_mcp_binding_in_single_user_mode(tmp_path, monkeypatch):
@@ -186,7 +230,7 @@ def test_store_session_skips_mcp_binding_in_single_user_mode(tmp_path, monkeypat
 
 
 # ---------------------------------------------------------------------------
-# _build_credentials_from_provider — fastmcp 3.x jti -> upstream token lookup
+# _build_credentials_from_provider: fastmcp jti -> upstream token lookup
 # (regression coverage for #886: refresh_token must be populated)
 # ---------------------------------------------------------------------------
 

@@ -299,6 +299,10 @@ class MinimalOAuthServer:
                     port=self.port,
                     log_level="warning",
                     access_log=False,
+                    # Match FastMCP's own uvicorn config: uvicorn's "auto"
+                    # default resolves to the deprecated legacy-websockets
+                    # implementation whenever `websockets` is installed.
+                    ws="websockets-sansio",
                 )
                 self.server = uvicorn.Server(config)
                 asyncio.run(self.server.serve())

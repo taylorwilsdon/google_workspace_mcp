@@ -4,8 +4,6 @@ Tests for strikethrough text style support.
 Covers the helpers, validation, and batch manager integration.
 """
 
-import json
-from difflib import unified_diff
 from pathlib import Path
 import pytest
 from unittest.mock import AsyncMock, Mock
@@ -15,6 +13,7 @@ from core.tool_registry import get_tool_components
 from gdocs import docs_tools
 from gdocs.docs_helpers import build_text_style, create_format_text_request
 from gdocs.managers.validation_manager import ValidationManager
+from tests.golden_utils import assert_matches_golden
 
 SCHEMA_GOLDEN_PATH = (
     Path(__file__).with_name("golden").joinpath("docs_tool_schemas.json")
@@ -201,7 +200,6 @@ class TestPublicToolWiring:
 class TestDocsToolSchemaGolden:
     def test_docs_tool_schema_matches_golden(self):
         generated = _schema_subset()
-        golden = json.loads(SCHEMA_GOLDEN_PATH.read_text())
 
         assert "strikethrough" in generated["modify_doc_text"]["properties"], (
             "modify_doc_text schema is missing the strikethrough parameter"
@@ -219,16 +217,4 @@ class TestDocsToolSchemaGolden:
             is False
         )
 
-        if generated != golden:
-            expected = json.dumps(golden, indent=2, sort_keys=True).splitlines()
-            actual = json.dumps(generated, indent=2, sort_keys=True).splitlines()
-            diff = "\n".join(
-                unified_diff(
-                    expected,
-                    actual,
-                    fromfile=str(SCHEMA_GOLDEN_PATH),
-                    tofile="generated",
-                    lineterm="",
-                )
-            )
-            pytest.fail(f"Docs tool schema drifted from golden:\n{diff}")
+        assert_matches_golden(generated, SCHEMA_GOLDEN_PATH, "Docs")
