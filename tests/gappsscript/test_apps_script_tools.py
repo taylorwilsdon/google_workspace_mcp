@@ -153,6 +153,22 @@ async def test_list_script_projects_keeps_page_token_on_empty_page():
 
 
 @pytest.mark.asyncio
+async def test_list_script_projects_flags_incomplete_empty_search():
+    """An empty incomplete search is not reported as definitively empty."""
+    mock_service = Mock()
+    mock_service.files().list().execute.return_value = {
+        "files": [],
+        "incompleteSearch": True,
+    }
+
+    result = await _list_script_projects_impl(
+        service=mock_service, user_google_email="test@example.com", page_size=50
+    )
+
+    assert result == f"No Apps Script projects found.\n{INCOMPLETE_SEARCH_WARNING}"
+
+
+@pytest.mark.asyncio
 async def test_get_script_project():
     """Test retrieving complete project details"""
     mock_service = Mock()
