@@ -603,7 +603,7 @@ async def test_cached_names_are_isolated_per_authenticated_user():
 @pytest.mark.asyncio
 async def test_names_are_not_cached_without_an_authenticated_user():
     await chat_helpers._resolve_sender(_people_service(), {"name": "users/300"})
-    await chat_helpers._lookup_people_names(_people_service(), ["users/400"])
+    await chat_helpers._lookup_people_names(_people_service(), ["users/400"], "  ")
 
     assert chat_helpers._sender_name_cache == {}
 
