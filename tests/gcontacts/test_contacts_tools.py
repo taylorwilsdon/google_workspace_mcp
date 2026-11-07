@@ -15,7 +15,8 @@ from gcontacts.contacts_tools import (
     _format_contact,
     _build_person_body,
 )
-from gcontacts.contacts_helpers import _parse_birthday
+from gcontacts.contacts_helpers import _merge_names, _parse_birthday
+from core.utils import UserInputError
 
 
 class TestFormatContact:
@@ -260,15 +261,44 @@ class TestBuildPersonBody:
         """Test building a person body with only given name."""
         body = _build_person_body(given_name="John")
 
-        assert body["names"][0]["givenName"] == "John"
-        assert body["names"][0]["familyName"] == ""
+        assert body["names"] == [{"givenName": "John"}]
 
     def test_build_body_family_name_only(self):
         """Test building a person body with only family name."""
         body = _build_person_body(family_name="Doe")
 
-        assert body["names"][0]["givenName"] == ""
-        assert body["names"][0]["familyName"] == "Doe"
+        assert body["names"] == [{"familyName": "Doe"}]
+
+    def test_build_body_explicit_empty_name_part(self):
+        assert _build_person_body(given_name="")["names"] == [{"givenName": ""}]
+        assert _build_person_body(family_name="")["names"] == [{"familyName": ""}]
+
+    def test_merge_names_clears_explicit_empty_part(self):
+        existing = [
+            {
+                "metadata": {"source": {"type": "CONTACT"}},
+                "givenName": "Bob",
+                "familyName": "Smith",
+            }
+        ]
+        assert _merge_names(existing, [{"givenName": ""}]) == [
+            {"givenName": "", "familyName": "Smith"}
+        ]
+        assert _merge_names(existing, [{"familyName": ""}]) == [
+            {"givenName": "Bob", "familyName": ""}
+        ]
+
+    def test_merge_names_uses_contact_source_not_first(self):
+        existing = [
+            {"metadata": {"source": {"type": "PROFILE"}}, "givenName": "Profile"},
+            {"metadata": {"source": {"type": "CONTACT"}}, "familyName": "Smith"},
+        ]
+        assert _merge_names(existing, [{"givenName": "Robert"}]) == [
+            {"givenName": "Robert", "familyName": "Smith"}
+        ]
+        assert _merge_names(existing[:1], [{"givenName": "Robert"}]) == [
+            {"givenName": "Robert"}
+        ]
 
     def test_build_full_body(self):
         """Test building a person body with all fields."""
@@ -371,43 +401,43 @@ class TestParseBirthday:
         assert result == {"date": {"year": 1985, "month": 12, "day": 1}}
 
     def test_invalid_format_raises(self):
-        """An unrecognized date format raises ValueError."""
-        with pytest.raises(ValueError, match="Invalid birthday format"):
+        """An unrecognized date format raises UserInputError."""
+        with pytest.raises(UserInputError, match="Invalid birthday format"):
             _parse_birthday("15/03/1990")
 
     def test_single_part_raises(self):
-        """A single-component string (no separator) raises ValueError."""
-        with pytest.raises(ValueError):
+        """A single-component string (no separator) raises UserInputError."""
+        with pytest.raises(UserInputError):
             _parse_birthday("1990")
 
     def test_non_numeric_raises_format_error(self):
-        """Non-numeric components raise the friendly format ValueError, not int()'s."""
-        with pytest.raises(ValueError, match="Invalid birthday format"):
+        """Non-numeric components raise the friendly format UserInputError, not int()'s."""
+        with pytest.raises(UserInputError, match="Invalid birthday format"):
             _parse_birthday("1990-ab-15")
 
     def test_out_of_range_month_raises(self):
-        """A month outside 1-12 raises a range ValueError."""
-        with pytest.raises(ValueError, match="month must be 1-12"):
+        """A month outside 1-12 raises a range UserInputError."""
+        with pytest.raises(UserInputError, match="month must be 1-12"):
             _parse_birthday("1990-13-15")
 
     def test_out_of_range_day_raises(self):
-        """A day outside 1-31 raises a range ValueError."""
-        with pytest.raises(ValueError, match="day must be 1-31"):
+        """A day outside 1-31 raises a range UserInputError."""
+        with pytest.raises(UserInputError, match="day must be 1-31"):
             _parse_birthday("03-45")
 
     def test_empty_string_raises(self):
-        """An empty string has no numeric parts and raises the format ValueError."""
-        with pytest.raises(ValueError, match="Invalid birthday format"):
+        """An empty string has no numeric parts and raises the format UserInputError."""
+        with pytest.raises(UserInputError, match="Invalid birthday format"):
             _parse_birthday("")
 
     def test_impossible_day_month_combo_raises(self):
-        """A well-formed but non-existent date (Feb 30) raises a calendar ValueError."""
-        with pytest.raises(ValueError, match="not a real calendar date"):
+        """A well-formed but non-existent date (Feb 30) raises a calendar UserInputError."""
+        with pytest.raises(UserInputError, match="not a real calendar date"):
             _parse_birthday("2000-02-30")
 
     def test_feb_29_non_leap_year_raises(self):
         """Feb 29 in a non-leap year is rejected."""
-        with pytest.raises(ValueError, match="not a real calendar date"):
+        with pytest.raises(UserInputError, match="not a real calendar date"):
             _parse_birthday("1990-02-29")
 
     def test_feb_29_leap_year_allowed(self):
@@ -422,7 +452,7 @@ class TestParseBirthday:
 
     def test_year_zero_raises(self):
         """A non-positive year is not a real calendar date."""
-        with pytest.raises(ValueError, match="not a real calendar date"):
+        with pytest.raises(UserInputError, match="not a real calendar date"):
             _parse_birthday("0000-05-15")
 
 

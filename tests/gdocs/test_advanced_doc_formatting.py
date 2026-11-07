@@ -27,6 +27,13 @@ def _unwrap(tool):
 
 
 class TestAdvancedTextStyle:
+    def test_fractional_font_size(self):
+        style, fields = build_text_style(font_size=10.5)
+
+        assert style["fontSize"] == {"magnitude": 10.5, "unit": "PT"}
+        assert fields == ["fontSize"]
+        assert ValidationManager().validate_text_formatting_params(font_size=10.5)[0]
+
     def test_weight_baseline_small_caps_and_clear_link(self):
         style, fields = build_text_style(
             font_family="Roboto",
@@ -87,6 +94,9 @@ class TestAdvancedRequestBuilders:
         inner = request["updateDocumentStyle"]
         assert inner["tabId"] == "tab-123"
         assert inner["documentStyle"]["marginTop"] == {"magnitude": 72, "unit": "PT"}
+        assert inner["documentStyle"]["background"] == {
+            "color": {"color": {"rgbColor": {"red": 1.0, "green": 1.0, "blue": 1.0}}}
+        }
         assert inner["documentStyle"]["pageSize"]["width"] == {
             "magnitude": 612,
             "unit": "PT",

@@ -13,6 +13,12 @@ from dotenv import load_dotenv
 dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
 load_dotenv(dotenv_path=dotenv_path)
 
+from core.file_limits import validate_file_limit_settings
+
+# This module is itself a supported server entrypoint, so validate settings
+# here rather than relying on main.main(), which FastMCP Cloud does not call.
+validate_file_limit_settings()
+
 from auth.oauth_config import reload_oauth_config, is_stateless_mode
 from core.log_formatter import (
     EnhancedLogFormatter,
@@ -23,6 +29,8 @@ from core.utils import check_credentials_directory_permissions
 from core.server import server, set_transport_mode, configure_server_for_http
 from core.tool_registry import (
     set_enabled_tools as set_enabled_tool_names,
+    resolve_disabled_tools,
+    set_disabled_tools,
     wrap_server_tool_method,
     filter_server_tools,
 )
@@ -63,9 +71,9 @@ _fastmcp_cloud_overrides = enforce_fastmcp_cloud_defaults()
 logging.getLogger("googleapiclient.discovery_cache").setLevel(logging.ERROR)
 
 # Suppress httpx/httpcore INFO logs that leak access tokens in URLs
-# (e.g. tokeninfo?access_token=ya29.xxx)
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("httpcore").setLevel(logging.WARNING)
+# (e.g. tokeninfo?access_token=ya29.xxx). FastMCP 4 uses the httpx2 fork.
+for _http_logger in ("httpx", "httpcore", "httpx2", "httpcore2"):
+    logging.getLogger(_http_logger).setLevel(logging.WARNING)
 
 # Reload OAuth configuration after env vars loaded
 reload_oauth_config()
@@ -174,6 +182,8 @@ all_services = [
 ]
 set_enabled_tools(all_services)  # Set enabled services for scopes
 set_enabled_tool_names(None)  # Don't filter individual tools - enable all
+# Env-only block list: this entrypoint has no CLI args
+set_disabled_tools(resolve_disabled_tools())
 
 # Filter tools based on configuration
 filter_server_tools(server)

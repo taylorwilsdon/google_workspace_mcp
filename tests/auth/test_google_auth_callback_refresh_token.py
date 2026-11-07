@@ -1,7 +1,7 @@
 import pytest
 from google.oauth2.credentials import Credentials
 
-from auth.google_auth import handle_auth_callback
+from auth.google_auth import GoogleAuthenticationError, handle_auth_callback
 
 _UNSET = object()
 
@@ -20,6 +20,7 @@ class _DummyOAuthStore:
         session_credentials=None,
         latest_state_info=None,
         bound_state_session_id=_UNSET,
+        state_info=None,
     ):
         self._session_credentials = session_credentials
         self._latest_state_info = latest_state_info or {
@@ -27,12 +28,15 @@ class _DummyOAuthStore:
             "code_verifier": "verifier",
         }
         self._bound_state_session_id = bound_state_session_id
+        self._state_info = state_info
         self.latest_calls = []
         self.stored_refresh_token = None
         self.store_calls = 0
         self.store_kwargs = []
 
     def validate_and_consume_oauth_state(self, state, session_id=None):  # noqa: ARG002
+        if self._state_info is not None:
+            return dict(self._state_info)
         bound = (
             session_id
             if self._bound_state_session_id is _UNSET
@@ -61,12 +65,14 @@ class _DummyCredentialStore:
     def __init__(self, existing_credentials=None, store_result=True):
         self._existing_credentials = existing_credentials
         self.saved_credentials = None
+        self.saved_user_email = None
         self.store_result = store_result
 
     def get_credential(self, user_email):  # noqa: ARG002
         return self._existing_credentials
 
-    def store_credential(self, user_email, credentials):  # noqa: ARG002
+    def store_credential(self, user_email, credentials):
+        self.saved_user_email = user_email
         self.saved_credentials = credentials
         return self.store_result
 
@@ -80,6 +86,232 @@ def _make_credentials(refresh_token):
         client_secret="client-secret",
         scopes=["scope.a"],
     )
+
+
+def _patch_successful_callback(
+    monkeypatch,
+    *,
+    state_info,
+    google_email,
+):
+    callback_credentials = _make_credentials(refresh_token="callback-refresh-token")
+    oauth_store = _DummyOAuthStore(
+        session_credentials=None,
+        state_info=state_info,
+    )
+    credential_store = _DummyCredentialStore(existing_credentials=None)
+
+    monkeypatch.setattr(
+        "auth.google_auth.create_oauth_flow",
+        lambda **kwargs: _DummyFlow(callback_credentials),  # noqa: ARG005
+    )
+    monkeypatch.setattr(
+        "auth.google_auth.get_oauth21_session_store", lambda: oauth_store
+    )
+    monkeypatch.setattr(
+        "auth.google_auth.get_credential_store", lambda: credential_store
+    )
+    monkeypatch.setattr(
+        "auth.google_auth.get_user_info",
+        lambda credentials: {"email": google_email},  # noqa: ARG005
+    )
+    monkeypatch.setattr(
+        "auth.google_auth.save_credentials_to_session", lambda *args: None
+    )
+    monkeypatch.setattr("auth.google_auth.is_stateless_mode", lambda: False)
+    return oauth_store, credential_store
+
+
+@pytest.mark.asyncio
+async def test_gateway_callback_rejects_mismatched_google_account(monkeypatch):
+    oauth_store, credential_store = _patch_successful_callback(
+        monkeypatch,
+        state_info={
+            "session_id": "session-1",
+            "code_verifier": "verifier",
+            "expected_user_email": "gateway@example.com",
+            "enforce_user_email_match": True,
+            "principal_source": "gateway_assertion",
+        },
+        google_email="other@example.com",
+    )
+
+    with pytest.raises(GoogleAuthenticationError, match="Google account mismatch"):
+        await handle_auth_callback(
+            scopes=["scope.a"],
+            authorization_response="https://mcp.example/callback?state=abc&code=code",
+            redirect_uri="https://mcp.example/callback",
+            session_id="session-1",
+        )
+
+    assert credential_store.saved_credentials is None
+    assert oauth_store.store_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_gateway_callback_rejects_missing_enforced_principal(monkeypatch):
+    oauth_store, credential_store = _patch_successful_callback(
+        monkeypatch,
+        state_info={
+            "session_id": "session-1",
+            "code_verifier": "verifier",
+            "expected_user_email": None,
+            "enforce_user_email_match": True,
+            "principal_source": "gateway_assertion",
+        },
+        google_email="user@example.com",
+    )
+
+    with pytest.raises(
+        GoogleAuthenticationError, match="missing its verified gateway principal"
+    ):
+        await handle_auth_callback(
+            scopes=["scope.a"],
+            authorization_response="https://mcp.example/callback?state=abc&code=code",
+            redirect_uri="https://mcp.example/callback",
+            session_id="session-1",
+        )
+
+    assert credential_store.saved_credentials is None
+    assert oauth_store.store_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_gateway_callback_rejects_unversioned_oauth_state(monkeypatch):
+    oauth_store, credential_store = _patch_successful_callback(
+        monkeypatch,
+        state_info={
+            "session_id": "session-1",
+            "code_verifier": "verifier",
+            "user_email": "legacy@example.com",
+        },
+        google_email="legacy@example.com",
+    )
+    monkeypatch.setattr("auth.google_auth.is_trust_gateway_identity", lambda: True)
+
+    with pytest.raises(
+        GoogleAuthenticationError, match="predates trusted-gateway principal binding"
+    ):
+        await handle_auth_callback(
+            scopes=["scope.a"],
+            authorization_response="https://mcp.example/callback?state=abc&code=code",
+            redirect_uri="https://mcp.example/callback",
+            session_id="session-1",
+        )
+
+    assert credential_store.saved_credentials is None
+    assert oauth_store.store_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_gateway_callback_rejects_predeployment_false_enforcement_marker(
+    monkeypatch,
+):
+    oauth_store, credential_store = _patch_successful_callback(
+        monkeypatch,
+        state_info={
+            "session_id": "session-1",
+            "code_verifier": "verifier",
+            "expected_user_email": "gateway@example.com",
+            "enforce_user_email_match": False,
+            "principal_source": "gateway_assertion",
+        },
+        google_email="gateway@example.com",
+    )
+    monkeypatch.setattr("auth.google_auth.is_trust_gateway_identity", lambda: True)
+
+    with pytest.raises(
+        GoogleAuthenticationError, match="predates trusted-gateway principal binding"
+    ):
+        await handle_auth_callback(
+            scopes=["scope.a"],
+            authorization_response="https://mcp.example/callback?state=abc&code=code",
+            redirect_uri="https://mcp.example/callback",
+            session_id="session-1",
+        )
+
+    assert credential_store.saved_credentials is None
+    assert oauth_store.store_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_non_gateway_callback_keeps_google_email_verbatim(monkeypatch):
+    """Legacy flows must keep Google's email byte-for-byte as the credential key."""
+    oauth_store, credential_store = _patch_successful_callback(
+        monkeypatch,
+        state_info={
+            "session_id": "session-1",
+            "code_verifier": "verifier",
+            "expected_user_email": None,
+            "enforce_user_email_match": False,
+            "principal_source": None,
+        },
+        google_email="User@Example.com",
+    )
+    monkeypatch.setattr("auth.google_auth.is_trust_gateway_identity", lambda: False)
+
+    email, _ = await handle_auth_callback(
+        scopes=["scope.a"],
+        authorization_response="https://mcp.example/callback?state=abc&code=code",
+        redirect_uri="https://mcp.example/callback",
+        session_id="session-1",
+    )
+
+    assert email == "User@Example.com"
+    assert credential_store.saved_user_email == "User@Example.com"
+    assert oauth_store.store_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_gateway_callback_rejects_unusable_google_email(monkeypatch):
+    oauth_store, credential_store = _patch_successful_callback(
+        monkeypatch,
+        state_info={
+            "session_id": "session-1",
+            "code_verifier": "verifier",
+            "expected_user_email": "gateway@example.com",
+            "enforce_user_email_match": True,
+            "principal_source": "gateway_assertion",
+        },
+        google_email="not-an-email",
+    )
+
+    with pytest.raises(GoogleAuthenticationError, match="Google account mismatch"):
+        await handle_auth_callback(
+            scopes=["scope.a"],
+            authorization_response="https://mcp.example/callback?state=abc&code=code",
+            redirect_uri="https://mcp.example/callback",
+            session_id="session-1",
+        )
+
+    assert credential_store.saved_credentials is None
+    assert oauth_store.store_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_gateway_callback_stores_under_canonical_expected_principal(monkeypatch):
+    oauth_store, credential_store = _patch_successful_callback(
+        monkeypatch,
+        state_info={
+            "session_id": "session-1",
+            "code_verifier": "verifier",
+            "expected_user_email": "gateway@example.com",
+            "enforce_user_email_match": True,
+            "principal_source": "gateway_assertion",
+        },
+        google_email="Gateway@Example.com",
+    )
+
+    email, _ = await handle_auth_callback(
+        scopes=["scope.a"],
+        authorization_response="https://mcp.example/callback?state=abc&code=code",
+        redirect_uri="https://mcp.example/callback",
+        session_id="session-1",
+    )
+
+    assert email == "gateway@example.com"
+    assert credential_store.saved_user_email == "gateway@example.com"
+    assert oauth_store.store_kwargs[-1]["user_email"] == "gateway@example.com"
 
 
 @pytest.mark.asyncio

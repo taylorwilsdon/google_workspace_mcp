@@ -654,3 +654,12 @@ class TestNotesClearBugFix:
         """notes=None means no opinion, do not add the biographies key at all."""
         body = _build_person_body(given_name="Test")
         assert "biographies" not in body
+
+    def test_address_empty_string_clears_addresses(self):
+        """address='' clears addresses, matching the notes convention."""
+        body = _build_person_body(address="")
+        assert body.get("addresses") == []
+
+    def test_address_none_does_not_touch_addresses(self):
+        body = _build_person_body(given_name="Test")
+        assert "addresses" not in body

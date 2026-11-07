@@ -10,7 +10,7 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-from gdrive.drive_tools import _create_drive_folder_impl as _raw_create_drive_folder
+from gdrive.drive_helpers import _create_drive_folder_impl as _raw_create_drive_folder
 
 
 def _make_service(created_response):
@@ -36,7 +36,7 @@ async def test_create_folder_root_skips_resolve():
     service = _make_service(api_response)
 
     with patch(
-        "gdrive.drive_tools.resolve_folder_id",
+        "gdrive.drive_helpers.resolve_folder_id",
         new_callable=AsyncMock,
         return_value="root",
     ):
@@ -63,7 +63,7 @@ async def test_create_folder_custom_parent_resolves():
     service = _make_service(api_response)
 
     with patch(
-        "gdrive.drive_tools.resolve_folder_id",
+        "gdrive.drive_helpers.resolve_folder_id",
         new_callable=AsyncMock,
         return_value="resolved-parent-id",
     ) as mock_resolve:
@@ -100,7 +100,7 @@ async def test_create_folder_passes_correct_metadata():
     service = _make_service(api_response)
 
     with patch(
-        "gdrive.drive_tools.resolve_folder_id",
+        "gdrive.drive_helpers.resolve_folder_id",
         new_callable=AsyncMock,
         return_value="resolved-id",
     ):
@@ -132,7 +132,7 @@ async def test_create_folder_missing_webviewlink():
     service = _make_service(api_response)
 
     with patch(
-        "gdrive.drive_tools.resolve_folder_id",
+        "gdrive.drive_helpers.resolve_folder_id",
         new_callable=AsyncMock,
         return_value="root",
     ):

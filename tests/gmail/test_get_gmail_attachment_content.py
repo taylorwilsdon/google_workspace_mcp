@@ -6,7 +6,7 @@ localhost download URLs or local file paths.
 
 import base64
 from typing import Any, Callable
-from unittest.mock import Mock
+from unittest.mock import DEFAULT, Mock
 
 import pytest
 
@@ -65,11 +65,14 @@ def isolated_attachment_env(tmp_path, monkeypatch):
     """Route attachment storage to a temp dir and force HTTP (not stateless) mode."""
     import core.attachment_storage as storage_module
     import auth.oauth_config as oauth_config_module
-    import core.config as core_config_module
 
     monkeypatch.setattr(storage_module, "STORAGE_DIR", tmp_path)
     monkeypatch.setattr(oauth_config_module, "is_stateless_mode", lambda: False)
-    monkeypatch.setattr(core_config_module, "get_transport_mode", lambda: "http")
+    # Patch the shared config state rather than one module's reference to the
+    # getter; otherwise stdio mode starts a real callback listener on port 8000.
+    monkeypatch.setattr(
+        oauth_config_module.get_oauth_config(), "_transport_mode", "streamable-http"
+    )
 
     # Reset the cached module-level storage singleton so our patched
     # STORAGE_DIR actually takes effect.
@@ -78,14 +81,16 @@ def isolated_attachment_env(tmp_path, monkeypatch):
     return tmp_path
 
 
-def test_get_gmail_attachment_content_schema_includes_return_base64():
-    """Published MCP schema should expose the public return_base64 parameter."""
+def test_get_gmail_attachment_content_schema_includes_optional_controls():
+    """Published schema should expose base64 and stable attachment selection."""
     components = get_tool_components(server)
     schema = components[get_gmail_attachment_content.__name__].parameters["properties"]
 
     assert "return_base64" in schema
     assert schema["return_base64"]["type"] == "boolean"
     assert schema["return_base64"]["default"] is False
+    assert "attachment_index" in schema
+    assert schema["attachment_index"]["default"] is None
 
 
 def test_format_base64_content_block_converts_urlsafe_to_standard():
@@ -132,6 +137,173 @@ async def test_default_call_omits_base64_content(isolated_attachment_env):
     assert "Attachment downloaded successfully!" in result
     assert "📦 Base64 content" not in result
     assert "standard base64" not in result
+
+
+@pytest.mark.asyncio
+async def test_uncapped_stateless_download_skips_metadata_preflight(monkeypatch):
+    """An unset cap preserves the historical one-request stateless path."""
+    monkeypatch.delenv("WORKSPACE_MCP_MAX_FILE_BYTES", raising=False)
+    monkeypatch.setattr("auth.oauth_config.is_stateless_mode", lambda: True)
+    mock_service = _build_mock_service(b"attachment")
+    metadata_execute = mock_service.users().messages().get().execute
+    metadata_execute.reset_mock()
+
+    result = await _unwrap(get_gmail_attachment_content)(
+        service=mock_service,
+        message_id="msg-1",
+        attachment_id="att-123",
+        user_google_email="user@example.com",
+    )
+
+    assert "Attachment downloaded successfully!" in result
+    metadata_execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_rejects_oversized_before_download(monkeypatch, isolated_attachment_env):
+    """Declared attachment size should block attachments().get() entirely."""
+    monkeypatch.setenv("WORKSPACE_MCP_MAX_FILE_BYTES", "100")
+    mock_service = _build_mock_service(
+        b"x" * 50, filename="huge.bin", mime_type="application/octet-stream"
+    )
+    # Metadata declares an oversized attachment.
+    mock_service.users().messages().get().execute.return_value = {
+        "payload": {
+            "parts": [
+                {
+                    "filename": "huge.bin",
+                    "mimeType": "application/octet-stream",
+                    "body": {"attachmentId": "att-123", "size": 500},
+                }
+            ],
+        },
+    }
+    download_execute = mock_service.users().messages().attachments().get().execute
+    download_execute.reset_mock()
+
+    result = await _unwrap(get_gmail_attachment_content)(
+        service=mock_service,
+        message_id="msg-1",
+        attachment_id="att-123",
+        user_google_email="user@example.com",
+    )
+
+    assert result.startswith("Error:")
+    assert "huge.bin" in result
+    assert "WORKSPACE_MCP_MAX_FILE_BYTES" in result
+    download_execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_cap_uses_index_to_survive_refreshed_attachment_id(
+    monkeypatch, isolated_attachment_env
+):
+    """A metadata refresh may rotate IDs; the emitted ordinal remains usable."""
+    monkeypatch.setenv("WORKSPACE_MCP_MAX_FILE_BYTES", "100")
+    mock_service = _build_mock_service(b"small payload", filename="report.pdf")
+    mock_service.users().messages().get().execute.return_value = {
+        "payload": {
+            "parts": [
+                {
+                    "filename": "other.txt",
+                    "mimeType": "text/plain",
+                    "body": {"attachmentId": "refreshed-other", "size": 4},
+                },
+                {
+                    "filename": "report.pdf",
+                    "mimeType": "application/pdf",
+                    "body": {"attachmentId": "refreshed-target", "size": 13},
+                },
+            ]
+        }
+    }
+
+    result = await _unwrap(get_gmail_attachment_content)(
+        service=mock_service,
+        message_id="msg-1",
+        attachment_id="stale-id",
+        attachment_index=1,
+        user_google_email="user@example.com",
+    )
+
+    assert "Attachment downloaded successfully!" in result
+    download_get = mock_service.users().messages().attachments().get
+    assert download_get.call_args.kwargs["id"] == "refreshed-target"
+
+
+@pytest.mark.asyncio
+async def test_uncapped_uses_index_to_resolve_filename_when_sizes_tie(
+    monkeypatch, isolated_attachment_env
+):
+    """Without a cap, the ordinal still selects the current ID and filename."""
+    monkeypatch.delenv("WORKSPACE_MCP_MAX_FILE_BYTES", raising=False)
+    mock_service = _build_mock_service(b"same payload", filename="b.pdf")
+    download_get = mock_service.users().messages().attachments().get
+    download_get.reset_mock()
+
+    def _reject_stale_ids(**kwargs):
+        if kwargs["id"] != "refreshed-b.pdf":
+            raise RuntimeError(f"Invalid attachment ID: {kwargs['id']}")
+        return DEFAULT
+
+    download_get.side_effect = _reject_stale_ids
+    mock_service.users().messages().get().execute.return_value = {
+        "payload": {
+            "parts": [
+                {
+                    "filename": name,
+                    "mimeType": "application/pdf",
+                    "body": {"attachmentId": f"refreshed-{name}", "size": 12},
+                }
+                for name in ("a.pdf", "b.pdf", "c.pdf")
+            ]
+        }
+    }
+
+    result = await _unwrap(get_gmail_attachment_content)(
+        service=mock_service,
+        message_id="msg-1",
+        attachment_id="stale-id",
+        attachment_index=1,
+        user_google_email="user@example.com",
+    )
+
+    assert "Attachment downloaded successfully!" in result
+    assert "Filename: b.pdf" in result
+    download_get.assert_called_once()
+    assert download_get.call_args.kwargs["id"] == "refreshed-b.pdf"
+
+
+@pytest.mark.asyncio
+async def test_cap_fails_closed_when_deep_attachment_metadata_is_truncated(
+    monkeypatch, isolated_attachment_env
+):
+    """A part beyond the six-level fields mask must not bypass the preflight."""
+    monkeypatch.setenv("WORKSPACE_MCP_MAX_FILE_BYTES", "100")
+    mock_service = _build_mock_service(b"x" * 500, filename="deep.bin")
+
+    # Model Gmail's response when the requested attachment lives below the
+    # finite partial-response projection: parent MIME nodes are present, but
+    # the deeper attachment body/size is not returned.
+    payload = {}
+    cursor = payload
+    for _ in range(7):
+        child = {"filename": "", "mimeType": "multipart/mixed", "body": {}}
+        cursor["parts"] = [child]
+        cursor = child
+    mock_service.users().messages().get().execute.return_value = {"payload": payload}
+    download_execute = mock_service.users().messages().attachments().get().execute
+    download_execute.reset_mock()
+
+    result = await _unwrap(get_gmail_attachment_content)(
+        service=mock_service,
+        message_id="msg-1",
+        attachment_id="deep-att",
+        user_google_email="user@example.com",
+    )
+
+    assert result.startswith("Error: Could not verify the attachment size")
+    download_execute.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -227,3 +399,64 @@ async def test_return_base64_preserves_file_save_behavior(isolated_attachment_en
     assert "Download URL" in result
     # ...and includes the base64 block.
     assert "📦 Base64 content" in result
+
+
+@pytest.mark.asyncio
+async def test_resolves_correct_filename_for_nested_smime_attachment(
+    isolated_attachment_env,
+):
+    """Resolve a nested attachment instead of its top-level S/MIME signature."""
+    payload = b"%PDF-1.4 fake pdf bytes" + bytes(range(200))
+    mock_service = _build_mock_service(payload)
+
+    def messages_get(**kwargs):
+        mixed_part = {"mimeType": "multipart/mixed"}
+        if kwargs["fields"].count("parts(") >= 2:
+            mixed_part["parts"] = [
+                {
+                    "filename": "statement.pdf",
+                    "mimeType": "application/pdf",
+                    "body": {
+                        "attachmentId": "att-pdf-123",
+                        "size": len(payload),
+                    },
+                }
+            ]
+        return Mock(
+            execute=Mock(
+                return_value={
+                    "payload": {
+                        "mimeType": "multipart/signed",
+                        "parts": [
+                            mixed_part,
+                            {
+                                "filename": "smime.p7s",
+                                "mimeType": "application/pkcs7-signature",
+                                "body": {"attachmentId": "sig-456", "size": 4771},
+                            },
+                        ],
+                    }
+                }
+            )
+        )
+
+    metadata_get = Mock(side_effect=messages_get)
+    mock_service.users().messages().get = metadata_get
+
+    result = await _unwrap(get_gmail_attachment_content)(
+        service=mock_service,
+        message_id="msg-1",
+        attachment_id="att-pdf-123",
+        user_google_email="user@example.com",
+    )
+
+    assert "Filename: statement.pdf" in result
+    assert "smime.p7s" not in result
+    fields = metadata_get.call_args.kwargs["fields"]
+    assert fields.count("parts(") == 6
+    assert "data" not in fields
+
+    saved_files = list(isolated_attachment_env.iterdir())
+    assert len(saved_files) == 1
+    assert saved_files[0].suffix == ".pdf"
+    assert saved_files[0].read_bytes() == payload

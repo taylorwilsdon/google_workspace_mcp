@@ -12,7 +12,16 @@ import os
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-from gsheets.sheets_tools import _format_sheet_range_impl
+from core.server import server
+from core.utils import UserInputError
+from gsheets.sheets_tools import _format_sheet_range_impl, format_sheet_range
+
+
+def _unwrap(fn):
+    """Unwrap decorated function to access the underlying coroutine."""
+    while hasattr(fn, "__wrapped__"):
+        fn = fn.__wrapped__
+    return fn
 
 
 def create_mock_service():
@@ -434,3 +443,600 @@ async def test_format_confirmation_message_includes_new_params():
 
     assert result["spreadsheet_id"] == "test_spreadsheet_123"
     assert result["range_name"] == "A1:C10"
+
+
+@pytest.mark.asyncio
+async def test_format_merge_cells_default_all():
+    """Test merge_cells=True defaults to MERGE_ALL."""
+    mock_service = create_mock_service()
+
+    result = await _format_sheet_range_impl(
+        service=mock_service,
+        spreadsheet_id="test_spreadsheet_123",
+        range_name="J3:L3",
+        merge_cells=True,
+    )
+
+    assert result["spreadsheet_id"] == "test_spreadsheet_123"
+    assert result["range_name"] == "J3:L3"
+    assert "merged cells (MERGE_ALL)" in result["summary"]
+
+    call_args = mock_service.spreadsheets().batchUpdate.call_args
+    request_body = call_args[1]["body"]
+    requests = request_body["requests"]
+    assert len(requests) == 1
+    assert "mergeCells" in requests[0]
+    assert requests[0]["mergeCells"]["mergeType"] == "MERGE_ALL"
+    assert requests[0]["mergeCells"]["range"]["startColumnIndex"] == 9
+    assert requests[0]["mergeCells"]["range"]["endColumnIndex"] == 12
+    assert requests[0]["mergeCells"]["range"]["startRowIndex"] == 2
+    assert requests[0]["mergeCells"]["range"]["endRowIndex"] == 3
+
+
+@pytest.mark.asyncio
+async def test_format_merge_cells_columns():
+    """Test merge_cells=True with merge_type='MERGE_COLUMNS'."""
+    mock_service = create_mock_service()
+
+    result = await _format_sheet_range_impl(
+        service=mock_service,
+        spreadsheet_id="test_spreadsheet_123",
+        range_name="A1:B5",
+        merge_cells=True,
+        merge_type="MERGE_COLUMNS",
+    )
+
+    assert "merged cells (MERGE_COLUMNS)" in result["summary"]
+    call_args = mock_service.spreadsheets().batchUpdate.call_args
+    request_body = call_args[1]["body"]
+    assert request_body["requests"][0]["mergeCells"]["mergeType"] == "MERGE_COLUMNS"
+
+
+@pytest.mark.asyncio
+async def test_format_merge_cells_rows():
+    """Test merge_cells=True with merge_type='MERGE_ROWS'."""
+    mock_service = create_mock_service()
+
+    result = await _format_sheet_range_impl(
+        service=mock_service,
+        spreadsheet_id="test_spreadsheet_123",
+        range_name="A1:C2",
+        merge_cells=True,
+        merge_type="MERGE_ROWS",
+    )
+
+    assert "merged cells (MERGE_ROWS)" in result["summary"]
+    call_args = mock_service.spreadsheets().batchUpdate.call_args
+    request_body = call_args[1]["body"]
+    assert request_body["requests"][0]["mergeCells"]["mergeType"] == "MERGE_ROWS"
+
+
+@pytest.mark.asyncio
+async def test_format_merge_type_only():
+    """Test specifying merge_type without merge_cells automatically triggers merge."""
+    mock_service = create_mock_service()
+
+    result = await _format_sheet_range_impl(
+        service=mock_service,
+        spreadsheet_id="test_spreadsheet_123",
+        range_name="J3:L3",
+        merge_type="MERGE_ALL",
+    )
+
+    assert "merged cells (MERGE_ALL)" in result["summary"]
+    call_args = mock_service.spreadsheets().batchUpdate.call_args
+    assert "mergeCells" in call_args[1]["body"]["requests"][0]
+
+
+@pytest.mark.asyncio
+async def test_format_unmerge_cells():
+    """Test merge_cells=False creates unmergeCells request."""
+    mock_service = create_mock_service()
+
+    result = await _format_sheet_range_impl(
+        service=mock_service,
+        spreadsheet_id="test_spreadsheet_123",
+        range_name="J3:L3",
+        merge_cells=False,
+    )
+
+    assert "unmerged cells" in result["summary"]
+
+    call_args = mock_service.spreadsheets().batchUpdate.call_args
+    request_body = call_args[1]["body"]
+    requests = request_body["requests"]
+    assert len(requests) == 1
+    assert "unmergeCells" in requests[0]
+    assert requests[0]["unmergeCells"]["range"]["startColumnIndex"] == 9
+    assert requests[0]["unmergeCells"]["range"]["endColumnIndex"] == 12
+
+
+@pytest.mark.asyncio
+async def test_format_combined_formatting_and_merge():
+    """Test applying text formatting and merging together in a single request."""
+    mock_service = create_mock_service()
+
+    result = await _format_sheet_range_impl(
+        service=mock_service,
+        spreadsheet_id="test_spreadsheet_123",
+        range_name="J3:L3",
+        bold=True,
+        horizontal_alignment="CENTER",
+        vertical_alignment="MIDDLE",
+        merge_cells=True,
+    )
+
+    assert "bold" in result["summary"]
+    assert "horizontal align CENTER" in result["summary"]
+    assert "vertical align MIDDLE" in result["summary"]
+    assert "merged cells (MERGE_ALL)" in result["summary"]
+
+    call_args = mock_service.spreadsheets().batchUpdate.call_args
+    requests = call_args[1]["body"]["requests"]
+    assert len(requests) == 2
+    assert "repeatCell" in requests[0]
+    assert "mergeCells" in requests[1]
+
+
+@pytest.mark.asyncio
+async def test_format_merge_single_cell_raises():
+    """Test attempting to merge a single cell raises UserInputError."""
+    mock_service = create_mock_service()
+
+    with pytest.raises(UserInputError) as exc_info:
+        await _format_sheet_range_impl(
+            service=mock_service,
+            spreadsheet_id="test_spreadsheet_123",
+            range_name="A1:A1",
+            merge_cells=True,
+        )
+
+    assert "span at least 2 cells" in str(exc_info.value)
+    mock_service.spreadsheets().batchUpdate().execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "range_name, merge_type",
+    [("A1:A5", "MERGE_ROWS"), ("A1:C1", "MERGE_COLUMNS"), ("A:A", "MERGE_ROWS")],
+)
+async def test_format_merge_single_cell_groups_raise(range_name, merge_type):
+    """Typed merges reject ranges where every merge group is a single cell."""
+    mock_service = create_mock_service()
+
+    with pytest.raises(UserInputError, match="span at least 2 cells"):
+        await _format_sheet_range_impl(
+            service=mock_service,
+            spreadsheet_id="test_spreadsheet_123",
+            range_name=range_name,
+            bold=True,
+            merge_type=merge_type,
+        )
+
+    mock_service.spreadsheets().batchUpdate().execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "range_name, merge_type",
+    [("A1:A5", "MERGE_COLUMNS"), ("A1:C1", "MERGE_ROWS"), ("A:A", "MERGE_ALL")],
+)
+async def test_format_merge_valid_spans(range_name, merge_type):
+    """Typed merges accept ranges whose merge groups span multiple cells."""
+    mock_service = create_mock_service()
+
+    await _format_sheet_range_impl(
+        service=mock_service,
+        spreadsheet_id="test_spreadsheet_123",
+        range_name=range_name,
+        merge_type=merge_type,
+    )
+
+    requests = mock_service.spreadsheets().batchUpdate.call_args[1]["body"]["requests"]
+    assert requests[0]["mergeCells"]["mergeType"] == merge_type
+
+
+@pytest.mark.asyncio
+async def test_format_sheet_range_is_destructive():
+    """Merging discards non top-left values, so the tool advertises destructiveHint."""
+    tool = await server.get_tool("format_sheet_range")
+    assert tool.annotations.destructive_hint is True
+
+
+@pytest.mark.asyncio
+async def test_format_invalid_merge_type_raises():
+    """Test invalid merge_type raises UserInputError."""
+    mock_service = create_mock_service()
+
+    with pytest.raises(UserInputError) as exc_info:
+        await _format_sheet_range_impl(
+            service=mock_service,
+            spreadsheet_id="test_spreadsheet_123",
+            range_name="A1:B2",
+            merge_cells=True,
+            merge_type="INVALID_TYPE",
+        )
+
+    assert "merge_type must be one of" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_format_unmerge_with_merge_type_raises():
+    """Test specifying merge_type when unmerging raises UserInputError."""
+    mock_service = create_mock_service()
+
+    with pytest.raises(UserInputError) as exc_info:
+        await _format_sheet_range_impl(
+            service=mock_service,
+            spreadsheet_id="test_spreadsheet_123",
+            range_name="A1:B2",
+            merge_cells=False,
+            merge_type="MERGE_ALL",
+        )
+
+    assert "Cannot specify merge_type when merge_cells is False" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_format_merge_case_insensitive():
+    """Test merge_type is case-insensitive."""
+    mock_service = create_mock_service()
+
+    result = await _format_sheet_range_impl(
+        service=mock_service,
+        spreadsheet_id="test_spreadsheet_123",
+        range_name="A1:B2",
+        merge_cells=True,
+        merge_type="merge_rows",
+    )
+
+    assert "merged cells (MERGE_ROWS)" in result["summary"]
+    call_args = mock_service.spreadsheets().batchUpdate.call_args
+    request_body = call_args[1]["body"]
+    assert request_body["requests"][0]["mergeCells"]["mergeType"] == "MERGE_ROWS"
+
+
+@pytest.mark.asyncio
+async def test_format_sheet_range_tool_wrapper_merge():
+    """Test format_sheet_range server tool wrapper with merge."""
+    mock_service = create_mock_service()
+
+    output = await _unwrap(format_sheet_range)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        spreadsheet_id="test_spreadsheet_123",
+        range_name="J3:L3",
+        bold=True,
+        merge_cells=True,
+    )
+
+    assert "Applied formatting to range 'J3:L3'" in output
+    assert "merged cells (MERGE_ALL)" in output
+    assert "user@example.com" in output
+
+
+def _sent_requests(mock_service):
+    return mock_service.spreadsheets().batchUpdate.call_args[1]["body"]["requests"]
+
+
+@pytest.mark.asyncio
+async def test_format_borders_outer_defaults_to_solid_black():
+    """borders="outer" draws the four outer edges, SOLID and black by default."""
+    mock_service = create_mock_service()
+
+    result = await _format_sheet_range_impl(
+        service=mock_service,
+        spreadsheet_id="test_spreadsheet_123",
+        range_name="A1:C3",
+        borders="outer",
+    )
+
+    requests = _sent_requests(mock_service)
+    assert len(requests) == 1
+    update = requests[0]["updateBorders"]
+    assert set(update) == {"range", "top", "bottom", "left", "right"}
+    assert update["top"] == {
+        "style": "SOLID",
+        "color": {"red": 0.0, "green": 0.0, "blue": 0.0},
+    }
+    assert "SOLID borders (outer)" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_format_borders_combined_with_cell_format():
+    """Borders and cell formatting go out in one batchUpdate, format first."""
+    mock_service = create_mock_service()
+
+    await _format_sheet_range_impl(
+        service=mock_service,
+        spreadsheet_id="test_spreadsheet_123",
+        range_name="A1:B2",
+        background_color="#FFEECC",
+        borders="bottom,inner_horizontal",
+        border_style="dashed",
+        border_color="#FF0000",
+    )
+
+    requests = _sent_requests(mock_service)
+    assert list(requests[0]) == ["repeatCell"]
+    update = requests[1]["updateBorders"]
+    assert set(update) == {"range", "bottom", "innerHorizontal"}
+    assert update["bottom"]["style"] == "DASHED"
+    assert update["bottom"]["color"] == {"red": 1.0, "green": 0.0, "blue": 0.0}
+
+
+@pytest.mark.asyncio
+async def test_format_borders_all_deduplicates_sides():
+    mock_service = create_mock_service()
+
+    await _format_sheet_range_impl(
+        service=mock_service,
+        spreadsheet_id="test_spreadsheet_123",
+        range_name="A1:B2",
+        borders="all,top",
+    )
+
+    update = _sent_requests(mock_service)[0]["updateBorders"]
+    assert set(update) - {"range"} == {
+        "top",
+        "bottom",
+        "left",
+        "right",
+        "innerHorizontal",
+        "innerVertical",
+    }
+
+
+@pytest.mark.asyncio
+async def test_format_borders_none_clears_every_side():
+    mock_service = create_mock_service()
+
+    result = await _format_sheet_range_impl(
+        service=mock_service,
+        spreadsheet_id="test_spreadsheet_123",
+        range_name="A1:B2",
+        borders="none",
+    )
+
+    update = _sent_requests(mock_service)[0]["updateBorders"]
+    assert len(update) == 7
+    assert all(update[side] == {"style": "NONE"} for side in update if side != "range")
+    assert "borders removed" in result["summary"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "kwargs, message",
+    [
+        ({"borders": "diagonal"}, "Unknown border side"),
+        ({"borders": "none,top"}, "cannot be combined"),
+        ({"borders": "all", "border_style": "WAVY"}, "border_style must be one of"),
+        ({"border_style": "SOLID"}, "need borders"),
+        ({"border_color": "#000000"}, "need borders"),
+        ({"borders": "none", "border_style": "WAVY"}, "drop border_style"),
+        ({"borders": "none", "border_color": "#FF0000"}, "drop border_style"),
+    ],
+)
+async def test_format_borders_invalid_input(kwargs, message):
+    mock_service = create_mock_service()
+
+    with pytest.raises(UserInputError, match=message):
+        await _format_sheet_range_impl(
+            service=mock_service,
+            spreadsheet_id="test_spreadsheet_123",
+            range_name="A1:B2",
+            **kwargs,
+        )
+    mock_service.spreadsheets().batchUpdate().execute.assert_not_called()
+    # Bad border input is rejected before the metadata fetch, too.
+    mock_service.spreadsheets().get().execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "side", ["innerHorizontal", "inner-horizontal", "INNER_HORIZONTAL"]
+)
+async def test_format_borders_accepts_api_and_hyphen_spellings(side):
+    mock_service = create_mock_service()
+
+    await _format_sheet_range_impl(
+        service=mock_service,
+        spreadsheet_id="test_spreadsheet_123",
+        range_name="A1:B2",
+        borders=side,
+    )
+
+    update = _sent_requests(mock_service)[0]["updateBorders"]
+    assert set(update) == {"range", "innerHorizontal"}
+
+
+@pytest.mark.asyncio
+async def test_format_borders_blank_style_and_color_fall_back_to_defaults():
+    mock_service = create_mock_service()
+
+    await _format_sheet_range_impl(
+        service=mock_service,
+        spreadsheet_id="test_spreadsheet_123",
+        range_name="A1:B2",
+        borders="outer",
+        border_style="  ",
+        border_color="  ",
+    )
+
+    update = _sent_requests(mock_service)[0]["updateBorders"]
+    assert update["top"] == {
+        "style": "SOLID",
+        "color": {"red": 0.0, "green": 0.0, "blue": 0.0},
+    }
+
+
+@pytest.mark.asyncio
+async def test_format_dropdown_values_sets_strict_list():
+    """dropdown_values adds a strict ONE_OF_LIST rule with the dropdown chip."""
+    mock_service = create_mock_service()
+
+    result = await _format_sheet_range_impl(
+        service=mock_service,
+        spreadsheet_id="test_spreadsheet_123",
+        range_name="C2:C20",
+        dropdown_values=["open", " in progress ", "", "done"],
+    )
+
+    requests = _sent_requests(mock_service)
+    assert len(requests) == 1
+    rule = requests[0]["setDataValidation"]["rule"]
+    assert rule["condition"] == {
+        "type": "ONE_OF_LIST",
+        "values": [
+            {"userEnteredValue": "open"},
+            {"userEnteredValue": "in progress"},
+            {"userEnteredValue": "done"},
+        ],
+    }
+    assert rule["strict"] is True
+    assert rule["showCustomUi"] is True
+    assert "dropdown [open, in progress, done]" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_format_dropdown_combined_with_cell_format():
+    """Dropdown and cell formatting go out in one batchUpdate."""
+    mock_service = create_mock_service()
+
+    result = await _format_sheet_range_impl(
+        service=mock_service,
+        spreadsheet_id="test_spreadsheet_123",
+        range_name="A1:A5",
+        background_color="#FFF2CC",
+        dropdown_values=["1", "2", "3"],
+        dropdown_strict=False,
+    )
+
+    requests = _sent_requests(mock_service)
+    assert len(requests) == 2
+    assert list(requests[0]) == ["repeatCell"]
+    assert requests[1]["setDataValidation"]["range"]["sheetId"] == 0
+    assert requests[1]["setDataValidation"]["rule"]["strict"] is False
+    assert "(warning only)" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_format_clear_dropdown_sends_rule_less_request():
+    mock_service = create_mock_service()
+
+    result = await _format_sheet_range_impl(
+        service=mock_service,
+        spreadsheet_id="test_spreadsheet_123",
+        range_name="A1:A5",
+        clear_dropdown=True,
+    )
+
+    request = _sent_requests(mock_service)[0]["setDataValidation"]
+    assert "rule" not in request
+    assert "data validation removed" in result["summary"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "kwargs, message",
+    [
+        ({"dropdown_values": ["a"], "clear_dropdown": True}, "not both"),
+        ({"dropdown_values": [], "clear_dropdown": True}, "not both"),
+        ({"dropdown_values": [" ", ""]}, "at least one value"),
+        ({"dropdown_strict": False, "bold": True}, "needs dropdown_values"),
+        ({"dropdown_values": [], "bold": True}, "at least one value"),
+    ],
+)
+async def test_format_dropdown_invalid_input(kwargs, message):
+    mock_service = create_mock_service()
+
+    with pytest.raises(UserInputError, match=message):
+        await _format_sheet_range_impl(
+            service=mock_service,
+            spreadsheet_id="test_spreadsheet_123",
+            range_name="A1:B2",
+            **kwargs,
+        )
+    mock_service.spreadsheets().batchUpdate().execute.assert_not_called()
+    # Bad dropdown input is rejected before the metadata fetch, too.
+    mock_service.spreadsheets().get().execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_format_borders_and_dropdown_in_one_call():
+    """Cell format, borders and dropdown all go out in a single batchUpdate."""
+    mock_service = create_mock_service()
+
+    result = await _format_sheet_range_impl(
+        service=mock_service,
+        spreadsheet_id="test_spreadsheet_123",
+        range_name="A1:A5",
+        bold=True,
+        borders="outer",
+        dropdown_values=["yes", "no"],
+    )
+
+    requests = _sent_requests(mock_service)
+    assert [list(r)[0] for r in requests] == [
+        "repeatCell",
+        "updateBorders",
+        "setDataValidation",
+    ]
+    assert (
+        requests[1]["updateBorders"]["range"]
+        == requests[2]["setDataValidation"]["range"]
+    )
+    assert "SOLID borders (outer), dropdown [yes, no]" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_format_sheet_range_tool_wrapper_forwards_borders_and_dropdown():
+    """The tool wrapper passes every border and dropdown option through."""
+    mock_service = create_mock_service()
+
+    output = await _unwrap(format_sheet_range)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        spreadsheet_id="test_spreadsheet_123",
+        range_name="A1:B2",
+        merge_cells=True,
+        borders="outer",
+        border_style="DOTTED",
+        border_color="#00FF00",
+        dropdown_values=["yes", "no"],
+        dropdown_strict=False,
+    )
+
+    requests = _sent_requests(mock_service)
+    assert [list(r)[0] for r in requests] == [
+        "mergeCells",
+        "updateBorders",
+        "setDataValidation",
+    ]
+    assert requests[1]["updateBorders"]["top"] == {
+        "style": "DOTTED",
+        "color": {"red": 0.0, "green": 1.0, "blue": 0.0},
+    }
+    assert requests[2]["setDataValidation"]["rule"]["strict"] is False
+    assert (
+        "merged cells (MERGE_ALL), DOTTED borders (outer) in #00FF00, "
+        "dropdown [yes, no] (warning only)" in output
+    )
+
+
+@pytest.mark.asyncio
+async def test_format_sheet_range_tool_wrapper_forwards_clear_dropdown():
+    mock_service = create_mock_service()
+
+    output = await _unwrap(format_sheet_range)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        spreadsheet_id="test_spreadsheet_123",
+        range_name="A1:B2",
+        clear_dropdown=True,
+    )
+
+    requests = _sent_requests(mock_service)
+    assert len(requests) == 1
+    assert list(requests[0]["setDataValidation"]) == ["range"]
+    assert "data validation removed" in output

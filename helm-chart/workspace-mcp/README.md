@@ -22,6 +22,18 @@ helm install workspace-mcp ./helm-chart/workspace-mcp \
   --set secrets.googleOAuth.clientSecret="your-client-secret"
 ```
 
+### Install from the GHCR OCI registry
+
+Released chart versions are published as OCI artifacts to GitHub Packages. No
+`helm repo add` is needed:
+
+```bash
+helm install workspace-mcp oci://ghcr.io/taylorwilsdon/charts/workspace-mcp \
+  --version 0.3.0 \
+  --set secrets.googleOAuth.clientId="your-client-id.apps.googleusercontent.com" \
+  --set secrets.googleOAuth.clientSecret="your-client-secret"
+```
+
 ## Configuration
 
 The following table lists the configurable parameters and their default values:
@@ -29,7 +41,7 @@ The following table lists the configurable parameters and their default values:
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | `replicaCount` | Number of replicas | `1` |
-| `image.repository` | Container image repository | `workspace-mcp` |
+| `image.repository` | Container image repository | `ghcr.io/taylorwilsdon/google_workspace_mcp` |
 | `image.tag` | Container image tag | `""` (uses Chart.AppVersion) |
 | `image.pullPolicy` | Image pull policy | `IfNotPresent` |
 | `secrets.googleOAuth.clientId` | Google OAuth Client ID | `""` (required) |

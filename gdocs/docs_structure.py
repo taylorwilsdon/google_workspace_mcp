@@ -6,17 +6,36 @@ of Google Docs documents, including finding tables, cells, and other elements.
 """
 
 import logging
+from collections.abc import Iterator
 from typing import Any, Optional
+
+from core.utils import UserInputError
 
 logger = logging.getLogger(__name__)
 
+# Limit returned ranges; the count remains exact.
+EMPTY_PARAGRAPH_RANGE_LIMIT = 100
 
-def parse_document_structure(doc_data: dict[str, Any]) -> dict[str, Any]:
+
+def truncate_preview(text: str, preview_chars: Optional[int]) -> str:
+    """Truncate preview text; None or a non-positive limit disables truncation."""
+    return (
+        text[:preview_chars]
+        if preview_chars is not None and preview_chars > 0
+        else text
+    )
+
+
+def parse_document_structure(
+    doc_data: dict[str, Any], preview_chars: Optional[int] = 100
+) -> dict[str, Any]:
     """
     Parse the full document structure into a navigable format.
 
     Args:
         doc_data: Raw document data from Google Docs API
+        preview_chars: Maximum characters of header/footer text preview.
+            None, zero or negative means no truncation.
 
     Returns:
         Dictionary containing parsed structure with elements and their positions
@@ -51,10 +70,10 @@ def parse_document_structure(doc_data: dict[str, Any]) -> dict[str, Any]:
 
     # Parse headers and footers
     for header_id, header_data in doc_data.get("headers", {}).items():
-        structure["headers"][header_id] = _parse_segment(header_data)
+        structure["headers"][header_id] = _parse_segment(header_data, preview_chars)
 
     for footer_id, footer_data in doc_data.get("footers", {}).items():
-        structure["footers"][footer_id] = _parse_segment(footer_data)
+        structure["footers"][footer_id] = _parse_segment(footer_data, preview_chars)
 
     for range_name, named_ranges in doc_data.get("namedRanges", {}).items():
         ranges = []
@@ -94,6 +113,13 @@ def _parse_element(element: dict[str, Any]) -> Optional[dict[str, Any]]:
         element_info["type"] = "paragraph"
         element_info["text"] = _extract_paragraph_text(paragraph)
         element_info["style"] = paragraph.get("paragraphStyle", {})
+        element_info["is_list_item"] = "bullet" in paragraph
+        for api_key, key in (
+            ("positionedObjectIds", "positioned_object_ids"),
+            ("suggestedPositionedObjectIds", "suggested_positioned_object_ids"),
+        ):
+            if paragraph.get(api_key):
+                element_info[key] = paragraph[api_key]
 
     elif "table" in element:
         table = element["table"]
@@ -180,7 +206,9 @@ def _extract_cell_text(cell: dict[str, Any]) -> str:
     return "".join(text_parts)
 
 
-def _parse_segment(segment_data: dict[str, Any]) -> dict[str, Any]:
+def _parse_segment(
+    segment_data: dict[str, Any], preview_chars: Optional[int] = 100
+) -> dict[str, Any]:
     """Parse a document segment (header/footer)."""
     content = segment_data.get("content", [])
     text_parts = []
@@ -192,7 +220,7 @@ def _parse_segment(segment_data: dict[str, Any]) -> dict[str, Any]:
         "content": content,
         "start_index": content[0].get("startIndex", 0) if content else 0,
         "end_index": content[-1].get("endIndex", 0) if content else 0,
-        "text_preview": "".join(text_parts)[:100],
+        "text_preview": truncate_preview("".join(text_parts), preview_chars),
         "element_count": len(content),
     }
 
@@ -343,6 +371,47 @@ def get_next_paragraph_index(doc_data: dict[str, Any], after_index: int = 0) -> 
     return structure["total_length"] - 1 if structure["total_length"] > 0 else 1
 
 
+def _is_empty_paragraph(paragraph: dict[str, Any]) -> bool:
+    """A newline-only paragraph with no existing or suggested object anchors."""
+    return (
+        paragraph["end_index"] - paragraph["start_index"] == 1
+        and not paragraph.get("positioned_object_ids")
+        and not paragraph.get("suggested_positioned_object_ids")
+    )
+
+
+def summarize_paragraph_layout(structure: dict[str, Any]) -> dict[str, Any]:
+    """Count empty body paragraphs and report the last paragraph's state.
+
+    Only top-level paragraphs are included; object anchors do not count as empty.
+    Ranges are capped extents, including protected newlines. last_paragraph is
+    None if absent.
+    """
+    paragraphs = [e for e in structure["body"] if e.get("type") == "paragraph"]
+
+    empty_ranges = [
+        {"start": p["start_index"], "end": p["end_index"]}
+        for p in paragraphs
+        if _is_empty_paragraph(p)
+    ]
+
+    last_paragraph = None
+    if paragraphs:
+        last = paragraphs[-1]
+        last_paragraph = {
+            "is_list_item": bool(last.get("is_list_item")),
+            "is_empty": _is_empty_paragraph(last),
+        }
+
+    return {
+        "empty_paragraphs": len(empty_ranges),
+        "empty_paragraph_ranges": empty_ranges[:EMPTY_PARAGRAPH_RANGE_LIMIT],
+        "empty_paragraph_ranges_truncated": len(empty_ranges)
+        > EMPTY_PARAGRAPH_RANGE_LIMIT,
+        "last_paragraph": last_paragraph,
+    }
+
+
 def analyze_document_complexity(doc_data: dict[str, Any]) -> dict[str, Any]:
     """
     Analyze document complexity and provide statistics.
@@ -365,6 +434,7 @@ def analyze_document_complexity(doc_data: dict[str, Any]) -> dict[str, Any]:
         "total_length": structure["total_length"],
         "has_headers": bool(structure["headers"]),
         "has_footers": bool(structure["footers"]),
+        **summarize_paragraph_layout(structure),
     }
 
     # Add table statistics
@@ -378,3 +448,108 @@ def analyze_document_complexity(doc_data: dict[str, Any]) -> dict[str, Any]:
         )
 
     return stats
+
+
+def _iter_tabs(tabs: list[dict[str, Any]]) -> Iterator[dict[str, Any]]:
+    for tab in tabs:
+        yield tab
+        yield from _iter_tabs(tab.get("childTabs", []))
+
+
+def _body_content_for_tab(
+    doc: dict[str, Any], tab_id: Optional[str]
+) -> list[dict[str, Any]]:
+    """Return the body content of ``tab_id``, or of the only tab when omitted."""
+    tabs = list(_iter_tabs(doc.get("tabs", [])))
+    if tab_id is None:
+        if len(tabs) > 1:
+            available = [t.get("tabProperties", {}).get("tabId") for t in tabs]
+            raise UserInputError(
+                f"Document has {len(tabs)} tabs; tab_id is required. "
+                f"Available tab IDs: {available}"
+            )
+        tab = tabs[0] if tabs else {"documentTab": doc}
+    else:
+        tab = next(
+            (t for t in tabs if t.get("tabProperties", {}).get("tabId") == tab_id),
+            None,
+        )
+        if tab is None:
+            raise UserInputError(f"tab_id {tab_id!r} not found in document.")
+    return tab.get("documentTab", {}).get("body", {}).get("content", [])
+
+
+def _paragraph_heading_level(paragraph: dict[str, Any]) -> Optional[int]:
+    """Return N for a ``HEADING_N`` paragraph, otherwise ``None``."""
+    style = paragraph.get("paragraphStyle", {}).get("namedStyleType", "")
+    return int(style[len("HEADING_") :]) if style.startswith("HEADING_") else None
+
+
+def find_heading_section(
+    doc: dict[str, Any],
+    heading: str,
+    heading_level: Optional[int] = None,
+    tab_id: Optional[str] = None,
+) -> dict[str, Any]:
+    """Locate the one body heading matching ``heading`` and the section below it.
+
+    The section runs to the next ``TITLE`` or equal-or-shallower heading, or to
+    the body's undeletable final newline. Returns ``body_start``,
+    ``section_end``, ``last_paragraph`` and ``footnote_refs``.
+    """
+    content = _body_content_for_tab(doc, tab_id)
+    wanted = heading.strip().casefold()
+    matches = []
+    for idx, element in enumerate(content):
+        paragraph = element.get("paragraph", {})
+        level = _paragraph_heading_level(paragraph)
+        if level is None or heading_level not in (None, level):
+            continue
+        if _extract_paragraph_text(paragraph).strip().casefold() == wanted:
+            matches.append(idx)
+    if not matches:
+        raise UserInputError(
+            f"No heading matching {heading!r} found in the document body "
+            f"(heading_level={heading_level!r}, tab_id={tab_id!r}). Headings inside "
+            "tables, footnotes, headers and footers are not addressable by heading; "
+            "use index-based editing for those."
+        )
+    if len(matches) > 1:
+        starts = ", ".join(str(content[idx].get("startIndex")) for idx in matches)
+        raise UserInputError(
+            f"Heading {heading!r} matches {len(matches)} headings (at indices "
+            f"{starts}). Pass heading_level to narrow it, or edit by index."
+        )
+
+    match_idx = matches[0]
+    matched_level = _paragraph_heading_level(content[match_idx]["paragraph"])
+    body_start = content[match_idx]["endIndex"]
+    section_end = None
+    last_paragraph = content[match_idx]
+    for element in content[match_idx + 1 :]:
+        paragraph = element.get("paragraph")
+        if not paragraph:
+            continue
+        level = _paragraph_heading_level(paragraph)
+        style = paragraph.get("paragraphStyle", {}).get("namedStyleType")
+        if style == "TITLE" or (level is not None and level <= matched_level):
+            section_end = element["startIndex"]
+            break
+        last_paragraph = element
+    if section_end is None:
+        # The body's final newline cannot be deleted.
+        section_end = last_paragraph["endIndex"] - 1
+
+    footnote_refs = sum(
+        1
+        for element in content[match_idx + 1 :]
+        for run in element.get("paragraph", {}).get("elements", [])
+        if "footnoteReference" in run
+        and body_start <= run.get("startIndex", -1) < section_end
+    )
+    return {
+        "body_start": body_start,
+        "section_end": section_end,
+        "last_paragraph": last_paragraph,
+        "footnote_refs": footnote_refs,
+    }

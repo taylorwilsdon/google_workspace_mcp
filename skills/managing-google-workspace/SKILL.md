@@ -2,10 +2,10 @@
 name: managing-google-workspace
 description: >
   Manages Google Workspace operations across 12 services (Gmail, Drive, Calendar, Docs, Sheets, Slides, Forms, Tasks, Contacts, Chat, Apps Script, Custom Search).
-  Supports MCP tools or CLI via uvx workspace-mcp --cli. Provides tool routing, workflows, and parameter guidance for 114 tools.
+  Supports MCP tools or the workspace-cli client. Provides tool routing, workflows, and parameter guidance for every tool.
   Triggers for "check my email", "find a file", "schedule a meeting", "update the spreadsheet", "share a doc",
   "create a presentation", "add a task", "look up a contact", or any mention of Google Workspace services.
-allowed-tools: Bash(uvx workspace-mcp *)
+allowed-tools: Bash(workspace-cli *), Bash(uv run workspace-cli *)
 user-invocable: false
 ---
 
@@ -19,11 +19,17 @@ Detect which mode is available and use it.
 If MCP tools from the `google-workspace` server are available, call them directly. The tool names in the tables below are the base names -- prefix with the server name as needed (e.g. `google-workspace:search_gmail_messages`).
 
 ### CLI (no MCP)
-If no MCP tools are available, execute via bash:
+If no MCP tools are available, call a running server via `workspace-cli`:
 
 ```bash
-uvx workspace-mcp --cli <tool_name> --args '{"user_google_email": "USER_EMAIL", ...}'
+workspace-cli list
+workspace-cli call <tool_name> key=value ...
 ```
+
+- Pass `user_google_email=USER_EMAIL` only when the tool schema requires it (legacy OAuth 2.0 without `USER_GOOGLE_EMAIL` set). Omit it for OAuth 2.1 and trusted-gateway servers, which take it from the verified identity.
+- Arguments are `key=value` pairs; values are parsed as JSON when possible, so pass lists and objects as JSON (e.g. `label_ids='["INBOX"]'`).
+- The server must be reachable over HTTP. The default URL is `http://localhost:8000/mcp` (a server started with `--transport streamable-http`); override it with `--url` before the subcommand (`workspace-cli --url <url> call ...`) or `WORKSPACE_MCP_URL`. Plugin users on stdio can set `WORKSPACE_MCP_HTTP_PORT` to expose a loopback sidecar at `http://127.0.0.1:<port>/mcp`.
+- If `workspace-cli` is not on PATH, run `uv run workspace-cli` from a checkout of this repo. Installing it permanently (`uv tool install .` in that checkout) is a manual setup step for the user. Never use `uvx workspace-cli`: an unrelated, abandoned PyPI package squats that name.
 
 Before calling a tool, read the relevant reference file for exact parameter names and types. Only use parameters documented there -- do not invent parameters.
 
@@ -69,7 +75,7 @@ For server options, transport, auth modes, tool filtering, and deployment: [refe
 | Task | Tool |
 |------|------|
 | Search/find emails | `search_gmail_messages` |
-| Read one email | `get_gmail_message_content` |
+| Read one email, or page a long body | `get_gmail_message_content` (`page_offset`, `page_size`, `expected_sha256`) |
 | Read multiple emails | `get_gmail_messages_content_batch` |
 | Read a thread | `get_gmail_thread_content` |
 | Read multiple threads | `get_gmail_threads_content_batch` |
@@ -103,6 +109,8 @@ For parameters: [references/gmail.md](references/gmail.md)
 | Get shareable link | `get_drive_shareable_link` |
 | Check public access | `check_drive_file_public_access` |
 | Import file to Google Doc | `import_to_google_doc` |
+| Import spreadsheet (XLSX, CSV, ...) to Google Sheets | `import_to_google_sheets` |
+| Import presentation (PPTX, ...) to Google Slides | `import_to_google_slides` |
 
 For parameters: [references/drive.md](references/drive.md)
 
@@ -111,8 +119,11 @@ For parameters: [references/drive.md](references/drive.md)
 | Task | Tool |
 |------|------|
 | List calendars | `list_calendars` |
+| Create secondary calendar | `create_calendar` |
 | Get events | `get_events` |
 | Create/update/delete event | `manage_event` |
+| Out of office (auto-decline) | `manage_out_of_office` |
+| Focus time (auto-decline, DND) | `manage_focus_time` |
 | Check availability | `query_freebusy` |
 
 For parameters: [references/calendar.md](references/calendar.md)
@@ -123,8 +134,9 @@ For parameters: [references/calendar.md](references/calendar.md)
 |------|------|
 | Read doc as Markdown | `get_doc_as_markdown` |
 | Read doc content (raw) | `get_doc_content` |
+| Read plain text with link/chip targets and document segments | `get_doc_content(preserve_context=True)` |
 | Create new doc | `create_doc` |
-| Modify text / apply styles | `modify_doc_text` |
+| Modify text / apply styles (by index or by `heading`) | `modify_doc_text` |
 | Insert elements (tables, lists, breaks) | `insert_doc_elements` |
 | Insert image | `insert_doc_image` |
 | Create table with data | `create_table_with_data` |
@@ -148,12 +160,18 @@ For parameters: [references/docs.md](references/docs.md)
 |------|------|
 | Read cell values | `read_sheet_values` |
 | Write/append/clear values | `modify_sheet_values` |
+| Insert smart chips | `modify_sheet_values` (`chips`) |
 | Format cells | `format_sheet_range` |
 | Conditional formatting | `manage_conditional_formatting` |
 | Get spreadsheet info | `get_spreadsheet_info` |
 | Create spreadsheet | `create_spreadsheet` |
 | Create sheet (tab) | `create_sheet` |
+| Rename/delete/hide/reorder/style tab | `manage_sheet_tab` |
+| Resize/freeze/hide/insert/delete rows and columns | `resize_sheet_dimensions` |
 | Move rows between sheets | `move_sheet_rows` |
+| List structured tables | `list_sheet_tables` |
+| Append rows to structured table | `append_table_rows` |
+| Manage named ranges | `manage_named_range` |
 | List spreadsheets | `list_spreadsheets` |
 | Comments | `manage_spreadsheet_comment` / `list_spreadsheet_comments` |
 
@@ -165,9 +183,10 @@ For parameters: [references/sheets.md](references/sheets.md)
 |------|------|
 | Get presentation | `get_presentation` |
 | Get specific slide | `get_page` |
-| Get slide thumbnail | `get_page_thumbnail` |
+| Look at a slide (render to image) | `render_page_to_image` |
 | Create presentation | `create_presentation` |
 | Batch update | `batch_update_presentation` |
+| Speaker notes | `get_presentation` (`include_speaker_notes`) + `batch_update_presentation` |
 | Comments | `manage_presentation_comment` / `list_presentation_comments` |
 
 For parameters: [references/slides.md](references/slides.md)
@@ -221,6 +240,7 @@ For parameters: [references/contacts.md](references/contacts.md)
 | Get messages | `get_messages` |
 | Search messages | `search_messages` |
 | Send message | `send_message` |
+| Edit a message already sent | `send_message` (`message_name`) |
 | React to message | `create_reaction` |
 | Download attachment | `download_chat_attachment` |
 
@@ -230,18 +250,17 @@ For parameters: [references/chat.md](references/chat.md)
 
 | Task | Tool |
 |------|------|
-| List projects | `list_script_projects` |
-| Get project | `get_script_project` |
-| Create project | `create_script_project` |
-| Delete project | `delete_script_project` |
-| Get file content | `get_script_content` |
-| Update file content | `update_script_content` |
+| Projects/files (list/get) | `get_script_project` (`action`) |
+| Projects (create/delete) | `manage_script_project` (`action`) |
+| File content (update) | `manage_script_content` (`action="update"`) |
 | Run function | `run_script_function` |
 | Generate trigger code | `generate_trigger_code` |
-| Manage deployments | `manage_deployment` / `list_deployments` |
-| Versions | `create_version` / `get_version` / `list_versions` |
-| Execution metrics | `get_script_metrics` |
-| Process history | `list_script_processes` |
+| Deployments (list) | `list_script_deployments` |
+| Deployments (create/update/delete) | `manage_deployment` (`action`) |
+| Versions (list/get) | `get_script_version` (`action`) |
+| Versions (create) | `manage_script_version` (`action="create"`) |
+| Execution metrics / process history | `get_script_activity` (`action="metrics"` / `"processes"`) |
+| Current user's triggers (list/delete) | `manage_script_trigger` (`action`) |
 
 For parameters: [references/apps-script.md](references/apps-script.md)
 
@@ -260,14 +279,14 @@ For parameters: [references/search.md](references/search.md)
 |------|------|
 | Start OAuth flow | `start_google_auth` |
 
-Parameters: `user_google_email` (string, optional), `service_name` (string, required -- e.g. `"gmail"`, `"drive"`). Legacy OAuth 2.0 only -- disabled when OAuth 2.1 is enabled. In most cases, just call the tool you need and auth happens automatically.
+Legacy OAuth 2.0 only -- disabled when OAuth 2.1 is enabled. In most cases, just call the tool you need and auth happens automatically. For parameters: [references/server-options.md](references/server-options.md#start_google_auth)
 
 ## Common Workflows
 
 ### Reply to an email
 1. `search_gmail_messages` -- find the email
 2. `get_gmail_message_content` -- read it (get `message_id` and `thread_id`)
-3. `send_gmail_message` -- reply using `in_reply_to` and `thread_id`
+3. `send_gmail_message` -- reply using `thread_id`; omit reply headers to target the latest non-draft, non-trash message with an RFC `Message-ID`
 
 ### Find and share a file
 1. `search_drive_files` -- find the file
@@ -300,4 +319,4 @@ Parameters: `user_google_email` (string, optional), `service_name` (string, requ
 
 ## Tips
 
-- **Check parameters**: In CLI mode, run `uvx workspace-mcp --cli <tool> --help` for any unfamiliar tool.
+- **Check parameters**: The reference files document every parameter of every tool. In CLI mode, `workspace-cli list` shows which tools the running server exposes.

@@ -2,7 +2,7 @@
 replicaCount: 1
 
 image:
-  repository: workspace-mcp
+  repository: ghcr.io/taylorwilsdon/google_workspace_mcp
   pullPolicy: IfNotPresent
   # Uses Chart.AppVersion if not specified
   tag: ""

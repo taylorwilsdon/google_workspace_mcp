@@ -8,7 +8,7 @@ string, or the literal string "null"/"None" instead of omitting the param.
 
 import pytest
 
-from gcalendar.calendar_tools import _correct_time_format_for_api
+from gcalendar.calendar_helpers import _correct_time_format_for_api
 
 
 @pytest.mark.parametrize("empty", [None, "", "   "])

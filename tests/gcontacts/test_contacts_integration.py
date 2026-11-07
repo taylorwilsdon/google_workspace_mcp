@@ -164,6 +164,191 @@ class TestManageContactUpdateMerge:
         assert update_kwargs["body"]["etag"] == "E1"
 
 
+class TestNameUpdateKeepsOtherParts:
+    """Changing one name part must not erase the rest (issue #1096)."""
+
+    STORED_NAME = {
+        "metadata": {"primary": True, "source": {"type": "CONTACT"}},
+        "displayName": "Bob Q Smith Jr.",
+        "unstructuredName": "Bob Q Smith Jr.",
+        "givenName": "Bob",
+        "familyName": "Smith",
+        "middleName": "Q",
+        "honorificSuffix": "Jr.",
+    }
+    EXPECTED_NAMES = [
+        {
+            "givenName": "Robert",
+            "familyName": "Smith",
+            "middleName": "Q",
+            "honorificSuffix": "Jr.",
+        }
+    ]
+
+    def test_manage_contact_update_merges_names(self):
+        svc = MagicMock()
+        svc.people.return_value.get.return_value.execute.return_value = {
+            "resourceName": "people/c1",
+            "etag": "E1",
+            "names": [self.STORED_NAME],
+        }
+        svc.people.return_value.updateContact.return_value.execute.return_value = {
+            "resourceName": "people/c1"
+        }
+
+        run(
+            manage_contact(
+                service=svc,
+                user_google_email="test@example.com",
+                action="update",
+                contact_id="c1",
+                given_name="Robert",
+            )
+        )
+
+        update_kwargs = svc.people.return_value.updateContact.call_args.kwargs
+        assert update_kwargs["updatePersonFields"] == "names"
+        assert update_kwargs["body"]["names"] == self.EXPECTED_NAMES
+
+    def test_batch_update_merges_names(self):
+        svc = MagicMock()
+        svc.people.return_value.getBatchGet.return_value.execute.return_value = {
+            "responses": [
+                {
+                    "person": {
+                        "resourceName": "people/c1",
+                        "etag": "E1",
+                        "names": [self.STORED_NAME],
+                    }
+                }
+            ]
+        }
+        svc.people.return_value.batchUpdateContacts.return_value.execute.return_value = {
+            "updateResult": {}
+        }
+
+        run(
+            manage_contacts_batch(
+                service=svc,
+                user_google_email="test@example.com",
+                action="update",
+                updates=[{"contact_id": "c1", "given_name": "Robert"}],
+                field="names",
+            )
+        )
+
+        get_kwargs = svc.people.return_value.getBatchGet.call_args.kwargs
+        batch_kwargs = svc.people.return_value.batchUpdateContacts.call_args.kwargs
+        assert get_kwargs["personFields"] == "metadata,names"
+        assert batch_kwargs["body"]["contacts"]["people/c1"] == {
+            "etag": "E1",
+            "names": self.EXPECTED_NAMES,
+        }
+
+    @pytest.mark.parametrize("batch", [False, True])
+    def test_empty_given_name_clears_without_losing_family_name(self, batch):
+        svc = MagicMock()
+        stored_name = {
+            "metadata": {"source": {"type": "CONTACT"}},
+            "givenName": "Bob",
+            "familyName": "Smith",
+        }
+        if batch:
+            svc.people.return_value.getBatchGet.return_value.execute.return_value = {
+                "responses": [
+                    {
+                        "person": {
+                            "resourceName": "people/c1",
+                            "etag": "E1",
+                            "names": [stored_name],
+                        }
+                    }
+                ]
+            }
+            svc.people.return_value.batchUpdateContacts.return_value.execute.return_value = {
+                "updateResult": {}
+            }
+            run(
+                manage_contacts_batch(
+                    service=svc,
+                    user_google_email="test@example.com",
+                    action="update",
+                    updates=[{"contact_id": "c1", "given_name": ""}],
+                    field="names",
+                )
+            )
+            names = svc.people.return_value.batchUpdateContacts.call_args.kwargs[
+                "body"
+            ]["contacts"]["people/c1"]["names"]
+        else:
+            svc.people.return_value.get.return_value.execute.return_value = {
+                "resourceName": "people/c1",
+                "etag": "E1",
+                "names": [stored_name],
+            }
+            svc.people.return_value.updateContact.return_value.execute.return_value = {
+                "resourceName": "people/c1"
+            }
+            run(
+                manage_contact(
+                    service=svc,
+                    user_google_email="test@example.com",
+                    action="update",
+                    contact_id="c1",
+                    given_name="",
+                )
+            )
+            names = svc.people.return_value.updateContact.call_args.kwargs["body"][
+                "names"
+            ]
+        assert names == [{"givenName": "", "familyName": "Smith"}]
+
+    @pytest.mark.parametrize("batch", [False, True])
+    def test_unrepresentable_free_form_name_rejects_update(self, batch):
+        svc = MagicMock()
+        stored_name = {**self.STORED_NAME, "unstructuredName": "Bob 'Bobby' Smith"}
+        if batch:
+            svc.people.return_value.getBatchGet.return_value.execute.return_value = {
+                "responses": [
+                    {
+                        "person": {
+                            "resourceName": "people/c1",
+                            "etag": "E1",
+                            "names": [stored_name],
+                        }
+                    }
+                ]
+            }
+            with pytest.raises(UserInputError, match="unstructuredName"):
+                run(
+                    manage_contacts_batch(
+                        service=svc,
+                        user_google_email="test@example.com",
+                        action="update",
+                        updates=[{"contact_id": "c1", "given_name": "Robert"}],
+                        field="names",
+                    )
+                )
+            svc.people.return_value.batchUpdateContacts.assert_not_called()
+        else:
+            svc.people.return_value.get.return_value.execute.return_value = {
+                "resourceName": "people/c1",
+                "etag": "E1",
+                "names": [stored_name],
+            }
+            with pytest.raises(UserInputError, match="unstructuredName"):
+                run(
+                    manage_contact(
+                        service=svc,
+                        user_google_email="test@example.com",
+                        action="update",
+                        contact_id="c1",
+                        given_name="Robert",
+                    )
+                )
+            svc.people.return_value.updateContact.assert_not_called()
+
+
 # =============================================================================
 # Test 9: phones_mode="replace" vs "merge" vs "remove" behavioural difference
 # =============================================================================
