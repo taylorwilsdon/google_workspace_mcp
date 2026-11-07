@@ -5,6 +5,12 @@ import logging
 from types import SimpleNamespace
 
 import pytest
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+    InMemorySpanExporter,
+)
+from opentelemetry.trace import StatusCode
 
 from core import telemetry
 
@@ -380,12 +386,6 @@ def test_record_google_principal_skips_non_recording_span(
 
 
 def _in_memory_tracer():
-    from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
-        InMemorySpanExporter,
-    )
-
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
@@ -393,8 +393,6 @@ def _in_memory_tracer():
 
 
 def test_record_degraded_failure_marks_span_as_error() -> None:
-    from opentelemetry.trace import StatusCode
-
     tracer, exporter = _in_memory_tracer()
     with tracer.start_as_current_span("tools/call get_gmail_attachment_content"):
         telemetry.record_degraded_failure(
