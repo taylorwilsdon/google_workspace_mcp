@@ -12,6 +12,8 @@ from unittest.mock import AsyncMock, Mock, patch
 import sys
 import os
 
+from gchat.chat_tools import get_messages
+
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 
@@ -194,8 +196,6 @@ async def test_get_messages_forwards_page_token_and_returns_the_next_one(mock_re
         "nextPageToken": "page-3",
     }
 
-    from gchat.chat_tools import get_messages
-
     result = await _unwrap(get_messages)(
         chat_service=chat_service,
         people_service=Mock(),
@@ -219,8 +219,6 @@ async def test_get_messages_empty_page_with_token_says_more_remain(mock_resolve)
     chat_service.spaces().messages().list().execute.return_value = {
         "nextPageToken": "page-2",
     }
-
-    from gchat.chat_tools import get_messages
 
     result = await _unwrap(get_messages)(
         chat_service=chat_service,
