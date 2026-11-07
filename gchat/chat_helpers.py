@@ -15,8 +15,7 @@ from googleapiclient.errors import HttpError
 logger = logging.getLogger(__name__)
 
 _SENDER_CACHE_MAX_SIZE = 256
-# Keyed by (authenticated user, Chat user id): People API names can come from
-# the caller's own contacts, so one user's cached names must not reach another.
+# Keyed per owner: People API names can include the owner's own contact labels.
 _sender_name_cache: Dict[Tuple[str, str], str] = {}
 _UNNAMED_SPACE_FALLBACKS = {
     "DIRECT_MESSAGE": "Direct message",
@@ -30,10 +29,9 @@ _SEARCH_MESSAGES_RETRY_BASE_DELAY_SECONDS = 1
 
 
 def _cache_key(cache_owner: Optional[str], user_id: str) -> Optional[Tuple[str, str]]:
-    """Return the cache key for user_id as seen by cache_owner, or None to skip caching."""
-    if not cache_owner:
-        return None
-    return (cache_owner.strip().lower(), user_id)
+    """Return cache_owner's cache key for user_id, or None when there is no owner."""
+    owner = (cache_owner or "").strip().lower()
+    return (owner, user_id) if owner else None
 
 
 def _cached_name(cache_owner: Optional[str], user_id: str) -> Optional[str]:
@@ -66,8 +64,7 @@ async def _resolve_sender(
     """Resolve a Chat message sender to a display name.
 
     Fast path: use displayName if the API already provided it.
-    Slow path: look up the user via the People API directory and cache the result
-    for cache_owner, the authenticated user; without one nothing is cached.
+    Slow path: look up the user via the People API and cache the result per cache_owner.
     """
     display_name = sender_obj.get("displayName")
     if display_name:
