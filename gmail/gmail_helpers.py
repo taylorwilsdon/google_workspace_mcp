@@ -1522,6 +1522,38 @@ def _checked_header(field: str, value: str) -> str:
     return value
 
 
+MessagePriority = Literal["high", "normal", "low"]
+
+PRIORITY_DESCRIPTION = (
+    "Message priority. 'high' marks the email as important and 'low' as low priority "
+    "via the Importance, X-Priority and Priority headers, which clients such as Outlook, "
+    "Apple Mail and Thunderbird display. Gmail does not show them. 'normal' (the "
+    "default) adds no headers."
+)
+
+_PRIORITY_HEADERS: Dict[str, List[tuple[str, str]]] = {
+    "high": [
+        ("Importance", "High"),
+        ("X-Priority", "1 (Highest)"),
+        ("Priority", "urgent"),
+    ],
+    "low": [
+        ("Importance", "Low"),
+        ("X-Priority", "5 (Lowest)"),
+        ("Priority", "non-urgent"),
+    ],
+}
+
+
+def _priority_headers(priority: Optional[str]) -> List[tuple[str, str]]:
+    """Return the priority headers for ``priority``; none for 'normal' or None."""
+    if priority is None or priority == "normal":
+        return []
+    if priority not in _PRIORITY_HEADERS:
+        raise ValueError("priority must be one of 'high', 'normal' or 'low'.")
+    return list(_PRIORITY_HEADERS[priority])
+
+
 def _prepare_gmail_message_web(
     subject: str,
     plain_body: str,
@@ -1533,6 +1565,7 @@ def _prepare_gmail_message_web(
     references: Optional[str] = None,
     from_email: Optional[str] = None,
     from_name: Optional[str] = None,
+    priority: Optional[MessagePriority] = None,
 ) -> str:
     """Assemble a Gmail-web faithful ``multipart/alternative`` raw message.
 
@@ -1565,6 +1598,8 @@ def _prepare_gmail_message_web(
     if cc:
         headers.append(("Cc", format_address_list(_checked_header("Cc", cc))))
 
+    headers.extend(_priority_headers(priority))
+
     message = assemble_alternative(
         headers=headers,
         plain_text=plain_body,
@@ -1588,6 +1623,7 @@ def _build_web_compose_raw(
     references: Optional[str],
     direction: TextDirection,
     reply_target: Optional[Mapping[str, Any]],
+    priority: Optional[MessagePriority] = None,
 ) -> str:
     """Build a Gmail-web raw message for the attachment-free send/draft paths.
 
@@ -1611,6 +1647,7 @@ def _build_web_compose_raw(
         references=references,
         from_email=from_email,
         from_name=from_name,
+        priority=priority,
     )
 
 
