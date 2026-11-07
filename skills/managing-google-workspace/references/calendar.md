@@ -88,6 +88,7 @@ Create, update, delete, or RSVP to a calendar event.
 | response | string | for rsvp | | `accepted`, `declined`, `tentative`, or `needsAction` |
 | rsvp_comment | string | no | | Message sent with the RSVP (rsvp only) |
 | send_updates | string | no | all | `all`, `externalOnly`, or `none`. Applies to every action |
+| only_if_no_attendees | boolean | no | false | Delete only if the event has no attendees besides the calendar owner |
 | this_and_following | boolean | no | false | Update only. With a recurring instance `event_id`, splits the series there so the change applies to that instance and all later ones while earlier instances keep the original schedule. Updating the series ID moves every instance and can drop past ones |
 
 **Reminder format** (each item is a dict):

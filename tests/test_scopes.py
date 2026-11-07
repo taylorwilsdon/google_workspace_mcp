@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from auth.scopes import (
     BASE_SCOPES,
+    CALENDAR_LIST_READONLY_SCOPE,
     CALENDAR_READONLY_SCOPE,
     CALENDAR_SCOPE,
     CONTACTS_READONLY_SCOPE,
@@ -226,6 +227,9 @@ class TestHasRequiredScopes:
     # Other hierarchies
     def test_calendar_covers_readonly(self):
         assert has_required_scopes([CALENDAR_SCOPE], [CALENDAR_READONLY_SCOPE])
+
+    def test_calendar_covers_calendar_list_readonly(self):
+        assert has_required_scopes([CALENDAR_SCOPE], [CALENDAR_LIST_READONLY_SCOPE])
 
     def test_sheets_write_covers_readonly(self):
         assert has_required_scopes([SHEETS_WRITE_SCOPE], [SHEETS_READONLY_SCOPE])
