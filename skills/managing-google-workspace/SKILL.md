@@ -75,7 +75,7 @@ For server options, transport, auth modes, tool filtering, and deployment: [refe
 | Task | Tool |
 |------|------|
 | Search/find emails | `search_gmail_messages` |
-| Read one email | `get_gmail_message_content` |
+| Read one email, or page a long body | `get_gmail_message_content` (`page_offset`, `page_size`, `expected_sha256`) |
 | Read multiple emails | `get_gmail_messages_content_batch` |
 | Read a thread | `get_gmail_thread_content` |
 | Read multiple threads | `get_gmail_threads_content_batch` |

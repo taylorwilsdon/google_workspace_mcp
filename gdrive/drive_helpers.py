@@ -1077,6 +1077,27 @@ GOOGLE_SHEETS_IMPORT_FORMATS = {
 GOOGLE_DOCS_MIME_TYPE = "application/vnd.google-apps.document"
 GOOGLE_SLIDES_MIME_TYPE = "application/vnd.google-apps.presentation"
 GOOGLE_SHEETS_MIME_TYPE = "application/vnd.google-apps.spreadsheet"
+GOOGLE_DRAWINGS_MIME_TYPE = "application/vnd.google-apps.drawing"
+
+# Export targets for Google Drawings, keyed by export_format; PNG is the default.
+DRAWING_EXPORT_FORMATS = {
+    "png": ("png", "image/png"),
+    "pdf": ("pdf", "application/pdf"),
+    "jpg": ("jpg", "image/jpeg"),
+    "jpeg": ("jpg", "image/jpeg"),
+    "svg": ("svg", "image/svg+xml"),
+}
+
+
+def drawing_export_target(export_format: Optional[str]) -> Tuple[str, str]:
+    """(file extension, export MIME type) for a Google Drawing.
+
+    PNG unless export_format names another supported format.
+    """
+    return DRAWING_EXPORT_FORMATS.get(
+        (export_format or "").lower(), DRAWING_EXPORT_FORMATS["png"]
+    )
+
 
 IMPORT_FORMATS_BY_GOOGLE_MIME_TYPE = {
     GOOGLE_DOCS_MIME_TYPE: GOOGLE_DOCS_IMPORT_FORMATS,

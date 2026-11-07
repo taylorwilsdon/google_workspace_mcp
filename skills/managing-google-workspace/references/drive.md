@@ -61,6 +61,8 @@ Retrieve file content as text.
 |-----------|------|----------|---------|-------|
 | user_google_email | string | yes | | |
 | file_id | string | yes | | Drive file ID |
+| offset | integer | no | 0 | Character offset to start from, to read on after a cut-off result |
+| full_content | boolean | no | false | Return everything from `offset` onward in one call instead of a page |
 
 Content handling:
 - Google Docs/Sheets/Slides: exported as text/CSV
@@ -68,8 +70,10 @@ Content handling:
 - PDFs: text extracted when possible; scanned PDFs return a download hint
 - Images (PNG, JPEG, GIF, WebP): metadata header as text, plus the image itself as MCP image content
 - SVG: returned as its markup (text). Each PNG, JPEG, GIF or WebP image embedded as a base64 data URI is attached as image content, and its place in the markup reads `[embedded image N, … attached as image content]`. Other embedded payloads, such as fonts, are omitted, with a note giving their size
-- BMP, TIFF: returned as base64 text after the header
+- BMP, TIFF: returned as base64 text after the header, or a pointer to `get_drive_file_download_url` when that text would be over the default page size below and `full_content` is not set
 - Other files: downloaded, UTF-8 decoded if possible
+
+By default, long content comes back a page at a time: at most 40,000 characters per call (the server sets this with `WORKSPACE_MCP_MAX_CONTENT_CHARS`; `0` returns whole content by default). A page ends at a line break where possible, with a note giving the range shown, how much follows, and the `offset` to call again with. To get the whole file in one call instead, pass `full_content=true`. The header names the file's version; if it changes between pages, start again from `offset=0`.
 
 ### get_drive_file_download_url
 Download a file to local disk (stdio mode) or get a temporary URL (HTTP mode, valid 1 hour).
@@ -78,12 +82,13 @@ Download a file to local disk (stdio mode) or get a temporary URL (HTTP mode, va
 |-----------|------|----------|---------|-------|
 | user_google_email | string | yes | | |
 | file_id | string | yes | | Drive file ID |
-| export_format | string | no | | `pdf`, `docx`, `xlsx`, `csv`, `pptx` |
+| export_format | string | no | | `pdf`, `docx`, `xlsx`, `csv`, `pptx`, `png`, `jpg`, `svg` |
 
 Default export formats for Google native files:
 - Docs: PDF (or `docx`)
 - Sheets: XLSX (or `pdf`, `csv`)
 - Slides: PDF (or `pptx`)
+- Drawings: PNG (or `pdf`, `jpg`, `svg`)
 
 ---
 
