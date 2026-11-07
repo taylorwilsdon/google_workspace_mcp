@@ -358,6 +358,18 @@ def _format_event_detail_lines(
     if status and status != "confirmed":
         lines.append(f"{prefix}Status: {status}")
 
+    reminders = item.get("reminders") or {}
+    if not reminders.get("useDefault", True):
+        lines.append(f"{prefix}Reminders: {json.dumps(reminders.get('overrides', []))}")
+
+    visibility = item.get("visibility")
+    if visibility and visibility != "default":
+        lines.append(f"{prefix}Visibility: {visibility}")
+
+    transparency = item.get("transparency")
+    if transparency and transparency != "opaque":
+        lines.append(f"{prefix}Transparency: {transparency}")
+
     creator_str = _format_person(item.get("creator"))
     if creator_str:
         lines.append(f"{prefix}Creator: {creator_str}")

@@ -39,6 +39,7 @@ from gsheets.sheets_helpers import (
     _format_conditional_rules_section,
     _format_named_ranges_list,
     _format_sheet_error_section,
+    _format_sheet_values_rows,
     _insert_cell_comment,
     _normalize_chips_input,
     _normalize_merge_type,
@@ -239,7 +240,8 @@ async def read_sheet_values(
     include_smart_chips: bool = False,
 ) -> str:
     """
-    Reads values from a specific range in a Google Sheet.
+    Reads values from a specific range in a Google Sheet, one line per row:
+    the sheet row number, then the row's cells separated by tabs.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
@@ -258,7 +260,7 @@ async def read_sheet_values(
             and People chips) for the range. Defaults to False to avoid expensive includeGridData requests.
 
     Returns:
-        str: The formatted values from the specified range.
+        str: The formatted values, with trailing empty cells dropped.
     """
     logger.info(
         f"[read_sheet_values] Invoked. Email: '{user_google_email}', Spreadsheet: {spreadsheet_id}, Range: {range_name}"
@@ -335,16 +337,9 @@ async def read_sheet_values(
                 exc,
             )
 
-    # Format the output as a readable table
-    formatted_rows = []
-    for i, row in enumerate(values, 1):
-        # Pad row with empty strings to show structure
-        padded_row = row + [""] * max(0, len(values[0]) - len(row)) if values else row
-        formatted_rows.append(f"Row {i:2d}: {padded_row}")
-
     text_output = (
         f"Successfully read {len(values)} rows from range '{range_name}' in spreadsheet {spreadsheet_id} for {user_google_email}:\n"
-        + "\n".join(formatted_rows)
+        + _format_sheet_values_rows(result.get("range", ""), values)
     )
     if clamp_note:
         text_output += clamp_note
