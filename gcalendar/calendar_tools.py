@@ -801,6 +801,7 @@ async def _delete_event_impl(
     )
 
     # Try to get the event first to verify it exists
+    etag = None
     try:
         existing_event = await asyncio.to_thread(
             lambda: (
@@ -838,6 +839,12 @@ async def _delete_event_impl(
                 raise UserInputError(
                     f"Event has {len(other_attendees)} attendee(s) besides the calendar owner; refusing to delete."
                 )
+
+            etag = existing_event.get("etag")
+            if not isinstance(etag, str) or not etag.strip():
+                raise UserInputError(
+                    "Could not verify event version; refusing to delete."
+                )
     except HttpError as get_error:
         if get_error.resp.status == 404:
             logger.error(
@@ -855,17 +862,14 @@ async def _delete_event_impl(
             )
 
     # Proceed with the deletion
-    await asyncio.to_thread(
-        lambda: (
-            service.events()
-            .delete(
-                calendarId=calendar_id,
-                eventId=event_id,
-                sendUpdates=send_updates,
-            )
-            .execute()
-        )
+    delete_request = service.events().delete(
+        calendarId=calendar_id,
+        eventId=event_id,
+        sendUpdates=send_updates,
     )
+    if etag is not None:
+        delete_request.headers["If-Match"] = etag
+    await asyncio.to_thread(delete_request.execute)
 
     confirmation_message = f"Successfully deleted event (ID: {event_id}) from calendar '{calendar_id}' for {user_google_email}."
     logger.info(f"Event deleted successfully for {user_google_email}. ID: {event_id}")

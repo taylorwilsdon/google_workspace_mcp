@@ -363,6 +363,66 @@ async def test_manage_event_delete_can_refuse_events_with_attendees():
 async def test_manage_event_delete_proceeds_when_only_owner_is_attendee():
     fn = _unwrap(manage_event)
     mock_service = _create_mock_service()
+    delete_request = mock_service.events().delete.return_value
+    delete_request.headers = {}
+    delete_request.execute = Mock()
+    mock_service.calendarList().get().execute = Mock(
+        return_value={"accessRole": "owner"}
+    )
+    mock_service.events().get().execute = Mock(
+        return_value={
+            "id": "evt123",
+            "etag": '"event-version-1"',
+            "attendees": [{"email": "owner@example.com"}],
+        }
+    )
+
+    await fn(
+        service=mock_service,
+        user_google_email="owner@example.com",
+        action="delete",
+        event_id="evt123",
+        only_if_no_attendees=True,
+    )
+
+    mock_service.events().delete.assert_called_once()
+    assert delete_request.headers["If-Match"] == '"event-version-1"'
+
+
+@pytest.mark.asyncio
+async def test_manage_event_delete_allows_owner_attendee_without_email():
+    fn = _unwrap(manage_event)
+    mock_service = _create_mock_service()
+    delete_request = mock_service.events().delete.return_value
+    delete_request.headers = {}
+    delete_request.execute = Mock()
+    mock_service.calendarList().get().execute = Mock(
+        return_value={"accessRole": "owner"}
+    )
+    mock_service.events().get().execute = Mock(
+        return_value={
+            "id": "evt123",
+            "etag": '"event-version-1"',
+            "attendees": [{"displayName": "Owner"}],
+        }
+    )
+
+    await fn(
+        service=mock_service,
+        user_google_email="owner@example.com",
+        action="delete",
+        event_id="evt123",
+        only_if_no_attendees=True,
+    )
+
+    mock_service.events().delete.assert_called_once()
+    assert delete_request.headers["If-Match"] == '"event-version-1"'
+
+
+@pytest.mark.asyncio
+async def test_manage_event_delete_refuses_guard_when_event_has_no_etag():
+    fn = _unwrap(manage_event)
+    mock_service = _create_mock_service()
     mock_service.calendarList().get().execute = Mock(
         return_value={"accessRole": "owner"}
     )
@@ -370,37 +430,35 @@ async def test_manage_event_delete_proceeds_when_only_owner_is_attendee():
         return_value={"id": "evt123", "attendees": [{"email": "owner@example.com"}]}
     )
 
-    await fn(
-        service=mock_service,
-        user_google_email="owner@example.com",
-        action="delete",
-        event_id="evt123",
-        only_if_no_attendees=True,
-    )
+    with pytest.raises(UserInputError, match="event version; refusing to delete"):
+        await fn(
+            service=mock_service,
+            user_google_email="owner@example.com",
+            action="delete",
+            event_id="evt123",
+            only_if_no_attendees=True,
+        )
 
-    mock_service.events().delete.assert_called_once()
+    mock_service.events().delete.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_manage_event_delete_allows_owner_attendee_without_email():
+async def test_manage_event_delete_without_guard_does_not_use_etag_precondition():
     fn = _unwrap(manage_event)
     mock_service = _create_mock_service()
-    mock_service.calendarList().get().execute = Mock(
-        return_value={"accessRole": "owner"}
-    )
-    mock_service.events().get().execute = Mock(
-        return_value={"id": "evt123", "attendees": [{"displayName": "Owner"}]}
-    )
+    delete_request = mock_service.events().delete.return_value
+    delete_request.headers = {}
+    delete_request.execute = Mock()
 
     await fn(
         service=mock_service,
         user_google_email="owner@example.com",
         action="delete",
         event_id="evt123",
-        only_if_no_attendees=True,
     )
 
     mock_service.events().delete.assert_called_once()
+    assert "If-Match" not in delete_request.headers
 
 
 @pytest.mark.asyncio
