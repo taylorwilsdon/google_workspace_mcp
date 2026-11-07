@@ -70,8 +70,10 @@ from auth.scopes import (
 from gmail.gmail_helpers import (
     FILTER_APPLY_DEFAULT_MAX_MESSAGES,
     GMAIL_METADATA_HEADERS,
+    PRIORITY_DESCRIPTION,
     RAW_BODY_TRUNCATE_LIMIT,
     THREAD_REPLY_CONTEXT_FIELDS,
+    MessagePriority,
     _analyze_thread_ownership_impl,
     _build_forward_content,
     _build_web_compose_raw,
@@ -86,6 +88,7 @@ from gmail.gmail_helpers import (
     _is_email_reaction,
     _new_attachment_id,
     _prepare_gmail_message_web,
+    _priority_headers,
     _reject_entity_escaped_html_body,
     _reply_subject,
     _retryable_result_ids,
@@ -1344,6 +1347,7 @@ def _prepare_gmail_message(
     from_name: Optional[str] = None,
     attachments: Optional[List[Dict[str, str]]] = None,
     plain_body: Optional[str] = None,
+    priority: Optional[MessagePriority] = None,
 ) -> tuple[str, Optional[str], int, List[str]]:
     """
     Prepare a Gmail message with threading and attachment support.
@@ -1362,6 +1366,7 @@ def _prepare_gmail_message(
         from_name: Optional sender display name (e.g., "Peter Hartree")
         attachments: Optional list of attachments. Each can have 'path' (file path) OR 'content' (base64) + 'filename'
         plain_body: Explicit text alternative for HTML, preserving a forwarded original.
+        priority: Optional message priority ('high', 'normal' or 'low').
 
     Returns:
         Tuple of (raw_message, thread_id, attached_count, attachment_errors)
@@ -1403,6 +1408,9 @@ def _prepare_gmail_message(
 
     if references:
         message["References"] = references
+
+    for name, value in _priority_headers(priority):
+        message[name] = value
 
     if normalized_format == "html":
         # Include a text/plain fallback so reply drafts and recipients don't
@@ -2761,6 +2769,9 @@ async def send_gmail_message(
             description="Whether to derive reply-all recipients from the thread: To = the sender being replied to, Cc = the other participants, excluding the authenticated account and from_email. Requires thread_id. Explicit to/cc win; when cc is omitted the sender being replied to is added to the derived Cc if they are not already in To. Defaults to false.",
         ),
     ] = False,
+    priority: Annotated[
+        MessagePriority, Field(description=PRIORITY_DESCRIPTION)
+    ] = "normal",
 ) -> str:
     """
     Sends an email using the user's Gmail account. Supports new emails, replies, and
@@ -2826,6 +2837,9 @@ async def send_gmail_message(
             values; when cc is omitted, the sender being replied to is added to the derived Cc
             unless they are already in To (so an explicit 'to' that redirects the reply still
             keeps them on it).
+        priority (str): 'high' or 'low' adds the Importance, X-Priority and Priority
+            headers that clients such as Outlook display; Gmail does not show them.
+            Defaults to 'normal' (no headers).
 
     Returns:
         str: Confirmation message with the sent email's message ID.
@@ -2956,6 +2970,7 @@ async def send_gmail_message(
             from_email=from_email,
             user_google_email=user_google_email,
             direction=direction,
+            priority=priority,
         )
 
     if body is None or (not thread_id and not (subject or "").strip()):
@@ -3074,6 +3089,7 @@ async def send_gmail_message(
                 from_email=sender_email,
                 from_name=from_name,
                 attachments=resolved_attachments,
+                priority=priority,
             )
         )
     else:
@@ -3091,6 +3107,7 @@ async def send_gmail_message(
             references=references,
             direction=direction,
             reply_target=quote_target,
+            priority=priority,
         )
         thread_id_final, attached_count, attachment_errors = thread_id, 0, []
 
@@ -3139,6 +3156,7 @@ async def _forward_gmail_message_impl(
     direction: TextDirection = "auto",
     as_draft: bool = False,
     attachments: Optional[List[Dict[str, Any]]] = None,
+    priority: Optional[MessagePriority] = None,
 ) -> str:
     """Build a forward of an existing Gmail message and send it or save it as a draft.
 
@@ -3259,6 +3277,7 @@ async def _forward_gmail_message_impl(
             from_email=sender_email,
             from_name=from_name,
             attachments=attachments_to_send,
+            priority=priority,
         )
     else:
         raw_message = _prepare_gmail_message_web(
@@ -3270,6 +3289,7 @@ async def _forward_gmail_message_impl(
             bcc=bcc,
             from_email=sender_email,
             from_name=from_name,
+            priority=priority,
         )
         attached_count, attachment_errors = 0, []
     if attachments_to_send and attached_count != len(attachments_to_send):
@@ -3418,6 +3438,9 @@ async def draft_gmail_message(
             description="Whether to derive reply-all recipients from the thread: To = the sender being replied to, Cc = the other participants, excluding the authenticated account and from_email. Requires thread_id. Explicit to/cc win; when cc is omitted the sender being replied to is added to the derived Cc if they are not already in To. Defaults to false.",
         ),
     ] = False,
+    priority: Annotated[
+        MessagePriority, Field(description=PRIORITY_DESCRIPTION)
+    ] = "normal",
 ) -> str:
     """
     Creates a draft email in the user's Gmail account. Supports new, reply, and forward
@@ -3486,6 +3509,9 @@ async def draft_gmail_message(
             account and from_email. Requires thread_id. Explicit to/cc win over the derived
             values; when cc is omitted, the sender being replied to is added to the derived Cc
             unless they are already in To.
+        priority (str): 'high' or 'low' adds the Importance, X-Priority and Priority
+            headers that clients such as Outlook display; Gmail does not show them.
+            Defaults to 'normal' (no headers).
 
     Returns:
         str: Confirmation message with the created draft's ID.
@@ -3577,6 +3603,7 @@ async def draft_gmail_message(
             user_google_email=user_google_email,
             direction=direction,
             as_draft=True,
+            priority=priority,
         )
 
     if body is None or (not thread_id and not (subject or "").strip()):
@@ -3684,6 +3711,7 @@ async def draft_gmail_message(
                 from_email=sender_email,
                 from_name=from_name,
                 attachments=resolved_attachments,
+                priority=priority,
             )
         )
     else:
@@ -3701,6 +3729,7 @@ async def draft_gmail_message(
             references=references,
             direction=direction,
             reply_target=quote_target,
+            priority=priority,
         )
         attached_count, attachment_errors = 0, []
 
