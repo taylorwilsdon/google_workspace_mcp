@@ -149,6 +149,29 @@ async def test_download_url_moves_payload_into_storage(mock_resolve, storage):
 
 
 @pytest.mark.asyncio
+async def test_download_url_save_failure_marks_span_as_degraded(
+    mock_resolve, storage, monkeypatch
+):
+    error = OSError(30, "Read-only file system")
+    monkeypatch.setattr(storage, "save_attachment_from_path", Mock(side_effect=error))
+    record = Mock()
+    monkeypatch.setattr("gdrive.drive_tools.record_degraded_failure", record)
+
+    with (
+        _patch_downloader(b"video-bytes"),
+        patch("gdrive.drive_tools.is_stateless_mode", return_value=False),
+    ):
+        result = await _unwrap(get_drive_file_download_url)(
+            service=Mock(),
+            user_google_email="user@example.com",
+            file_id="file123",
+        )
+
+    assert result.startswith("Error: Failed to save file for download.")
+    record.assert_called_once_with(error)
+
+
+@pytest.mark.asyncio
 async def test_worker_save_survives_concurrent_attachment_route_sweep(
     mock_resolve, tmp_path, monkeypatch
 ):
