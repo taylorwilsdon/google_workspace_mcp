@@ -8,6 +8,7 @@ from googleapiclient.errors import HttpError
 
 import gcalendar.calendar_tools  # noqa: F401
 from auth.permissions import set_permissions
+from auth.scopes import CALENDAR_SCOPE
 from core import tool_registry
 from core.server import server
 from core.utils import UserInputError, handle_http_errors
@@ -49,6 +50,12 @@ async def test_calendar_sharing_tool_is_registered():
     assert tool is not None
     assert tool.annotations.read_only_hint is False
     assert tool.annotations.destructive_hint is True
+
+
+@pytest.mark.asyncio
+async def test_calendar_sharing_tool_requires_full_calendar_scope():
+    tool = await server.get_tool("manage_calendar_sharing")
+    assert tool.fn._required_google_scopes == [CALENDAR_SCOPE]
 
 
 @pytest.mark.asyncio
