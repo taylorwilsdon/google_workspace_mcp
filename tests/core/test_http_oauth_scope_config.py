@@ -549,9 +549,15 @@ def test_configure_server_for_http_logs_default_storage_directory(
     server_module.configure_server_for_http()
 
     assert server_module.server.auth.client_storage is None
+    GoogleProvider(
+        client_id="client-id",
+        client_secret="client-secret",
+        base_url="https://workspace-mcp.example.test",
+    )
+    [storage_dir] = (tmp_path / "oauth-proxy").iterdir()
     assert (
         "FastMCP default encrypted FileTreeStore for OAuth proxy client_storage "
-        f"(directory={tmp_path / 'oauth-proxy'})" in caplog.text
+        f"(directory={storage_dir})" in caplog.text
     )
 
 
