@@ -36,15 +36,21 @@ class _OAuthSessionStore:
 
 
 class _CredentialStore:
-    def __init__(self, existing_credentials=None, store_result=True):
+    def __init__(self, existing_credentials=None, store_result=True, users=()):
         self._existing_credentials = existing_credentials
         self.store_result = store_result
+        self.users = list(users)
         self.get_calls = []
         self.store_calls = []
 
     def get_credential(self, user_email):
         self.get_calls.append(user_email)
+        if self.users and user_email not in self.users:
+            return None
         return self._existing_credentials
+
+    def list_users(self):
+        return self.users
 
     def store_credential(self, user_email, credentials):  # noqa: ARG002
         self.store_calls.append((user_email, credentials.token))
@@ -122,7 +128,9 @@ def test_get_credentials_skips_session_update_when_refresh_persist_fails(monkeyp
 def test_get_credentials_single_user_returns_none_for_missing_requested_user(
     monkeypatch,
 ):
-    credential_store = _CredentialStore(existing_credentials=None)
+    credential_store = _CredentialStore(
+        existing_credentials=_RefreshableCredentials(), users=["other@example.com"]
+    )
     fallback_creds = _RefreshableCredentials()
     fallback_calls = []
 
@@ -145,3 +153,69 @@ def test_get_credentials_single_user_returns_none_for_missing_requested_user(
     assert credential_store.get_calls == ["missing@example.com"]
     assert credential_store.store_calls == []
     assert fallback_calls == []
+
+
+def test_get_credentials_single_user_matches_stored_email_case_insensitively(
+    monkeypatch,
+):
+    credential_store = _CredentialStore(
+        existing_credentials=_RefreshableCredentials(), users=["luke@example.com"]
+    )
+    oauth_store = _OAuthSessionStore(session_user=None)
+
+    monkeypatch.setenv("MCP_SINGLE_USER_MODE", "1")
+    monkeypatch.setattr(
+        "auth.google_auth.get_oauth21_session_store", lambda: oauth_store
+    )
+    monkeypatch.setattr(
+        "auth.google_auth.get_credential_store", lambda: credential_store
+    )
+    monkeypatch.setattr("auth.google_auth.is_stateless_mode", lambda: False)
+    monkeypatch.setattr(
+        "auth.google_auth.has_required_scopes", lambda scopes, required: True
+    )
+
+    result = get_credentials(
+        user_google_email="Luke@Example.com",
+        required_scopes=["scope.a"],
+    )
+
+    assert result is not None and result.token == "fresh-token"
+    assert credential_store.get_calls == ["luke@example.com"]
+    assert credential_store.store_calls == [("luke@example.com", "fresh-token")]
+    assert [call["user_email"] for call in oauth_store.store_calls] == [
+        "luke@example.com"
+    ]
+
+
+def test_get_credentials_single_user_exact_lookup_when_store_cannot_list(
+    monkeypatch,
+):
+    class _UnlistableCredentialStore(_CredentialStore):
+        def list_users(self):
+            raise NotImplementedError
+
+    credential_store = _UnlistableCredentialStore(
+        existing_credentials=_RefreshableCredentials()
+    )
+
+    monkeypatch.setenv("MCP_SINGLE_USER_MODE", "1")
+    monkeypatch.setattr(
+        "auth.google_auth.get_oauth21_session_store",
+        lambda: _OAuthSessionStore(session_user=None),
+    )
+    monkeypatch.setattr(
+        "auth.google_auth.get_credential_store", lambda: credential_store
+    )
+    monkeypatch.setattr("auth.google_auth.is_stateless_mode", lambda: False)
+    monkeypatch.setattr(
+        "auth.google_auth.has_required_scopes", lambda scopes, required: True
+    )
+
+    result = get_credentials(
+        user_google_email="Luke@Example.com",
+        required_scopes=["scope.a"],
+    )
+
+    assert result is not None
+    assert credential_store.get_calls == ["Luke@Example.com"]
