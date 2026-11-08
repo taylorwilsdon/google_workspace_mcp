@@ -825,10 +825,18 @@ def configure_server_for_http():
                         allowed_client_redirect_uris,
                     )
                 if client_storage is None:
+                    storage_fingerprint = hashlib.sha256(
+                        derive_jwt_key(
+                            high_entropy_material=jwt_signing_key.decode(),
+                            salt="fastmcp-storage-encryption-key",
+                        )
+                    ).hexdigest()[:12]
                     logger.info(
                         "OAuth 2.1: Using FastMCP default encrypted FileTreeStore for OAuth proxy client_storage (directory=%s). "
                         "Set WORKSPACE_MCP_OAUTH_PROXY_STORAGE_BACKEND to memory, disk or valkey to change it.",
-                        (fastmcp.settings.home / "oauth-proxy").absolute(),
+                        (
+                            fastmcp.settings.home / "oauth-proxy" / storage_fingerprint
+                        ).absolute(),
                     )
                 provider = WorkspaceGoogleProvider(
                     client_id=config.client_id,
