@@ -59,6 +59,7 @@ from core.utils import (
     DictList,
 )
 from core.server import server
+from core.telemetry import record_degraded_failure
 from auth.scopes import (
     GMAIL_SEND_SCOPE,
     GMAIL_COMPOSE_SCOPE,
@@ -569,6 +570,7 @@ async def _export_full_message(
         saved = await asyncio.to_thread(_save_export)
     except OSError as exc:
         logger.error(f"[get_gmail_message_content] Failed to save message: {exc}")
+        record_degraded_failure(exc)
         return f"Error: failed to save message to storage: {exc}"
 
     result_lines.append(f"Saved filename: {Path(saved.path).name}")
@@ -2629,6 +2631,7 @@ async def get_gmail_attachment_content(
             f"[get_gmail_attachment_content] Failed to save attachment: {e}",
             exc_info=True,
         )
+        record_degraded_failure(e)
         # Fallback to showing base64 preview
         result_lines = [
             "Attachment downloaded successfully!",

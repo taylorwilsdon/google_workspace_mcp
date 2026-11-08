@@ -62,6 +62,7 @@ from core.utils import (
     validate_file_path,
 )
 from core.server import server
+from core.telemetry import record_degraded_failure
 from core.config import get_transport_mode
 from gdrive.drive_helpers import (
     DRIVE_QUERY_PATTERNS,
@@ -821,6 +822,7 @@ async def get_drive_file_download_url(
         # raised before the move completed the temp file is still ours to drop.
         tmp_path.unlink(missing_ok=True)
         logger.error(f"[get_drive_file_download_url] Failed to save file: {e}")
+        record_degraded_failure(e)
         return (
             f"Error: Failed to save file for download.\n"
             f"File was downloaded successfully ({size_kb:.1f} KB) but could not be saved.\n\n"
