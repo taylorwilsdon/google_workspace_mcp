@@ -1,6 +1,6 @@
 # Google Calendar Tools Reference
 
-MCP tools for Google Calendar event management, Out of Office and Focus Time blocks, calendar creation, and availability queries. All tools require `user_google_email` (string, required).
+MCP tools for Google Calendar event management, Out of Office and Focus Time blocks, calendar creation and sharing, and availability queries. All tools require `user_google_email` (string, required).
 
 ---
 
@@ -24,6 +24,21 @@ Create a new secondary calendar. Returns its ID for use as `calendar_id` elsewhe
 | summary | string | yes | | Calendar name |
 | description | string | no | | Calendar description |
 | timezone | string | no | | IANA timezone, e.g. `America/New_York` |
+
+### manage_calendar_sharing
+List, share, update, or remove a calendar's access control rules. `list` returns each rule's role, scope, and rule ID for use with `update` and `remove`.
+
+| Parameter | Type | Required | Default | Notes |
+|-----------|------|----------|---------|-------|
+| user_google_email | string | yes | | |
+| action | string | yes | | `list`, `share`, `update`, or `remove` |
+| calendar_id | string | no | primary | Calendar ID |
+| role | string | for share/update | | `freeBusyReader`, `reader`, `writerWithoutPrivateAccess`, `writer`, `owner`, or `none` |
+| scope_type | string | no | user | `user`, `group`, `domain`, or `default` (public). Used by share |
+| scope_value | string | for share | | Email for user/group, domain name for domain. Omit for `default` |
+| rule_id | string | for update/remove | | Rule ID from `list`, e.g. `user:alice@example.com` |
+| send_notifications | boolean | no | true | Email the grantee on share/update |
+| page_token | string | no | | Next-page token (list only) |
 
 ### get_events
 Retrieve events from a calendar. Fetch a single event by ID, list events in a time range, or search by keyword.

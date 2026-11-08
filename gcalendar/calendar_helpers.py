@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import pytz
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 from core.utils import UserInputError
 
@@ -1133,3 +1134,133 @@ def _validate_chat_status(
             f"Must be one of: {', '.join(sorted(_VALID_FOCUS_TIME_CHAT_STATUSES))}"
         )
     return chat_status
+
+
+_ACL_ROLES = {
+    role.lower(): role
+    for role in (
+        "none",
+        "freeBusyReader",
+        "reader",
+        "writerWithoutPrivateAccess",
+        "writer",
+        "owner",
+    )
+}
+_ACL_SCOPE_TYPES = ("default", "user", "group", "domain")
+
+
+def _resolve_acl_role(role: Optional[str], action: str) -> str:
+    """Return the canonical Calendar ACL role for a case-insensitive role name."""
+    if not role or not role.strip():
+        raise UserInputError(f"role is required for {action} action")
+    canonical = _ACL_ROLES.get(role.strip().lower())
+    if canonical is None:
+        raise UserInputError(
+            f"Invalid role '{role}'. Must be one of: {', '.join(_ACL_ROLES.values())}"
+        )
+    return canonical
+
+
+def _build_acl_scope(scope_type: str, scope_value: Optional[str]) -> Dict[str, str]:
+    """Build the ACL scope for a user, group, domain or public (default) grant."""
+    scope_type = scope_type.strip().lower()
+    if scope_type not in _ACL_SCOPE_TYPES:
+        raise UserInputError(
+            f"Invalid scope_type '{scope_type}'. Must be one of: {', '.join(_ACL_SCOPE_TYPES)}"
+        )
+    value = (scope_value or "").strip()
+    if scope_type == "default":
+        if value:
+            raise UserInputError("scope_value must be omitted for scope_type 'default'")
+        return {"type": "default"}
+    if not value:
+        raise UserInputError(f"scope_value is required for scope_type '{scope_type}'")
+    return {"type": scope_type, "value": value}
+
+
+def _format_acl_rule(rule: Dict[str, Any]) -> str:
+    """Format one ACL rule as a single readable line."""
+    scope = rule.get("scope", {})
+    target = " ".join(filter(None, (scope.get("type"), scope.get("value"))))
+    return f"- {rule.get('role')}: {target} (Rule ID: {rule.get('id')})"
+
+
+async def _manage_calendar_acl(
+    service,
+    user_google_email: str,
+    action: str,
+    calendar_id: str,
+    role: Optional[str],
+    scope_type: str,
+    scope_value: Optional[str],
+    rule_id: Optional[str],
+    send_notifications: bool,
+    page_token: Optional[str],
+) -> str:
+    """List, share, update or remove a calendar's sharing rules and summarize the result."""
+    action = action.lower().strip()
+    acl = service.acl()
+
+    if action == "list":
+        params: Dict[str, Any] = {"calendarId": calendar_id}
+        if page_token:
+            params["pageToken"] = page_token
+        response = await asyncio.to_thread(lambda: acl.list(**params).execute())
+        rules = response.get("items", [])
+        lines = [f"Found {len(rules)} sharing rules for calendar '{calendar_id}':"]
+        lines.extend(_format_acl_rule(rule) for rule in rules)
+        if response.get("nextPageToken"):
+            lines.append(f"\nNext page token: {response['nextPageToken']}")
+        return "\n".join(lines)
+
+    if action == "share":
+        body = {
+            "role": _resolve_acl_role(role, action),
+            "scope": _build_acl_scope(scope_type, scope_value),
+        }
+        rule = await asyncio.to_thread(
+            lambda: acl.insert(
+                calendarId=calendar_id,
+                body=body,
+                sendNotifications=send_notifications,
+            ).execute()
+        )
+        return f"Shared calendar '{calendar_id}':\n{_format_acl_rule(rule)}"
+
+    if action not in ("update", "remove"):
+        raise UserInputError(
+            f"Invalid action '{action}'. Must be 'list', 'share', 'update', or 'remove'."
+        )
+    if not rule_id or not rule_id.strip():
+        raise UserInputError(
+            f"rule_id is required for {action} action. Use action 'list' to find it."
+        )
+    rule_id = rule_id.strip()
+    owner = user_google_email.lower()
+    if calendar_id.lower() in ("primary", owner) and rule_id.lower() == f"user:{owner}":
+        raise UserInputError(
+            f"Rule '{rule_id}' is the owner's access to their primary calendar and "
+            "cannot be changed or removed."
+        )
+    if action == "update":
+        request = acl.patch(
+            calendarId=calendar_id,
+            ruleId=rule_id,
+            body={"role": _resolve_acl_role(role, action)},
+            sendNotifications=send_notifications,
+        )
+    else:
+        request = acl.delete(calendarId=calendar_id, ruleId=rule_id)
+    try:
+        rule = await asyncio.to_thread(request.execute)
+    except HttpError as error:
+        if error.resp.status == 404:
+            raise UserInputError(
+                f"No sharing rule '{rule_id}' found on calendar '{calendar_id}'. "
+                "Use action 'list' to see rule IDs."
+            ) from error
+        raise
+    if action == "update":
+        return f"Updated sharing on calendar '{calendar_id}':\n{_format_acl_rule(rule)}"
+    return f"Removed sharing rule '{rule_id}' from calendar '{calendar_id}'."
