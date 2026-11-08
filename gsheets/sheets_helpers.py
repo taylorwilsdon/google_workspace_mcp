@@ -12,8 +12,6 @@ import math
 import re
 from typing import Any, List, Optional, Union
 
-from googleapiclient.errors import HttpError
-
 from core.utils import UserInputError
 
 logger = logging.getLogger(__name__)
@@ -1159,7 +1157,7 @@ async def _copy_sheet_to_spreadsheet(
             )
             .execute
         )
-    except HttpError:
+    except Exception:
         try:
             await asyncio.to_thread(
                 service.spreadsheets()
@@ -1169,7 +1167,7 @@ async def _copy_sheet_to_spreadsheet(
                 )
                 .execute
             )
-        except HttpError as cleanup_error:
+        except Exception as cleanup_error:
             raise RuntimeError(
                 f"Copied sheet '{new_props['title']}' (ID: {new_id}) to spreadsheet "
                 f"{destination_spreadsheet_id} but could not set its title or index; "

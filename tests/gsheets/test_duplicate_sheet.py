@@ -335,14 +335,15 @@ async def test_copy_sheet_to_other_spreadsheet_applies_name_and_index():
 
 
 @pytest.mark.asyncio
-async def test_copy_sheet_rename_failure_removes_copy():
+@pytest.mark.parametrize("error", [_http_error(), TimeoutError("timed out")])
+async def test_copy_sheet_rename_failure_removes_copy(error):
     service = _create_copy_service(
         TEMPLATE_METADATA,
         {"sheetId": 555, "title": "Copy of Template"},
-        batch_update_effect=[_http_error(), {}],
+        batch_update_effect=[error, {}],
     )
 
-    with pytest.raises(HttpError) as excinfo:
+    with pytest.raises(type(error)) as excinfo:
         await _call_create_sheet(
             service,
             sheet_name="Taken",
@@ -350,7 +351,7 @@ async def test_copy_sheet_rename_failure_removes_copy():
             destination_spreadsheet_id="dest-456",
         )
 
-    assert excinfo.value.resp.status == 400
+    assert excinfo.value is error
     assert _batch_update_calls(service)[1] == {
         "spreadsheetId": "dest-456",
         "body": {"requests": [{"deleteSheet": {"sheetId": 555}}]},
@@ -358,11 +359,18 @@ async def test_copy_sheet_rename_failure_removes_copy():
 
 
 @pytest.mark.asyncio
-async def test_copy_sheet_reports_stray_copy_when_cleanup_fails():
+@pytest.mark.parametrize(
+    "errors",
+    [
+        [_http_error(), _http_error(500)],
+        [TimeoutError("timed out"), TimeoutError("timed out")],
+    ],
+)
+async def test_copy_sheet_reports_stray_copy_when_cleanup_fails(errors):
     service = _create_copy_service(
         TEMPLATE_METADATA,
         {"sheetId": 555, "title": "Copy of Template"},
-        batch_update_effect=[_http_error(), _http_error(500)],
+        batch_update_effect=errors,
     )
 
     with pytest.raises(RuntimeError, match=r"'Copy of Template' \(ID: 555\)"):
