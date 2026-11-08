@@ -1,3 +1,5 @@
+import pytest
+
 from auth.google_auth import get_credentials
 
 
@@ -155,11 +157,18 @@ def test_get_credentials_single_user_returns_none_for_missing_requested_user(
     assert fallback_calls == []
 
 
+@pytest.mark.parametrize(
+    ("stored", "requested"),
+    [
+        ("luke@example.com", "Luke@Example.com"),
+        ("Luke@Example.com", "luke@example.com"),
+    ],
+)
 def test_get_credentials_single_user_matches_stored_email_case_insensitively(
-    monkeypatch,
+    monkeypatch, stored, requested
 ):
     credential_store = _CredentialStore(
-        existing_credentials=_RefreshableCredentials(), users=["luke@example.com"]
+        existing_credentials=_RefreshableCredentials(), users=[stored]
     )
     oauth_store = _OAuthSessionStore(session_user=None)
 
@@ -176,16 +185,14 @@ def test_get_credentials_single_user_matches_stored_email_case_insensitively(
     )
 
     result = get_credentials(
-        user_google_email="Luke@Example.com",
+        user_google_email=requested,
         required_scopes=["scope.a"],
     )
 
     assert result is not None and result.token == "fresh-token"
-    assert credential_store.get_calls == ["luke@example.com"]
-    assert credential_store.store_calls == [("luke@example.com", "fresh-token")]
-    assert [call["user_email"] for call in oauth_store.store_calls] == [
-        "luke@example.com"
-    ]
+    assert credential_store.get_calls == [stored]
+    assert credential_store.store_calls == [(stored, "fresh-token")]
+    assert [call["user_email"] for call in oauth_store.store_calls] == [stored]
 
 
 def test_get_credentials_single_user_exact_lookup_when_store_cannot_list(
