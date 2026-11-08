@@ -32,6 +32,8 @@ Reads a Google Doc and returns it as Markdown, preserving headings, bold/italic/
 | suggestions_view_mode | string | no | DEFAULT_FOR_CURRENT_ACCESS | `DEFAULT_FOR_CURRENT_ACCESS`, `SUGGESTIONS_INLINE`, `PREVIEW_SUGGESTIONS_ACCEPTED`, or `PREVIEW_WITHOUT_SUGGESTIONS` |
 | tab_id | string | no | | Render only this tab (no child tabs); overrides a URL `?tab=`. Pass `""` to read every tab of such a URL |
 | include_colors | boolean | no | false | Follow text with an explicit RGB foreground color with `[color: #rrggbb]`. Theme colors are not shown |
+| heading | string | no | | Text of a body heading (case-insensitive, must match exactly one). Renders only that heading and its section, up to the next heading of equal or shallower level; comments are listed as document-wide |
+| heading_level | integer | no | | 1-6; only match a heading of this level |
 
 ### get_doc_content
 Retrieves plain text content of a Google Doc or a Drive file (.docx, etc.). Native Google Docs use the Docs API; Office files are downloaded and text-extracted via Drive API.
@@ -47,6 +49,8 @@ Comments, revision history, exact visual layout, and chip details hidden by the 
 | suggestions_view_mode | string | no | DEFAULT_FOR_CURRENT_ACCESS | `DEFAULT_FOR_CURRENT_ACCESS`, `SUGGESTIONS_INLINE`, `PREVIEW_SUGGESTIONS_ACCEPTED`, or `PREVIEW_WITHOUT_SUGGESTIONS` |
 | tab_id | string | no | | Select a specific Google Docs tab |
 | preserve_context | boolean | no | false | Include readable semantic annotations; output offsets are no longer editing indices |
+| heading | string | no | | Text of a body heading (case-insensitive, must match exactly one). Returns only that heading and its section, up to the next heading of equal or shallower level; the header reports the section's start index. Native Docs only |
+| heading_level | integer | no | | 1-6; only match a heading of this level |
 
 ### search_docs
 Searches for Google Docs by name using Drive API (mimeType filter).
