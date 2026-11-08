@@ -75,6 +75,7 @@ def isolated_attachment_env(tmp_path, monkeypatch):
     monkeypatch.setattr(
         oauth_config_module.get_oauth_config(), "_transport_mode", "streamable-http"
     )
+    monkeypatch.delenv("WORKSPACE_MCP_FILES_GCS_BUCKET", raising=False)
 
     # Reset the cached module-level storage singleton so our patched
     # STORAGE_DIR actually takes effect.
