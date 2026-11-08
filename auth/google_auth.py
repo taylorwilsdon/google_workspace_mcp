@@ -929,9 +929,7 @@ async def handle_auth_callback(
 
             if session_id:
                 try:
-                    session_credentials = store.get_credentials_by_mcp_session(
-                        session_id
-                    )
+                    session_credentials = store.get_credentials(user_google_email)
                     if session_credentials and session_credentials.refresh_token:
                         fallback_refresh_token = session_credentials.refresh_token
                         logger.info(
@@ -1275,6 +1273,10 @@ def get_credentials(
                 if persist_succeeded or is_stateless_mode():
                     # Also update OAuth21SessionStore
                     store = get_oauth21_session_store()
+                    mcp_session_id = session_id
+                    if skip_session_cache:
+                        existing_session = store.get_session_info(user_google_email)
+                        mcp_session_id = (existing_session or {}).get("mcp_session_id")
                     store.store_session(
                         user_email=user_google_email,
                         access_token=credentials.token,
@@ -1284,7 +1286,7 @@ def get_credentials(
                         client_secret=credentials.client_secret,
                         scopes=credentials.scopes,
                         expiry=credentials.expiry,
-                        mcp_session_id=None if skip_session_cache else session_id,
+                        mcp_session_id=mcp_session_id,
                         issuer="https://accounts.google.com",  # Add issuer for Google tokens
                     )
 

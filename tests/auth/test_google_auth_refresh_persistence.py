@@ -1,4 +1,5 @@
 import jwt
+import pytest
 
 from auth.google_auth import get_credentials
 from auth.oauth21_session_store import OAuth21SessionStore
@@ -123,8 +124,9 @@ def test_get_credentials_skips_session_update_when_refresh_persist_fails(monkeyp
     assert session_cache_writes[0][0] == "session-1"
 
 
+@pytest.mark.parametrize("secondary_session_id", [None, "session-2"])
 def test_get_credentials_keeps_refresh_for_account_outside_bound_session(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, secondary_session_id
 ):
     oauth_store = OAuth21SessionStore(
         oauth_state_file=str(tmp_path / "oauth_states.json")
@@ -134,6 +136,12 @@ def test_get_credentials_keeps_refresh_for_account_outside_bound_session(
         access_token="primary-token",
         mcp_session_id="session-1",
     )
+    if secondary_session_id:
+        oauth_store.store_session(
+            user_email="secondary@example.com",
+            access_token="secondary-token",
+            mcp_session_id=secondary_session_id,
+        )
     file_creds = _RefreshableCredentials(
         id_token=jwt.encode(
             {"email": "secondary@example.com"},
@@ -165,6 +173,15 @@ def test_get_credentials_keeps_refresh_for_account_outside_bound_session(
     assert oauth_store.get_credentials_by_mcp_session("session-1").token == (
         "primary-token"
     )
+    if secondary_session_id:
+        assert (
+            oauth_store.get_user_by_mcp_session(secondary_session_id)
+            == "secondary@example.com"
+        )
+        secondary_creds = oauth_store.get_credentials_by_mcp_session(
+            secondary_session_id
+        )
+        assert secondary_creds.token == "fresh-token"
 
 
 def test_get_credentials_single_user_returns_none_for_missing_requested_user(
