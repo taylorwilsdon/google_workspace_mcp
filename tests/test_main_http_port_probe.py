@@ -122,12 +122,14 @@ def test_streamable_http_port_conflict_is_logged_at_error(tmp_path):
             "streamable-http",
             WORKSPACE_MCP_HOST="127.0.0.1",
             WORKSPACE_MCP_PORT=str(port),
+            PORT=str(port),
         )
     finally:
         srv.close()
 
     assert result.returncode == 1
     assert "ERROR" in result.stderr
+    assert f"Cannot start HTTP server on 127.0.0.1:{port}" in result.stderr
     assert f"a server is already listening on 127.0.0.1:{port}" in result.stderr
 
 
@@ -139,6 +141,7 @@ def test_streamable_http_bind_failure_is_not_reported_as_port_in_use(tmp_path):
         "streamable-http",
         WORKSPACE_MCP_HOST="192.0.2.1",
         WORKSPACE_MCP_PORT="8000",
+        PORT="8000",
     )
 
     assert result.returncode == 1
