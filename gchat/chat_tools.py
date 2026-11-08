@@ -135,6 +135,7 @@ async def get_messages(
     page_size: int = 50,
     order_by: str = "createTime desc",
     message_filter: Optional[str] = None,
+    page_token: Optional[str] = None,
 ) -> str:
     """
     Retrieves messages from a Google Chat space.
@@ -146,9 +147,11 @@ async def get_messages(
                           'createTime > "2026-03-18T00:00:00-03:00"'
                           'createTime > "2026-03-18T00:00:00-03:00" AND createTime < "2026-03-19T00:00:00-03:00"'
                           'thread.name = spaces/X/threads/Y'
+        page_token: Token for the next page, taken from a previous response. Keep all other arguments unchanged.
 
     Returns:
-        str: Formatted messages from the specified space.
+        str: Formatted messages from the specified space. When more messages
+            remain, a "Next page token" line is appended.
     """
     logger.info(f"[get_messages] Space ID: '{space_id}' for user '{user_google_email}'")
 
@@ -163,13 +166,26 @@ async def get_messages(
     list_params = {"parent": space_id, "pageSize": page_size, "orderBy": order_by}
     if message_filter is not None:
         list_params["filter"] = message_filter
+    if page_token:
+        list_params["pageToken"] = page_token
     response = await asyncio.to_thread(
         chat_service.spaces().messages().list(**list_params).execute
     )
 
     messages = response.get("messages", [])
+    next_page_token = response.get("nextPageToken")
     if not messages:
-        return f"No messages found in space '{space_name}' (ID: {space_id})."
+        if next_page_token:
+            return (
+                f"No messages on this page in space '{space_name}' (ID: {space_id}), "
+                f"and more pages remain.\nNext page token: {next_page_token}"
+            )
+        matching = " matching the filter" if message_filter else ""
+        if page_token:
+            return (
+                f"No more messages{matching} in space '{space_name}' (ID: {space_id})."
+            )
+        return f"No messages{matching} found in space '{space_name}' (ID: {space_id})."
 
     # Pre-resolve unique senders sequentially. The underlying googleapiclient/httplib2
     # service objects are not safe to fan out across worker threads.
@@ -229,6 +245,8 @@ async def get_messages(
             output.append(f"  [reactions: {', '.join(parts)}]")
         output.append(f"  (Message ID: {msg_name})\n")
 
+    if next_page_token:
+        output.append(f"Next page token: {next_page_token}")
     return "\n".join(output)
 
 
