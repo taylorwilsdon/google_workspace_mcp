@@ -3171,6 +3171,100 @@ async def manage_doc_tab(
     }
 
 
+@server.tool(
+    title="Replace Doc Section",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("replace_doc_section", service_type="docs")
+@require_google_service("docs", "docs_write")
+async def replace_doc_section(
+    service: Any,
+    user_google_email: str,
+    document_id: str,
+    heading: str,
+    markdown_text: str,
+    heading_level: Optional[int] = None,
+    tab_id: Optional[str] = None,
+    append: bool = False,
+) -> str:
+    """
+    Replace or append to the body of a heading section using Markdown, without indices.
+
+    The section is identified by its heading text, resolved at execution time.
+    When heading matches zero or more than one heading the operation is refused.
+    The section body runs from just after the matched heading to the start of the
+    next heading of equal or shallower level (or to the end of the document body).
+    The heading paragraph itself is never modified.
+
+    This is the section-scoped complement of manage_doc_tab's populate_from_markdown:
+    use it to update one section of a multi-section document without touching the rest.
+
+    Args:
+        user_google_email: User's Google email address
+        document_id: ID of the document to update
+        heading: Text of the heading whose section body to replace (case-insensitive,
+            must match exactly one heading in the document body)
+        markdown_text: Markdown to render into the section body
+        heading_level: Optional 1-6 heading level to narrow the match when multiple
+            headings share the same text
+        tab_id: Optional document tab ID (required when the document has multiple tabs
+            and the heading is not in the first tab)
+        append: When True, insert markdown after the existing section body instead of
+            replacing it. Defaults to False (replace).
+
+    Returns:
+        str: Confirmation message with operation details and document link
+    """
+    logger.info(
+        f"[replace_doc_section] Doc={document_id}, heading={heading!r}, "
+        f"heading_level={heading_level}, tab={tab_id}, append={append}"
+    )
+
+    validator = ValidationManager()
+    is_valid, error_msg = validator.validate_document_id(document_id)
+    if not is_valid:
+        return f"Error: {error_msg}"
+
+    if not heading.strip():
+        return "Error: 'heading' must not be empty."
+    if heading_level is not None and not 1 <= heading_level <= 6:
+        return "Error: 'heading_level' must be between 1 and 6."
+    if not markdown_text:
+        return "Error: 'markdown_text' must not be empty."
+
+    doc = await asyncio.to_thread(
+        service.documents().get(documentId=document_id, includeTabsContent=True).execute
+    )
+    section = find_heading_section(doc, heading, heading_level, tab_id)
+
+    if not append and section["footnote_refs"]:
+        raise UserInputError(
+            f"The section under heading {heading!r} contains "
+            f"{section['footnote_refs']} footnote reference(s); replacing it would "
+            "detach them. Use append=True to add content after the section, or edit by index."
+        )
+
+    requests = build_section_markdown_requests(section, markdown_text, append, tab_id)
+    if not requests:
+        return "Error: 'markdown_text' rendered to no content; nothing to insert."
+
+    body: dict[str, Any] = {"requests": requests}
+    if doc.get("revisionId"):
+        body["writeControl"] = {"requiredRevisionId": doc["revisionId"]}
+    await asyncio.to_thread(
+        service.documents().batchUpdate(documentId=document_id, body=body).execute
+    )
+
+    verb = "Appended to" if append or section["section_end"] <= section["body_start"] else "Replaced"
+    link = f"https://docs.google.com/document/d/{document_id}/edit"
+    return f"{verb} section under heading {heading!r} in document {document_id}. Link: {link}"
+
+
 # Create comment management tools for documents
 _comment_tools = create_comment_tools("document", "document_id")
 
