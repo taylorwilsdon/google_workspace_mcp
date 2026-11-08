@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 # Limit returned ranges; the count remains exact.
 EMPTY_PARAGRAPH_RANGE_LIMIT = 100
+HEADING_LIST_LIMIT = 50
 
 
 def truncate_preview(text: str, preview_chars: Optional[int]) -> str:
@@ -511,7 +512,10 @@ def _resolve_heading_section(
         if text.casefold() == wanted and heading_level in (None, level)
     ]
     if not matches:
-        available = ", ".join(repr(text) for _, _, text in headings if text)
+        named = [text for _, _, text in headings if text]
+        available = ", ".join(map(repr, named[:HEADING_LIST_LIMIT]))
+        if len(named) > HEADING_LIST_LIMIT:
+            available += f" and {len(named) - HEADING_LIST_LIMIT} more"
         raise UserInputError(
             f"No heading matching {heading!r} found in the document body "
             f"(heading_level={heading_level!r}, tab_id={tab_id!r}). "
