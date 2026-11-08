@@ -987,6 +987,14 @@ async def handle_auth_callback(
                     "session state was not updated."
                 )
 
+        session_user = store.get_user_by_mcp_session(session_id) if session_id else None
+        if session_user and session_user != user_google_email:
+            logger.info(
+                f"[handle_auth_callback] Session belongs to {session_user}; storing "
+                f"{user_google_email} without a session binding"
+            )
+            session_id = None
+
         # Always save to OAuth21SessionStore for centralized management
         store.store_session(
             user_email=user_google_email,

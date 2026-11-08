@@ -35,6 +35,7 @@ class _DummyOAuthStore:
         self.stored_refresh_token = None
         self.store_calls = 0
         self.store_kwargs = []
+        self.session_user = None
 
     def validate_and_consume_oauth_state(self, state, session_id=None):  # noqa: ARG002
         if self._state_info is not None:
@@ -61,6 +62,9 @@ class _DummyOAuthStore:
 
     def get_credentials_by_mcp_session(self, mcp_session_id):  # noqa: ARG002
         return self._session_credentials
+
+    def get_user_by_mcp_session(self, mcp_session_id):  # noqa: ARG002
+        return self.session_user
 
     def store_session(self, **kwargs):
         self.store_calls += 1
@@ -535,6 +539,35 @@ async def test_callback_does_not_borrow_refresh_token_from_another_account(
 
     assert credentials.refresh_token == "secondary-refresh-token"
     assert credential_store.saved_credentials.refresh_token == "secondary-refresh-token"
+
+
+@pytest.mark.asyncio
+async def test_callback_for_second_account_skips_binding_another_accounts_session(
+    monkeypatch,
+):
+    oauth_store, credential_store = _patch_successful_callback(
+        monkeypatch,
+        state_info={"session_id": None, "code_verifier": "verifier"},
+        google_email="secondary@gmail.com",
+    )
+    oauth_store.session_user = "primary@gmail.com"
+    session_cache_writes = []
+    monkeypatch.setattr(
+        "auth.google_auth.save_credentials_to_session",
+        lambda *args: session_cache_writes.append(args),
+    )
+
+    email, _credentials = await handle_auth_callback(
+        scopes=["scope.a"],
+        authorization_response="http://localhost/callback?state=abc123&code=code123",
+        redirect_uri="http://localhost/callback",
+        session_id="session-1",
+    )
+
+    assert email == "secondary@gmail.com"
+    assert credential_store.saved_user_email == "secondary@gmail.com"
+    assert oauth_store.store_kwargs[-1]["mcp_session_id"] is None
+    assert session_cache_writes == []
 
 
 @pytest.mark.asyncio
