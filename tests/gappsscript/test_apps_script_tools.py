@@ -66,6 +66,7 @@ from gappsscript.apps_script_tools import (
     get_script_activity,
     run_script_function,
 )
+from gdrive.drive_helpers import INCOMPLETE_SEARCH_WARNING
 
 
 def _parameters_adapter():
@@ -113,6 +114,60 @@ async def test_list_script_projects():
     assert "Found 1 Apps Script projects" in result
     assert "Test Project" in result
     assert "test123" in result
+
+
+@pytest.mark.asyncio
+async def test_list_script_projects_searches_shared_drives():
+    """Projects stored in shared drives are part of the search."""
+    mock_service = Mock()
+    mock_service.files().list().execute.return_value = {"files": []}
+
+    await _list_script_projects_impl(
+        service=mock_service, user_google_email="test@example.com", page_size=50
+    )
+
+    kwargs = mock_service.files().list.call_args.kwargs
+    assert kwargs["corpora"] == "allDrives"
+    assert kwargs["supportsAllDrives"] is True
+    assert kwargs["includeItemsFromAllDrives"] is True
+    assert kwargs["fields"] == (
+        "nextPageToken, incompleteSearch, files(id, name, createdTime, modifiedTime)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_script_projects_keeps_page_token_on_empty_page():
+    """An empty page that has a next page is not reported as no projects."""
+    mock_service = Mock()
+    mock_service.files().list().execute.return_value = {
+        "files": [],
+        "nextPageToken": "page-2",
+        "incompleteSearch": True,
+    }
+
+    result = await _list_script_projects_impl(
+        service=mock_service, user_google_email="test@example.com", page_size=50
+    )
+
+    assert "No Apps Script projects found" not in result
+    assert "page-2" in result
+    assert INCOMPLETE_SEARCH_WARNING in result
+
+
+@pytest.mark.asyncio
+async def test_list_script_projects_flags_incomplete_empty_search():
+    """An empty incomplete search is not reported as definitively empty."""
+    mock_service = Mock()
+    mock_service.files().list().execute.return_value = {
+        "files": [],
+        "incompleteSearch": True,
+    }
+
+    result = await _list_script_projects_impl(
+        service=mock_service, user_google_email="test@example.com", page_size=50
+    )
+
+    assert result == f"No Apps Script projects found.\n{INCOMPLETE_SEARCH_WARNING}"
 
 
 @pytest.mark.asyncio
