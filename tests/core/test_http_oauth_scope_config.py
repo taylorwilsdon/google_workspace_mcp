@@ -1,6 +1,8 @@
 import json
+import logging
 from types import SimpleNamespace
 
+import fastmcp
 import pytest
 from fastmcp import FastMCP
 from fastmcp.server.auth.providers.google import GoogleProvider
@@ -501,3 +503,74 @@ def test_configure_server_for_http_passes_consent_mode_to_google_provider(monkey
     server_module.configure_server_for_http()
 
     assert captured["require_authorization_consent"] == "remember"
+
+
+def _configure_standard_oauth21(monkeypatch):
+    class FakeGoogleProvider:
+        def __init__(self, **kwargs):
+            self.client_storage = kwargs["client_storage"]
+            self.client_registration_options = None
+
+    for var in (
+        "FASTMCP_SERVER_AUTH_GOOGLE_JWT_SIGNING_KEY",
+        "WORKSPACE_MCP_OAUTH_PROXY_STORAGE_BACKEND",
+        "WORKSPACE_MCP_OAUTH_PROXY_VALKEY_HOST",
+        "WORKSPACE_MCP_OAUTH_PROXY_DISK_DIRECTORY",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(server_module, "get_transport_mode", lambda: "streamable-http")
+    monkeypatch.setattr(server_module, "WorkspaceGoogleProvider", FakeGoogleProvider)
+    monkeypatch.setattr(server_module, "set_auth_provider", lambda provider: None)
+    monkeypatch.setattr(server_module, "get_oauth_proxy_expiry_kwargs", lambda: {})
+    monkeypatch.setattr(server_module, "_auth_provider", server_module._auth_provider)
+    monkeypatch.setattr(server_module.server, "auth", server_module.server.auth)
+    monkeypatch.setattr(
+        "auth.oauth_config.get_oauth_config",
+        lambda: SimpleNamespace(
+            is_oauth21_enabled=lambda: True,
+            is_configured=lambda: True,
+            is_public_client=lambda: False,
+            is_external_oauth21_provider=lambda: False,
+            client_id="client-id",
+            client_secret="client-secret",
+            get_oauth_base_url=lambda: "https://workspace-mcp.example.test",
+            redirect_path="/oauth2callback",
+        ),
+    )
+
+
+def test_configure_server_for_http_logs_default_storage_directory(
+    monkeypatch, tmp_path, caplog
+):
+    _configure_standard_oauth21(monkeypatch)
+    monkeypatch.setattr(fastmcp.settings, "home", tmp_path)
+    caplog.set_level(logging.INFO, logger=server_module.logger.name)
+
+    server_module.configure_server_for_http()
+
+    assert server_module.server.auth.client_storage is None
+    GoogleProvider(
+        client_id="client-id",
+        client_secret="client-secret",
+        base_url="https://workspace-mcp.example.test",
+    )
+    [storage_dir] = (tmp_path / "oauth-proxy").iterdir()
+    assert (
+        "FastMCP default encrypted FileTreeStore for OAuth proxy client_storage "
+        f"(directory={storage_dir})" in caplog.text
+    )
+
+
+@pytest.mark.parametrize("backend", ["memory", "disk"])
+def test_configure_server_for_http_skips_default_storage_log_with_backend(
+    monkeypatch, tmp_path, caplog, backend
+):
+    _configure_standard_oauth21(monkeypatch)
+    monkeypatch.setenv("WORKSPACE_MCP_OAUTH_PROXY_STORAGE_BACKEND", backend)
+    monkeypatch.setenv("WORKSPACE_MCP_OAUTH_PROXY_DISK_DIRECTORY", str(tmp_path))
+    caplog.set_level(logging.INFO, logger=server_module.logger.name)
+
+    server_module.configure_server_for_http()
+
+    assert server_module.server.auth.client_storage is not None
+    assert "FastMCP default encrypted FileTreeStore" not in caplog.text
