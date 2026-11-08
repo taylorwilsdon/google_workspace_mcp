@@ -59,6 +59,9 @@ class _DummyOAuthStore:
             return self._session_credentials
         return None
 
+    def get_credentials_by_mcp_session(self, mcp_session_id):  # noqa: ARG002
+        return self._session_credentials
+
     def store_session(self, **kwargs):
         self.store_calls += 1
         self.stored_refresh_token = kwargs.get("refresh_token")
