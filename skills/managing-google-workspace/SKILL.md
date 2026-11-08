@@ -136,6 +136,7 @@ For parameters: [references/calendar.md](references/calendar.md)
 | Read doc as Markdown | `get_doc_as_markdown` |
 | Read doc content (raw) | `get_doc_content` |
 | Read plain text with link/chip targets and document segments | `get_doc_content(preserve_context=True)` |
+| Read only the section under one heading | `get_doc_as_markdown(heading=...)` or `get_doc_content(heading=...)` |
 | Create new doc | `create_doc` |
 | Modify text / apply styles (by index or by `heading`) | `modify_doc_text` |
 | Insert elements (tables, lists, breaks) | `insert_doc_elements` |
