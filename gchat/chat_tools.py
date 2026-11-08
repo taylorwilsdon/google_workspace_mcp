@@ -180,12 +180,12 @@ async def get_messages(
                 f"No messages on this page in space '{space_name}' (ID: {space_id}), "
                 f"and more pages remain.\nNext page token: {next_page_token}"
             )
+        matching = " matching the filter" if message_filter else ""
         if page_token:
-            matching = " matching the filter" if message_filter else ""
             return (
                 f"No more messages{matching} in space '{space_name}' (ID: {space_id})."
             )
-        return f"No messages found in space '{space_name}' (ID: {space_id})."
+        return f"No messages{matching} found in space '{space_name}' (ID: {space_id})."
 
     # Pre-resolve unique senders sequentially. The underlying googleapiclient/httplib2
     # service objects are not safe to fan out across worker threads.
