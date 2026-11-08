@@ -18,11 +18,13 @@ class _DummyOAuthStore:
     def __init__(
         self,
         session_credentials=None,
+        session_email="user@gmail.com",
         latest_state_info=None,
         bound_state_session_id=_UNSET,
         state_info=None,
     ):
         self._session_credentials = session_credentials
+        self._session_email = session_email
         self._latest_state_info = latest_state_info or {
             "session_id": None,
             "code_verifier": "verifier",
@@ -52,8 +54,10 @@ class _DummyOAuthStore:
         self.latest_calls.append((initiating_session_id, allow_any_session))
         return self._latest_state_info
 
-    def get_credentials_by_mcp_session(self, mcp_session_id):  # noqa: ARG002
-        return self._session_credentials
+    def get_credentials(self, user_email):
+        if user_email == self._session_email:
+            return self._session_credentials
+        return None
 
     def store_session(self, **kwargs):
         self.store_calls += 1
@@ -485,6 +489,49 @@ async def test_callback_prefers_session_refresh_token_over_credential_store(
     assert credentials.refresh_token == "session-refresh-token"
     assert credential_store.saved_credentials.refresh_token == "session-refresh-token"
     assert oauth_store.stored_refresh_token == "session-refresh-token"
+
+
+@pytest.mark.asyncio
+async def test_callback_does_not_borrow_refresh_token_from_another_account(
+    monkeypatch,
+):
+    callback_credentials = _make_credentials(refresh_token=None)
+    oauth_store = _DummyOAuthStore(
+        session_credentials=_make_credentials(refresh_token="primary-refresh-token"),
+        session_email="primary@gmail.com",
+    )
+    credential_store = _DummyCredentialStore(
+        existing_credentials=_make_credentials(refresh_token="secondary-refresh-token")
+    )
+
+    monkeypatch.setattr(
+        "auth.google_auth.create_oauth_flow",
+        lambda **kwargs: _DummyFlow(callback_credentials),  # noqa: ARG005
+    )
+    monkeypatch.setattr(
+        "auth.google_auth.get_oauth21_session_store", lambda: oauth_store
+    )
+    monkeypatch.setattr(
+        "auth.google_auth.get_credential_store", lambda: credential_store
+    )
+    monkeypatch.setattr(
+        "auth.google_auth.get_user_info",
+        lambda credentials: {"email": "secondary@gmail.com"},  # noqa: ARG005
+    )
+    monkeypatch.setattr(
+        "auth.google_auth.save_credentials_to_session", lambda *args: None
+    )
+    monkeypatch.setattr("auth.google_auth.is_stateless_mode", lambda: False)
+
+    _email, credentials = await handle_auth_callback(
+        scopes=["scope.a"],
+        authorization_response="http://localhost/callback?state=abc123&code=code123",
+        redirect_uri="http://localhost/callback",
+        session_id="session-1",
+    )
+
+    assert credentials.refresh_token == "secondary-refresh-token"
+    assert credential_store.saved_credentials.refresh_token == "secondary-refresh-token"
 
 
 @pytest.mark.asyncio
