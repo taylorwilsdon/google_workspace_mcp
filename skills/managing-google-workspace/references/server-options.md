@@ -90,7 +90,7 @@ Manually start the legacy OAuth 2.0 browser flow, e.g. to re-authenticate with d
 | Parameter | Type | Required | Default | Notes |
 |-----------|------|----------|---------|-------|
 | user_google_email | string | no | `USER_GOOGLE_EMAIL` env | |
-| service_name | string | no | `""` | Service to authorize, e.g. `"gmail"`, `"drive"`. Omit to report authenticated accounts. |
+| service_name | string | no | omitted | Service to authorize, e.g. `"gmail"`, `"drive"`. Omit it to report authenticated accounts. |
 | list_accounts | boolean | no | `false` | If true, returns already-authenticated Google accounts without starting a flow |
 
 ## Credential loading priority

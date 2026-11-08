@@ -15,7 +15,10 @@ from core.warning_filters import install_startup_warning_filters
 install_startup_warning_filters()
 
 from auth.auth_info_middleware import AuthInfoMiddleware
-from auth.credential_store import get_legacy_authenticated_users
+from auth.credential_store import (
+    CredentialStoreUnavailableError,
+    get_legacy_authenticated_users,
+)
 from core.camel_case_middleware import CamelCaseArgumentsMiddleware
 from core.portable_schema_middleware import PortableSchemaMiddleware
 from auth.google_auth import (
@@ -1047,7 +1050,7 @@ async def legacy_oauth2_callback(request: Request) -> HTMLResponse:
     ),
 )
 async def start_google_auth(
-    service_name: str = "",
+    service_name: Optional[str] = None,
     user_google_email: str = USER_GOOGLE_EMAIL,
     list_accounts: bool = False,
 ) -> str:
@@ -1078,7 +1081,9 @@ async def start_google_auth(
             "original tool."
         )
 
-    wants_account_list = list_accounts or not service_name.strip()
+    # Only an omitted service_name asks for the account list; an explicit value
+    # (even blank) keeps the authentication behaviour.
+    wants_account_list = list_accounts or service_name is None
 
     if is_trust_gateway_identity():
         if wants_account_list:
@@ -1086,18 +1091,24 @@ async def start_google_auth(
         user_google_email = await get_verified_gateway_principal()
 
     if wants_account_list:
-        accounts = get_legacy_authenticated_users()
+        try:
+            accounts = get_legacy_authenticated_users()
+        except CredentialStoreUnavailableError as e:
+            return f"Could not list authenticated accounts: {e}"
         if not accounts:
             return "No accounts are currently authenticated."
         return f"Authenticated accounts: {', '.join(accounts)}"
 
     if not user_google_email:
-        accounts = get_legacy_authenticated_users()
-        accounts_msg = (
-            f" Authenticated accounts: {', '.join(accounts)}."
-            if accounts
-            else " No accounts are currently authenticated."
-        )
+        try:
+            accounts = get_legacy_authenticated_users()
+            accounts_msg = (
+                f" Authenticated accounts: {', '.join(accounts)}."
+                if accounts
+                else " No accounts are currently authenticated."
+            )
+        except CredentialStoreUnavailableError:
+            accounts_msg = ""
         raise ValueError(f"user_google_email must be provided.{accounts_msg}")
 
     error_message = check_client_secrets()
