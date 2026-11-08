@@ -367,6 +367,10 @@ async def get_doc_content(
                 f"Showing only the section under heading {heading!r}, "
                 f"starting at document index {content[0]['startIndex']}."
             )
+            if tab_from_url:
+                tabs = doc_data.get("tabs", [])
+                tab_notice = _url_tab_notice(tabs, _find_tab(tabs, tab_id), tab_id)
+                notice = f"{tab_notice} {notice}".lstrip()
             body_text = (
                 render_doc_to_plain_text(section, tab_id)
                 if preserve_context
@@ -2866,7 +2870,10 @@ async def get_doc_as_markdown(
 
     notice = ""
     if heading is not None:
+        tabs = doc.get("tabs", [])
         doc = heading_section_document(doc, heading, heading_level, tab_id)
+        if tab_from_url:
+            notice = _url_tab_notice(tabs, _find_tab(tabs, tab_id), tab_id)
     elif tab_id:
         tabs = doc.get("tabs", [])
         tab = _find_tab(tabs, tab_id)
