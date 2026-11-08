@@ -17,11 +17,18 @@ class _RefreshableCredentials:
         self.valid = False
         self.expired = True
         self.id_token = id_token
+        self.refreshed_email = None
 
     def refresh(self, request):  # noqa: ARG002
         self.token = "fresh-token"
         self.valid = True
         self.expired = False
+        if self.refreshed_email:
+            self.id_token = jwt.encode(
+                {"email": self.refreshed_email},
+                "test-signing-key-that-is-long-enough",
+                algorithm="HS256",
+            )
 
 
 class _OAuthSessionStore:
@@ -122,6 +129,38 @@ def test_get_credentials_skips_session_update_when_refresh_persist_fails(monkeyp
     assert oauth_store.store_calls == []
     assert len(session_cache_writes) == 1
     assert session_cache_writes[0][0] == "session-1"
+
+
+@pytest.mark.parametrize(
+    ("refreshed_email", "expect_credentials"),
+    [("primary@example.com", False), ("Secondary@Example.com", True), (None, True)],
+)
+def test_get_credentials_discards_refresh_that_returns_another_account(
+    monkeypatch, refreshed_email, expect_credentials
+):
+    file_creds = _RefreshableCredentials()
+    file_creds.refreshed_email = refreshed_email
+    credential_store = _CredentialStore(existing_credentials=file_creds)
+
+    monkeypatch.delenv("MCP_SINGLE_USER_MODE", raising=False)
+    monkeypatch.setattr(
+        "auth.google_auth.get_oauth21_session_store",
+        lambda: _OAuthSessionStore(session_user=None),
+    )
+    monkeypatch.setattr(
+        "auth.google_auth.get_credential_store", lambda: credential_store
+    )
+    monkeypatch.setattr("auth.google_auth.is_stateless_mode", lambda: False)
+    monkeypatch.setattr(
+        "auth.google_auth.has_required_scopes", lambda scopes, required: True
+    )
+
+    result = get_credentials(
+        user_google_email="secondary@example.com", required_scopes=["scope.a"]
+    )
+
+    assert (result is file_creds) is expect_credentials
+    assert bool(credential_store.store_calls) is expect_credentials
 
 
 @pytest.mark.parametrize("secondary_session_id", [None, "session-2"])
