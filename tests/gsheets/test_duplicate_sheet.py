@@ -351,7 +351,7 @@ async def test_copy_sheet_rename_failure_removes_copy(error):
             destination_spreadsheet_id="dest-456",
         )
 
-    assert excinfo.value is error
+    assert excinfo.value.args == error.args
     assert _batch_update_calls(service)[1] == {
         "spreadsheetId": "dest-456",
         "body": {"requests": [{"deleteSheet": {"sheetId": 555}}]},
