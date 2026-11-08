@@ -17,6 +17,7 @@ install_startup_warning_filters()
 from auth.auth_info_middleware import AuthInfoMiddleware
 from core.camel_case_middleware import CamelCaseArgumentsMiddleware
 from core.portable_schema_middleware import PortableSchemaMiddleware
+from core.toolset_header_middleware import ToolsetHeaderMiddleware
 from auth.google_auth import (
     check_client_secrets,
     get_google_api_timeout,
@@ -539,6 +540,10 @@ server = SecureFastMCP(
     icons=_brand_icons,
     lifespan=_freeze_startup_heap | _google_api_executor,
 )
+
+# Narrow tools per request with X-MCP-Toolsets / X-MCP-Tools. See
+# https://github.com/taylorwilsdon/google_workspace_mcp/issues/509
+server.add_middleware(ToolsetHeaderMiddleware())
 
 # Accept camelCase argument names (calendarId, timeMin, ...) from callers that
 # mirror the Google API field names, mapping them onto the snake_case tool
