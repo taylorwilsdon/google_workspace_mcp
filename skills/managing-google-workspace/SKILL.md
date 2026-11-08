@@ -101,6 +101,7 @@ For parameters: [references/gmail.md](references/gmail.md)
 | Download file | `get_drive_file_download_url` |
 | Create file | `create_drive_file` |
 | Create folder | `create_drive_folder` |
+| Create shortcut | `create_drive_file` (`shortcut_target_id`) |
 | Copy file | `copy_drive_file` |
 | Update file metadata | `update_drive_file` |
 | Share / set permissions | `set_drive_file_permissions` |
