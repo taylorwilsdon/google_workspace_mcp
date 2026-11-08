@@ -111,14 +111,14 @@ async def test_start_google_auth_uses_verified_gateway_principal(monkeypatch):
 
 
 @pytest.fixture
-def legacy_mode(monkeypatch):
+def legacy_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     """Force legacy OAuth 2.0 mode in both the server and the credential-store helper."""
     for target in ("core.server", "auth.oauth_config"):
         monkeypatch.setattr(f"{target}.is_oauth21_enabled", lambda: False)
         monkeypatch.setattr(f"{target}.is_trust_gateway_identity", lambda: False)
 
 
-def _use_store(monkeypatch, store):
+def _use_store(monkeypatch: pytest.MonkeyPatch, store: object) -> None:
     """Make the credential-store helper return the given fake store."""
     monkeypatch.setattr("auth.credential_store.get_credential_store", lambda: store)
 
@@ -126,18 +126,18 @@ def _use_store(monkeypatch, store):
 class _FakeStore:
     """Credential store stub returning a fixed list of users."""
 
-    def __init__(self, users):
+    def __init__(self, users: list[str]) -> None:
         self._users = users
 
-    def list_users(self):
+    def list_users(self) -> list[str]:
         """Return the configured users."""
         return list(self._users)
 
 
 @pytest.mark.asyncio
 async def test_start_google_auth_lists_accounts_in_legacy_mode(
-    monkeypatch, legacy_mode
-):
+    monkeypatch: pytest.MonkeyPatch, legacy_mode: None
+) -> None:
     """list_accounts=True reports every stored account in legacy mode."""
     _use_store(monkeypatch, _FakeStore(["alice@example.com", "bob@example.com"]))
 
@@ -148,8 +148,8 @@ async def test_start_google_auth_lists_accounts_in_legacy_mode(
 
 @pytest.mark.asyncio
 async def test_start_google_auth_lists_accounts_when_service_name_omitted(
-    monkeypatch, legacy_mode
-):
+    monkeypatch: pytest.MonkeyPatch, legacy_mode: None
+) -> None:
     """Omitting service_name, or passing list_accounts, lists accounts."""
     _use_store(monkeypatch, _FakeStore(["alice@example.com"]))
 
@@ -162,8 +162,8 @@ async def test_start_google_auth_lists_accounts_when_service_name_omitted(
 
 @pytest.mark.asyncio
 async def test_start_google_auth_blank_service_name_does_not_list(
-    monkeypatch, legacy_mode
-):
+    monkeypatch: pytest.MonkeyPatch, legacy_mode: None
+) -> None:
     """An explicitly blank service_name keeps the authentication path."""
     _use_store(monkeypatch, _FakeStore(["alice@example.com"]))
 
@@ -174,7 +174,9 @@ async def test_start_google_auth_blank_service_name_does_not_list(
 
 
 @pytest.mark.asyncio
-async def test_start_google_auth_lists_accounts_when_empty(monkeypatch, legacy_mode):
+async def test_start_google_auth_lists_accounts_when_empty(
+    monkeypatch: pytest.MonkeyPatch, legacy_mode: None
+) -> None:
     """An empty store reports that no accounts are authenticated."""
     _use_store(monkeypatch, _FakeStore([]))
 
@@ -184,10 +186,12 @@ async def test_start_google_auth_lists_accounts_when_empty(monkeypatch, legacy_m
 
 
 @pytest.mark.asyncio
-async def test_start_google_auth_reports_store_failure(monkeypatch, legacy_mode):
+async def test_start_google_auth_reports_store_failure(
+    monkeypatch: pytest.MonkeyPatch, legacy_mode: None
+) -> None:
     """A store that cannot be opened is reported, not shown as 'no accounts'."""
 
-    def broken_store():
+    def broken_store() -> object:
         raise OSError("credentials directory unreadable")
 
     monkeypatch.setattr("auth.credential_store.get_credential_store", broken_store)
@@ -200,7 +204,9 @@ async def test_start_google_auth_reports_store_failure(monkeypatch, legacy_mode)
 
 
 @pytest.mark.asyncio
-async def test_start_google_auth_list_accounts_disabled_in_oauth21(monkeypatch):
+async def test_start_google_auth_list_accounts_disabled_in_oauth21(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """OAuth 2.1 mode never lists stored accounts."""
     monkeypatch.setattr("core.server.is_oauth21_enabled", lambda: True)
     monkeypatch.setattr("core.server.is_external_oauth21_provider", lambda: False)
@@ -213,7 +219,9 @@ async def test_start_google_auth_list_accounts_disabled_in_oauth21(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_start_google_auth_list_accounts_disabled_in_gateway_mode(monkeypatch):
+async def test_start_google_auth_list_accounts_disabled_in_gateway_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Trusted-gateway mode never lists stored accounts."""
     monkeypatch.setattr("core.server.is_oauth21_enabled", lambda: False)
     monkeypatch.setattr("core.server.is_trust_gateway_identity", lambda: True)
@@ -232,8 +240,8 @@ async def test_start_google_auth_list_accounts_disabled_in_gateway_mode(monkeypa
 
 @pytest.mark.asyncio
 async def test_start_google_auth_missing_email_reports_authenticated_accounts(
-    monkeypatch, legacy_mode
-):
+    monkeypatch: pytest.MonkeyPatch, legacy_mode: None
+) -> None:
     """A missing user_google_email error names the authenticated accounts."""
     _use_store(monkeypatch, _FakeStore(["user1@example.com", "user2@example.com"]))
 
@@ -247,8 +255,8 @@ async def test_start_google_auth_missing_email_reports_authenticated_accounts(
 
 @pytest.mark.asyncio
 async def test_start_google_auth_output_never_exposes_tokens_or_file_paths(
-    monkeypatch, legacy_mode
-):
+    monkeypatch: pytest.MonkeyPatch, legacy_mode: None
+) -> None:
     """Only email addresses appear in the account list."""
 
     class FakeStoreWithSensitiveData(_FakeStore):
@@ -267,7 +275,9 @@ async def test_start_google_auth_output_never_exposes_tokens_or_file_paths(
         assert forbidden not in result.lower()
 
 
-def test_get_legacy_authenticated_users_helper(monkeypatch, legacy_mode):
+def test_get_legacy_authenticated_users_helper(
+    monkeypatch: pytest.MonkeyPatch, legacy_mode: None
+) -> None:
     """The helper filters non-emails, respects modes and separates failures."""
     from auth.credential_store import (
         CredentialStoreUnavailableError,
@@ -290,7 +300,7 @@ def test_get_legacy_authenticated_users_helper(monkeypatch, legacy_mode):
     class NoEnumerationStore:
         """Backend that cannot enumerate users."""
 
-        def list_users(self):
+        def list_users(self) -> list[str]:
             """Signal that enumeration is unsupported."""
             raise NotImplementedError("unsupported")
 
@@ -300,7 +310,7 @@ def test_get_legacy_authenticated_users_helper(monkeypatch, legacy_mode):
     class FailingStore:
         """Backend whose enumeration fails."""
 
-        def list_users(self):
+        def list_users(self) -> list[str]:
             """Fail as an unreadable store would."""
             raise OSError("disk error")
 
@@ -311,12 +321,12 @@ def test_get_legacy_authenticated_users_helper(monkeypatch, legacy_mode):
 
 @pytest.mark.asyncio
 async def test_start_google_auth_blank_service_name_uses_generic_label(
-    monkeypatch, legacy_mode
-):
+    monkeypatch: pytest.MonkeyPatch, legacy_mode: None
+) -> None:
     """A blank service_name still authenticates, with a generic display label."""
     captured = {}
 
-    async def fake_start_auth_flow(**kwargs):
+    async def fake_start_auth_flow(**kwargs: object) -> str:
         captured.update(kwargs)
         return "auth-url"
 
