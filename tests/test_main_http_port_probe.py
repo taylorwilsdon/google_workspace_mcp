@@ -99,7 +99,7 @@ def _start_server(tmp_path, *args: str, **env: str) -> subprocess.CompletedProce
         [sys.executable, "main.py", "--tools", "gmail", *args],
         cwd=REPO_ROOT,
         env={
-            **os.environ,
+            **{k: v for k, v in os.environ.items() if k != "PORT"},
             "MCP_ENABLE_OAUTH21": "false",
             "WORKSPACE_MCP_CREDENTIALS_DIR": str(tmp_path),
             **env,
@@ -122,7 +122,6 @@ def test_streamable_http_port_conflict_is_logged_at_error(tmp_path):
             "streamable-http",
             WORKSPACE_MCP_HOST="127.0.0.1",
             WORKSPACE_MCP_PORT=str(port),
-            PORT=str(port),
         )
     finally:
         srv.close()
@@ -141,7 +140,6 @@ def test_streamable_http_bind_failure_is_not_reported_as_port_in_use(tmp_path):
         "streamable-http",
         WORKSPACE_MCP_HOST="192.0.2.1",
         WORKSPACE_MCP_PORT="8000",
-        PORT="8000",
     )
 
     assert result.returncode == 1
