@@ -225,19 +225,22 @@ def _find_any_credentials(
     return None, None
 
 
+def _id_token_email(credentials: Credentials) -> Optional[str]:
+    """Return the email claim from the credentials' id_token, if present."""
+    if not (credentials and credentials.id_token):
+        return None
+    try:
+        return jwt.decode(
+            credentials.id_token, options={"verify_signature": False}
+        ).get("email")
+    except Exception as e:
+        logger.debug(f"Could not decode id_token to get email: {e}")
+        return None
+
+
 def save_credentials_to_session(session_id: str, credentials: Credentials):
     """Saves user credentials using OAuth21SessionStore."""
-    # Get user email from credentials if possible
-    user_email = None
-    if credentials and credentials.id_token:
-        try:
-            decoded_token = jwt.decode(
-                credentials.id_token, options={"verify_signature": False}
-            )
-            user_email = decoded_token.get("email")
-        except Exception as e:
-            logger.debug(f"Could not decode id_token to get email: {e}")
-
+    user_email = _id_token_email(credentials)
     if user_email:
         store = get_oauth21_session_store()
         store.store_session(
@@ -1240,6 +1243,19 @@ def get_credentials(
                 "[get_credentials] Refreshing token using embedded client credentials"
             )
             credentials.refresh(Request())
+            refreshed_email = _id_token_email(credentials)
+            if (
+                user_google_email
+                and refreshed_email
+                and normalize_principal_email(refreshed_email)
+                != normalize_principal_email(user_google_email)
+            ):
+                logger.error(
+                    "[get_credentials] Refreshed credentials belong to %s, not %s; discarding them",
+                    refreshed_email,
+                    user_google_email,
+                )
+                return None
             logger.info(
                 f"[get_credentials] Credentials refreshed successfully. User: '{user_google_email}', Session: '{session_id}'"
             )
