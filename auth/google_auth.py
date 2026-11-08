@@ -227,10 +227,7 @@ def _find_any_credentials(
 
 def _stored_user_email(store: CredentialStore, user_email: str) -> str:
     """Return the stored spelling of user_email, matched case-insensitively."""
-    try:
-        users = store.list_users()
-    except NotImplementedError:
-        return user_email
+    users = store.list_users()
     if user_email in users:
         return user_email
     lowered = user_email.lower()
