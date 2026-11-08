@@ -824,6 +824,12 @@ def configure_server_for_http():
                         "OAuth 2.1: restricting DCR client redirect URIs to allowlist: %s",
                         allowed_client_redirect_uris,
                     )
+                if client_storage is None:
+                    logger.info(
+                        "OAuth 2.1: Using FastMCP default encrypted FileTreeStore for OAuth proxy client_storage (directory=%s). "
+                        "Set WORKSPACE_MCP_OAUTH_PROXY_STORAGE_BACKEND to memory, disk or valkey to change it.",
+                        (fastmcp.settings.home / "oauth-proxy").absolute(),
+                    )
                 provider = WorkspaceGoogleProvider(
                     client_id=config.client_id,
                     client_secret=config.client_secret,
