@@ -317,6 +317,7 @@ async def test_read_only_mode_removes_manage_calendar(monkeypatch):
     monkeypatch.setattr(tool_registry, "is_oauth21_enabled", lambda: False)
     monkeypatch.setattr(tool_registry, "get_enabled_tools", lambda: None)
     monkeypatch.setattr(tool_registry, "get_disabled_tools", set)
+    monkeypatch.setattr(tool_registry, "is_permissions_mode", lambda: False)
     set_read_only(True)
     try:
         tool_registry.filter_server_tools(SimpleNamespace(local_provider=provider))
