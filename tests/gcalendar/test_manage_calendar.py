@@ -1,4 +1,4 @@
-"""Tests for calendar sharing (ACL) management via manage_calendar_sharing."""
+"""Tests for calendar creation and sharing (ACL) management via manage_calendar."""
 
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -12,7 +12,7 @@ from auth.scopes import CALENDAR_SCOPE
 from core import tool_registry
 from core.server import server
 from core.utils import UserInputError, handle_http_errors
-from gcalendar.calendar_tools import manage_calendar_sharing
+from gcalendar.calendar_tools import manage_calendar
 
 RULE = {
     "id": "user:alice@example.com",
@@ -35,26 +35,30 @@ def _service():
     acl.insert.return_value.execute.return_value = RULE
     acl.patch.return_value.execute.return_value = {**RULE, "role": "writer"}
     acl.delete.return_value.execute.return_value = ""
+    service.calendars.return_value.insert.return_value.execute.return_value = {
+        "id": "new@group.calendar.google.com",
+        "summary": "Team",
+    }
     return service, acl
 
 
 async def _call(service, **kwargs):
-    return await _unwrap(manage_calendar_sharing)(
+    return await _unwrap(manage_calendar)(
         service=service, user_google_email="me@example.com", **kwargs
     )
 
 
 @pytest.mark.asyncio
-async def test_calendar_sharing_tool_is_registered():
-    tool = await server.get_tool("manage_calendar_sharing")
+async def test_manage_calendar_tool_is_registered():
+    tool = await server.get_tool("manage_calendar")
     assert tool is not None
     assert tool.annotations.read_only_hint is False
     assert tool.annotations.destructive_hint is True
 
 
 @pytest.mark.asyncio
-async def test_calendar_sharing_tool_requires_full_calendar_scope():
-    tool = await server.get_tool("manage_calendar_sharing")
+async def test_manage_calendar_tool_requires_full_calendar_scope():
+    tool = await server.get_tool("manage_calendar")
     assert tool.fn._required_google_scopes == [CALENDAR_SCOPE]
 
 
@@ -66,7 +70,7 @@ async def test_list_returns_rules_and_next_page_token():
         "nextPageToken": "tok2",
     }
 
-    result = await _call(service, action="list", page_token="tok1")
+    result = await _call(service, action="list_sharing", page_token="tok1")
 
     acl.list.assert_called_once_with(calendarId="primary", pageToken="tok1")
     assert "- reader: user alice@example.com (Rule ID: user:alice@example.com)" in (
@@ -114,7 +118,10 @@ async def test_update_patches_role():
     service, acl = _service()
 
     result = await _call(
-        service, action="update", rule_id="user:alice@example.com", role="writer"
+        service,
+        action="update_sharing",
+        rule_id="user:alice@example.com",
+        role="writer",
     )
 
     acl.patch.assert_called_once_with(
@@ -127,10 +134,10 @@ async def test_update_patches_role():
 
 
 @pytest.mark.asyncio
-async def test_remove_deletes_rule():
+async def test_unshare_deletes_rule():
     service, acl = _service()
 
-    result = await _call(service, action="Remove", rule_id="domain:example.com")
+    result = await _call(service, action="Unshare", rule_id="domain:example.com")
 
     acl.delete.assert_called_once_with(
         calendarId="primary", ruleId="domain:example.com"
@@ -167,14 +174,16 @@ async def test_remove_deletes_rule():
             },
             "must be omitted",
         ),
-        ({"action": "update", "role": "reader"}, "rule_id is required"),
-        ({"action": "update", "rule_id": "user:a@example.com"}, "role is required"),
-        ({"action": "remove", "rule_id": " "}, "rule_id is required"),
-        ({"action": "grant"}, "Invalid action 'grant'"),
-        ({"action": "remove", "rule_id": "user:ME@example.com"}, "owner's access"),
+        ({"action": "update_sharing", "role": "reader"}, "rule_id is required"),
+        (
+            {"action": "update_sharing", "rule_id": "user:a@example.com"},
+            "role is required",
+        ),
+        ({"action": "unshare", "rule_id": " "}, "rule_id is required"),
+        ({"action": "unshare", "rule_id": "user:ME@example.com"}, "owner's access"),
         (
             {
-                "action": "update",
+                "action": "update_sharing",
                 "calendar_id": "me@example.com",
                 "rule_id": "user:me@example.com",
                 "role": "reader",
@@ -194,7 +203,56 @@ async def test_invalid_input_raises_before_any_api_call(kwargs, message):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("action", ["update", "remove"])
+@pytest.mark.parametrize("action", ["grant", "list", "remove", "update"])
+async def test_unknown_action_raises_listing_valid_actions(action):
+    service, acl = _service()
+
+    with pytest.raises(
+        UserInputError,
+        match=f"Invalid action '{action}'. Must be 'create', 'list_sharing', 'share', "
+        "'update_sharing', or 'unshare'.",
+    ):
+        await _call(service, action=action, rule_id="user:a@example.com", role="reader")
+
+    for method in (acl.list, acl.insert, acl.patch, acl.delete):
+        method.assert_not_called()
+    service.calendars.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_inserts_secondary_calendar():
+    service, _ = _service()
+
+    result = await _call(
+        service,
+        action="create",
+        summary="Team",
+        description="Shared team calendar",
+        timezone="America/New_York",
+    )
+
+    service.calendars.return_value.insert.assert_called_once_with(
+        body={
+            "summary": "Team",
+            "description": "Shared team calendar",
+            "timeZone": "America/New_York",
+        }
+    )
+    assert result == "Created calendar 'Team' (ID: new@group.calendar.google.com)"
+
+
+@pytest.mark.asyncio
+async def test_create_requires_summary():
+    service, _ = _service()
+
+    with pytest.raises(UserInputError, match="summary is required for create action"):
+        await _call(service, action="create")
+
+    service.calendars.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["update_sharing", "unshare"])
 async def test_missing_rule_reports_list_hint(action):
     service, acl = _service()
     not_found = HttpError(Mock(status=404, reason="Not Found"), b"{}")
@@ -212,15 +270,15 @@ async def test_other_api_errors_surface_through_handler():
         Mock(status=403, reason="Forbidden"),
         b'{"error": {"code": 403, "message": "Cannot change your own access level."}}',
     )
-    tool = handle_http_errors("manage_calendar_sharing", service_type="calendar")(
-        _unwrap(manage_calendar_sharing)
+    tool = handle_http_errors("manage_calendar", service_type="calendar")(
+        _unwrap(manage_calendar)
     )
 
     with pytest.raises(Exception, match="Cannot change your own access level"):
         await tool(
             service=service,
             user_google_email="me@example.com",
-            action="remove",
+            action="unshare",
             calendar_id="team@group.calendar.google.com",
             rule_id="user:me@example.com",
         )
@@ -228,15 +286,13 @@ async def test_other_api_errors_surface_through_handler():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("level", "removed"), [("readonly", ["manage_calendar_sharing"]), ("full", [])]
+    ("level", "removed"), [("readonly", ["manage_calendar"]), ("full", [])]
 )
 async def test_permissions_gate_tool_like_other_calendar_writes(
     monkeypatch, level, removed
 ):
-    tool = await server.get_tool("manage_calendar_sharing")
-    provider = SimpleNamespace(
-        _components={"tool:manage_calendar_sharing@1": tool}, removed=[]
-    )
+    tool = await server.get_tool("manage_calendar")
+    provider = SimpleNamespace(_components={"tool:manage_calendar@1": tool}, removed=[])
     provider.remove_tool = provider.removed.append
     monkeypatch.setattr(tool_registry, "is_oauth21_enabled", lambda: False)
     monkeypatch.setattr(tool_registry, "get_enabled_tools", lambda: None)
