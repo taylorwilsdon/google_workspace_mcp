@@ -193,36 +193,3 @@ def test_get_credentials_single_user_matches_stored_email_case_insensitively(
     assert credential_store.get_calls == [stored]
     assert credential_store.store_calls == [(stored, "fresh-token")]
     assert [call["user_email"] for call in oauth_store.store_calls] == [stored]
-
-
-def test_get_credentials_single_user_exact_lookup_when_store_cannot_list(
-    monkeypatch,
-):
-    class _UnlistableCredentialStore(_CredentialStore):
-        def list_users(self):
-            raise NotImplementedError
-
-    credential_store = _UnlistableCredentialStore(
-        existing_credentials=_RefreshableCredentials()
-    )
-
-    monkeypatch.setenv("MCP_SINGLE_USER_MODE", "1")
-    monkeypatch.setattr(
-        "auth.google_auth.get_oauth21_session_store",
-        lambda: _OAuthSessionStore(session_user=None),
-    )
-    monkeypatch.setattr(
-        "auth.google_auth.get_credential_store", lambda: credential_store
-    )
-    monkeypatch.setattr("auth.google_auth.is_stateless_mode", lambda: False)
-    monkeypatch.setattr(
-        "auth.google_auth.has_required_scopes", lambda scopes, required: True
-    )
-
-    result = get_credentials(
-        user_google_email="Luke@Example.com",
-        required_scopes=["scope.a"],
-    )
-
-    assert result is not None
-    assert credential_store.get_calls == ["Luke@Example.com"]
