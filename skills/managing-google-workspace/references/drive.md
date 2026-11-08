@@ -111,6 +111,7 @@ Office-to-Google conversion, use `import_to_google_doc`,
 | content_mime_type | string | with base64_content | | Source MIME type; Google-native MIME types are rejected |
 | base64_sha256 | string | no | | Optional SHA-256 integrity check for decoded binary content |
 | return_upload_url | boolean | no | false | Remote mode only (local file access off): return a resumable-upload URL to PUT the bytes to instead of passing a source |
+| shortcut_target_id | string | no | | Create a shortcut named `file_name` in `folder_id` pointing to this file or folder ID, instead of a file with content |
 
 The import tools also accept `base64_content` and optional `base64_sha256` for
 binary Office/OpenDocument sources. ZIP-based formats are checked for required

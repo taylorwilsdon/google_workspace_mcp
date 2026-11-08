@@ -250,6 +250,128 @@ async def test_create_drive_file_rejects_empty_file_url():
 
 
 # ---------------------------------------------------------------------------
+# create_drive_file - shortcuts
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_helpers.resolve_folder_id", new_callable=AsyncMock)
+async def test_create_drive_file_creates_shortcut(mock_resolve_folder):
+    """shortcut_target_id creates a metadata-only shortcut in the target folder."""
+    mock_resolve_folder.return_value = "folder123"
+    mock_service = Mock()
+    mock_service.files().create().execute.return_value = {
+        "id": "short123",
+        "name": "Q3 report",
+        "webViewLink": "https://drive.google.com/file/d/short123",
+        "shortcutDetails": {
+            "targetId": "doc456",
+            "targetMimeType": "application/vnd.google-apps.document",
+        },
+    }
+
+    result = await _unwrap(create_drive_file)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        file_name="Q3 report",
+        folder_id="shared-folder",
+        shortcut_target_id=" doc456 ",
+    )
+
+    mock_resolve_folder.assert_awaited_once_with(mock_service, "shared-folder")
+    create_kwargs = mock_service.files.return_value.create.call_args.kwargs
+    assert create_kwargs["body"] == {
+        "name": "Q3 report",
+        "parents": ["folder123"],
+        "mimeType": "application/vnd.google-apps.shortcut",
+        "shortcutDetails": {"targetId": "doc456"},
+    }
+    assert "media_body" not in create_kwargs
+    assert create_kwargs["supportsAllDrives"] is True
+    assert "shortcutDetails" in create_kwargs["fields"]
+    assert "Successfully created shortcut 'Q3 report' (ID: short123)" in result
+    assert "'doc456' (application/vnd.google-apps.document)" in result
+    assert "https://drive.google.com/file/d/short123" in result
+
+
+@pytest.mark.asyncio
+@patch("gdrive.drive_helpers.resolve_folder_id", new_callable=AsyncMock)
+async def test_create_drive_file_shortcut_accepts_shortcut_mime_type(
+    mock_resolve_folder,
+):
+    """Naming the shortcut MIME type explicitly is allowed alongside the target."""
+    mock_resolve_folder.return_value = "root"
+    mock_service = Mock()
+    mock_service.files().create().execute.return_value = {
+        "id": "short123",
+        "name": "Link",
+    }
+
+    result = await _unwrap(create_drive_file)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        file_name="Link",
+        mime_type="application/vnd.google-apps.shortcut",
+        shortcut_target_id="doc456",
+    )
+
+    body = mock_service.files.return_value.create.call_args.kwargs["body"]
+    assert body["shortcutDetails"] == {"targetId": "doc456"}
+    assert "Successfully created shortcut 'Link'" in result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "extra, message",
+    [
+        ({"content": "hello"}, "'content'"),
+        ({"fileUrl": "https://example.com/a.pdf"}, "'fileUrl'"),
+        (
+            {
+                "base64_content": base64.b64encode(b"x").decode("ascii"),
+                "content_mime_type": "text/plain",
+            },
+            "'base64_content', 'content_mime_type'",
+        ),
+        ({"return_upload_url": True}, "'return_upload_url'"),
+        ({"mime_type": "text/plain"}, "omit mime_type"),
+        ({"shortcut_target_id": "  "}, "non-empty"),
+    ],
+)
+async def test_create_drive_file_shortcut_rejects_conflicting_args(extra, message):
+    """A shortcut has no content, so content sources and other types are refused."""
+    mock_service = Mock()
+    kwargs = {"shortcut_target_id": "doc456", **extra}
+
+    with pytest.raises(ValueError, match=message):
+        await _unwrap(create_drive_file)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            file_name="Link",
+            **kwargs,
+        )
+
+    mock_service.files.return_value.create.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_drive_file_shortcut_mime_type_requires_target():
+    """The shortcut MIME type without a target fails with a pointer to the parameter."""
+    mock_service = Mock()
+
+    with pytest.raises(ValueError, match="requires shortcut_target_id"):
+        await _unwrap(create_drive_file)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            file_name="Link",
+            content="ignored",
+            mime_type="application/vnd.google-apps.shortcut",
+        )
+
+    mock_service.files.return_value.create.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # create_drive_file - inline base64 resource-limit enforcement
 # ---------------------------------------------------------------------------
 
