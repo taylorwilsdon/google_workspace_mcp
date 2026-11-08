@@ -108,7 +108,7 @@ This project is [MIT licensed](LICENSE) —
 </td>
 <td align="center" width="25%">
 <h3>📅</h3><a href="https://workspacemcp.com/google-calendar?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=services-google-calendar"><b>Calendar</b></a><br>
-<sub>8 tools - events, sharing, free/busy,<br>Out of Office, Focus Time</sub>
+<sub>7 tools - events, sharing, free/busy,<br>Out of Office, Focus Time</sub>
 </td>
 <td align="center" width="25%">
 <h3>📝</h3><a href="https://workspacemcp.com/google-docs?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=services-google-docs"><b>Docs</b></a><br>

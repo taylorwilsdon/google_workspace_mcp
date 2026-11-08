@@ -119,8 +119,7 @@ For parameters: [references/drive.md](references/drive.md)
 | Task | Tool |
 |------|------|
 | List calendars | `list_calendars` |
-| Create secondary calendar | `create_calendar` |
-| Share calendar / list, update or remove access | `manage_calendar_sharing` |
+| Create secondary calendar / share calendar, list, update or remove access | `manage_calendar` |
 | Get events | `get_events` |
 | Create/update/delete event | `manage_event` |
 | Out of office (auto-decline) | `manage_out_of_office` |

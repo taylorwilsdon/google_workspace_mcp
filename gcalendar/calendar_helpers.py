@@ -1186,6 +1186,26 @@ def _format_acl_rule(rule: Dict[str, Any]) -> str:
     return f"- {rule.get('role')}: {target} (Rule ID: {rule.get('id')})"
 
 
+async def _create_calendar(
+    service,
+    summary: Optional[str],
+    description: Optional[str],
+    timezone: Optional[str],
+) -> str:
+    """Create a secondary calendar and return its summary and ID."""
+    if not summary:
+        raise UserInputError("summary is required for create action")
+    body: Dict[str, Any] = {"summary": summary}
+    if description:
+        body["description"] = description
+    if timezone:
+        body["timeZone"] = timezone
+    result = await asyncio.to_thread(
+        lambda: service.calendars().insert(body=body).execute()
+    )
+    return f"Created calendar '{result.get('summary', summary)}' (ID: {result['id']})"
+
+
 async def _manage_calendar_acl(
     service,
     user_google_email: str,
@@ -1199,10 +1219,9 @@ async def _manage_calendar_acl(
     page_token: Optional[str],
 ) -> str:
     """List, share, update or remove a calendar's sharing rules and summarize the result."""
-    action = action.lower().strip()
     acl = service.acl()
 
-    if action == "list":
+    if action == "list_sharing":
         params: Dict[str, Any] = {"calendarId": calendar_id}
         if page_token:
             params["pageToken"] = page_token
@@ -1228,13 +1247,14 @@ async def _manage_calendar_acl(
         )
         return f"Shared calendar '{calendar_id}':\n{_format_acl_rule(rule)}"
 
-    if action not in ("update", "remove"):
+    if action not in ("update_sharing", "unshare"):
         raise UserInputError(
-            f"Invalid action '{action}'. Must be 'list', 'share', 'update', or 'remove'."
+            f"Invalid action '{action}'. Must be 'create', 'list_sharing', 'share', "
+            "'update_sharing', or 'unshare'."
         )
     if not rule_id or not rule_id.strip():
         raise UserInputError(
-            f"rule_id is required for {action} action. Use action 'list' to find it."
+            f"rule_id is required for {action} action. Use action 'list_sharing' to find it."
         )
     rule_id = rule_id.strip()
     owner = user_google_email.lower()
@@ -1243,7 +1263,7 @@ async def _manage_calendar_acl(
             f"Rule '{rule_id}' is the owner's access to their primary calendar and "
             "cannot be changed or removed."
         )
-    if action == "update":
+    if action == "update_sharing":
         request = acl.patch(
             calendarId=calendar_id,
             ruleId=rule_id,
@@ -1258,9 +1278,9 @@ async def _manage_calendar_acl(
         if error.resp.status == 404:
             raise UserInputError(
                 f"No sharing rule '{rule_id}' found on calendar '{calendar_id}'. "
-                "Use action 'list' to see rule IDs."
+                "Use action 'list_sharing' to see rule IDs."
             ) from error
         raise
-    if action == "update":
+    if action == "update_sharing":
         return f"Updated sharing on calendar '{calendar_id}':\n{_format_acl_rule(rule)}"
     return f"Removed sharing rule '{rule_id}' from calendar '{calendar_id}'."

@@ -47,11 +47,10 @@ calendar:
     - get_events
     - manage_event
   extended:
-    - create_calendar
+    - manage_calendar
     - query_freebusy
     - manage_out_of_office
     - manage_focus_time
-    - manage_calendar_sharing
   complete: []
 
 docs:
