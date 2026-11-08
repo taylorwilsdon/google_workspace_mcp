@@ -51,6 +51,7 @@ calendar:
     - query_freebusy
     - manage_out_of_office
     - manage_focus_time
+    - manage_calendar_sharing
   complete: []
 
 docs:

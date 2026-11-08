@@ -24,6 +24,7 @@ from gcalendar.calendar_helpers import (
     _format_event_detail_lines,
     _format_event_time,
     _get_meeting_link,
+    _manage_calendar_acl,
     _normalize_attendees,
     _parse_reminders_json,
     _preserve_existing_fields,
@@ -2190,3 +2191,60 @@ async def create_calendar(
     calendar_summary = result.get("summary", summary)
     logger.info(f"[create_calendar] Created calendar with ID: {calendar_id}")
     return f"Created calendar '{calendar_summary}' (ID: {calendar_id})"
+
+
+@server.tool(
+    title="Manage Calendar Sharing",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("manage_calendar_sharing", service_type="calendar")
+@require_google_service("calendar", "calendar")
+async def manage_calendar_sharing(
+    service,
+    user_google_email: str,
+    action: str,
+    calendar_id: str = "primary",
+    role: Optional[str] = None,
+    scope_type: str = "user",
+    scope_value: Optional[str] = None,
+    rule_id: Optional[str] = None,
+    send_notifications: bool = True,
+    page_token: Optional[str] = None,
+) -> str:
+    """
+    Manages who a Google Calendar is shared with (its access control rules).
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        action (str): Action to perform - "list", "share", "update", or "remove".
+        calendar_id (str): Calendar ID. Defaults to 'primary'.
+        role (Optional[str]): Access level for "share" and "update". One of: "freeBusyReader", "reader", "writerWithoutPrivateAccess", "writer", "owner", "none".
+        scope_type (str): Who "share" grants access to: "user", "group", "domain", or "default" (public). Defaults to "user".
+        scope_value (Optional[str]): Email address for "user"/"group" or domain name for "domain". Required for "share" unless scope_type is "default".
+        rule_id (Optional[str]): Rule ID from "list" (e.g. "user:alice@example.com"). Required for "update" and "remove".
+        send_notifications (bool): Whether to email the grantee on "share" and "update". Defaults to True.
+        page_token (Optional[str]): For "list" action: token for the next page, taken from a previous response.
+
+    Returns:
+        str: The calendar's sharing rules, or a confirmation of the rule that changed.
+    """
+    logger.info(
+        f"[manage_calendar_sharing] Invoked. Email: '{user_google_email}', Action: '{action}'"
+    )
+    return await _manage_calendar_acl(
+        service,
+        user_google_email=user_google_email,
+        action=action,
+        calendar_id=calendar_id,
+        role=role,
+        scope_type=scope_type,
+        scope_value=scope_value,
+        rule_id=rule_id,
+        send_notifications=send_notifications,
+        page_token=page_token,
+    )
