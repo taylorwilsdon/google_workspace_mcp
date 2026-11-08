@@ -111,10 +111,10 @@ from gdrive.drive_helpers import (
     resumable_upload_result,
     upload_url_hint,
     upload_url_not_offered_error,
-    validate_shortcut_request,
     validate_expiration_time,
     validate_share_role,
     validate_share_type,
+    validate_shortcut_request,
 )
 
 logger = logging.getLogger(__name__)
