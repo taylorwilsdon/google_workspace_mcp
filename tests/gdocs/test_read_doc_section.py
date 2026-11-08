@@ -154,6 +154,16 @@ async def test_unknown_heading_lists_available_headings(read):
 
 
 @pytest.mark.asyncio
+async def test_unknown_heading_caps_the_listed_headings():
+    doc = _doc(_body(*[(f"H{n}\n", "HEADING_2") for n in range(60)]))
+    with pytest.raises(UserInputError) as exc:
+        await _content(doc, heading="Budget")
+    message = str(exc.value)
+    assert "'H49' and 10 more." in message
+    assert "'H50'" not in message
+
+
+@pytest.mark.asyncio
 async def test_document_without_headings_says_so():
     doc = _doc(_body(("Just text\n", "NORMAL_TEXT")))
     with pytest.raises(UserInputError, match="has no headings"):
