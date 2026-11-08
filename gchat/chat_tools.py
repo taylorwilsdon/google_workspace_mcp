@@ -180,6 +180,8 @@ async def get_messages(
                 f"No messages on this page in space '{space_name}' (ID: {space_id}), "
                 f"and more pages remain.\nNext page token: {next_page_token}"
             )
+        if page_token:
+            return f"No more messages in space '{space_name}' (ID: {space_id})."
         return f"No messages found in space '{space_name}' (ID: {space_id})."
 
     # Pre-resolve unique senders sequentially. The underlying googleapiclient/httplib2
