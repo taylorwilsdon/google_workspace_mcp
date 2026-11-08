@@ -130,7 +130,9 @@ async def test_list_script_projects_searches_shared_drives():
     assert kwargs["corpora"] == "allDrives"
     assert kwargs["supportsAllDrives"] is True
     assert kwargs["includeItemsFromAllDrives"] is True
-    assert "incompleteSearch" in kwargs["fields"]
+    assert kwargs["fields"] == (
+        "nextPageToken, incompleteSearch, files(id, name, createdTime, modifiedTime)"
+    )
 
 
 @pytest.mark.asyncio
