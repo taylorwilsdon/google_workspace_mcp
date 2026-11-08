@@ -85,23 +85,23 @@ def _docs_service(doc):
     return service
 
 
-async def _content(doc, **kwargs):
+async def _content(doc, document_id="doc123", **kwargs):
     result = await _unwrap(docs_tools.get_doc_content)(
         drive_service=_drive_service(),
         docs_service=_docs_service(doc),
         user_google_email="user@example.com",
-        document_id="doc123",
+        document_id=document_id,
         **kwargs,
     )
     return result
 
 
-async def _markdown(doc, comments=(), **kwargs):
+async def _markdown(doc, comments=(), document_id="doc123", **kwargs):
     return await _unwrap(docs_tools.get_doc_as_markdown)(
         drive_service=_drive_service(comments),
         docs_service=_docs_service(doc),
         user_google_email="user@example.com",
-        document_id="doc123",
+        document_id=document_id,
         **kwargs,
     )
 
@@ -222,6 +222,28 @@ async def test_multi_tab_doc_reads_section_of_named_tab():
         doc, heading="Status", tab_id="t.a", include_comments=False
     )
     assert result == "## Status\n\ntab a\n"
+
+
+@pytest.mark.asyncio
+async def test_url_selected_tab_is_named_in_section_notice():
+    doc = {
+        "tabs": [
+            _tab("t.a", _body(("Status\n", "HEADING_2"), ("tab a\n", "NORMAL_TEXT"))),
+            _tab("t.b", BODY),
+        ]
+    }
+    url = "https://docs.google.com/document/d/doc123/edit?tab=t.b"
+    tab_notice = "Showing only tab 't.b' (t.b) from the URL"
+    result = await _content(doc, document_id=url, heading="Status")
+    header, body = result.split("--- CONTENT ---\n", 1)
+    assert tab_notice in header
+    assert "section under heading 'Status', starting at document index 7." in header
+    assert body == "Status\nOld body\nSub\nsub body\n"
+    result = await _markdown(
+        doc, document_id=url, heading="Status", include_comments=False
+    )
+    assert result.startswith(f"*{tab_notice}")
+    assert result.endswith("## Status\n\nOld body\n\n### Sub\n\nsub body\n")
 
 
 @pytest.mark.asyncio
