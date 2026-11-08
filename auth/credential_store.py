@@ -596,3 +596,23 @@ def set_credential_store(store: CredentialStore):
     global _credential_store
     _credential_store = store
     logger.info(f"Set credential store: {type(store).__name__}")
+
+
+def get_legacy_authenticated_users() -> List[str]:
+    """List user email addresses with stored credentials in legacy OAuth 2.0 mode.
+
+    Returns an empty list in OAuth 2.1 mode, when trusted gateway identity is
+    enabled, or if the underlying store does not support enumeration.
+    """
+    from auth.oauth_config import is_oauth21_enabled, is_trust_gateway_identity
+
+    if is_oauth21_enabled() or is_trust_gateway_identity():
+        return []
+
+    try:
+        store = get_credential_store()
+        users = store.list_users()
+        return [u for u in users if isinstance(u, str) and "@" in u]
+    except Exception as e:
+        logger.debug(f"Could not list stored credentials: {e}")
+        return []

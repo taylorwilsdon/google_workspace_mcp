@@ -85,12 +85,13 @@ docker run -p 8000:8000 -e GOOGLE_OAUTH_CLIENT_ID=... -e GOOGLE_OAUTH_CLIENT_SEC
 ## Auth tool
 
 ### start_google_auth
-Manually start the legacy OAuth 2.0 browser flow, e.g. to re-authenticate with different credentials or retry a failed automatic flow. Disabled when OAuth 2.1 is enabled; normally just call the tool you need and auth happens automatically.
+Manually start the legacy OAuth 2.0 browser flow, e.g. to re-authenticate with different credentials or retry a failed automatic flow, or list already-authenticated accounts. Disabled when OAuth 2.1 is enabled; normally just call the tool you need and auth happens automatically.
 
 | Parameter | Type | Required | Default | Notes |
 |-----------|------|----------|---------|-------|
 | user_google_email | string | no | `USER_GOOGLE_EMAIL` env | |
-| service_name | string | yes | | Service to authorize, e.g. `"gmail"`, `"drive"` |
+| service_name | string | no | `""` | Service to authorize, e.g. `"gmail"`, `"drive"`. Omit to report authenticated accounts. |
+| list_accounts | boolean | no | `false` | If true, returns already-authenticated Google accounts without starting a flow |
 
 ## Credential loading priority
 
