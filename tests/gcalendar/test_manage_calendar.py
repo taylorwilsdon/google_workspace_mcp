@@ -8,7 +8,7 @@ from googleapiclient.errors import HttpError
 
 import gcalendar.calendar_tools  # noqa: F401
 from auth.permissions import set_permissions
-from auth.scopes import CALENDAR_SCOPE
+from auth.scopes import CALENDAR_SCOPE, set_read_only
 from core import tool_registry
 from core.server import server
 from core.utils import UserInputError, handle_http_errors
@@ -304,3 +304,23 @@ async def test_permissions_gate_tool_like_other_calendar_writes(
         set_permissions(None)
 
     assert provider.removed == removed
+
+
+@pytest.mark.asyncio
+async def test_read_only_mode_removes_manage_calendar(monkeypatch):
+    components = {
+        f"tool:{name}@1": await server.get_tool(name)
+        for name in ("manage_calendar", "list_calendars")
+    }
+    provider = SimpleNamespace(_components=components, removed=[])
+    provider.remove_tool = provider.removed.append
+    monkeypatch.setattr(tool_registry, "is_oauth21_enabled", lambda: False)
+    monkeypatch.setattr(tool_registry, "get_enabled_tools", lambda: None)
+    monkeypatch.setattr(tool_registry, "get_disabled_tools", set)
+    set_read_only(True)
+    try:
+        tool_registry.filter_server_tools(SimpleNamespace(local_provider=provider))
+    finally:
+        set_read_only(False)
+
+    assert provider.removed == ["manage_calendar"]
