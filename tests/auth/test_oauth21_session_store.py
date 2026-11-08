@@ -183,6 +183,11 @@ def test_store_session_rejects_mcp_session_rebind_by_default(tmp_path):
             mcp_session_id="session-123",
         )
 
+    assert store.get_session_info("account-b@example.com") is None
+    store.store_session(user_email="account-b@example.com", access_token="token-b")
+    assert store.get_user_by_mcp_session("session-123") == "account-a@example.com"
+    assert store.get_credentials_by_mcp_session("session-123").token == "token-a"
+
 
 def test_store_session_stays_bounded_for_sessionless_clients(tmp_path):
     # Sessionless (2026-07-28) clients get a fresh MCP session ID per request.

@@ -11,6 +11,7 @@ import pytest
 from fastmcp.exceptions import ToolError
 
 import gmail.gmail_tools as gmail_tools
+from core.attachment_storage import AttachmentStorage
 from core.utils import UserInputError
 from gmail.gmail_helpers import (
     _signature_html_to_text,
@@ -999,6 +1000,35 @@ async def test_full_export_raw_saves_complete_eml(stdio_storage):
     # The saved file must hold the complete, decoded message.
     with open(_saved_path(result), "rb") as fh:
         assert fh.read().decode() == raw_mime
+
+
+@pytest.mark.asyncio
+async def test_full_export_save_failure_marks_span_as_degraded(
+    stdio_storage, monkeypatch
+):
+    error = OSError(30, "Read-only file system")
+    monkeypatch.setattr(
+        AttachmentStorage, "save_attachment_bytes", Mock(side_effect=error)
+    )
+    record = Mock()
+    monkeypatch.setattr(gmail_tools, "record_degraded_failure", record)
+    service = _build_service(
+        message_responses={
+            ("msg-1", "metadata"): _metadata_response("msg-1"),
+            ("msg-1", "raw"): {"raw": _unpadded("From: a@example.com\r\n\r\nBody")},
+        }
+    )
+
+    result = await _unwrap(get_gmail_message_content)(
+        service=service,
+        message_id="msg-1",
+        user_google_email="user@example.com",
+        body_format="raw",
+        full=True,
+    )
+
+    assert result.startswith("Error: failed to save message to storage:")
+    record.assert_called_once_with(error)
 
 
 @pytest.mark.asyncio

@@ -100,7 +100,7 @@ Create a new Google Spreadsheet.
 | folder_id | string | no | root | Parent folder. Accepts a folder ID or shortcut; for shared drives, a folder inside that drive. If the move fails, the spreadsheet is still created in My Drive root and the reply reports why |
 
 ### create_sheet
-Add a new sheet (tab) to an existing spreadsheet, or duplicate an existing tab when `source_sheet_name` is set.
+Add a new sheet (tab) to an existing spreadsheet, or duplicate an existing tab when `source_sheet_name` is set. Set `destination_spreadsheet_id` too to copy the tab, with its formatting and formulas, into another spreadsheet.
 
 | Parameter | Type | Required | Default | Notes |
 |-----------|------|----------|---------|-------|
@@ -109,6 +109,7 @@ Add a new sheet (tab) to an existing spreadsheet, or duplicate an existing tab w
 | sheet_name | string | no | | Title of the new tab. Google picks a default name if omitted |
 | source_sheet_name | string | no | | Existing tab to duplicate instead of adding a blank one |
 | insert_sheet_index | integer | no | end | 0-based position for the new tab |
+| destination_spreadsheet_id | string | no | spreadsheet_id | Spreadsheet to copy `source_sheet_name` into. Requires `source_sheet_name` |
 
 ### move_sheet_rows
 Move rows from one sheet to another within the same spreadsheet. Preserves formulas, data types, and formatting.

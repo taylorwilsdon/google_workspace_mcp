@@ -12,6 +12,8 @@ from unittest.mock import AsyncMock, Mock, patch
 import sys
 import os
 
+from gchat.chat_tools import get_messages
+
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 
@@ -182,11 +184,143 @@ async def test_get_messages_exposes_message_filter_and_forwards_it(mock_resolve)
 
 
 @pytest.mark.asyncio
+@patch("gchat.chat_tools._resolve_sender", new_callable=AsyncMock)
+async def test_get_messages_forwards_page_token_and_returns_the_next_one(mock_resolve):
+    """get_messages should page with page_token and report the next page's token."""
+    mock_resolve.return_value = "Test User"
+
+    chat_service = Mock()
+    chat_service.spaces().get().execute.return_value = {"displayName": "Test Space"}
+    chat_service.spaces().messages().list().execute.return_value = {
+        "messages": [_make_message(text="Second page")],
+        "nextPageToken": "page-3",
+    }
+
+    result = await _unwrap(get_messages)(
+        chat_service=chat_service,
+        people_service=Mock(),
+        user_google_email="test@example.com",
+        space_id="spaces/S",
+        message_filter="thread.name = spaces/S/threads/T",
+        page_token="page-2",
+    )
+
+    assert "Second page" in result
+    assert result.endswith("Next page token: page-3")
+    list_kwargs = chat_service.spaces().messages().list.call_args.kwargs
+    assert list_kwargs["pageToken"] == "page-2"
+    assert list_kwargs["filter"] == "thread.name = spaces/S/threads/T"
+
+
+@pytest.mark.asyncio
+@patch("gchat.chat_tools._resolve_sender", new_callable=AsyncMock)
+async def test_get_messages_empty_page_with_token_says_more_remain(mock_resolve):
+    """An empty page with a next token should not read as an empty space."""
+    chat_service = Mock()
+    chat_service.spaces().get().execute.return_value = {"displayName": "Test Space"}
+    chat_service.spaces().messages().list().execute.return_value = {
+        "nextPageToken": "page-2",
+    }
+
+    result = await _unwrap(get_messages)(
+        chat_service=chat_service,
+        people_service=Mock(),
+        user_google_email="test@example.com",
+        space_id="spaces/S",
+    )
+
+    assert "No messages found" not in result
+    assert "more pages remain" in result
+    assert result.endswith("Next page token: page-2")
+
+
+@pytest.mark.asyncio
+@patch("gchat.chat_tools._resolve_sender", new_callable=AsyncMock)
+async def test_get_messages_empty_last_page_does_not_say_space_is_empty(mock_resolve):
+    chat_service = Mock()
+    chat_service.spaces().get().execute.return_value = {"displayName": "Test Space"}
+    chat_service.spaces().messages().list().execute.return_value = {}
+
+    result = await _unwrap(get_messages)(
+        chat_service=chat_service,
+        people_service=Mock(),
+        user_google_email="test@example.com",
+        space_id="spaces/S",
+        page_token="page-9",
+    )
+
+    assert result == "No more messages in space 'Test Space' (ID: spaces/S)."
+
+
+@pytest.mark.asyncio
+@patch("gchat.chat_tools._resolve_sender", new_callable=AsyncMock)
+async def test_get_messages_empty_filtered_last_page_names_the_filter(mock_resolve):
+    chat_service = Mock()
+    chat_service.spaces().get().execute.return_value = {"displayName": "Test Space"}
+    chat_service.spaces().messages().list().execute.return_value = {}
+
+    result = await _unwrap(get_messages)(
+        chat_service=chat_service,
+        people_service=Mock(),
+        user_google_email="test@example.com",
+        space_id="spaces/S",
+        message_filter="thread.name = spaces/S/threads/T",
+        page_token="page-9",
+    )
+
+    assert result == (
+        "No more messages matching the filter in space 'Test Space' (ID: spaces/S)."
+    )
+
+
+@pytest.mark.asyncio
+@patch("gchat.chat_tools._resolve_sender", new_callable=AsyncMock)
+async def test_get_messages_empty_filtered_first_page_names_the_filter(mock_resolve):
+    chat_service = Mock()
+    chat_service.spaces().get().execute.return_value = {"displayName": "Test Space"}
+    chat_service.spaces().messages().list().execute.return_value = {}
+
+    result = await _unwrap(get_messages)(
+        chat_service=chat_service,
+        people_service=Mock(),
+        user_google_email="test@example.com",
+        space_id="spaces/S",
+        message_filter="thread.name = spaces/S/threads/T",
+    )
+
+    assert result == (
+        "No messages matching the filter found in space 'Test Space' (ID: spaces/S)."
+    )
+
+
+@pytest.mark.asyncio
+@patch("gchat.chat_tools._resolve_sender", new_callable=AsyncMock)
+async def test_get_messages_last_page_has_messages_and_no_token(mock_resolve):
+    mock_resolve.return_value = "Test User"
+    chat_service = Mock()
+    chat_service.spaces().get().execute.return_value = {"displayName": "Test Space"}
+    chat_service.spaces().messages().list().execute.return_value = {
+        "messages": [_make_message(text="Final page")],
+    }
+
+    result = await _unwrap(get_messages)(
+        chat_service=chat_service,
+        people_service=Mock(),
+        user_google_email="test@example.com",
+        space_id="spaces/S",
+        page_token="page-9",
+    )
+
+    assert "Final page" in result
+    assert "Next page token" not in result
+
+
+@pytest.mark.asyncio
 async def test_get_messages_resolves_senders_sequentially(monkeypatch):
     """get_messages should avoid concurrent People API sender resolution."""
     state = {"current": 0, "max": 0}
 
-    async def fake_resolve(_people_service, sender_obj):
+    async def fake_resolve(_people_service, sender_obj, _cache_owner=None):
         state["current"] += 1
         state["max"] = max(state["max"], state["current"])
         await asyncio.sleep(0.01)

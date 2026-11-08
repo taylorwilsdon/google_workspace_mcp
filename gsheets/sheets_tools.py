@@ -25,6 +25,7 @@ from gsheets.sheets_helpers import (
     _a1_range_for_values,
     _clamp_a1_read_rows,
     _column_to_index,
+    _copy_sheet_to_spreadsheet,
     _build_boolean_rule,
     _build_tab_style_properties,
     _build_update_borders_request,
@@ -1567,8 +1568,9 @@ async def create_sheet(
     sheet_name: Optional[str] = None,
     source_sheet_name: Optional[str] = None,
     insert_sheet_index: Optional[int] = None,
+    destination_spreadsheet_id: Optional[str] = None,
 ) -> str:
-    """Creates a new sheet or duplicates an existing sheet (user_google_email: str, spreadsheet_id: str, sheet_name: Optional[str] = None, source_sheet_name: Optional[str] = None, insert_sheet_index: Optional[int] = None)."""
+    """Creates a new sheet or duplicates an existing sheet, into destination_spreadsheet_id when given (user_google_email: str, spreadsheet_id: str, sheet_name: Optional[str] = None, source_sheet_name: Optional[str] = None, insert_sheet_index: Optional[int] = None, destination_spreadsheet_id: Optional[str] = None)."""
     if insert_sheet_index is not None and (
         isinstance(insert_sheet_index, bool)
         or not isinstance(insert_sheet_index, int)
@@ -1576,14 +1578,27 @@ async def create_sheet(
     ):
         raise UserInputError("insert_sheet_index must be a non-negative integer.")
 
+    if destination_spreadsheet_id is not None:
+        destination_spreadsheet_id = destination_spreadsheet_id.strip()
+        if not destination_spreadsheet_id:
+            raise UserInputError(
+                "destination_spreadsheet_id must be a non-empty string"
+            )
+        if source_sheet_name is None:
+            raise UserInputError(
+                "destination_spreadsheet_id requires source_sheet_name"
+            )
+
     if source_sheet_name is not None:
         source_sheet_name = source_sheet_name.strip()
         if not source_sheet_name:
             raise UserInputError("source_sheet_name must be a non-empty string")
 
+        target_spreadsheet_id = destination_spreadsheet_id or spreadsheet_id
         logger.info(
             f"[create_sheet] Duplicate invoked. Email: '{user_google_email}', "
-            f"Spreadsheet: {spreadsheet_id}, Source: {source_sheet_name}"
+            f"Spreadsheet: {spreadsheet_id}, Source: {source_sheet_name}, "
+            f"Destination: {target_spreadsheet_id}"
         )
 
         spreadsheet = await asyncio.to_thread(
@@ -1596,27 +1611,37 @@ async def create_sheet(
         source_sheet = _select_sheet(sheets, source_sheet_name)
         source_sheet_id = source_sheet["properties"]["sheetId"]
 
-        dup_request = {"sourceSheetId": source_sheet_id}
-        if sheet_name is not None:
-            dup_request["newSheetName"] = sheet_name
-        if insert_sheet_index is not None:
-            dup_request["insertSheetIndex"] = insert_sheet_index
+        if target_spreadsheet_id != spreadsheet_id:
+            new_props = await _copy_sheet_to_spreadsheet(
+                service,
+                spreadsheet_id,
+                source_sheet_id,
+                target_spreadsheet_id,
+                sheet_name,
+                insert_sheet_index,
+            )
+        else:
+            dup_request = {"sourceSheetId": source_sheet_id}
+            if sheet_name is not None:
+                dup_request["newSheetName"] = sheet_name
+            if insert_sheet_index is not None:
+                dup_request["insertSheetIndex"] = insert_sheet_index
 
-        request_body = {"requests": [{"duplicateSheet": dup_request}]}
+            request_body = {"requests": [{"duplicateSheet": dup_request}]}
 
-        response = await asyncio.to_thread(
-            service.spreadsheets()
-            .batchUpdate(spreadsheetId=spreadsheet_id, body=request_body)
-            .execute
-        )
+            response = await asyncio.to_thread(
+                service.spreadsheets()
+                .batchUpdate(spreadsheetId=spreadsheet_id, body=request_body)
+                .execute
+            )
+            new_props = response["replies"][0]["duplicateSheet"]["properties"]
 
-        new_props = response["replies"][0]["duplicateSheet"]["properties"]
         new_id = new_props["sheetId"]
         new_title = new_props["title"]
 
         text_output = (
             f"Successfully duplicated '{source_sheet_name}' to '{new_title}' "
-            f"(ID: {new_id}) in spreadsheet {spreadsheet_id} for {user_google_email}."
+            f"(ID: {new_id}) in spreadsheet {target_spreadsheet_id} for {user_google_email}."
         )
 
         logger.info(
