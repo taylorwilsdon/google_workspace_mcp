@@ -1,8 +1,11 @@
+import jwt
+
 from auth.google_auth import get_credentials
+from auth.oauth21_session_store import OAuth21SessionStore
 
 
 class _RefreshableCredentials:
-    def __init__(self):
+    def __init__(self, id_token=None):
         self.token = "stale-token"
         self.refresh_token = "refresh-token"
         self.token_uri = "https://oauth2.googleapis.com/token"
@@ -12,6 +15,7 @@ class _RefreshableCredentials:
         self.expiry = None
         self.valid = False
         self.expired = True
+        self.id_token = id_token
 
     def refresh(self, request):  # noqa: ARG002
         self.token = "fresh-token"
@@ -117,6 +121,50 @@ def test_get_credentials_skips_session_update_when_refresh_persist_fails(monkeyp
     assert oauth_store.store_calls == []
     assert len(session_cache_writes) == 1
     assert session_cache_writes[0][0] == "session-1"
+
+
+def test_get_credentials_keeps_refresh_for_account_outside_bound_session(
+    monkeypatch, tmp_path
+):
+    oauth_store = OAuth21SessionStore(
+        oauth_state_file=str(tmp_path / "oauth_states.json")
+    )
+    oauth_store.store_session(
+        user_email="primary@example.com",
+        access_token="primary-token",
+        mcp_session_id="session-1",
+    )
+    file_creds = _RefreshableCredentials(
+        id_token=jwt.encode(
+            {"email": "secondary@example.com"},
+            "test-signing-key-that-is-long-enough",
+            algorithm="HS256",
+        )
+    )
+    credential_store = _CredentialStore(existing_credentials=file_creds)
+
+    monkeypatch.delenv("MCP_SINGLE_USER_MODE", raising=False)
+    monkeypatch.setattr(
+        "auth.google_auth.get_oauth21_session_store", lambda: oauth_store
+    )
+    monkeypatch.setattr(
+        "auth.google_auth.get_credential_store", lambda: credential_store
+    )
+    monkeypatch.setattr("auth.google_auth.is_stateless_mode", lambda: False)
+
+    result = get_credentials(
+        user_google_email="secondary@example.com",
+        required_scopes=["scope.a"],
+        session_id="session-1",
+    )
+
+    assert result is file_creds
+    assert credential_store.store_calls == [("secondary@example.com", "fresh-token")]
+    assert oauth_store.get_credentials("secondary@example.com").token == "fresh-token"
+    assert oauth_store.get_user_by_mcp_session("session-1") == "primary@example.com"
+    assert oauth_store.get_credentials_by_mcp_session("session-1").token == (
+        "primary-token"
+    )
 
 
 def test_get_credentials_single_user_returns_none_for_missing_requested_user(
