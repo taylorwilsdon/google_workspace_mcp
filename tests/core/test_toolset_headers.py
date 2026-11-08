@@ -6,7 +6,7 @@ from fastmcp.utilities.tests import asgi_client
 
 import gdrive.drive_tools  # noqa: F401
 import gmail.gmail_tools  # noqa: F401
-from core import tool_registry
+from core import tool_registry, toolset_header_middleware
 from core.server import server
 from core.tool_tier_loader import get_tools_for_tier
 
@@ -99,6 +99,21 @@ async def test_unknown_names_match_nothing(headers, expected):
     unfiltered = await _listed()
 
     assert await _listed(headers) == expected & unfiltered
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"x-mcp-toolsets": "dr\u0456ve"},
+        {"x-mcp-tools": "search_gmail_me\u00dfages"},
+    ],
+)
+def test_lookalike_names_match_nothing(monkeypatch, headers):
+    monkeypatch.setattr(toolset_header_middleware, "get_http_headers", lambda: headers)
+
+    assert toolset_header_middleware.requested_tools().isdisjoint(
+        DRIVE_TOOLS | GMAIL_TOOLS
+    )
 
 
 @pytest.mark.asyncio
