@@ -25,7 +25,7 @@ import google_auth_httplib2
 from auth.scopes import SCOPES, get_current_scopes, has_required_scopes  # noqa
 from auth.client_secrets import get_client_secrets_path, load_client_secrets_file
 from auth.oauth21_session_store import get_oauth21_session_store
-from auth.credential_store import get_credential_store
+from auth.credential_store import CredentialStore, get_credential_store
 from auth.gateway_identity import normalize_principal_email
 from auth.oauth_config import (
     is_oauth21_enabled,
@@ -223,6 +223,15 @@ def _find_any_credentials(
 
     logger.info("[single-user] No valid credentials found via credential store")
     return None, None
+
+
+def _stored_user_email(store: CredentialStore, user_email: str) -> str:
+    """Return the stored spelling of user_email, matched case-insensitively."""
+    users = store.list_users()
+    if user_email in users:
+        return user_email
+    lowered = user_email.lower()
+    return next((user for user in users if user.lower() == lowered), user_email)
 
 
 def _id_token_email(credentials: Credentials) -> Optional[str]:
@@ -1150,6 +1159,7 @@ def get_credentials(
         # to avoid session binding conflicts when multiple credential files exist
         if user_google_email:
             credential_store = get_credential_store()
+            user_google_email = _stored_user_email(credential_store, user_google_email)
             credentials = credential_store.get_credential(user_google_email)
             if credentials:
                 logger.info(
