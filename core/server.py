@@ -1129,7 +1129,8 @@ async def start_google_auth(
 
         auth_message = await start_auth_flow(
             user_google_email=user_google_email,
-            service_name=service_name,
+            # service_name is only a display label here; keep messages readable when blank.
+            service_name=service_name.strip() or "Google Workspace",
             redirect_uri=get_oauth_redirect_uri_for_current_mode(),
             principal_source=(
                 "gateway_assertion" if is_trust_gateway_identity() else None

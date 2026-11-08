@@ -307,3 +307,29 @@ def test_get_legacy_authenticated_users_helper(monkeypatch, legacy_mode):
     _use_store(monkeypatch, FailingStore())
     with pytest.raises(CredentialStoreUnavailableError):
         get_legacy_authenticated_users()
+
+
+@pytest.mark.asyncio
+async def test_start_google_auth_blank_service_name_uses_generic_label(
+    monkeypatch, legacy_mode
+):
+    """A blank service_name still authenticates, with a generic display label."""
+    captured = {}
+
+    async def fake_start_auth_flow(**kwargs):
+        captured.update(kwargs)
+        return "auth-url"
+
+    monkeypatch.setattr("core.server.check_client_secrets", lambda: None)
+    monkeypatch.setattr("auth.oauth_callback_server.get_transport_mode", lambda: "http")
+    monkeypatch.setattr(
+        "core.server.get_oauth_redirect_uri_for_current_mode",
+        lambda: "http://localhost:8000/oauth2callback",
+    )
+    monkeypatch.setattr("core.server.start_auth_flow", fake_start_auth_flow)
+
+    result = await start_google_auth(service_name="  ", user_google_email="a@x.com")
+
+    assert result == "auth-url"
+    assert captured["service_name"] == "Google Workspace"
+    assert captured["user_google_email"] == "a@x.com"
