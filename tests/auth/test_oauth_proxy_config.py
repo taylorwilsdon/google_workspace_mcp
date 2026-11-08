@@ -5,11 +5,13 @@ from auth.oauth_proxy_config import (
     MAX_OAUTH_REFRESH_TOKEN_EXPIRY_SECONDS,
     MAX_OAUTH_TOKEN_EXPIRY_THRESHOLD_SECONDS,
     OAUTH_ACCESS_TOKEN_EXPIRY_ENV,
+    OAUTH_GOOGLE_PROMPT_ENV,
     OAUTH_REFRESH_TOKEN_EXPIRY_ENV,
     OAUTH_REQUIRE_CONSENT_ENV,
     OAUTH_TOKEN_EXPIRY_THRESHOLD_ENV,
     get_oauth_proxy_consent_kwargs,
     get_oauth_proxy_expiry_kwargs,
+    get_oauth_proxy_google_prompt_kwargs,
 )
 
 
@@ -133,3 +135,69 @@ def test_consent_env_rejects_unsupported_values(monkeypatch, value):
 
     with pytest.raises(ValueError, match=OAUTH_REQUIRE_CONSENT_ENV):
         get_oauth_proxy_consent_kwargs()
+
+
+@pytest.mark.parametrize("value", [None, "", "   "])
+def test_google_prompt_env_unset_leaves_fastmcp_default(monkeypatch, value):
+    if value is None:
+        monkeypatch.delenv(OAUTH_GOOGLE_PROMPT_ENV, raising=False)
+    else:
+        monkeypatch.setenv(OAUTH_GOOGLE_PROMPT_ENV, value)
+
+    assert get_oauth_proxy_google_prompt_kwargs() == {}
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("select_account consent", "select_account consent"),
+        (" Select_Account   CONSENT ", "select_account consent"),
+        ("consent", "consent"),
+        ("select_account", "select_account"),
+        ("consent consent", "consent"),
+        ("none", "none"),
+    ],
+)
+def test_google_prompt_env_maps_to_extra_authorize_params(monkeypatch, value, expected):
+    monkeypatch.setenv(OAUTH_GOOGLE_PROMPT_ENV, value)
+
+    assert get_oauth_proxy_google_prompt_kwargs() == {
+        "extra_authorize_params": {"prompt": expected}
+    }
+
+
+@pytest.mark.parametrize(
+    "value", ["login", "select-account", "none consent", "consent,select_account"]
+)
+def test_google_prompt_env_rejects_unsupported_values(monkeypatch, value):
+    monkeypatch.setenv(OAUTH_GOOGLE_PROMPT_ENV, value)
+
+    with pytest.raises(ValueError, match=OAUTH_GOOGLE_PROMPT_ENV):
+        get_oauth_proxy_google_prompt_kwargs()
+
+
+def test_google_prompt_without_consent_warns(monkeypatch, caplog):
+    monkeypatch.setenv(OAUTH_GOOGLE_PROMPT_ENV, "select_account")
+
+    with caplog.at_level("WARNING"):
+        get_oauth_proxy_google_prompt_kwargs()
+
+    assert "refresh token" in caplog.text
+
+
+def test_google_prompt_reaches_google_provider(monkeypatch):
+    from fastmcp.server.auth.providers.google import GoogleProvider
+
+    monkeypatch.setenv(OAUTH_GOOGLE_PROMPT_ENV, "select_account consent")
+    provider = GoogleProvider(
+        client_id="client-id.apps.googleusercontent.com",
+        client_secret="client-secret",
+        base_url="https://workspace-mcp.example.test",
+        jwt_signing_key="k" * 32,
+        **get_oauth_proxy_google_prompt_kwargs(),
+    )
+
+    assert provider._extra_authorize_params == {
+        "access_type": "offline",
+        "prompt": "select_account consent",
+    }

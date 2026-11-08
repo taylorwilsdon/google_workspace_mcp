@@ -35,6 +35,7 @@ from auth.oauth_config import (
 from auth.oauth_proxy_config import (
     get_oauth_proxy_consent_kwargs,
     get_oauth_proxy_expiry_kwargs,
+    get_oauth_proxy_google_prompt_kwargs,
 )
 from auth.oauth_responses import (
     create_error_response,
@@ -836,6 +837,7 @@ def configure_server_for_http():
                     allowed_client_redirect_uris=allowed_client_redirect_uris,
                     **expiry_kwargs,
                     **get_oauth_proxy_consent_kwargs(),
+                    **get_oauth_proxy_google_prompt_kwargs(),
                 )
                 if provider.client_registration_options is not None:
                     # Keep protocol-level auth limited to base identity scopes, but

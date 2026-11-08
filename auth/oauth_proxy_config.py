@@ -15,11 +15,13 @@ OAUTH_REFRESH_TOKEN_EXPIRY_ENV = (
     "WORKSPACE_MCP_OAUTH_PROXY_REFRESH_TOKEN_EXPIRY_SECONDS"
 )
 OAUTH_REQUIRE_CONSENT_ENV = "WORKSPACE_MCP_OAUTH_PROXY_REQUIRE_CONSENT"
+OAUTH_GOOGLE_PROMPT_ENV = "WORKSPACE_MCP_OAUTH_PROXY_GOOGLE_PROMPT"
 MAX_OAUTH_TOKEN_EXPIRY_THRESHOLD_SECONDS = 5 * 60
 MAX_OAUTH_ACCESS_TOKEN_EXPIRY_SECONDS = 30 * 24 * 60 * 60
 MAX_OAUTH_REFRESH_TOKEN_EXPIRY_SECONDS = 365 * 24 * 60 * 60
 
 _CONSENT_MODES: dict[str, bool | str] = {"always": True, "remember": "remember"}
+_GOOGLE_PROMPT_VALUES = ("none", "consent", "select_account")
 
 
 def _parse_expiry_seconds_env(
@@ -105,3 +107,32 @@ def get_oauth_proxy_consent_kwargs() -> dict[str, bool | str]:
             f"{', '.join(_CONSENT_MODES)}, got {raw!r}"
         )
     return {"require_authorization_consent": _CONSENT_MODES[raw]}
+
+
+def get_oauth_proxy_google_prompt_kwargs() -> dict[str, dict[str, str]]:
+    """Return the Google ``prompt`` to send upstream, empty when unset.
+
+    Unset keeps FastMCP's default, ``consent``. ``select_account consent``
+    lets the user pick the Google account instead of reusing the browser's
+    signed-in one, and still returns a refresh token.
+    """
+    raw = os.getenv(OAUTH_GOOGLE_PROMPT_ENV, "").strip().lower()
+    if not raw:
+        return {}
+    values = raw.split()
+    unknown = [v for v in values if v not in _GOOGLE_PROMPT_VALUES]
+    if unknown or ("none" in values and len(values) > 1):
+        raise ValueError(
+            f"{OAUTH_GOOGLE_PROMPT_ENV} must be 'none' or a space-separated "
+            f"combination of 'consent' and 'select_account', got {raw!r}"
+        )
+    if "consent" not in values:
+        logger.warning(
+            "%s=%r omits 'consent': Google returns no refresh token on a repeat "
+            "authorization, so sessions end when the access token expires",
+            OAUTH_GOOGLE_PROMPT_ENV,
+            raw,
+        )
+    prompt = " ".join(dict.fromkeys(values))
+    logger.info("OAuth 2.1: sending prompt=%r to Google", prompt)
+    return {"extra_authorize_params": {"prompt": prompt}}
