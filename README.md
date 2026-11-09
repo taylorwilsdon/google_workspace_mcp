@@ -18,7 +18,7 @@
 
 By leveraging native OAuth 2.1, stateless deployment capability and external auth server & gateway passthrough auth support, it's also the only Workspace MCP you can host for your whole organization centrally & securely! Supports all free Google accounts & Google Workspace plans with expanded app options like Chat & Spaces.
 
-<a href="https://workspacemcp.com/workspace-mcp-cloud?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=hero-cloud"><img width="600" height="80" alt="workspace-cloud" src="https://github.com/user-attachments/assets/349a6bab-c83a-4254-be2e-4ac6a9e8b3e5" /></a>
+<a href="https://workspacemcp.com/workspace-mcp-cloud?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=hero-cloud"><img width="400" height="53" alt="workspace-cloud" src="https://github.com/user-attachments/assets/349a6bab-c83a-4254-be2e-4ac6a9e8b3e5" /></a>
 
 </div>
 
