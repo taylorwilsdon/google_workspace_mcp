@@ -540,13 +540,21 @@ def find_heading_section(
         # The body's final newline cannot be deleted.
         section_end = last_paragraph["endIndex"] - 1
 
-    footnote_refs = sum(
-        1
-        for element in content[match_idx + 1 :]
-        for run in element.get("paragraph", {}).get("elements", [])
-        if "footnoteReference" in run
-        and body_start <= run.get("startIndex", -1) < section_end
-    )
+    def count_footnote_refs(elements: list[dict[str, Any]]) -> int:
+        return sum(
+            1
+            for element in elements
+            for run in element.get("paragraph", {}).get("elements", [])
+            if "footnoteReference" in run
+            and body_start <= run.get("startIndex", -1) < section_end
+        ) + sum(
+            count_footnote_refs(cell.get("content", []))
+            for element in elements
+            for row in element.get("table", {}).get("tableRows", [])
+            for cell in row.get("tableCells", [])
+        )
+
+    footnote_refs = count_footnote_refs(content[match_idx + 1 :])
     return {
         "body_start": body_start,
         "section_end": section_end,

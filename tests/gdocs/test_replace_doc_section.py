@@ -137,6 +137,55 @@ async def test_replace_doc_section_refuses_footnotes_on_replace():
 
 
 @pytest.mark.asyncio
+async def test_replace_doc_section_refuses_table_cell_footnotes():
+    doc = _doc()
+    doc["body"]["content"][3] = {
+        "startIndex": 15,
+        "endIndex": 25,
+        "table": {
+            "tableRows": [
+                {
+                    "tableCells": [
+                        {
+                            "content": [
+                                {
+                                    "startIndex": 16,
+                                    "endIndex": 24,
+                                    "paragraph": {
+                                        "elements": [
+                                            {
+                                                "startIndex": 16,
+                                                "endIndex": 17,
+                                                "footnoteReference": {},
+                                            },
+                                            {
+                                                "startIndex": 17,
+                                                "endIndex": 24,
+                                                "textRun": {"content": "Cell.\n"},
+                                            },
+                                        ]
+                                    },
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+    }
+    service = _make_service(doc)
+    with pytest.raises(UserInputError, match="footnote"):
+        await _unwrap(docs_tools.replace_doc_section)(
+            service=service,
+            user_google_email="user@example.com",
+            document_id="1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789abcd",
+            heading="Results",
+            markdown_text="Replacement.\n",
+        )
+    service.documents.return_value.batchUpdate.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_replace_doc_section_append_skips_footnote_guard():
     doc = _doc()
     doc["body"]["content"][3] = _para(15, "Old body.\n", footnote=True)
