@@ -8,7 +8,9 @@ attachment-free Gmail-web path.
 
 import base64
 from email import message_from_bytes
+from email.message import EmailMessage
 from email.policy import SMTP
+from typing import Any, cast
 
 from gmail.gmail_helpers import _derive_web_bodies
 from gmail.gmail_tools import _prepare_gmail_message
@@ -20,12 +22,17 @@ LONG_LINE = (
 BODY = f"Hi Jane,\n\n{LONG_LINE}\n\nBest,\nAlex"
 
 
-def _parse(raw_b64url: str):
-    return message_from_bytes(base64.urlsafe_b64decode(raw_b64url), policy=SMTP)
+def _parse(raw_b64url: str) -> EmailMessage:
+    """Decode a base64url raw message into an EmailMessage."""
+    return cast(
+        EmailMessage,
+        message_from_bytes(base64.urlsafe_b64decode(raw_b64url), policy=SMTP),
+    )
 
 
-def _prepare(**overrides):
-    fields = {
+def _prepare(**overrides: Any) -> EmailMessage:
+    """Build a plain-body message with one PDF attachment and parse it back."""
+    fields: dict[str, Any] = {
         "subject": "Agreement",
         "body": BODY,
         "to": "jane@example.com",
@@ -44,7 +51,8 @@ def _prepare(**overrides):
     return _parse(raw_b64)
 
 
-def test_plain_body_with_attachment_has_html_alternative():
+def test_plain_body_with_attachment_has_html_alternative() -> None:
+    """The attachment path adds the same HTML part as the Gmail-web path."""
     msg = _prepare()
 
     plain = msg.get_body(preferencelist=("plain",))
@@ -64,7 +72,8 @@ def test_plain_body_with_attachment_has_html_alternative():
     assert attachment.get_filename() == "agreement.pdf"
 
 
-def test_plain_body_html_alternative_follows_direction():
+def test_plain_body_html_alternative_follows_direction() -> None:
+    """The HTML part honours the requested or detected text direction."""
     msg = _prepare(body="שלום\n\nתודה", direction="auto")
     html = msg.get_body(preferencelist=("html",)).get_content()
     assert html.startswith('<div dir="rtl">')
