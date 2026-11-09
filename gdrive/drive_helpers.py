@@ -683,6 +683,42 @@ async def _create_drive_folder_impl(
     )
 
 
+async def _create_drive_shortcut_impl(
+    service,
+    user_google_email: str,
+    shortcut_name: str,
+    target_id: str,
+    parent_folder_id: str = "root",
+) -> str:
+    """Create a metadata-only shortcut to target_id inside parent_folder_id."""
+    resolved_folder_id = await resolve_folder_id(service, parent_folder_id)
+    file_metadata = {
+        "name": shortcut_name,
+        "parents": [resolved_folder_id],
+        "mimeType": SHORTCUT_MIME_TYPE,
+        "shortcutDetails": {"targetId": target_id},
+    }
+    created_file = await asyncio.to_thread(
+        service.files()
+        .create(
+            body=file_metadata,
+            fields="id, name, webViewLink, shortcutDetails(targetId, targetMimeType)",
+            supportsAllDrives=True,
+        )
+        .execute
+    )
+    link = created_file.get("webViewLink", "No link available")
+    target = created_file.get("shortcutDetails") or {}
+    target_mime_type = target.get("targetMimeType")
+    target_note = f" ({target_mime_type})" if target_mime_type else ""
+    return (
+        f"Successfully created shortcut '{created_file.get('name', shortcut_name)}' "
+        f"(ID: {created_file.get('id', 'N/A')}) to '{target.get('targetId', target_id)}'"
+        f"{target_note} in folder '{parent_folder_id}' for {user_google_email}. "
+        f"Link: {link}"
+    )
+
+
 DOWNLOAD_CHUNK_SIZE_BYTES = 256 * 1024  # 256 KB
 UPLOAD_CHUNK_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB (Google recommended minimum)
 MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB safety limit for URL downloads
@@ -885,6 +921,27 @@ def reject_sources_with_upload_url(verb: str, **sources: Any) -> None:
         )
 
 
+def validate_shortcut_request(
+    target_id: str, mime_type: Optional[str], **sources: Any
+) -> None:
+    """Refuse a shortcut create that also carries content or a non-shortcut type."""
+    if not target_id.strip():
+        raise ValueError("shortcut_target_id must be a non-empty Drive file ID.")
+    given = [
+        f"'{name}'" for name, value in sources.items() if value not in (None, False)
+    ]
+    if given:
+        raise ValueError(
+            "A shortcut has no content of its own; do not pass "
+            f"{', '.join(given)} with shortcut_target_id."
+        )
+    if mime_type is not None and mime_type != SHORTCUT_MIME_TYPE:
+        raise ValueError(
+            f"shortcut_target_id creates a '{SHORTCUT_MIME_TYPE}' file; omit "
+            f"mime_type or set it to that value, not '{mime_type}'."
+        )
+
+
 def upload_url_not_offered_error(routes: tuple[str, ...]) -> UserInputError:
     """Refuse ``return_upload_url`` while local file access is enabled.
 
@@ -1077,6 +1134,27 @@ GOOGLE_SHEETS_IMPORT_FORMATS = {
 GOOGLE_DOCS_MIME_TYPE = "application/vnd.google-apps.document"
 GOOGLE_SLIDES_MIME_TYPE = "application/vnd.google-apps.presentation"
 GOOGLE_SHEETS_MIME_TYPE = "application/vnd.google-apps.spreadsheet"
+GOOGLE_DRAWINGS_MIME_TYPE = "application/vnd.google-apps.drawing"
+
+# Export targets for Google Drawings, keyed by export_format; PNG is the default.
+DRAWING_EXPORT_FORMATS = {
+    "png": ("png", "image/png"),
+    "pdf": ("pdf", "application/pdf"),
+    "jpg": ("jpg", "image/jpeg"),
+    "jpeg": ("jpg", "image/jpeg"),
+    "svg": ("svg", "image/svg+xml"),
+}
+
+
+def drawing_export_target(export_format: Optional[str]) -> Tuple[str, str]:
+    """(file extension, export MIME type) for a Google Drawing.
+
+    PNG unless export_format names another supported format.
+    """
+    return DRAWING_EXPORT_FORMATS.get(
+        (export_format or "").lower(), DRAWING_EXPORT_FORMATS["png"]
+    )
+
 
 IMPORT_FORMATS_BY_GOOGLE_MIME_TYPE = {
     GOOGLE_DOCS_MIME_TYPE: GOOGLE_DOCS_IMPORT_FORMATS,

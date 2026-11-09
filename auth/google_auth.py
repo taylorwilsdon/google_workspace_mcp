@@ -25,7 +25,7 @@ import google_auth_httplib2
 from auth.scopes import SCOPES, get_current_scopes, has_required_scopes  # noqa
 from auth.client_secrets import get_client_secrets_path, load_client_secrets_file
 from auth.oauth21_session_store import get_oauth21_session_store
-from auth.credential_store import get_credential_store
+from auth.credential_store import CredentialStore, get_credential_store
 from auth.gateway_identity import normalize_principal_email
 from auth.oauth_config import (
     is_oauth21_enabled,
@@ -225,19 +225,31 @@ def _find_any_credentials(
     return None, None
 
 
+def _stored_user_email(store: CredentialStore, user_email: str) -> str:
+    """Return the stored spelling of user_email, matched case-insensitively."""
+    users = store.list_users()
+    if user_email in users:
+        return user_email
+    lowered = user_email.lower()
+    return next((user for user in users if user.lower() == lowered), user_email)
+
+
+def _id_token_email(credentials: Credentials) -> Optional[str]:
+    """Return the email claim from the credentials' id_token, if present."""
+    if not (credentials and credentials.id_token):
+        return None
+    try:
+        return jwt.decode(
+            credentials.id_token, options={"verify_signature": False}
+        ).get("email")
+    except Exception as e:
+        logger.debug(f"Could not decode id_token to get email: {e}")
+        return None
+
+
 def save_credentials_to_session(session_id: str, credentials: Credentials):
     """Saves user credentials using OAuth21SessionStore."""
-    # Get user email from credentials if possible
-    user_email = None
-    if credentials and credentials.id_token:
-        try:
-            decoded_token = jwt.decode(
-                credentials.id_token, options={"verify_signature": False}
-            )
-            user_email = decoded_token.get("email")
-        except Exception as e:
-            logger.debug(f"Could not decode id_token to get email: {e}")
-
+    user_email = _id_token_email(credentials)
     if user_email:
         store = get_oauth21_session_store()
         store.store_session(
@@ -929,9 +941,7 @@ async def handle_auth_callback(
 
             if session_id:
                 try:
-                    session_credentials = store.get_credentials_by_mcp_session(
-                        session_id
-                    )
+                    session_credentials = store.get_credentials(user_google_email)
                     if session_credentials and session_credentials.refresh_token:
                         fallback_refresh_token = session_credentials.refresh_token
                         logger.info(
@@ -988,6 +998,14 @@ async def handle_auth_callback(
                     f"Failed to persist credentials for {user_google_email}; "
                     "session state was not updated."
                 )
+
+        session_user = store.get_user_by_mcp_session(session_id) if session_id else None
+        if session_user and session_user != user_google_email:
+            logger.info(
+                f"[handle_auth_callback] Session belongs to {session_user}; storing "
+                f"{user_google_email} without a session binding"
+            )
+            session_id = None
 
         # Always save to OAuth21SessionStore for centralized management
         store.store_session(
@@ -1141,6 +1159,7 @@ def get_credentials(
         # to avoid session binding conflicts when multiple credential files exist
         if user_google_email:
             credential_store = get_credential_store()
+            user_google_email = _stored_user_email(credential_store, user_google_email)
             credentials = credential_store.get_credential(user_google_email)
             if credentials:
                 logger.info(
@@ -1234,6 +1253,19 @@ def get_credentials(
                 "[get_credentials] Refreshing token using embedded client credentials"
             )
             credentials.refresh(Request())
+            refreshed_email = _id_token_email(credentials)
+            if (
+                user_google_email
+                and refreshed_email
+                and normalize_principal_email(refreshed_email)
+                != normalize_principal_email(user_google_email)
+            ):
+                logger.error(
+                    "[get_credentials] Refreshed credentials belong to %s, not %s; discarding them",
+                    refreshed_email,
+                    user_google_email,
+                )
+                return None
             logger.info(
                 f"[get_credentials] Credentials refreshed successfully. User: '{user_google_email}', Session: '{session_id}'"
             )
@@ -1275,6 +1307,10 @@ def get_credentials(
                 if persist_succeeded or is_stateless_mode():
                     # Also update OAuth21SessionStore
                     store = get_oauth21_session_store()
+                    mcp_session_id = session_id
+                    if skip_session_cache:
+                        existing_session = store.get_session_info(user_google_email)
+                        mcp_session_id = (existing_session or {}).get("mcp_session_id")
                     store.store_session(
                         user_email=user_google_email,
                         access_token=credentials.token,
@@ -1284,11 +1320,15 @@ def get_credentials(
                         client_secret=credentials.client_secret,
                         scopes=credentials.scopes,
                         expiry=credentials.expiry,
-                        mcp_session_id=session_id,
+                        mcp_session_id=mcp_session_id,
                         issuer="https://accounts.google.com",  # Add issuer for Google tokens
                     )
 
-            if session_id and (persist_succeeded or is_stateless_mode()):
+            if (
+                session_id
+                and not skip_session_cache
+                and (persist_succeeded or is_stateless_mode())
+            ):
                 # Update session cache if it was the source or is active
                 save_credentials_to_session(session_id, credentials)
         except RefreshError as e:
