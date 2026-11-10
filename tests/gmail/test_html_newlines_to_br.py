@@ -146,8 +146,6 @@ class TestPrepareGmailMessageNewlines:
         )
         parts = _decode_parts(raw_b64)
         assert parts["text/plain"].strip() == body
-        # The HTML alternative is Gmail's per-line <div> layout, not
-        # html_newlines_to_br output.
         assert parts["text/html"].strip() == (
             '<div dir="ltr"><div>Hi Jane,</div><div><br></div>'
             "<div>plain text stays plain.</div></div>"
