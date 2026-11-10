@@ -622,6 +622,9 @@ def _naive_to_utc_rfc3339(
     try:
         aware = tz.localize(naive).astimezone(datetime.timezone.utc)
     except OverflowError:
+        logger.warning(
+            f"Could not apply timezone '{timezone}' to {param_name} '{naive.isoformat()}', falling back to UTC"
+        )
         aware = naive.replace(tzinfo=datetime.timezone.utc)
     return aware.isoformat().replace("+00:00", "Z")
 

@@ -6,6 +6,8 @@ passing values like '"2026-05-15T00:00:00Z"' with literal quotes inside the
 string, or the literal string "null"/"None" instead of omitting the param.
 """
 
+import logging
+
 import pytest
 
 from gcalendar.calendar_helpers import _correct_time_format_for_api
@@ -77,6 +79,12 @@ def test_offset_free_values_use_timezone(
     time_str: str, timezone: str | None, expected: str
 ) -> None:
     assert _correct_time_format_for_api(time_str, "time_min", timezone) == expected
+
+
+def test_unrepresentable_offset_warns(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.WARNING, logger="gcalendar.calendar_helpers"):
+        _correct_time_format_for_api("0001-01-01T00:00:00", "time_min", "Asia/Kolkata")
+    assert "Asia/Kolkata" in caplog.text
 
 
 def test_unquoted_rfc3339_passes_through() -> None:
