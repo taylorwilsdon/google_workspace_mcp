@@ -389,15 +389,12 @@ class AuthInfoMiddleware(Middleware):
             return result
 
         except Exception as e:
-            # Check if this is an authentication error - don't log traceback for these
             if (
                 isinstance(e, GatewayIdentityError)
                 or "GoogleAuthenticationError" in str(type(e))
                 or "Access denied: Cannot retrieve credentials" in str(e)
             ):
                 logger.info(f"Authentication check failed: {e}")
-            else:
-                logger.error(f"Error in on_call_tool middleware: {e}", exc_info=True)
             raise
 
     async def on_get_prompt(self, context: MiddlewareContext, call_next):
@@ -413,13 +410,10 @@ class AuthInfoMiddleware(Middleware):
             return result
 
         except Exception as e:
-            # Check if this is an authentication error - don't log traceback for these
             if (
                 isinstance(e, GatewayIdentityError)
                 or "GoogleAuthenticationError" in str(type(e))
                 or "Access denied: Cannot retrieve credentials" in str(e)
             ):
                 logger.info(f"Authentication check failed in prompt: {e}")
-            else:
-                logger.error(f"Error in on_get_prompt middleware: {e}", exc_info=True)
             raise

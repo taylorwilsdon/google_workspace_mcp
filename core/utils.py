@@ -1354,7 +1354,7 @@ def handle_http_errors(
                         f"API error in {tool_name}: {_format_http_error_for_log(error)}"
                     )
                     logger.debug(f"API error detail in {tool_name}", exc_info=True)
-                    raise Exception(message) from error
+                    raise ToolError(message) from error
                 except TransientNetworkError:
                     # Re-raise without wrapping to preserve the specific error type
                     raise
