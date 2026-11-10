@@ -716,7 +716,6 @@ async def batch_update_presentation(
                     f"\n  Request {i}: Created shape with ID {shape_id}"
                 )
             elif "replaceAllText" in reply:
-                # The API omits occurrencesChanged when nothing matched.
                 count = reply["replaceAllText"].get("occurrencesChanged", 0)
                 confirmation_message += (
                     f"\n  Request {i}: Replaced {count} occurrence(s)"
