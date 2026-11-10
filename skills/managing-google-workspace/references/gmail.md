@@ -120,6 +120,7 @@ Send an email. Supports new messages, replies, forwards, HTML, attachments, CC/B
 | quote_original | boolean | no | false | Include the message being replied to as a quoted original (requires thread_id) |
 | include_signature | boolean | no | true | Append Gmail signature if available |
 | attachments | array | no | | See attachment format below |
+| priority | string | no | normal | `high` or `low` adds Importance / X-Priority / Priority headers that Outlook, Apple Mail and Thunderbird display; Gmail does not show them |
 
 **Attachment format** (each item is an object):
 - **File path**: `{"path": "path/to/file.pdf"}` -- optionally add `"filename"` and `"mime_type"`. Use forward slashes on all platforms
@@ -149,6 +150,7 @@ Create a draft. Same capabilities as send (including forwards and reply_all).
 | include_signature | boolean | no | true | Append Gmail signature if available |
 | reply_all | boolean | no | false | Derive recipients from the thread: To = sender being replied to, Cc = other participants (minus you and from_email). Requires thread_id; explicit to/cc win |
 | quote_original | boolean | no | false | Include original message as quoted reply (requires thread_id) |
+| priority | string | no | normal | `high` or `low` adds Importance / X-Priority / Priority headers that Outlook, Apple Mail and Thunderbird display; Gmail does not show them |
 
 Operational Gmail settings errors such as rate limits abort draft creation instead of silently falling back to a potentially unintended sender.
 
