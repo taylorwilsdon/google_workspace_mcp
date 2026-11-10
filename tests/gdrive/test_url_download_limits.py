@@ -109,3 +109,57 @@ async def test_download_url_to_bytes_fetches_untrusted_attachment_origin(
 
     with data_file:
         assert data_file.read() == b"remote"
+
+
+@pytest.mark.asyncio
+async def test_download_url_to_bytes_enforces_max_size_for_own_attachment(
+    stored_attachment, monkeypatch
+):
+    monkeypatch.setattr(drive_helpers, "MAX_DOWNLOAD_BYTES", 6)
+
+    with pytest.raises(ValueError, match="exceeds the 6 byte limit"):
+        await drive_helpers._download_url_to_bytes(
+            f"{config.WORKSPACE_MCP_BASE_URI}:{config.WORKSPACE_MCP_PORT}"
+            f"/attachments/{stored_attachment.file_id}",
+            upload_type_param="mime_type",
+        )
+
+
+@pytest.mark.asyncio
+async def test_download_url_to_bytes_reads_own_attachment_behind_path_prefix(
+    stored_attachment, monkeypatch
+):
+    def _no_fetch(_url):
+        raise AssertionError("own attachment links must not be fetched over HTTP")
+
+    monkeypatch.setattr(drive_helpers, "_ssrf_safe_stream", _no_fetch)
+    monkeypatch.setattr(config, "WORKSPACE_EXTERNAL_URL", "https://mcp.example/proxy/")
+
+    data_file, _content_type = await drive_helpers._download_url_to_bytes(
+        f"https://mcp.example/proxy/attachments/{stored_attachment.file_id}",
+        upload_type_param="mime_type",
+    )
+
+    with data_file:
+        assert data_file.read() == b"%PDF-stored"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://mcp.example/other/attachments/{file_id}",
+        "https://evil.example/proxy/attachments/{file_id}",
+        "/proxy/attachments/{file_id}",
+    ],
+)
+def test_resolve_local_attachment_rejects_untrusted_prefix(
+    stored_attachment, monkeypatch, url
+):
+    monkeypatch.setattr(config, "WORKSPACE_EXTERNAL_URL", "https://mcp.example/proxy")
+
+    assert (
+        attachment_storage.resolve_local_attachment(
+            url.format(file_id=stored_attachment.file_id)
+        )
+        is None
+    )
