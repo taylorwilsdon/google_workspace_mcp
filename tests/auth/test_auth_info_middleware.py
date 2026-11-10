@@ -1,12 +1,16 @@
 import logging
 from types import SimpleNamespace
 
+import httplib2
 import mcp.types as mt
 import pytest
+from fastmcp import Client, FastMCP
 from fastmcp.server.middleware import MiddlewareContext
+from googleapiclient.errors import HttpError
 
 from auth.auth_info_middleware import AuthInfoMiddleware
 from auth.gateway_identity import GatewayIdentityError
+from core.utils import handle_http_errors
 
 # The only identity keys any consumer reads. Asserting the exact set is what stops a
 # write-only key from creeping back in: every extra key used to cost a session-scoped
@@ -452,3 +456,53 @@ async def test_unresolved_auth_warning_is_suppressed_only_for_legacy_http_no_bea
         if "reason=all_auth_paths_failed" in record.getMessage()
     ]
     assert bool(unresolved_warnings) is expect_warning
+
+
+async def _skip_auth(self, context):
+    return None
+
+
+@pytest.mark.asyncio
+async def test_api_error_is_logged_without_traceback_or_query(monkeypatch, caplog):
+    monkeypatch.setattr(AuthInfoMiddleware, "_process_request_for_auth", _skip_auth)
+    monkeypatch.setattr(logging.getLogger("fastmcp"), "propagate", True)
+
+    server = FastMCP("test")
+    server.add_middleware(AuthInfoMiddleware())
+
+    @server.tool
+    @handle_http_errors("manage_event", service_type="calendar")
+    async def manage_event() -> str:
+        raise HttpError(
+            httplib2.Response({"status": 400}),
+            b'{"error": {"message": "Invalid start time."}}',
+            uri="https://www.googleapis.com/calendar/v3/events/e?q=secret-query",
+        )
+
+    with caplog.at_level(logging.DEBUG):
+        async with Client(server) as client:
+            result = await client.call_tool("manage_event", raise_on_error=False)
+
+    assert result.is_error
+    assert "Invalid start time." in result.content[0].text
+    errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert not any(r.name == "auth.auth_info_middleware" for r in errors)
+    assert not any(r.exc_info for r in errors)
+    assert not any("secret-query" in r.getMessage() for r in errors)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hook", ["on_call_tool", "on_get_prompt"])
+async def test_handler_errors_reraise_without_middleware_error_log(
+    monkeypatch, caplog, hook
+):
+    monkeypatch.setattr(AuthInfoMiddleware, "_process_request_for_auth", _skip_auth)
+
+    async def call_next(context):
+        raise RuntimeError("boom")
+
+    with caplog.at_level(logging.DEBUG, logger="auth.auth_info_middleware"):
+        with pytest.raises(RuntimeError, match="boom"):
+            await getattr(AuthInfoMiddleware(), hook)(SimpleNamespace(), call_next)
+
+    assert [r for r in caplog.records if r.levelno >= logging.ERROR] == []
