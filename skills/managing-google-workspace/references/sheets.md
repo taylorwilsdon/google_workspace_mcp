@@ -43,6 +43,15 @@ Get spreadsheet metadata: title, locale, and list of sheets.
 ### read_sheet_values
 Read values from a range in a spreadsheet.
 
+The response has one line per row: the sheet row number, then the row's cells
+separated by tabs, starting at the range's first column (the line above the rows says
+which). Row numbers are the sheet's own, so reading `A41:G60` starts at row 41.
+If the API's response gives no A1 starting cell, rows are instead numbered from 1
+within the range, and the line above the rows says so.
+Trailing empty cells are dropped. Tabs, line breaks and backslashes inside a
+cell are shown as `\t`, `\n`, `\r` and `\\`, so `\\n` is a backslash
+followed by `n`, not a line break.
+
 Open-ended or oversized A1 ranges are clamped to at most **1000 rows** before
 the Sheets API request (same budget as the default `A1:Z1000`). When clamped,
 the response includes a note with the rewritten range so you can request the
@@ -91,7 +100,7 @@ Create a new Google Spreadsheet.
 | folder_id | string | no | root | Parent folder. Accepts a folder ID or shortcut; for shared drives, a folder inside that drive. If the move fails, the spreadsheet is still created in My Drive root and the reply reports why |
 
 ### create_sheet
-Add a new sheet (tab) to an existing spreadsheet, or duplicate an existing tab when `source_sheet_name` is set.
+Add a new sheet (tab) to an existing spreadsheet, or duplicate an existing tab when `source_sheet_name` is set. Set `destination_spreadsheet_id` too to copy the tab, with its formatting and formulas, into another spreadsheet.
 
 | Parameter | Type | Required | Default | Notes |
 |-----------|------|----------|---------|-------|
@@ -100,6 +109,7 @@ Add a new sheet (tab) to an existing spreadsheet, or duplicate an existing tab w
 | sheet_name | string | no | | Title of the new tab. Google picks a default name if omitted |
 | source_sheet_name | string | no | | Existing tab to duplicate instead of adding a blank one |
 | insert_sheet_index | integer | no | end | 0-based position for the new tab |
+| destination_spreadsheet_id | string | no | spreadsheet_id | Spreadsheet to copy `source_sheet_name` into. Requires `source_sheet_name` |
 
 ### move_sheet_rows
 Move rows from one sheet to another within the same spreadsheet. Preserves formulas, data types, and formatting.
