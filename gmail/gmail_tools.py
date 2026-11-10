@@ -16,7 +16,7 @@ from functools import partial
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Annotated, Optional, List, Dict, Literal, Any, Union
-from urllib.parse import quote, unquote, urlparse, urlunsplit
+from urllib.parse import unquote, urlparse, urlunsplit
 
 from email.message import EmailMessage
 from email.policy import SMTP
@@ -79,6 +79,7 @@ from gmail.gmail_helpers import (
     _derive_reply_headers,
     _fetch_with_retry,
     _format_id_list,
+    _generate_gmail_web_url,
     _get_send_as_identity_and_signature,
     _html_signature_separator,
     _http_error_status,
@@ -1559,29 +1560,6 @@ def _prepare_gmail_message(
     raw_message = base64.urlsafe_b64encode(message.as_bytes(policy=SMTP)).decode()
 
     return raw_message, thread_id, attached_count, attachment_errors
-
-
-def _generate_gmail_web_url(
-    item_id: str, account_index: int = 0, user_google_email: Optional[str] = None
-) -> str:
-    """
-    Generate Gmail web interface URL for a message or thread ID.
-    Uses #all to access messages from any Gmail folder/label (not just inbox).
-    Addresses the account by email when known, so browsers signed in to several
-    Google accounts open the mailbox that owns the message.
-
-    Args:
-        item_id: Gmail message ID or thread ID
-        account_index: Google account index, used only when no email is known (default 0)
-        user_google_email: Email of the account that owns the message
-
-    Returns:
-        Gmail web interface URL that opens the message/thread in Gmail web interface
-    """
-    account = (
-        quote(user_google_email, safe="@") if user_google_email else str(account_index)
-    )
-    return f"https://mail.google.com/mail/u/{account}/#all/{item_id}"
 
 
 async def _fetch_search_result_headers(
