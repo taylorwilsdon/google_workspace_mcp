@@ -1418,9 +1418,6 @@ def _prepare_gmail_message(
         message.set_content(plain_body)
         message.add_alternative(body, subtype="html")
     else:
-        # Same two parts as the attachment-free Gmail-web path. A text/plain-only
-        # draft opens in Gmail's plain-text compose mode, and Gmail hard-wraps
-        # every line at ~76 characters when the user sends it from there.
         plain_part, html_part = _derive_web_bodies(body, "plain", direction)
         message.set_content(plain_part)
         message.add_alternative(html_part, subtype="html")
