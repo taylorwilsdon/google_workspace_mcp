@@ -298,6 +298,8 @@ Single-file service modules live in `g<service>/`, tools are registered with `@s
 
 MIT - see [`LICENSE`](LICENSE). The license is 21 lines and says what it means.
 
+_Workspace MCP is an independent open-source project and is not affiliated with, endorsed by, or sponsored by Google LLC. Google and Google Workspace are trademarks of Google LLC._
+
 ---
 
 Validations:
