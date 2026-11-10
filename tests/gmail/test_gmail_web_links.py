@@ -70,6 +70,30 @@ async def test_search_results_link_to_the_searched_account():
 
 
 @pytest.mark.asyncio
+async def test_message_metadata_links_to_the_account_that_was_read(monkeypatch):
+    monkeypatch.setattr(gmail_tools, "GMAIL_REQUEST_DELAY", 0)
+    service = Mock()
+    service.new_batch_http_request.side_effect = RuntimeError("no batch")
+    service.users.return_value.messages.return_value.get.return_value.execute.return_value = {
+        "id": "msg-1",
+        "threadId": "thread-1",
+        "payload": {"headers": [{"name": "Subject", "value": "Hello"}]},
+    }
+
+    result = await _unwrap(get_gmail_messages_content_batch)(
+        service=service,
+        message_ids=["msg-1"],
+        user_google_email="second@example.com",
+        format="metadata",
+    )
+
+    assert (
+        "Web Link: https://mail.google.com/mail/u/second@example.com/#all/msg-1"
+        in result
+    )
+
+
+@pytest.mark.asyncio
 async def test_message_content_links_to_the_account_that_was_read(monkeypatch):
     monkeypatch.setattr(gmail_tools, "GMAIL_REQUEST_DELAY", 0)
     body = base64.urlsafe_b64encode(b"Body text").decode()
