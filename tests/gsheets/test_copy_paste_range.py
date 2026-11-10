@@ -123,12 +123,13 @@ async def test_rejects_source_range_with_other_modes(extra):
         ({"source_range": "Daily!A29", "paste_type": "PASTE_ALL"}, "paste_type"),
         ({"source_range": "Missing!A1"}, "not found"),
         ({"source_range": ""}, "must not be empty"),
+        ({"source_range": "Daily!A29", "range_name": "Daily!:"}, "row or column"),
     ],
-    ids=["bad-paste-type", "unknown-sheet", "empty-source"],
+    ids=["bad-paste-type", "unknown-sheet", "empty-source", "whole-sheet-dest"],
 )
 async def test_rejects_invalid_copy_input(kwargs, message):
     service = _service()
 
     with pytest.raises(UserInputError, match=message):
-        await _copy(service, range_name="Daily!A30", **kwargs)
+        await _copy(service, **{"range_name": "Daily!A30", **kwargs})
     service.spreadsheets.return_value.batchUpdate.assert_not_called()
