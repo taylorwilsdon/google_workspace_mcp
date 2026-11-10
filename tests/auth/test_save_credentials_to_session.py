@@ -1,11 +1,3 @@
-"""Regression tests for caching credentials in the OAuth 2.1 session store.
-
-Credentials loaded from the file credential store carry no ``id_token``, so
-``save_credentials_to_session`` used to find no email, log a warning on every
-tool call and skip the per-session cache. Callers already know the account
-email, so they now pass it in and ``id_token`` decoding is only a fallback.
-"""
-
 import logging
 
 import jwt
@@ -38,14 +30,6 @@ class _SessionStore:
 
     def store_session(self, **kwargs):
         self.store_calls.append(kwargs)
-
-    def get_session_info(self, user_email):
-        issuers = {
-            call["user_email"]: call.get("issuer") for call in self.store_calls
-        }
-        if user_email in issuers:
-            return {"issuer": issuers[user_email]}
-        return None
 
     def get_user_by_mcp_session(self, session_id):  # noqa: ARG002
         return None
@@ -85,6 +69,7 @@ def test_save_uses_explicit_email_without_id_token(monkeypatch, caplog):
     assert call["user_email"] == EMAIL
     assert call["mcp_session_id"] == SESSION_ID
     assert call["access_token"] == "access-token"
+    assert call["issuer"] == "https://accounts.google.com"
 
 
 def test_save_falls_back_to_id_token_email(monkeypatch):
@@ -126,10 +111,7 @@ def test_save_without_any_email_still_warns_and_skips_cache(monkeypatch, caplog)
     assert session_store.store_calls == []
 
 
-def test_get_credentials_from_file_store_populates_session_cache(monkeypatch, caplog):
-    session_store = _SessionStore()
-    file_credentials = _Credentials()
-
+def _patch_file_store_lookup(monkeypatch, session_store, file_credentials):
     monkeypatch.delenv("MCP_SINGLE_USER_MODE", raising=False)
     monkeypatch.setattr(
         "auth.google_auth.get_oauth21_session_store", lambda: session_store
@@ -146,6 +128,12 @@ def test_get_credentials_from_file_store_populates_session_cache(monkeypatch, ca
         "auth.google_auth.load_credentials_from_session", lambda session_id: None
     )
 
+
+def test_get_credentials_from_file_store_populates_session_cache(monkeypatch, caplog):
+    session_store = _SessionStore()
+    file_credentials = _Credentials()
+    _patch_file_store_lookup(monkeypatch, session_store, file_credentials)
+
     with caplog.at_level(logging.WARNING):
         result = get_credentials(
             user_google_email=EMAIL,
@@ -159,3 +147,22 @@ def test_get_credentials_from_file_store_populates_session_cache(monkeypatch, ca
         (call["user_email"], call["mcp_session_id"])
         for call in session_store.store_calls
     ] == [(EMAIL, SESSION_ID)]
+
+
+def test_get_credentials_returns_file_credentials_when_session_binds_elsewhere(
+    monkeypatch,
+):
+    class _RefusingSessionStore(_SessionStore):
+        def store_session(self, **kwargs):  # noqa: ARG002
+            raise ValueError("Session is already bound to a different user")
+
+    file_credentials = _Credentials()
+    _patch_file_store_lookup(monkeypatch, _RefusingSessionStore(), file_credentials)
+
+    result = get_credentials(
+        user_google_email=EMAIL,
+        required_scopes=["scope.a"],
+        session_id=SESSION_ID,
+    )
+
+    assert result is file_credentials

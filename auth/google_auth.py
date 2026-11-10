@@ -251,13 +251,9 @@ def save_credentials_to_session(
     session_id: str, credentials: Credentials, user_email: Optional[str] = None
 ):
     """Saves user credentials using OAuth21SessionStore."""
-    # Credentials loaded from the file credential store carry no id_token,
-    # so only decode it as a fallback when the caller did not supply an email.
     user_email = user_email or _id_token_email(credentials)
     if user_email:
         store = get_oauth21_session_store()
-        # Keep the issuer an earlier write (for example the OAuth callback) recorded.
-        existing = store.get_session_info(user_email)
         store.store_session(
             user_email=user_email,
             access_token=credentials.token,
@@ -268,7 +264,7 @@ def save_credentials_to_session(
             scopes=credentials.scopes,
             expiry=credentials.expiry,
             mcp_session_id=session_id,
-            issuer=existing.get("issuer") if existing else None,
+            issuer="https://accounts.google.com",
         )
         logger.debug(
             f"Credentials saved to OAuth21SessionStore for session_id: {session_id}, user: {user_email}"
@@ -1229,9 +1225,13 @@ def get_credentials(
                     f"[get_credentials] Loaded from file for user '{user_google_email}', caching to session '{session_id}'."
                 )
                 if not skip_session_cache:
-                    save_credentials_to_session(
-                        session_id, credentials, user_google_email
-                    )  # Cache for current session
+                    try:
+                        save_credentials_to_session(
+                            session_id, credentials, user_google_email
+                        )
+                    except ValueError:
+                        # A concurrent call bound this session to another account.
+                        skip_session_cache = True
 
         if not credentials:
             logger.info(
