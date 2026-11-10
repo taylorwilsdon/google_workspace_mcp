@@ -1140,10 +1140,13 @@ async def _copy_paste_range(
         .execute
     )
     sheets = metadata.get("sheets", [])
+    destination = _parse_a1_range(destination_range, sheets)
+    if set(destination) == {"sheetId"}:
+        raise UserInputError("range_name must include a row or column to paste into.")
     request = {
         "copyPaste": {
             "source": _parse_a1_range(source_range, sheets),
-            "destination": _parse_a1_range(destination_range, sheets),
+            "destination": destination,
             "pasteType": normalized,
         }
     }
