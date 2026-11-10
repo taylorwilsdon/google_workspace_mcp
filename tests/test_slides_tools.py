@@ -206,7 +206,7 @@ async def test_batch_update_allows_insert_text_targeting_created_shape():
 
 
 @pytest.mark.asyncio
-async def test_batch_update_reports_replace_all_text_counts():
+async def test_batch_update_reports_replace_all_text_counts() -> None:
     """replaceAllText replies report how many occurrences changed, including none."""
     service, _ = _build_slides_service(
         batch_update_response={
