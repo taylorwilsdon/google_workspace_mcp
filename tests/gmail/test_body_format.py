@@ -383,13 +383,6 @@ class TestHtmlSignatureSeparator:
 
         assert html_to_text_preserving_breaks(result) == "Hello\n\nJane"
 
-    def test_quoted_reply_signature_follows_block_body(self):
-        result = gmail_tools._build_quoted_reply_body(
-            "<p>Thanks</p>", "html", self.SIGNATURE, {"html_body": "<p>Hi</p>"}
-        )
-
-        assert result.startswith(f"<p>Thanks</p>{self.WRAPPED}")
-
 
 class TestHtmlPlainTextAlternative:
     """The text/plain alternative of an outgoing HTML message is what non-HTML
@@ -1745,6 +1738,7 @@ async def test_forward_includes_attachment_backed_bodies():
 
     await _forward_gmail_message_impl(
         service=service,
+        people_service=None,
         message_id="msg-1",
         to="recipient@example.com",
         user_google_email="user@example.com",
@@ -1779,6 +1773,7 @@ async def test_forward_aborts_when_a_body_cannot_be_fetched(
     with pytest.raises(ToolError, match="original message body"):
         await _forward_gmail_message_impl(
             service=service,
+            people_service=None,
             message_id="msg-1",
             to="recipient@example.com",
             user_google_email="user@example.com",

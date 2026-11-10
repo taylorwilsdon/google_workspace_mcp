@@ -16,6 +16,7 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 import gmail.gmail_tools as gmail_tools
+from gmail.gmail_helpers import _wrap_signature_html
 from core.utils import UserInputError
 from gmail.gmail_tools import (
     draft_gmail_message,
@@ -816,8 +817,9 @@ async def test_draft_gmail_message_builds_html_attachments_with_mixed_top_level(
     attachments = list(parsed.iter_attachments())
 
     assert parsed.get_content_type() == "multipart/mixed"
+    # Attachments take the Gmail-web path, which wraps the body in its dir div.
     assert parsed.get_body(preferencelist=("html",)).get_content().strip() == (
-        "<p>Please see attached.</p>"
+        '<div dir="ltr"><p>Please see attached.</p></div>'
     )
     assert parsed.get_body(preferencelist=("plain",)).get_content().strip() == (
         "Please see attached."
@@ -1767,6 +1769,54 @@ async def test_send_gmail_message_quotes_original_when_requested():
 
 
 @pytest.mark.asyncio
+async def test_send_gmail_message_quoted_reply_signature_follows_block_body():
+    signature = "<div>Jane</div>"
+    mock_service = _mock_gmail_service()
+    mock_service.users().messages().send().execute.return_value = {"id": "sent_reply"}
+    mock_service.users().settings().sendAs().list().execute.return_value = {
+        "sendAs": [
+            {
+                "sendAsEmail": "user@example.com",
+                "isPrimary": True,
+                "signature": signature,
+            }
+        ]
+    }
+    mock_service.users().threads().get().execute.return_value = {
+        "messages": [
+            _thread_message(
+                "<msg1@example.com>",
+                from_value="Alice Example <alice@example.com>",
+                text="Hi",
+            )
+        ]
+    }
+
+    await _unwrap(send_gmail_message)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        to="alice@example.com",
+        subject="Re: Meeting tomorrow",
+        body="<p>Thanks</p>",
+        body_format="html",
+        thread_id="thread123",
+        quote_original=True,
+        include_signature=True,
+    )
+
+    send_kwargs = (
+        mock_service.users.return_value.messages.return_value.send.call_args.kwargs
+    )
+    parsed = _parse_raw_message(send_kwargs["body"]["raw"])
+    html_body = parsed.get_body(preferencelist=("html",)).get_content()
+    # A closing margin block already separates the signature; no <br> is added.
+    assert html_body.startswith(
+        f'<div dir="ltr"><p>Thanks</p>{_wrap_signature_html(signature)}'
+    )
+    assert 'class="gmail_quote' in html_body
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "cc, expected_cc",
     [
@@ -1804,7 +1854,8 @@ async def test_send_gmail_message_reply_all_derives_recipients(cc, expected_cc):
         mock_service.users.return_value.messages.return_value.send.call_args.kwargs
     )
     parsed = _parse_raw_message(send_kwargs["body"]["raw"])
-    assert parsed["To"] == "alice@example.com"
+    # Recipients carry the display name harvested from the thread, as Gmail web does.
+    assert parsed["To"] == "Alice Example <alice@example.com>"
     assert parsed["Cc"] == expected_cc
 
 
@@ -1874,7 +1925,9 @@ async def test_send_gmail_message_reply_all_moves_sender_to_cc_when_to_is_explic
     parsed = _parse_raw_message(send_kwargs["body"]["raw"])
     assert parsed["To"] == "dave@example.com"
     # Redirecting To must not drop Alice from the reply-all entirely.
-    assert parsed["Cc"] == "alice@example.com, bob@example.com, carol@example.com"
+    assert parsed["Cc"] == (
+        "Alice Example <alice@example.com>, bob@example.com, carol@example.com"
+    )
 
 
 @pytest.mark.asyncio
@@ -2052,7 +2105,8 @@ async def test_draft_gmail_message_reply_all_derives_recipients(cc, expected_cc)
         mock_service.users.return_value.drafts.return_value.create.call_args.kwargs
     )
     parsed = _parse_raw_message(create_kwargs["body"]["message"]["raw"])
-    assert parsed["To"] == "alice@example.com"
+    # Recipients carry the display name harvested from the thread, as Gmail web does.
+    assert parsed["To"] == "Alice Example <alice@example.com>"
     assert parsed["Cc"] == expected_cc
 
 
@@ -2120,7 +2174,7 @@ async def test_draft_gmail_message_forward_creates_draft_instead_of_sending():
         forward_message_id="abc123",
     )
 
-    assert result == "Forward draft created! Draft ID: draft123"
+    assert result.startswith("Forward draft created! Draft ID: draft123")
     mock_service.users().messages().send().execute.assert_not_called()
     raw = (
         mock_service.users().drafts().create.call_args.kwargs["body"]["message"]["raw"]
