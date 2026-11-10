@@ -133,3 +133,20 @@ async def test_rejects_invalid_copy_input(kwargs, message):
     with pytest.raises(UserInputError, match=message):
         await _copy(service, **{"range_name": "Daily!A30", **kwargs})
     service.spreadsheets.return_value.batchUpdate.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_unqualified_ranges_use_first_visible_sheet():
+    service = _service()
+    service.spreadsheets.return_value.get.return_value.execute.return_value = {
+        "sheets": [
+            {"properties": {"sheetId": 7, "title": "Hidden", "hidden": True}},
+            {"properties": {"sheetId": 0, "title": "Daily"}},
+        ]
+    }
+
+    await _copy(service, range_name="A2", source_range="Hidden!A1")
+
+    copy_paste = _sent_requests(service)[0]["copyPaste"]
+    assert copy_paste["source"]["sheetId"] == 7
+    assert copy_paste["destination"]["sheetId"] == 0
