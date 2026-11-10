@@ -25,6 +25,7 @@ from gsheets.sheets_helpers import (
     _a1_range_for_values,
     _clamp_a1_read_rows,
     _column_to_index,
+    _copy_paste_range,
     _copy_sheet_to_spreadsheet,
     _build_boolean_rule,
     _build_tab_style_properties,
@@ -377,10 +378,12 @@ async def modify_sheet_values(
     clear_values: bool = False,
     chips: Optional[Union[str, dict, List[Any]]] = None,
     chip_type: Optional[str] = None,
+    source_range: Optional[str] = None,
+    paste_type: str = "PASTE_NORMAL",
 ) -> str:
     """
     Modifies values in a specific range of a Google Sheet - can write, update, or clear values,
-    or insert Smart Chips (Drive files/folders or People).
+    insert Smart Chips (Drive files/folders or People), or copy another range into it.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
@@ -398,10 +401,30 @@ async def modify_sheet_values(
             - A dict or list of dicts with explicit properties (e.g., {"type": "drive", "uri": "..."}, {"type": "person", "email": "..."}).
             - A JSON-encoded string representing any of the above formats.
         chip_type (Optional[str]): Explicit chip type if passing raw strings in chips: "drive" (default for URLs/IDs) or "person" (default for emails).
+        source_range (Optional[str]): A1 range in the same spreadsheet to copy into range_name, like the UI copy and
+            paste: relative formula references shift and formatting comes along. Both ranges must be A1 notation (not
+            named ranges); one without a sheet name uses the first sheet. range_name may be just the top-left cell
+            (e.g., copy "Sheet1!A29:AO29" to "Sheet1!A30"). Use instead of values, chips, or clear_values.
+        paste_type (str): What source_range pastes: "PASTE_NORMAL" (values, formulas, formatting), "PASTE_VALUES",
+            "PASTE_FORMAT", "PASTE_NO_BORDERS", "PASTE_FORMULA", "PASTE_DATA_VALIDATION", or
+            "PASTE_CONDITIONAL_FORMATTING". Defaults to "PASTE_NORMAL".
 
     Returns:
         str: Confirmation message of the successful modification operation.
     """
+    if source_range is not None:
+        if values is not None or clear_values or chips is not None:
+            raise UserInputError(
+                "Provide only one of 'values', 'chips', 'source_range', or 'clear_values'."
+            )
+        applied_paste_type = await _copy_paste_range(
+            service, spreadsheet_id, source_range, range_name, paste_type
+        )
+        return (
+            f"Successfully copied '{source_range}' to '{range_name}' ({applied_paste_type}) "
+            f"in spreadsheet {spreadsheet_id} for {user_google_email}."
+        )
+
     if chips is not None:
         if values is not None or clear_values:
             raise UserInputError(
@@ -446,7 +469,7 @@ async def modify_sheet_values(
 
     if not clear_values and not values:
         raise UserInputError(
-            "Either 'values' or 'chips' must be provided, or 'clear_values' must be True."
+            "Provide 'values', 'chips', or 'source_range', or set 'clear_values' to True."
         )
 
     if clear_values:
