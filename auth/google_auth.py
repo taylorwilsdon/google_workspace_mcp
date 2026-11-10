@@ -249,7 +249,7 @@ def _id_token_email(credentials: Credentials) -> Optional[str]:
 
 def save_credentials_to_session(
     session_id: str, credentials: Credentials, user_email: Optional[str] = None
-):
+) -> None:
     """Saves user credentials using OAuth21SessionStore."""
     user_email = user_email or _id_token_email(credentials)
     if user_email:

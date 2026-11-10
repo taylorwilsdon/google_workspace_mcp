@@ -54,7 +54,7 @@ def _warning_messages(caplog):
     ]
 
 
-def test_save_uses_explicit_email_without_id_token(monkeypatch, caplog):
+def test_save_uses_explicit_email_without_id_token(monkeypatch, caplog) -> None:
     session_store = _SessionStore()
     monkeypatch.setattr(
         "auth.google_auth.get_oauth21_session_store", lambda: session_store
@@ -72,7 +72,7 @@ def test_save_uses_explicit_email_without_id_token(monkeypatch, caplog):
     assert call["issuer"] == "https://accounts.google.com"
 
 
-def test_save_falls_back_to_id_token_email(monkeypatch):
+def test_save_falls_back_to_id_token_email(monkeypatch) -> None:
     session_store = _SessionStore()
     monkeypatch.setattr(
         "auth.google_auth.get_oauth21_session_store", lambda: session_store
@@ -86,7 +86,7 @@ def test_save_falls_back_to_id_token_email(monkeypatch):
     ]
 
 
-def test_save_prefers_explicit_email_over_id_token(monkeypatch):
+def test_save_prefers_explicit_email_over_id_token(monkeypatch) -> None:
     session_store = _SessionStore()
     monkeypatch.setattr(
         "auth.google_auth.get_oauth21_session_store", lambda: session_store
@@ -98,7 +98,9 @@ def test_save_prefers_explicit_email_over_id_token(monkeypatch):
     assert [call["user_email"] for call in session_store.store_calls] == [EMAIL]
 
 
-def test_save_without_any_email_still_warns_and_skips_cache(monkeypatch, caplog):
+def test_save_without_any_email_still_warns_and_skips_cache(
+    monkeypatch, caplog
+) -> None:
     session_store = _SessionStore()
     monkeypatch.setattr(
         "auth.google_auth.get_oauth21_session_store", lambda: session_store
@@ -129,7 +131,9 @@ def _patch_file_store_lookup(monkeypatch, session_store, file_credentials):
     )
 
 
-def test_get_credentials_from_file_store_populates_session_cache(monkeypatch, caplog):
+def test_get_credentials_from_file_store_populates_session_cache(
+    monkeypatch, caplog
+) -> None:
     session_store = _SessionStore()
     file_credentials = _Credentials()
     _patch_file_store_lookup(monkeypatch, session_store, file_credentials)
@@ -151,7 +155,7 @@ def test_get_credentials_from_file_store_populates_session_cache(monkeypatch, ca
 
 def test_get_credentials_returns_file_credentials_when_session_binds_elsewhere(
     monkeypatch,
-):
+) -> None:
     class _RefusingSessionStore(_SessionStore):
         def store_session(self, **kwargs):  # noqa: ARG002
             raise ValueError("Session is already bound to a different user")
