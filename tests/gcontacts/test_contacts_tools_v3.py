@@ -154,6 +154,22 @@ class TestNormalizeUrl:
             == "https://example.com/path/sub"
         )
 
+    @pytest.mark.parametrize(
+        "value, expected",
+        [
+            (
+                "HTTPS://YouTu.be/dQw4w9WgXcQ?t=Ab#Frag",
+                "https://youtu.be/dQw4w9WgXcQ?t=Ab#Frag",
+            ),
+            ("Example.COM/Doc/ABC/", "example.com/Doc/ABC"),
+            ("https://User:Pass@Example.COM/X", "https://User:Pass@example.com/X"),
+            ("https://medium.com/@User/Post", "https://medium.com/@User/Post"),
+            ("MAILTO:Foo@Bar.COM", "mailto:Foo@bar.com"),
+        ],
+    )
+    def test_preserves_case_outside_scheme_and_host(self, value, expected):
+        assert _normalize_url(value) == expected
+
 
 class TestNormalizeNickname:
     def test_lowercase(self):
@@ -498,6 +514,25 @@ class TestMergeUrls:
         # Stored without slash, request has slash + caps — must still match
         result = _merge_urls(existing, [{"value": "HTTPS://Example.COM/"}], "remove")
         assert result == []
+
+    def test_merge_keeps_paths_differing_only_by_case(self):
+        existing = [{"value": "https://youtu.be/dQw4w9WgXcQ"}]
+        new = [{"value": "https://youtu.be/DQW4W9WGXCQ"}]
+        result = _merge_urls(existing, new, "merge")
+        assert [u["value"] for u in result] == [
+            "https://youtu.be/dQw4w9WgXcQ",
+            "https://youtu.be/DQW4W9WGXCQ",
+        ]
+
+    def test_remove_matches_path_case_exactly(self):
+        existing = [
+            {"value": "https://example.com/Doc/ABC"},
+            {"value": "https://example.com/doc/abc"},
+        ]
+        result = _merge_urls(
+            existing, [{"value": "https://Example.com/Doc/ABC"}], "remove"
+        )
+        assert result == [{"value": "https://example.com/doc/abc"}]
 
 
 # =============================================================================
