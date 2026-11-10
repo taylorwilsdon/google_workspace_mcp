@@ -163,6 +163,7 @@ For parameters: [references/docs.md](references/docs.md)
 | Read cell values | `read_sheet_values` |
 | Write/append/clear values | `modify_sheet_values` |
 | Insert smart chips | `modify_sheet_values` (`chips`) |
+| Copy/paste a range with formulas and formatting | `modify_sheet_values` (`source_range`) |
 | Format cells | `format_sheet_range` |
 | Conditional formatting | `manage_conditional_formatting` |
 | Get spreadsheet info | `get_spreadsheet_info` |

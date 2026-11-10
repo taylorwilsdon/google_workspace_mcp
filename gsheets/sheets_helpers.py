@@ -28,6 +28,15 @@ SHEET_TITLE_SAFE_RE = re.compile(r"^[A-Za-z0-9_]+$")
 COLUMN_LETTER_REGEX = re.compile(r"^[A-Za-z]+$")
 QUOTED_SHEET_ONLY_REGEX = re.compile(r"^'(?:[^']|'')+'$")
 MERGE_TYPES = ("MERGE_ALL", "MERGE_COLUMNS", "MERGE_ROWS")
+PASTE_TYPES = (
+    "PASTE_NORMAL",
+    "PASTE_VALUES",
+    "PASTE_FORMAT",
+    "PASTE_NO_BORDERS",
+    "PASTE_FORMULA",
+    "PASTE_DATA_VALIDATION",
+    "PASTE_CONDITIONAL_FORMATTING",
+)
 
 
 def _column_to_index(column: str) -> Optional[int]:
@@ -1111,6 +1120,39 @@ def _select_sheet(sheets: List[dict], sheet_name: Optional[str]) -> dict:
     raise UserInputError(
         f"Sheet '{sheet_name}' not found. Available sheets: {', '.join(available_titles)}."
     )
+
+
+async def _copy_paste_range(
+    service,
+    spreadsheet_id: str,
+    source_range: str,
+    destination_range: str,
+    paste_type: str,
+) -> str:
+    """Copy source_range onto destination_range with a copyPaste request; return the paste type used."""
+    normalized = paste_type.strip().upper()
+    if normalized not in PASTE_TYPES:
+        raise UserInputError(f"paste_type must be one of {list(PASTE_TYPES)}.")
+
+    metadata = await asyncio.to_thread(
+        service.spreadsheets()
+        .get(spreadsheetId=spreadsheet_id, fields="sheets(properties(sheetId,title))")
+        .execute
+    )
+    sheets = metadata.get("sheets", [])
+    request = {
+        "copyPaste": {
+            "source": _parse_a1_range(source_range, sheets),
+            "destination": _parse_a1_range(destination_range, sheets),
+            "pasteType": normalized,
+        }
+    }
+    await asyncio.to_thread(
+        service.spreadsheets()
+        .batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": [request]})
+        .execute
+    )
+    return normalized
 
 
 async def _copy_sheet_to_spreadsheet(
