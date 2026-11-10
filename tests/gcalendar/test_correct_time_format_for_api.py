@@ -83,8 +83,12 @@ def test_offset_free_values_use_timezone(
 
 def test_unrepresentable_offset_warns(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.WARNING, logger="gcalendar.calendar_helpers"):
-        _correct_time_format_for_api("0001-01-01T00:00:00", "time_min", "Asia/Kolkata")
-    assert "Asia/Kolkata" in caplog.text
+        result = _correct_time_format_for_api(
+            "0001-01-01T00:00:00", "time_min", "Asia/Kolkata"
+        )
+    assert result == "0001-01-01T00:00:00Z"
+    assert "Could not apply timezone 'Asia/Kolkata'" in caplog.text
+    assert "falling back to UTC" in caplog.text
 
 
 def test_unquoted_rfc3339_passes_through() -> None:
