@@ -2,6 +2,7 @@ import logging
 from types import SimpleNamespace
 
 import httplib2
+import fastmcp
 import mcp.types as mt
 import pytest
 from fastmcp import Client, FastMCP
@@ -489,6 +490,30 @@ async def test_api_error_is_logged_without_traceback_or_query(monkeypatch, caplo
     assert not any(r.name == "auth.auth_info_middleware" for r in errors)
     assert not any(r.exc_info for r in errors)
     assert not any("secret-query" in r.getMessage() for r in errors)
+
+
+@pytest.mark.asyncio
+async def test_api_error_respects_mask_error_details(monkeypatch):
+    monkeypatch.setattr(AuthInfoMiddleware, "_process_request_for_auth", _skip_auth)
+    monkeypatch.setattr(fastmcp.settings, "mask_error_details", True)
+
+    server = FastMCP("test")
+    server.add_middleware(AuthInfoMiddleware())
+
+    @server.tool
+    @handle_http_errors("manage_event", service_type="calendar")
+    async def manage_event() -> str:
+        raise HttpError(
+            httplib2.Response({"status": 400}),
+            b'{"error": {"message": "secret-detail"}}',
+            uri="https://www.googleapis.com/calendar/v3/events/e?q=secret-query",
+        )
+
+    async with Client(server) as client:
+        result = await client.call_tool("manage_event", raise_on_error=False)
+
+    assert result.is_error
+    assert result.content[0].text == "API error in manage_event: HTTP 400"
 
 
 @pytest.mark.asyncio
