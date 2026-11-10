@@ -1,6 +1,6 @@
 # Google Calendar Tools Reference
 
-MCP tools for Google Calendar event management, Out of Office and Focus Time blocks, calendar creation, and availability queries. All tools require `user_google_email` (string, required).
+MCP tools for Google Calendar event management, Out of Office and Focus Time blocks, calendar creation and sharing, and availability queries. All tools require `user_google_email` (string, required).
 
 ---
 
@@ -15,15 +15,23 @@ List a single page of calendars accessible to the authenticated user. Returns su
 | max_results | integer | no | | Max calendars per page. Omit for the API default |
 | page_token | string | no | | Token from a previous response's `Next page token` |
 
-### create_calendar
-Create a new secondary calendar. Returns its ID for use as `calendar_id` elsewhere.
+### manage_calendar
+Create a secondary calendar, or list, share, update, or remove a calendar's access control rules. `create` returns the new calendar's ID for use as `calendar_id` elsewhere. `list_sharing` returns each rule's role, scope, and rule ID for use with `update_sharing` and `unshare`.
 
 | Parameter | Type | Required | Default | Notes |
 |-----------|------|----------|---------|-------|
 | user_google_email | string | yes | | |
-| summary | string | yes | | Calendar name |
-| description | string | no | | Calendar description |
-| timezone | string | no | | IANA timezone, e.g. `America/New_York` |
+| action | string | yes | | `create`, `list_sharing`, `share`, `update_sharing`, or `unshare` |
+| summary | string | for create | | Calendar name |
+| description | string | no | | Calendar description (create only) |
+| timezone | string | no | | IANA timezone, e.g. `America/New_York` (create only) |
+| calendar_id | string | no | primary | Calendar ID for the sharing actions |
+| role | string | for share/update_sharing | | `freeBusyReader`, `reader`, `writerWithoutPrivateAccess`, `writer`, `owner`, or `none` |
+| scope_type | string | no | user | `user`, `group`, `domain`, or `default` (public). Used by share |
+| scope_value | string | for share | | Email for user/group, domain name for domain. Omit for `default` |
+| rule_id | string | for update_sharing/unshare | | Rule ID from `list_sharing`, e.g. `user:alice@example.com` |
+| send_notifications | boolean | no | true | Email the grantee on share/update_sharing |
+| page_token | string | no | | Next-page token (list_sharing only) |
 
 ### get_events
 Retrieve events from a calendar. Fetch a single event by ID, list events in a time range, or search by keyword.

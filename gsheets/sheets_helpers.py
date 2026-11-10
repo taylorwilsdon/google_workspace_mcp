@@ -1113,6 +1113,70 @@ def _select_sheet(sheets: List[dict], sheet_name: Optional[str]) -> dict:
     )
 
 
+async def _copy_sheet_to_spreadsheet(
+    service,
+    spreadsheet_id: str,
+    sheet_id: int,
+    destination_spreadsheet_id: str,
+    sheet_name: Optional[str],
+    insert_sheet_index: Optional[int],
+) -> dict:
+    """Copy a sheet into another spreadsheet with an optional title and index; return its properties."""
+    new_props = await asyncio.to_thread(
+        service.spreadsheets()
+        .sheets()
+        .copyTo(
+            spreadsheetId=spreadsheet_id,
+            sheetId=sheet_id,
+            body={"destinationSpreadsheetId": destination_spreadsheet_id},
+        )
+        .execute
+    )
+
+    updates: dict[str, Any] = {}
+    if sheet_name is not None:
+        updates["title"] = sheet_name
+    if insert_sheet_index is not None:
+        updates["index"] = insert_sheet_index
+    if not updates:
+        return new_props
+
+    new_id = new_props["sheetId"]
+    update_request = {
+        "updateSheetProperties": {
+            "properties": {"sheetId": new_id, **updates},
+            "fields": ",".join(updates),
+        }
+    }
+    try:
+        await asyncio.to_thread(
+            service.spreadsheets()
+            .batchUpdate(
+                spreadsheetId=destination_spreadsheet_id,
+                body={"requests": [update_request]},
+            )
+            .execute
+        )
+    except Exception:
+        try:
+            await asyncio.to_thread(
+                service.spreadsheets()
+                .batchUpdate(
+                    spreadsheetId=destination_spreadsheet_id,
+                    body={"requests": [{"deleteSheet": {"sheetId": new_id}}]},
+                )
+                .execute
+            )
+        except Exception as cleanup_error:
+            raise RuntimeError(
+                f"Copied sheet '{new_props['title']}' (ID: {new_id}) to spreadsheet "
+                f"{destination_spreadsheet_id} but could not set its title or index; "
+                "delete or rename it before retrying."
+            ) from cleanup_error
+        raise
+    return {**new_props, **updates}
+
+
 def _parse_condition_values(
     condition_values: Optional[Union[str, List[Union[str, int, float]]]],
 ) -> Optional[List[Union[str, int, float]]]:
