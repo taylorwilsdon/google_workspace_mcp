@@ -579,8 +579,9 @@ async def search_messages(
             f" [attachment: {a.get('contentName', 'unnamed')} ({a.get('contentType', 'unknown type')})]"
             for a in attachments
         )
+        summary = f"[{create_time}] {sender} in '{space_name}': {text_content}{links_suffix}{att_suffix}"
         output.append(
-            f"- [{create_time}] {sender} in '{space_name}': {text_content}{links_suffix}{att_suffix}\n  {_format_search_message_ids(msg)}"
+            f"- {' '.join(summary.split())}\n  {_format_search_message_ids(msg)}"
         )
 
     return "\n".join(output)
