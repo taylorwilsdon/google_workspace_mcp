@@ -1136,10 +1136,16 @@ async def _copy_paste_range(
 
     metadata = await asyncio.to_thread(
         service.spreadsheets()
-        .get(spreadsheetId=spreadsheet_id, fields="sheets(properties(sheetId,title))")
+        .get(
+            spreadsheetId=spreadsheet_id,
+            fields="sheets(properties(sheetId,title,hidden))",
+        )
         .execute
     )
-    sheets = metadata.get("sheets", [])
+    sheets = sorted(
+        metadata.get("sheets", []),
+        key=lambda sheet: sheet.get("properties", {}).get("hidden", False),
+    )
     destination = _parse_a1_range(destination_range, sheets)
     if set(destination) == {"sheetId"}:
         raise UserInputError("range_name must include a row or column to paste into.")
