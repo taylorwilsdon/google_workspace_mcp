@@ -27,6 +27,7 @@ from googleapiclient.errors import HttpError
 from googleapiclient.http import HttpRequest, MediaIoBaseDownload, MediaIoBaseUpload
 
 from auth.service_decorator import require_google_service
+from core.attachment_storage import resolve_local_attachment
 from core.file_limits import download_media_bytes
 from core.http_utils import (
     PrivateHostError,
@@ -984,13 +985,33 @@ async def _stream_url_with_validation(
     *,
     upload_type_param: str,
 ) -> Tuple[int, Optional[str]]:
-    """Stream a remote file, hinting at the upload URL on a private-host refusal."""
+    """Stream a URL, hinting at the upload URL on a private-host refusal.
+
+    This server's own /attachments/{id} links are read from attachment storage.
+    """
+    local = resolve_local_attachment(url)
+    if local is not None:
+        file_path, metadata = local
+        return await _stream_file(file_path, write_chunk), metadata.get("mime_type")
     try:
         return await _stream_url(url, write_chunk)
     except PrivateHostError as exc:
         if local_file_access_enabled():
             raise
         raise ValueError(f"{exc}. {upload_url_hint(upload_type_param)}") from exc
+
+
+async def _stream_file(
+    path: Path, write_chunk: Optional[Callable[[bytes], Awaitable[None]]]
+) -> int:
+    """Stream a local file in download-sized chunks and return its size."""
+    total_bytes = 0
+    with path.open("rb") as source:
+        while chunk := await asyncio.to_thread(source.read, DOWNLOAD_CHUNK_SIZE_BYTES):
+            total_bytes += len(chunk)
+            if write_chunk is not None:
+                await write_chunk(chunk)
+    return total_bytes
 
 
 async def _stream_url(

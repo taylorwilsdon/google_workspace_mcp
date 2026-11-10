@@ -16,6 +16,9 @@ import uuid
 from pathlib import Path
 from typing import NamedTuple, Optional, Dict
 from datetime import datetime, timedelta
+from urllib.parse import urlparse
+
+from core import config
 
 logger = logging.getLogger(__name__)
 
@@ -410,6 +413,43 @@ def get_attachment_storage() -> AttachmentStorage:
         _attachment_storage = AttachmentStorage()
     _attachment_storage.sweep_expired()
     return _attachment_storage
+
+
+def _trusted_attachment_origins() -> set[tuple[str, str]]:
+    """Return the origins this server hands out /attachments/{id} links on."""
+    origins: set[tuple[str, str]] = set()
+    for origin in (
+        config.WORKSPACE_EXTERNAL_URL,
+        f"{config.WORKSPACE_MCP_BASE_URI}:{config.WORKSPACE_MCP_PORT}",
+    ):
+        if not origin:
+            continue
+        parsed = urlparse(origin)
+        if parsed.scheme and parsed.netloc:
+            origins.add((parsed.scheme.lower(), parsed.netloc.lower()))
+    return origins
+
+
+def resolve_local_attachment(url: str) -> Optional[tuple[Path, Dict]]:
+    """Return (path, metadata) when ``url`` is this server's own /attachments/{id} link."""
+    parsed = urlparse(url)
+    parts = parsed.path.strip("/").split("/")
+    if len(parts) != 2 or parts[0] != "attachments":
+        return None
+    if parsed.netloc and (
+        (parsed.scheme.lower(), parsed.netloc.lower())
+        not in _trusted_attachment_origins()
+    ):
+        return None
+
+    storage = get_attachment_storage()
+    metadata = storage.get_attachment_metadata(parts[1])
+    if metadata is None:
+        return None
+    file_path = storage.get_attachment_path(parts[1])
+    if file_path is None:
+        return None
+    return Path(file_path), metadata
 
 
 def get_attachment_url(file_id: str) -> str:
