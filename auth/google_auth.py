@@ -1333,11 +1333,12 @@ def get_credentials(
 
             if (
                 session_id
+                and not user_google_email
                 and not skip_session_cache
                 and (persist_succeeded or is_stateless_mode())
             ):
                 # Update session cache if it was the source or is active
-                save_credentials_to_session(session_id, credentials, user_google_email)
+                save_credentials_to_session(session_id, credentials)
         except RefreshError as e:
             logger.warning(
                 f"[get_credentials] RefreshError - token expired/revoked: {e}. User: '{user_google_email}', Session: '{session_id}'"

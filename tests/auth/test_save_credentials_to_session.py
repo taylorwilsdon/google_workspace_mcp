@@ -170,3 +170,39 @@ def test_get_credentials_returns_file_credentials_when_session_binds_elsewhere(
     )
 
     assert result is file_credentials
+
+
+def test_get_credentials_writes_refreshed_credentials_to_session_once(
+    monkeypatch,
+) -> None:
+    class _ExpiredCredentials(_Credentials):
+        def __init__(self):
+            super().__init__()
+            self.valid = False
+
+        def refresh(self, request):  # noqa: ARG002
+            self.token = "refreshed-token"
+
+    class _WritableCredentialStore(_FileCredentialStore):
+        def store_credential(self, user_email, credentials):  # noqa: ARG002
+            return True
+
+    session_store = _SessionStore()
+    file_credentials = _ExpiredCredentials()
+    _patch_file_store_lookup(monkeypatch, session_store, file_credentials)
+    monkeypatch.setattr(
+        "auth.google_auth.get_credential_store",
+        lambda: _WritableCredentialStore(file_credentials),
+    )
+
+    result = get_credentials(
+        user_google_email=EMAIL,
+        required_scopes=["scope.a"],
+        session_id=SESSION_ID,
+    )
+
+    assert result is file_credentials
+    assert [call["access_token"] for call in session_store.store_calls] == [
+        "access-token",
+        "refreshed-token",
+    ]
