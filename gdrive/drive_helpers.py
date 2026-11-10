@@ -1005,6 +1005,12 @@ async def _stream_file(
     path: Path, write_chunk: Optional[Callable[[bytes], Awaitable[None]]]
 ) -> int:
     """Stream a local file in download-sized chunks and return its size."""
+    size_bytes = path.stat().st_size
+    if size_bytes > MAX_DOWNLOAD_BYTES:
+        raise ValueError(
+            f"Attachment {path.name} exceeds the {MAX_DOWNLOAD_BYTES} byte limit "
+            f"({size_bytes} bytes)"
+        )
     total_bytes = 0
     with path.open("rb") as source:
         while chunk := await asyncio.to_thread(source.read, DOWNLOAD_CHUNK_SIZE_BYTES):

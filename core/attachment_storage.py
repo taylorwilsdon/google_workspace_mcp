@@ -415,38 +415,38 @@ def get_attachment_storage() -> AttachmentStorage:
     return _attachment_storage
 
 
-def _trusted_attachment_origins() -> set[tuple[str, str]]:
-    """Return the origins this server hands out /attachments/{id} links on."""
-    origins: set[tuple[str, str]] = set()
-    for origin in (
+def _trusted_attachment_bases() -> set[tuple[str, str, str]]:
+    """Return the (scheme, host, path prefix) bases of this server's attachment links."""
+    bases: set[tuple[str, str, str]] = set()
+    for base in (
         config.WORKSPACE_EXTERNAL_URL,
         f"{config.WORKSPACE_MCP_BASE_URI}:{config.WORKSPACE_MCP_PORT}",
     ):
-        if not origin:
+        if not base:
             continue
-        parsed = urlparse(origin)
+        parsed = urlparse(base)
         if parsed.scheme and parsed.netloc:
-            origins.add((parsed.scheme.lower(), parsed.netloc.lower()))
-    return origins
+            bases.add(
+                (parsed.scheme.lower(), parsed.netloc.lower(), parsed.path.rstrip("/"))
+            )
+    return bases
 
 
 def resolve_local_attachment(url: str) -> Optional[tuple[Path, Dict]]:
     """Return (path, metadata) when ``url`` is this server's own /attachments/{id} link."""
     parsed = urlparse(url)
-    parts = parsed.path.strip("/").split("/")
-    if len(parts) != 2 or parts[0] != "attachments":
+    prefix, separator, file_id = parsed.path.rstrip("/").rpartition("/attachments/")
+    if not separator or "/" in file_id:
         return None
-    if parsed.netloc and (
-        (parsed.scheme.lower(), parsed.netloc.lower())
-        not in _trusted_attachment_origins()
-    ):
+    base = (parsed.scheme.lower(), parsed.netloc.lower(), prefix)
+    if (parsed.netloc or prefix) and base not in _trusted_attachment_bases():
         return None
 
     storage = get_attachment_storage()
-    metadata = storage.get_attachment_metadata(parts[1])
+    metadata = storage.get_attachment_metadata(file_id)
     if metadata is None:
         return None
-    file_path = storage.get_attachment_path(parts[1])
+    file_path = storage.get_attachment_path(file_id)
     if file_path is None:
         return None
     return Path(file_path), metadata
