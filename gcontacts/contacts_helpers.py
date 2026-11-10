@@ -21,7 +21,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_PERSON_FIELDS = "names,nicknames,emailAddresses,phoneNumbers,organizations"
 
 _URL_SCHEME_HOST_RE = re.compile(
-    r"((?:[a-z][a-z0-9+.-]*:)?(?://)?)([^/?#@]*@)?([^/?#]*)", re.IGNORECASE
+    r"([a-z][a-z0-9+.-]*:)(?!//)|((?:[a-z][a-z0-9+.-]*:)?//)?([^/?#@]*@)?([^/?#]*)",
+    re.IGNORECASE,
 )
 
 
@@ -166,8 +167,9 @@ def _normalize_url(value: str) -> str:
     """Return a normalized URL string for deduplication. Lowercases scheme/host, strips trailing slash."""
     stripped = value.strip()
     match = _URL_SCHEME_HOST_RE.match(stripped)
-    scheme, userinfo, host = match.groups(default="")
-    normalized = scheme.lower() + userinfo + host.lower() + stripped[match.end() :]
+    opaque_scheme, scheme, userinfo, host = match.groups(default="")
+    prefix = (opaque_scheme + scheme).lower()
+    normalized = prefix + userinfo + host.lower() + stripped[match.end() :]
     return normalized.removesuffix("/")
 
 
