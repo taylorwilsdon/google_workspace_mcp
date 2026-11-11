@@ -68,8 +68,9 @@ Get all messages in a conversation thread.
 | thread_id | string | yes | | |
 | user_google_email | string | yes | | |
 | body_format | string | no | "text" | "text" (plaintext, HTML converted as fallback), "html" (raw HTML body) or "raw" (decoded MIME) |
-| include_analysis | boolean | no | false | Return a dict with the thread content plus ownership analysis (last sender, ball-in-court verdict, per-sender counts, participants) instead of a string |
+| include_analysis | boolean | no | false | Return a dict with the thread content plus ownership analysis (last sender, ball-in-court verdict, per-sender counts, participants) instead of a string. The analysis ignores drafts and trashed messages |
 | include_links | boolean | no | false | Append a LINKS section listing the http(s) URLs from the HTML body that the text output omits; only applies to body_format="text" |
+| include_drafts | boolean | no | false | Also show drafts and trashed messages, marked in each entry header (e.g. `[DRAFT IN TRASH, NOT SENT]`). When false they are left out and only counted in the thread header |
 
 ### get_gmail_threads_content_batch
 Get content of multiple threads in one request. Auto-batches in chunks of 25.
@@ -80,6 +81,7 @@ Get content of multiple threads in one request. Auto-batches in chunks of 25.
 | user_google_email | string | yes | | |
 | body_format | string | no | "text" | "text" (plaintext, HTML converted as fallback), "html" (raw HTML body) or "raw" (decoded MIME) |
 | include_links | boolean | no | false | Append a LINKS section listing the http(s) URLs from the HTML body that the text output omits; only applies to body_format="text" |
+| include_drafts | boolean | no | false | Also show drafts and trashed messages, marked in each entry header (e.g. `[DRAFT IN TRASH, NOT SENT]`). When false they are left out and only counted in the thread header |
 
 ### get_gmail_attachment_content
 Download an attachment to local disk (stdio mode) or get a temporary URL (HTTP mode, 1-hour expiry).
