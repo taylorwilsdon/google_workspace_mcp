@@ -29,6 +29,7 @@ from gchat.chat_helpers import (
     _name_spaces,
     _none_if_blank,
     _none_if_null_sentinel,
+    _normalize_space_resource_name,
     _resolve_sender,
 )
 
@@ -37,26 +38,6 @@ logger = logging.getLogger(__name__)
 
 _SEARCH_MESSAGES_MAX_CONCURRENT_SPACE_FETCHES = 1
 _SEARCH_MESSAGES_SSL_RETRIES = 3
-_SPACE_RESOURCE_PATTERN = re.compile(r"^spaces/[^/]+$")
-
-
-def _normalize_space_resource_name(space_id: str) -> str:
-    """Accept either a full Chat space resource name or a bare space id."""
-    normalized = (space_id or "").strip()
-    if not normalized:
-        raise UserInputError(
-            "space_id cannot be blank. Expected a space resource like 'spaces/X' or a bare ID like 'X'."
-        )
-
-    if _SPACE_RESOURCE_PATTERN.fullmatch(normalized):
-        return normalized
-
-    if "/" in normalized or re.search(r"\s", normalized):
-        raise UserInputError(
-            f"Invalid space_id '{space_id}'. Expected 'spaces/X' or a bare space ID without slashes."
-        )
-
-    return f"spaces/{normalized}"
 
 
 @server.tool(
@@ -176,14 +157,12 @@ async def get_messages(
         str: Formatted messages from the specified space. When more messages
             remain, a "Next page token" line is appended.
     """
-    normalized_space_id = _normalize_space_resource_name(space_id)
-    logger.info(
-        f"[get_messages] Space ID: '{normalized_space_id}' for user '{user_google_email}'"
-    )
+    space_id = _normalize_space_resource_name(space_id)
+    logger.info(f"[get_messages] Space ID: '{space_id}' for user '{user_google_email}'")
 
     # Get space info first
     space_info = await asyncio.to_thread(
-        chat_service.spaces().get(name=normalized_space_id).execute
+        chat_service.spaces().get(name=space_id).execute
     )
     space_labels = await _name_spaces(
         chat_service, people_service, [space_info], user_google_email
@@ -191,11 +170,7 @@ async def get_messages(
     space_name = space_labels[space_info.get("name")]
 
     # Get messages
-    list_params = {
-        "parent": normalized_space_id,
-        "pageSize": page_size,
-        "orderBy": order_by,
-    }
+    list_params = {"parent": space_id, "pageSize": page_size, "orderBy": order_by}
     if message_filter is not None:
         list_params["filter"] = message_filter
     if page_token:
@@ -209,15 +184,15 @@ async def get_messages(
     if not messages:
         if next_page_token:
             return (
-                f"No messages on this page in space '{space_name}' (ID: {normalized_space_id}), "
+                f"No messages on this page in space '{space_name}' (ID: {space_id}), "
                 f"and more pages remain.\nNext page token: {next_page_token}"
             )
         matching = " matching the filter" if message_filter else ""
         if page_token:
             return (
-                f"No more messages{matching} in space '{space_name}' (ID: {normalized_space_id})."
+                f"No more messages{matching} in space '{space_name}' (ID: {space_id})."
             )
-        return f"No messages{matching} found in space '{space_name}' (ID: {normalized_space_id})."
+        return f"No messages{matching} found in space '{space_name}' (ID: {space_id})."
 
     # Pre-resolve unique senders sequentially. The underlying googleapiclient/httplib2
     # service objects are not safe to fan out across worker threads.
@@ -233,7 +208,7 @@ async def get_messages(
             people_service, sender_obj, user_google_email
         )
 
-    output = [f"Messages from '{space_name}' (ID: {normalized_space_id}):\n"]
+    output = [f"Messages from '{space_name}' (ID: {space_id}):\n"]
     for msg in messages:
         sender_obj = msg.get("sender", {})
         sender_key = sender_obj.get("name", "")
@@ -318,10 +293,8 @@ async def send_message(
     Returns:
         str: Confirmation message with the sent or updated message details.
     """
-    normalized_space_id = _normalize_space_resource_name(space_id)
-    logger.info(
-        f"[send_message] Email: '{user_google_email}', Space: '{normalized_space_id}'"
-    )
+    space_id = _normalize_space_resource_name(space_id)
+    logger.info(f"[send_message] Email: '{user_google_email}', Space: '{space_id}'")
 
     thread_key = _none_if_blank(thread_key)
     thread_name = _none_if_blank(thread_name)
@@ -339,9 +312,9 @@ async def send_message(
                 f"Invalid message_name '{message_name}'. "
                 "Expected the full resource name, e.g. spaces/X/messages/Y."
             )
-        if f"spaces/{message_match.group(1)}" != normalized_space_id:
+        if f"spaces/{message_match.group(1)}" != space_id:
             raise UserInputError(
-                f"message_name '{message_name}' does not belong to space '{normalized_space_id}'. "
+                f"message_name '{message_name}' does not belong to space '{space_id}'. "
                 "Expected the full resource name, e.g. spaces/X/messages/Y."
             )
 
@@ -358,7 +331,7 @@ async def send_message(
 
         update_time = message.get("lastUpdateTime") or message.get("createTime", "")
         msg = (
-            f"Message updated in space '{normalized_space_id}' by {user_google_email}. "
+            f"Message updated in space '{space_id}' by {user_google_email}. "
             f"Message ID: {message.get('name', message_name)}, Time: {update_time}"
         )
         logger.info(
@@ -368,7 +341,7 @@ async def send_message(
 
     message_body = {"text": message_text}
 
-    request_params = {"parent": normalized_space_id, "body": message_body}
+    request_params = {"parent": space_id, "body": message_body}
 
     # Thread reply support
     if thread_name:
@@ -385,9 +358,9 @@ async def send_message(
     sent_message_name = message.get("name", "")
     create_time = message.get("createTime", "")
 
-    msg = f"Message sent to space '{normalized_space_id}' by {user_google_email}. Message ID: {sent_message_name}, Time: {create_time}"
+    msg = f"Message sent to space '{space_id}' by {user_google_email}. Message ID: {sent_message_name}, Time: {create_time}"
     logger.info(
-        f"Successfully sent message to space '{normalized_space_id}' by {user_google_email}"
+        f"Successfully sent message to space '{space_id}' by {user_google_email}"
     )
     return msg
 
@@ -441,10 +414,6 @@ async def search_messages(
     logger.info(
         f"[search_messages] Email={user_google_email}, query_len={len(query) if query else 0}, has_time_filter={bool(time_filter)}"
     )
-    normalized_space_id: Optional[str] = None
-    if space_id:
-        normalized_space_id = _normalize_space_resource_name(space_id)
-
     if query:
         logger.debug(f"[search_messages] Query='{query}'")
     if time_filter:
@@ -465,9 +434,10 @@ async def search_messages(
     search_desc = " and ".join(search_terms) if search_terms else "all messages"
 
     # If specific space provided, search within that space
-    if normalized_space_id:
+    if space_id:
+        space_id = _normalize_space_resource_name(space_id)
         list_params = {
-            "parent": normalized_space_id,
+            "parent": space_id,
             "pageSize": page_size,
             "orderBy": "createTime desc",
         }
@@ -475,18 +445,18 @@ async def search_messages(
             list_params["filter"] = filter_str
         response = await _execute_chat_request(
             lambda: chat_service.spaces().messages().list(**list_params),
-            request_label=f"fetching messages for {normalized_space_id}",
+            request_label=f"fetching messages for {space_id}",
             retries=_SEARCH_MESSAGES_SSL_RETRIES,
         )
         space = await _execute_chat_request(
-            lambda: chat_service.spaces().get(name=normalized_space_id),
-            request_label=f"fetching space {normalized_space_id}",
+            lambda: chat_service.spaces().get(name=space_id),
+            request_label=f"fetching space {space_id}",
             retries=_SEARCH_MESSAGES_SSL_RETRIES,
         )
         messages = response.get("messages", [])
         for msg in messages:
             msg["_space"] = space
-        context = f"space '{normalized_space_id}'"
+        context = f"space '{space_id}'"
     else:
         # Search across accessible spaces, paging until max_spaces are listed
         spaces = []
