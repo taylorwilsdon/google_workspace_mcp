@@ -11,6 +11,7 @@ import re
 import ssl
 from typing import Dict, List, Optional, Tuple
 
+from fastmcp.exceptions import ToolError
 from googleapiclient.errors import HttpError
 
 from core.utils import UserInputError
@@ -265,9 +266,19 @@ async def _format_space_members(
     space_label = space.get("displayName") or _UNNAMED_SPACE_FALLBACKS.get(
         space.get("spaceType"), "Unnamed Space"
     )
-    memberships = await _list_memberships(
-        chat_service, space_id, limit, showInvited=True, showGroups=True
-    )
+    try:
+        memberships = await _list_memberships(
+            chat_service, space_id, limit, showInvited=True, showGroups=True
+        )
+    except HttpError as e:
+        if _is_scope_error(e):
+            raise ToolError(
+                "Listing members needs the chat.memberships.readonly scope, which "
+                "this token lacks. Re-authenticate with the default Chat scopes and "
+                "retry. In service-account (domain-wide delegation) mode list_spaces "
+                "does not request that scope, so member listing is unavailable there."
+            ) from e
+        raise
 
     has_more = len(memberships) > limit
     memberships = memberships[:limit]
