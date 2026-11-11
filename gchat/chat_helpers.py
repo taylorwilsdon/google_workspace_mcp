@@ -29,7 +29,7 @@ _PEOPLE_BATCH_SIZE = 200  # people.getBatchGet limit
 _MAX_CONSECUTIVE_MEMBER_LOOKUP_FAILURES = 2
 _SCOPE_ERROR_REASON = "ACCESS_TOKEN_SCOPE_INSUFFICIENT"
 _SEARCH_MESSAGES_RETRY_BASE_DELAY_SECONDS = 1
-_SPACE_ID_PATTERN = re.compile(r"(?:spaces/)?([^/\s]+)")
+_SPACE_ID_PATTERN = re.compile(r"(?:spaces/)?([^/\s?#]+)")
 
 
 def _cache_key(cache_owner: Optional[str], user_id: str) -> Optional[Tuple[str, str]]:

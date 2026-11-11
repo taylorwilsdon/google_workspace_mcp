@@ -566,7 +566,17 @@ def test_normalize_space_resource_name(space_id: str, expected: str) -> None:
 
 @pytest.mark.parametrize(
     "space_id",
-    ["", "   ", "spaces/", "spaces/AA B", "AA B", "spaces/X/threads/T", "users/1"],
+    [
+        "",
+        "   ",
+        "spaces/",
+        "spaces/AA B",
+        "AA B",
+        "spaces/X/threads/T",
+        "users/1",
+        "S?x=1",
+        "spaces/S#frag",
+    ],
 )
 def test_normalize_space_resource_name_rejects_malformed_ids(space_id: str) -> None:
     with pytest.raises(UserInputError):
