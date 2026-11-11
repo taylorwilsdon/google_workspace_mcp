@@ -162,7 +162,7 @@ async def test_lists_people_apps_groups_and_invites_across_pages() -> None:
 
 @pytest.mark.asyncio
 async def test_member_listing_stops_at_page_size() -> None:
-    def member(i):
+    def member(i: int) -> dict[str, Any]:
         return {
             "member": {"name": f"users/{i}", "type": "HUMAN"},
             "role": "ROLE_MEMBER",
