@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 
 from googleapiclient.errors import HttpError
 
-from core.utils import UserInputError, validate_file_path
+from core.utils import UserInputError, local_file_access_enabled, validate_file_path
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,6 @@ _URL_SCHEME_HOST_RE = re.compile(
     re.IGNORECASE,
 )
 
-
 _MAX_CONTACT_PHOTO_BYTES = 5 * 1024 * 1024
 
 
@@ -36,9 +35,12 @@ def _prepare_contact_photo(
 ) -> str:
     """Read one bounded photo input; leave image decoding to the People API."""
     if (photo_base64 is None) == (file_path is None):
-        raise UserInputError(
-            "Provide exactly one of photo_base64 or file_path for set_photo."
+        sources = (
+            "photo_base64 or file_path"
+            if local_file_access_enabled()
+            else "photo_base64"
         )
+        raise UserInputError(f"set_photo takes exactly one photo input: {sources}.")
 
     if file_path is not None:
         try:
@@ -75,23 +77,32 @@ async def _manage_contact_photo(
     photo_base64: Optional[str],
     file_path: Optional[str],
 ) -> str:
-    """Mutate only the contact photo, returning contact-source photo URLs."""
-    fields = {"personFields": "photos", "sources": ["READ_SOURCE_TYPE_CONTACT"]}
-    if action == "set_photo":
-        encoded = await asyncio.to_thread(
-            _prepare_contact_photo, photo_base64, file_path
+    """Set or remove only the contact photo; on set, return the new photo URL."""
+    contact_id = resource_name.removeprefix("people/")
+    if action == "delete_photo":
+        await asyncio.to_thread(
+            service.people().deleteContactPhoto(resourceName=resource_name).execute
         )
-        request = service.people().updateContactPhoto(
-            resourceName=resource_name, body={"photoBytes": encoded, **fields}
-        )
-    else:
-        request = service.people().deleteContactPhoto(
-            resourceName=resource_name, **fields
+        return (
+            f"Contact photo removed for {user_google_email}:\nContact ID: {contact_id}"
         )
 
-    result = await asyncio.to_thread(request.execute)
-    verb = "updated" if action == "set_photo" else "removed"
-    response = f"Contact photo {verb} for {user_google_email}:\nContact ID: {resource_name.removeprefix('people/')}"
+    encoded = await asyncio.to_thread(_prepare_contact_photo, photo_base64, file_path)
+    result = await asyncio.to_thread(
+        service.people()
+        .updateContactPhoto(
+            resourceName=resource_name,
+            body={
+                "photoBytes": encoded,
+                "personFields": "photos",
+                "sources": ["READ_SOURCE_TYPE_CONTACT"],
+            },
+        )
+        .execute
+    )
+    response = (
+        f"Contact photo updated for {user_google_email}:\nContact ID: {contact_id}"
+    )
     for photo in result.get("person", {}).get("photos", []):
         if photo.get("url"):
             response += f"\nPhoto URL: {photo['url']}"

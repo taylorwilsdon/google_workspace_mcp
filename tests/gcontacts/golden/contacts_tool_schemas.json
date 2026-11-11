@@ -574,7 +574,7 @@
           }
         ],
         "default": null,
-        "description": "Raw Base64 photo bytes for \"set_photo\" only. Supply exactly one of photo_base64 or file_path. Maximum 5 MiB decoded; no data URL prefix."
+        "description": "Raw Base64 JPEG or PNG bytes for \"set_photo\", without a data URL prefix. Maximum 5 MiB decoded."
       },
       "file_path": {
         "anyOf": [
@@ -586,7 +586,7 @@
           }
         ],
         "default": null,
-        "description": "Server-side photo path for \"set_photo\" only. Subject to ALLOWED_FILE_DIRS and local file access settings. Maximum 5 MiB."
+        "description": "Server-side JPEG or PNG path for \"set_photo\", instead of photo_base64. Must be under ALLOWED_FILE_DIRS. Maximum 5 MiB."
       }
     },
     "required": [

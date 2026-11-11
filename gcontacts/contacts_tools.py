@@ -18,9 +18,9 @@ from mcp.types import ToolAnnotations
 from auth.service_decorator import require_google_service
 from core.server import server
 from core.utils import (
+    StringList,
     UserInputError,
     handle_http_errors,
-    StringList,
     hide_local_file_args,
 )
 from gcontacts.contacts_helpers import (
@@ -818,8 +818,8 @@ async def manage_contact(
         email (Optional[str]): [DEPRECATED] Email address. Use emails=[{"address":..., "type":"other"}].
         organization (Optional[str]): [DEPRECATED] Company name. Use organizations=[{"name":...}].
         job_title (Optional[str]): [DEPRECATED] Job title. Use organizations=[{"title":...}].
-        photo_base64 (Optional[str]): Raw Base64 photo bytes for "set_photo" only. Supply exactly one of photo_base64 or file_path. Maximum 5 MiB decoded; no data URL prefix.
-        file_path (Optional[str]): Server-side photo path for "set_photo" only. Subject to ALLOWED_FILE_DIRS and local file access settings. Maximum 5 MiB.
+        photo_base64 (Optional[str]): Raw Base64 JPEG or PNG bytes for "set_photo", without a data URL prefix. Maximum 5 MiB decoded.
+        file_path (Optional[str]): Server-side JPEG or PNG path for "set_photo", instead of photo_base64. Must be under ALLOWED_FILE_DIRS. Maximum 5 MiB.
 
     Returns:
         str: Result of the action performed.
@@ -832,16 +832,6 @@ async def manage_contact(
 
     if action != "set_photo" and (photo_base64 is not None or file_path is not None):
         raise UserInputError("Photo inputs are only supported with action='set_photo'.")
-
-    if action in ("set_photo", "delete_photo"):
-        if not contact_id or not contact_id.strip():
-            raise UserInputError(f"contact_id is required for '{action}' action.")
-        resource_name = (
-            contact_id if contact_id.startswith("people/") else f"people/{contact_id}"
-        )
-        return await _manage_contact_photo(
-            service, user_google_email, resource_name, action, photo_base64, file_path
-        )
 
     for mode_name, mode_val in [
         ("phones_mode", phones_mode),
@@ -899,7 +889,6 @@ async def manage_contact(
         logger.info(f"Created contact {created_id} for {user_google_email}")
         return response
 
-    # update and delete both require contact_id
     if not contact_id:
         raise UserInputError(f"contact_id is required for '{action}' action.")
 
@@ -908,6 +897,11 @@ async def manage_contact(
         resource_name = f"people/{contact_id}"
     else:
         resource_name = contact_id
+
+    if action in ("set_photo", "delete_photo"):
+        return await _manage_contact_photo(
+            service, user_google_email, resource_name, action, photo_base64, file_path
+        )
 
     if action == "update":
         # Retry loop for etag conflicts (412 Precondition Failed)

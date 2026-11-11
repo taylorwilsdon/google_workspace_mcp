@@ -77,19 +77,10 @@ On `update`, each list field has a `*_mode` companion that controls how the list
 | phone | string | no | | Deprecated, use `phones`. Ignored when `phones` is set |
 | organization | string | no | | Deprecated, use `organizations`. Ignored when `organizations` is set |
 | job_title | string | no | | Deprecated, use `organizations`. Ignored when `organizations` is set |
-| photo_base64 | string | conditional | | For `set_photo` only: raw Base64 image bytes, without a data URL prefix. Maximum 5 MiB decoded |
-| file_path | string | conditional | | For `set_photo` only: image path on the MCP server, subject to `ALLOWED_FILE_DIRS` and local file access settings. Maximum 5 MiB |
+| photo_base64 | string | conditional | | `set_photo` only: raw Base64 JPEG or PNG bytes, no data URL prefix. Maximum 5 MiB decoded |
+| file_path | string | conditional | | `set_photo` only: JPEG or PNG path on the MCP server, under `ALLOWED_FILE_DIRS`. Maximum 5 MiB. Local file access only |
 
-For `set_photo`, pass exactly one of `photo_base64` or `file_path`. On servers
-with local files disabled (including stateless mode), use `photo_base64`;
-`file_path` is hidden from the tool schema and refused at runtime. The People API
-validates the image contents. A successful action reports the contact ID and
-the returned contact photo URL, when available, without echoing the image bytes.
-
-Use `delete_photo` without either image input to remove only the contact's photo;
-`delete` still deletes the entire contact. Photo actions do not edit other contact
-fields. Send contact mutations sequentially for the same user, as recommended by
-the People API. Both photo actions use the existing Contacts write scope.
+`set_photo` takes exactly one of `photo_base64` or `file_path` and returns the new photo URL. `delete_photo` removes only the photo; `delete` removes the whole contact.
 
 ### manage_contacts_batch
 Batch create, update, or delete up to 200 contacts. A batch `update` writes one field per call and replaces that field outright (no `*_mode` merging); only `names` keeps the name parts you leave out.
