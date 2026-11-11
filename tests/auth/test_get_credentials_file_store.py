@@ -9,9 +9,9 @@ SESSION_ID = "session-1"
 
 class _SessionStore:
     def __init__(self) -> None:
-        self.store_calls: list[dict] = []
+        self.store_calls: list[dict[str, object]] = []
 
-    def store_session(self, **kwargs) -> None:
+    def store_session(self, **kwargs: object) -> None:
         self.store_calls.append(kwargs)
 
     def get_user_by_mcp_session(self, session_id: str) -> None:  # noqa: ARG002
