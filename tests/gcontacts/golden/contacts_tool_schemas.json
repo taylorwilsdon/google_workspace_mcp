@@ -494,7 +494,7 @@
           "remove"
         ],
         "type": "string",
-        "description": "How to update urls on \"update\": \"merge\" (default), \"replace\", or \"remove\".\nmerge dedups by normalized URL (lowercased, trailing slash stripped)."
+        "description": "How to update urls on \"update\": \"merge\" (default), \"replace\", or \"remove\".\nmerge and remove match URLs case-insensitively on scheme and host only, ignoring a trailing slash."
       },
       "user_defined_mode": {
         "default": "merge",

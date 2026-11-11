@@ -17,6 +17,7 @@ from mcp.types import ToolAnnotations
 from auth.service_decorator import require_google_service
 from core.server import server
 from core.utils import ObjectList, UserInputError, handle_http_errors
+from gdrive.drive_helpers import flag_incomplete_search
 
 logger = logging.getLogger(__name__)
 
@@ -120,8 +121,11 @@ async def _list_script_projects_impl(
     request_params = {
         "q": query,
         "pageSize": page_size,
-        "fields": "nextPageToken, files(id, name, createdTime, modifiedTime)",
+        "fields": "nextPageToken, incompleteSearch, files(id, name, createdTime, modifiedTime)",
         "orderBy": "modifiedTime desc",
+        "supportsAllDrives": True,
+        "includeItemsFromAllDrives": True,
+        "corpora": "allDrives",
     }
     if page_token:
         request_params["pageToken"] = page_token
@@ -130,8 +134,8 @@ async def _list_script_projects_impl(
 
     files = response.get("files", [])
 
-    if not files:
-        return "No Apps Script projects found."
+    if not files and "nextPageToken" not in response:
+        return flag_incomplete_search("No Apps Script projects found.", response)
 
     output = [f"Found {len(files)} Apps Script projects:"]
     for file in files:
@@ -150,7 +154,7 @@ async def _list_script_projects_impl(
     logger.info(
         f"[list_script_projects] Found {len(files)} projects for {user_google_email}"
     )
-    return "\n".join(output)
+    return flag_incomplete_search("\n".join(output), response)
 
 
 def _require_project_action_service(action_services):

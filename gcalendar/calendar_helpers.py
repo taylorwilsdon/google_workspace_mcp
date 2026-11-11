@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import pytz
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 from core.utils import UserInputError
 
@@ -606,6 +607,28 @@ def _preserve_existing_fields(
             event_body[field_name] = new_value
 
 
+def _naive_to_utc_rfc3339(
+    naive: datetime.datetime, param_name: str, timezone: Optional[str]
+) -> str:
+    """Read a naive datetime as wall time in ``timezone`` (UTC if unset) as RFC3339 UTC."""
+    tz = pytz.utc
+    if timezone:
+        try:
+            tz = pytz.timezone(timezone)
+        except pytz.exceptions.UnknownTimeZoneError:
+            logger.warning(
+                f"Could not apply timezone '{timezone}', falling back to UTC for {param_name}"
+            )
+    try:
+        aware = tz.localize(naive).astimezone(datetime.timezone.utc)
+    except OverflowError:
+        logger.warning(
+            f"Could not apply timezone '{timezone}' to {param_name} '{naive.isoformat()}', falling back to UTC"
+        )
+        aware = naive.replace(tzinfo=datetime.timezone.utc)
+    return aware.isoformat().replace("+00:00", "Z")
+
+
 def _correct_time_format_for_api(
     time_str: Optional[str], param_name: str, timezone: Optional[str] = None
 ) -> Optional[str]:
@@ -626,39 +649,19 @@ def _correct_time_format_for_api(
     # Handle date-only format (YYYY-MM-DD)
     if len(time_str) == 10 and time_str.count("-") == 2:
         try:
-            # Validate it's a proper date
-            datetime.datetime.strptime(time_str, "%Y-%m-%d")
-            # For date-only, convert using the provided timezone, or UTC if not provided
-            if timezone:
-                try:
-                    tz = pytz.timezone(timezone)
-                    # Parse the date and create a datetime at midnight in the specified timezone
-                    date_obj = datetime.datetime.strptime(time_str, "%Y-%m-%d")
-                    dt = tz.localize(date_obj)
-                    # Convert to UTC and format as RFC3339
-                    formatted = (
-                        dt.astimezone(datetime.timezone.utc)
-                        .isoformat()
-                        .replace("+00:00", "Z")
-                    )
-                except pytz.exceptions.UnknownTimeZoneError:
-                    logger.warning(
-                        f"Could not apply timezone '{timezone}', falling back to UTC for {param_name}"
-                    )
-                    formatted = f"{time_str}T00:00:00Z"
-            else:
-                formatted = f"{time_str}T00:00:00Z"
-            logger.info(
-                f"Formatting date-only {param_name} '{time_str}' to RFC3339: '{formatted}'"
-            )
-            return formatted
+            naive = datetime.datetime.strptime(time_str, "%Y-%m-%d")
         except ValueError:
             logger.warning(
                 f"{param_name} '{time_str}' looks like a date but is not valid YYYY-MM-DD. Using as is."
             )
             return time_str
+        formatted = _naive_to_utc_rfc3339(naive, param_name, timezone)
+        logger.info(
+            f"Formatting date-only {param_name} '{time_str}' to RFC3339: '{formatted}'"
+        )
+        return formatted
 
-    # Specifically address YYYY-MM-DDTHH:MM:SS by appending 'Z'
+    # Handle offset-free date-time format (YYYY-MM-DDTHH:MM:SS)
     if (
         len(time_str) == 19
         and time_str[10] == "T"
@@ -668,17 +671,15 @@ def _correct_time_format_for_api(
         )
     ):
         try:
-            # Validate the format before appending 'Z'
-            datetime.datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S")
-            logger.info(
-                f"Formatting {param_name} '{time_str}' by appending 'Z' for UTC."
-            )
-            return time_str + "Z"
+            naive = datetime.datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S")
         except ValueError:
             logger.warning(
                 f"{param_name} '{time_str}' looks like it needs 'Z' but is not valid YYYY-MM-DDTHH:MM:SS. Using as is."
             )
             return time_str
+        formatted = _naive_to_utc_rfc3339(naive, param_name, timezone)
+        logger.info(f"Formatting {param_name} '{time_str}' to RFC3339: '{formatted}'")
+        return formatted
 
     # If it already has timezone info or doesn't match our patterns, return as is
     logger.info(f"{param_name} '{time_str}' doesn't need formatting, using as is.")
@@ -1133,3 +1134,153 @@ def _validate_chat_status(
             f"Must be one of: {', '.join(sorted(_VALID_FOCUS_TIME_CHAT_STATUSES))}"
         )
     return chat_status
+
+
+_ACL_ROLES = {
+    role.lower(): role
+    for role in (
+        "none",
+        "freeBusyReader",
+        "reader",
+        "writerWithoutPrivateAccess",
+        "writer",
+        "owner",
+    )
+}
+_ACL_SCOPE_TYPES = ("default", "user", "group", "domain")
+
+
+def _resolve_acl_role(role: Optional[str], action: str) -> str:
+    """Return the canonical Calendar ACL role for a case-insensitive role name."""
+    if not role or not role.strip():
+        raise UserInputError(f"role is required for {action} action")
+    canonical = _ACL_ROLES.get(role.strip().lower())
+    if canonical is None:
+        raise UserInputError(
+            f"Invalid role '{role}'. Must be one of: {', '.join(_ACL_ROLES.values())}"
+        )
+    return canonical
+
+
+def _build_acl_scope(scope_type: str, scope_value: Optional[str]) -> Dict[str, str]:
+    """Build the ACL scope for a user, group, domain or public (default) grant."""
+    scope_type = scope_type.strip().lower()
+    if scope_type not in _ACL_SCOPE_TYPES:
+        raise UserInputError(
+            f"Invalid scope_type '{scope_type}'. Must be one of: {', '.join(_ACL_SCOPE_TYPES)}"
+        )
+    value = (scope_value or "").strip()
+    if scope_type == "default":
+        if value:
+            raise UserInputError("scope_value must be omitted for scope_type 'default'")
+        return {"type": "default"}
+    if not value:
+        raise UserInputError(f"scope_value is required for scope_type '{scope_type}'")
+    return {"type": scope_type, "value": value}
+
+
+def _format_acl_rule(rule: Dict[str, Any]) -> str:
+    """Format one ACL rule as a single readable line."""
+    scope = rule.get("scope", {})
+    target = " ".join(filter(None, (scope.get("type"), scope.get("value"))))
+    return f"- {rule.get('role')}: {target} (Rule ID: {rule.get('id')})"
+
+
+async def _create_calendar(
+    service,
+    summary: Optional[str],
+    description: Optional[str],
+    timezone: Optional[str],
+) -> str:
+    """Create a secondary calendar and return its summary and ID."""
+    if not summary:
+        raise UserInputError("summary is required for create action")
+    body: Dict[str, Any] = {"summary": summary}
+    if description:
+        body["description"] = description
+    if timezone:
+        body["timeZone"] = timezone
+    result = await asyncio.to_thread(
+        lambda: service.calendars().insert(body=body).execute()
+    )
+    return f"Created calendar '{result.get('summary', summary)}' (ID: {result['id']})"
+
+
+async def _manage_calendar_acl(
+    service,
+    user_google_email: str,
+    action: str,
+    calendar_id: str,
+    role: Optional[str],
+    scope_type: str,
+    scope_value: Optional[str],
+    rule_id: Optional[str],
+    send_notifications: bool,
+    page_token: Optional[str],
+) -> str:
+    """List, share, update or remove a calendar's sharing rules and summarize the result."""
+    acl = service.acl()
+
+    if action == "list_sharing":
+        params: Dict[str, Any] = {"calendarId": calendar_id}
+        if page_token:
+            params["pageToken"] = page_token
+        response = await asyncio.to_thread(lambda: acl.list(**params).execute())
+        rules = response.get("items", [])
+        lines = [f"Found {len(rules)} sharing rules for calendar '{calendar_id}':"]
+        lines.extend(_format_acl_rule(rule) for rule in rules)
+        if response.get("nextPageToken"):
+            lines.append(f"\nNext page token: {response['nextPageToken']}")
+        return "\n".join(lines)
+
+    if action == "share":
+        body = {
+            "role": _resolve_acl_role(role, action),
+            "scope": _build_acl_scope(scope_type, scope_value),
+        }
+        rule = await asyncio.to_thread(
+            lambda: acl.insert(
+                calendarId=calendar_id,
+                body=body,
+                sendNotifications=send_notifications,
+            ).execute()
+        )
+        return f"Shared calendar '{calendar_id}':\n{_format_acl_rule(rule)}"
+
+    if action not in ("update_sharing", "unshare"):
+        raise UserInputError(
+            f"Invalid action '{action}'. Must be 'create', 'list_sharing', 'share', "
+            "'update_sharing', or 'unshare'."
+        )
+    if not rule_id or not rule_id.strip():
+        raise UserInputError(
+            f"rule_id is required for {action} action. Use action 'list_sharing' to find it."
+        )
+    rule_id = rule_id.strip()
+    owner = user_google_email.lower()
+    if calendar_id.lower() in ("primary", owner) and rule_id.lower() == f"user:{owner}":
+        raise UserInputError(
+            f"Rule '{rule_id}' is the owner's access to their primary calendar and "
+            "cannot be changed or removed."
+        )
+    if action == "update_sharing":
+        request = acl.patch(
+            calendarId=calendar_id,
+            ruleId=rule_id,
+            body={"role": _resolve_acl_role(role, action)},
+            sendNotifications=send_notifications,
+        )
+    else:
+        request = acl.delete(calendarId=calendar_id, ruleId=rule_id)
+    try:
+        rule = await asyncio.to_thread(request.execute)
+    except HttpError as error:
+        if error.resp.status == 404:
+            raise UserInputError(
+                f"No sharing rule '{rule_id}' found on calendar '{calendar_id}'. "
+                "Use action 'list_sharing' to see rule IDs."
+            ) from error
+        raise
+    if action == "update_sharing":
+        return f"Updated sharing on calendar '{calendar_id}':\n{_format_acl_rule(rule)}"
+    return f"Removed sharing rule '{rule_id}' from calendar '{calendar_id}'."

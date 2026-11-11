@@ -810,7 +810,7 @@ async def manage_contact(
         organizations_mode (str): How to update orgs on "update": "merge" (default), "replace", or "remove".
         nicknames_mode (str): How to update nicknames on "update": "merge" (default), "replace", or "remove".
         urls_mode (str): How to update urls on "update": "merge" (default), "replace", or "remove".
-            merge dedups by normalized URL (lowercased, trailing slash stripped).
+            merge and remove match URLs case-insensitively on scheme and host only, ignoring a trailing slash.
         user_defined_mode (str): How to update custom fields on "update": "merge" (default), "replace", or "remove".
             merge overrides value on matching key; new keys appended.
         relations_mode (str): How to update relations on "update": "merge" (default), "replace", or "remove".
