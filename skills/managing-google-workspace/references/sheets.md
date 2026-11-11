@@ -70,9 +70,11 @@ Google Sheets can resolve them as named ranges.
 | include_smart_chips | boolean | no | false | Fetch smart chips metadata (Drive files/folders & People) |
 
 ### modify_sheet_values
-Write, update, or clear values in a range, or insert Smart Chips (Drive files/folders or People). Chip writes are chunked into batches of <=8 chips to respect Google Sheets API limits.
+Write, update, or clear values in a range, insert Smart Chips (Drive files/folders or People), or copy another range into it. Chip writes are chunked into batches of <=8 chips to respect Google Sheets API limits.
 
-When providing `chips`, omit `values` and leave `clear_values=false`. `value_input_option` applies only to ordinary value writes.
+When providing `chips` or `source_range`, omit `values` and leave `clear_values=false`. `value_input_option` applies only to ordinary value writes.
+
+`source_range` works like copy and paste in the Sheets UI: relative formula references shift and formatting comes along. `range_name` can be just the top-left destination cell, e.g. copy `Sheet1!A29:AO29` to `Sheet1!A30` to start a new row from the previous one.
 
 | Parameter | Type | Required | Default | Notes |
 |-----------|------|----------|---------|-------|
@@ -84,6 +86,8 @@ When providing `chips`, omit `values` and leave `clear_values=false`. `value_inp
 | clear_values | boolean | no | false | Clear the range instead of writing |
 | chips | array, object, or string | conditional | | Smart chips instead of `values`: single URL/email, 1D/2D array of URLs/emails, or dict(s) with `type`, `uri`/`email` |
 | chip_type | string | no | null | Optional override for `chips`: `drive` or `person` (auto-detected if omitted) |
+| source_range | string | conditional | | A1 range in the same spreadsheet to copy into `range_name` instead of `values`. Both must be A1 notation, not named ranges |
+| paste_type | string | no | PASTE_NORMAL | What `source_range` pastes: `PASTE_NORMAL`, `PASTE_VALUES`, `PASTE_FORMAT`, `PASTE_NO_BORDERS`, `PASTE_FORMULA`, `PASTE_DATA_VALIDATION`, `PASTE_CONDITIONAL_FORMATTING` |
 
 ---
 

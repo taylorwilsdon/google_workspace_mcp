@@ -519,3 +519,12 @@ async def _pin_message(chat_service, space_id: str, message_name: str) -> str:
         logger.warning(f"Pinning '{message_name}' failed unexpectedly: {e}")
         return f"Pin failed (message was still delivered): {e}"
     return f"Pinned. Pin ID: {pin.get('name', '')}"
+
+
+def _format_search_message_ids(message: dict) -> str:
+    identifiers = (
+        ("space_id", message.get("_space", {}).get("name")),
+        ("message_id", message.get("name")),
+        ("thread_id", message.get("thread", {}).get("name")),
+    )
+    return " ".join(f"[{label}: {value}]" for label, value in identifiers if value)

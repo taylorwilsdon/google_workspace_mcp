@@ -607,6 +607,28 @@ def _preserve_existing_fields(
             event_body[field_name] = new_value
 
 
+def _naive_to_utc_rfc3339(
+    naive: datetime.datetime, param_name: str, timezone: Optional[str]
+) -> str:
+    """Read a naive datetime as wall time in ``timezone`` (UTC if unset) as RFC3339 UTC."""
+    tz = pytz.utc
+    if timezone:
+        try:
+            tz = pytz.timezone(timezone)
+        except pytz.exceptions.UnknownTimeZoneError:
+            logger.warning(
+                f"Could not apply timezone '{timezone}', falling back to UTC for {param_name}"
+            )
+    try:
+        aware = tz.localize(naive).astimezone(datetime.timezone.utc)
+    except OverflowError:
+        logger.warning(
+            f"Could not apply timezone '{timezone}' to {param_name} '{naive.isoformat()}', falling back to UTC"
+        )
+        aware = naive.replace(tzinfo=datetime.timezone.utc)
+    return aware.isoformat().replace("+00:00", "Z")
+
+
 def _correct_time_format_for_api(
     time_str: Optional[str], param_name: str, timezone: Optional[str] = None
 ) -> Optional[str]:
@@ -627,39 +649,19 @@ def _correct_time_format_for_api(
     # Handle date-only format (YYYY-MM-DD)
     if len(time_str) == 10 and time_str.count("-") == 2:
         try:
-            # Validate it's a proper date
-            datetime.datetime.strptime(time_str, "%Y-%m-%d")
-            # For date-only, convert using the provided timezone, or UTC if not provided
-            if timezone:
-                try:
-                    tz = pytz.timezone(timezone)
-                    # Parse the date and create a datetime at midnight in the specified timezone
-                    date_obj = datetime.datetime.strptime(time_str, "%Y-%m-%d")
-                    dt = tz.localize(date_obj)
-                    # Convert to UTC and format as RFC3339
-                    formatted = (
-                        dt.astimezone(datetime.timezone.utc)
-                        .isoformat()
-                        .replace("+00:00", "Z")
-                    )
-                except pytz.exceptions.UnknownTimeZoneError:
-                    logger.warning(
-                        f"Could not apply timezone '{timezone}', falling back to UTC for {param_name}"
-                    )
-                    formatted = f"{time_str}T00:00:00Z"
-            else:
-                formatted = f"{time_str}T00:00:00Z"
-            logger.info(
-                f"Formatting date-only {param_name} '{time_str}' to RFC3339: '{formatted}'"
-            )
-            return formatted
+            naive = datetime.datetime.strptime(time_str, "%Y-%m-%d")
         except ValueError:
             logger.warning(
                 f"{param_name} '{time_str}' looks like a date but is not valid YYYY-MM-DD. Using as is."
             )
             return time_str
+        formatted = _naive_to_utc_rfc3339(naive, param_name, timezone)
+        logger.info(
+            f"Formatting date-only {param_name} '{time_str}' to RFC3339: '{formatted}'"
+        )
+        return formatted
 
-    # Specifically address YYYY-MM-DDTHH:MM:SS by appending 'Z'
+    # Handle offset-free date-time format (YYYY-MM-DDTHH:MM:SS)
     if (
         len(time_str) == 19
         and time_str[10] == "T"
@@ -669,17 +671,15 @@ def _correct_time_format_for_api(
         )
     ):
         try:
-            # Validate the format before appending 'Z'
-            datetime.datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S")
-            logger.info(
-                f"Formatting {param_name} '{time_str}' by appending 'Z' for UTC."
-            )
-            return time_str + "Z"
+            naive = datetime.datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S")
         except ValueError:
             logger.warning(
                 f"{param_name} '{time_str}' looks like it needs 'Z' but is not valid YYYY-MM-DDTHH:MM:SS. Using as is."
             )
             return time_str
+        formatted = _naive_to_utc_rfc3339(naive, param_name, timezone)
+        logger.info(f"Formatting {param_name} '{time_str}' to RFC3339: '{formatted}'")
+        return formatted
 
     # If it already has timezone info or doesn't match our patterns, return as is
     logger.info(f"{param_name} '{time_str}' doesn't need formatting, using as is.")
