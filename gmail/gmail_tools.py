@@ -77,6 +77,7 @@ from gmail.gmail_helpers import (
     _build_web_compose_raw,
     _derive_reply_all_recipients,
     _derive_reply_headers,
+    _derive_web_bodies,
     _fetch_with_retry,
     _format_id_list,
     _generate_gmail_web_url,
@@ -1345,6 +1346,7 @@ def _prepare_gmail_message(
     from_name: Optional[str] = None,
     attachments: Optional[List[Dict[str, str]]] = None,
     plain_body: Optional[str] = None,
+    direction: TextDirection = "auto",
 ) -> tuple[str, Optional[str], int, List[str]]:
     """
     Prepare a Gmail message with threading and attachment support.
@@ -1363,6 +1365,7 @@ def _prepare_gmail_message(
         from_name: Optional sender display name (e.g., "Peter Hartree")
         attachments: Optional list of attachments. Each can have 'path' (file path) OR 'content' (base64) + 'filename'
         plain_body: Explicit text alternative for HTML, preserving a forwarded original.
+        direction: Base text direction of the HTML part derived from a plain body.
 
     Returns:
         Tuple of (raw_message, thread_id, attached_count, attachment_errors)
@@ -1416,7 +1419,9 @@ def _prepare_gmail_message(
         message.set_content(plain_body)
         message.add_alternative(body, subtype="html")
     else:
-        message.set_content(body)
+        plain_part, html_part = _derive_web_bodies(body, "plain", direction)
+        message.set_content(plain_part)
+        message.add_alternative(html_part, subtype="html")
 
     seen_content_ids: set[str] = set()
 
@@ -3055,6 +3060,7 @@ async def send_gmail_message(
             _prepare_gmail_message(
                 subject=subject,
                 body=send_body_content,
+                direction=direction,
                 to=to,
                 cc=cc,
                 bcc=bcc,
@@ -3666,6 +3672,7 @@ async def draft_gmail_message(
                 subject=subject,
                 body=draft_body,
                 body_format=body_format,
+                direction=direction,
                 to=to,
                 cc=cc,
                 bcc=bcc,
