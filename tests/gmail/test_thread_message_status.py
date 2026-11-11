@@ -9,6 +9,7 @@ second copy of the sent email.
 from __future__ import annotations
 
 import base64
+from typing import Any, Callable, cast
 from unittest.mock import MagicMock, Mock
 
 import pytest
@@ -26,15 +27,23 @@ from gmail.gmail_tools import (
 USER = "finance@example.com"
 
 
-def _unwrap(tool):
+def _unwrap(tool: Any) -> Callable[..., Any]:
     """Unwrap FunctionTool + decorators to the original async function."""
     fn = tool.fn if hasattr(tool, "fn") else tool
     while hasattr(fn, "__wrapped__"):
         fn = fn.__wrapped__
-    return fn
+    return cast(Callable[..., Any], fn)
 
 
-def _message(message_id, labels, sender, date, body, subject="Re: Invoice"):
+def _message(
+    message_id: str,
+    labels: list[str],
+    sender: str,
+    date: str,
+    body: str,
+    subject: str = "Re: Invoice",
+) -> dict[str, Any]:
+    """Build one threads.get(format='full') message with a plain-text body."""
     return {
         "id": message_id,
         "labelIds": labels,
@@ -51,7 +60,7 @@ def _message(message_id, labels, sender, date, body, subject="Re: Invoice"):
     }
 
 
-def _thread(thread_id="t1"):
+def _thread(thread_id: str = "t1") -> dict[str, Any]:
     """A received question, two abandoned drafts, the sent reply, a reply back."""
     finance = f"Finance <{USER}>"
     client = "Client <client@example.com>"
@@ -98,26 +107,32 @@ def _thread(thread_id="t1"):
     }
 
 
-def _service(thread):
+def _service(thread: dict[str, Any]) -> MagicMock:
+    """Service whose users().threads().get().execute() returns ``thread``."""
     service = MagicMock()
     service.users.return_value.threads.return_value.get.return_value.execute.return_value = thread
     return service
 
 
-def _batch_service(threads):
-    class _FakeBatch:
-        def __init__(self, callback):
-            self._callback = callback
-            self._requests = []
+def _batch_service(threads: dict[str, dict[str, Any]]) -> Mock:
+    """Service whose batch HTTP request answers each thread ID from ``threads``."""
 
-        def add(self, request, request_id):
+    class _FakeBatch:
+        """Batch that runs each request and calls back per request ID."""
+
+        def __init__(self, callback: Callable[[str, Any, Any], None]) -> None:
+            self._callback = callback
+            self._requests: list[tuple[str, Mock]] = []
+
+        def add(self, request: Mock, request_id: str) -> None:
             self._requests.append((request_id, request))
 
-        def execute(self):
+        def execute(self) -> None:
             for request_id, request in self._requests:
                 self._callback(request_id, request.execute(), None)
 
-    def thread_get(**kwargs):
+    def thread_get(**kwargs: Any) -> Mock:
+        """Return a request whose execute() yields the thread for its ID."""
         request = Mock()
         request.execute.return_value = threads[kwargs["id"]]
         return request
@@ -142,11 +157,11 @@ def _batch_service(threads):
         (["INBOX", "TRASH"], "received in trash"),
     ],
 )
-def test_thread_message_status(labels, status):
+def test_thread_message_status(labels: list[str] | None, status: str) -> None:
     assert thread_message_status({"labelIds": labels}) == status
 
 
-def test_status_counts_are_ordered_and_pluralized():
+def test_status_counts_are_ordered_and_pluralized() -> None:
     statuses = ["draft in trash", "received", "sent", "draft in trash", "received"]
     assert format_thread_status_counts(statuses) == (
         "1 sent, 2 received, 2 drafts in trash"
@@ -154,7 +169,7 @@ def test_status_counts_are_ordered_and_pluralized():
 
 
 @pytest.mark.asyncio
-async def test_thread_content_hides_drafts_and_trash_by_default():
+async def test_thread_content_hides_drafts_and_trash_by_default() -> None:
     result = await _unwrap(get_gmail_thread_content)(
         service=_service(_thread()), thread_id="t1", user_google_email=USER
     )
@@ -177,7 +192,8 @@ async def test_thread_content_hides_drafts_and_trash_by_default():
 
 
 @pytest.mark.asyncio
-async def test_thread_content_marks_drafts_and_trash_when_included():
+async def test_thread_content_marks_drafts_and_trash_when_included() -> None:
+    """include_drafts=True shows every message, each marked in its header."""
     result = await _unwrap(get_gmail_thread_content)(
         service=_service(_thread()),
         thread_id="t1",
@@ -202,7 +218,7 @@ async def test_thread_content_marks_drafts_and_trash_when_included():
 
 
 @pytest.mark.asyncio
-async def test_thread_content_with_only_drafts_says_so():
+async def test_thread_content_with_only_drafts_says_so() -> None:
     thread = _thread()
     thread["messages"] = thread["messages"][1:3]
 
@@ -219,10 +235,15 @@ async def test_thread_content_with_only_drafts_says_so():
 
 
 @pytest.mark.asyncio
-async def test_raw_format_fetches_only_shown_messages(monkeypatch):
-    fetched = []
+async def test_raw_format_fetches_only_shown_messages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fetched: list[str] = []
 
-    async def fake_raw(service, message_ids, log_prefix):
+    async def fake_raw(
+        service: Any, message_ids: list[str], log_prefix: str
+    ) -> dict[str, str]:
+        """Record which message IDs had raw content fetched."""
         fetched.extend(message_ids)
         return {mid: f"raw {mid}" for mid in message_ids}
 
@@ -239,7 +260,8 @@ async def test_raw_format_fetches_only_shown_messages(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_analysis_ignores_drafts_and_trash_whatever_include_drafts_is():
+async def test_analysis_ignores_drafts_and_trash_whatever_include_drafts_is() -> None:
+    """A trashed reply must not change who owes the next message."""
     thread = _thread()
     # A trashed reply from the client must not put the ball in the user's court.
     thread["messages"].append(
@@ -272,7 +294,7 @@ async def test_analysis_ignores_drafts_and_trash_whatever_include_drafts_is():
         }
 
 
-def test_analysis_all_drafts_or_trash_has_no_last_sender():
+def test_analysis_all_drafts_or_trash_has_no_last_sender() -> None:
     thread = _thread()
     thread["messages"] = thread["messages"][1:3]
 
@@ -285,7 +307,7 @@ def test_analysis_all_drafts_or_trash_has_no_last_sender():
 
 
 @pytest.mark.asyncio
-async def test_batch_hides_drafts_and_trash_by_default():
+async def test_batch_hides_drafts_and_trash_by_default() -> None:
     other = _thread("t2")
     other["messages"] = [other["messages"][0]]
     service = _batch_service({"t1": _thread(), "t2": other})
@@ -302,7 +324,7 @@ async def test_batch_hides_drafts_and_trash_by_default():
 
 
 @pytest.mark.asyncio
-async def test_batch_marks_drafts_and_trash_when_included():
+async def test_batch_marks_drafts_and_trash_when_included() -> None:
     service = _batch_service({"t1": _thread()})
 
     result = await _unwrap(get_gmail_threads_content_batch)(
