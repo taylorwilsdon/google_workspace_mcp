@@ -399,6 +399,14 @@ class InsertImageOperation(InsertionLocationOperation, SegmentTargetDocOperation
     height: Optional[int] = None
 
 
+class InsertPersonOperation(InsertionLocationOperation, SegmentTargetDocOperation):
+    type: Literal["insert_person"]
+    email: str = Field(
+        min_length=1,
+        description="Email of the person to @mention as a smart chip.",
+    )
+
+
 class InsertDocTabOperation(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -452,6 +460,7 @@ BatchDocOperation = Annotated[
         UpdateSectionStyleOperation,
         CreateHeaderFooterOperation,
         InsertImageOperation,
+        InsertPersonOperation,
         InsertDocTabOperation,
         DeleteDocTabOperation,
         UpdateDocTabOperation,

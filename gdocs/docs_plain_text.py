@@ -254,6 +254,11 @@ class _PlainTextRenderer:
                 parts.append(self._render_rich_link(element.get("richLink", {})))
             elif "dateElement" in element:
                 parts.append(self._render_date(element.get("dateElement", {})))
+            elif "dropdown" in element:
+                props = element["dropdown"].get("dropdownProperties", {})
+                parts.append(
+                    props.get("displayValue") or "[Dropdown: details unavailable]"
+                )
             elif "inlineObjectElement" in element:
                 object_id = element.get("inlineObjectElement", {}).get(
                     "inlineObjectId", ""

@@ -74,6 +74,26 @@ _SLIDES_BATCH_REQUEST_EXAMPLES = (
 )
 
 
+# getThumbnail thumbnailSize values and the pixel width each renders at.
+PAGE_IMAGE_WIDTHS = {
+    "SMALL": 200,
+    "MEDIUM": 800,
+    "LARGE": 1600,
+    "WIDTH2000_PX": 2000,
+}
+
+
+def validate_page_image_size(size: str) -> int:
+    """Check a render size against the API's values and return its pixel width."""
+    width = PAGE_IMAGE_WIDTHS.get(size)
+    if width is None:
+        valid = ", ".join(
+            f"{name} ({px}px wide)" for name, px in PAGE_IMAGE_WIDTHS.items()
+        )
+        raise UserInputError(f"Invalid size '{size}'. Use one of: {valid}.")
+    return width
+
+
 def _slides_batch_request_guidance() -> str:
     examples = ", ".join(_SLIDES_BATCH_REQUEST_EXAMPLES)
     return f"exactly one Slides request type such as {examples}"

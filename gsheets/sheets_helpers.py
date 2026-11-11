@@ -28,6 +28,15 @@ SHEET_TITLE_SAFE_RE = re.compile(r"^[A-Za-z0-9_]+$")
 COLUMN_LETTER_REGEX = re.compile(r"^[A-Za-z]+$")
 QUOTED_SHEET_ONLY_REGEX = re.compile(r"^'(?:[^']|'')+'$")
 MERGE_TYPES = ("MERGE_ALL", "MERGE_COLUMNS", "MERGE_ROWS")
+PASTE_TYPES = (
+    "PASTE_NORMAL",
+    "PASTE_VALUES",
+    "PASTE_FORMAT",
+    "PASTE_NO_BORDERS",
+    "PASTE_FORMULA",
+    "PASTE_DATA_VALIDATION",
+    "PASTE_CONDITIONAL_FORMATTING",
+)
 
 
 def _column_to_index(column: str) -> Optional[int]:
@@ -253,6 +262,186 @@ def _parse_hex_color(color: Optional[str]) -> Optional[dict]:
     return {"red": red, "green": green, "blue": blue}
 
 
+def _build_tab_style_properties(
+    tab_color: Optional[str] = None,
+    show_gridlines: Optional[bool] = None,
+) -> tuple[dict, str, str]:
+    """
+    Build the sheet properties for manage_sheet_tab's "style" action.
+
+    Args:
+        tab_color: Hex color for the tab, or "none" to remove it.
+        show_gridlines: Whether the sheet shows gridlines.
+
+    Returns:
+        The properties to set (without sheetId), the fields mask, and a
+        short human-readable summary.
+    """
+    if tab_color is None and show_gridlines is None:
+        raise UserInputError("action='style' needs tab_color and/or show_gridlines.")
+
+    properties: dict = {}
+    fields = []
+    parts = []
+    if tab_color is not None:
+        color = tab_color.strip()
+        if not color:
+            raise UserInputError("tab_color must be a hex color (#RRGGBB) or 'none'.")
+        if color.lower() == "none":
+            # An empty colour style with the field in the mask clears it.
+            properties["tabColorStyle"] = {}
+            parts.append("removed tab color")
+        else:
+            properties["tabColorStyle"] = {"rgbColor": _parse_hex_color(color)}
+            parts.append(f"tab color #{color.lstrip('#').upper()}")
+        fields.append("tabColorStyle")
+    if show_gridlines is not None:
+        properties["gridProperties"] = {"hideGridlines": not show_gridlines}
+        fields.append("gridProperties.hideGridlines")
+        parts.append("gridlines shown" if show_gridlines else "gridlines hidden")
+    return properties, ",".join(fields), ", ".join(parts)
+
+
+BORDER_SIDES = ("top", "bottom", "left", "right", "innerHorizontal", "innerVertical")
+# Keys are normalized: lowercase with "_" and "-" removed, so "inner_horizontal",
+# "inner-horizontal" and the API's own "innerHorizontal" all match.
+BORDER_SIDE_ALIASES = {
+    "all": BORDER_SIDES,
+    "outer": ("top", "bottom", "left", "right"),
+    "inner": ("innerHorizontal", "innerVertical"),
+    "top": ("top",),
+    "bottom": ("bottom",),
+    "left": ("left",),
+    "right": ("right",),
+    "innerhorizontal": ("innerHorizontal",),
+    "innervertical": ("innerVertical",),
+}
+BORDER_SIDE_NAMES = (
+    "all",
+    "outer",
+    "inner",
+    "top",
+    "bottom",
+    "left",
+    "right",
+    "inner_horizontal",
+    "inner_vertical",
+)
+BORDER_STYLES = {"DOTTED", "DASHED", "SOLID", "SOLID_MEDIUM", "SOLID_THICK", "DOUBLE"}
+
+
+def _build_update_borders_request(
+    borders: str,
+    border_style: Optional[str] = None,
+    border_color: Optional[str] = None,
+) -> tuple[dict, str]:
+    """
+    Build an updateBorders request. The caller sets its "range" once the
+    GridRange is known, so input errors surface before any API call.
+
+    Args:
+        borders: Comma-separated sides: all, outer, inner, top, bottom, left,
+            right, inner_horizontal, inner_vertical. "none" removes all borders.
+        border_style: One of BORDER_STYLES. Defaults to SOLID.
+        border_color: Hex color. Defaults to black.
+
+    Returns:
+        The request dict (without range) and a short human-readable summary.
+    """
+    tokens = [t.strip().lower() for t in borders.split(",") if t.strip()]
+    if not tokens:
+        raise UserInputError("borders must name at least one side.")
+    style_given = bool(border_style and border_style.strip())
+    color_given = bool(border_color and border_color.strip())
+
+    if "none" in tokens:
+        if tokens != ["none"]:
+            raise UserInputError("borders='none' cannot be combined with sides.")
+        if style_given or color_given:
+            raise UserInputError(
+                "borders='none' removes borders; drop border_style and border_color."
+            )
+        border: dict = {"style": "NONE"}
+        sides = BORDER_SIDES
+        summary = "borders removed"
+    else:
+        keys = [t.replace("_", "").replace("-", "") for t in tokens]
+        unknown = [t for t, k in zip(tokens, keys) if k not in BORDER_SIDE_ALIASES]
+        if unknown:
+            raise UserInputError(
+                f"Unknown border side(s) {unknown}. Use 'none' alone, or any of "
+                f"{list(BORDER_SIDE_NAMES)}."
+            )
+        style = border_style.strip().upper() if style_given else "SOLID"
+        if style not in BORDER_STYLES:
+            raise UserInputError(
+                f"border_style must be one of {sorted(BORDER_STYLES)}."
+            )
+        border = {
+            "style": style,
+            "color": _parse_hex_color(border_color)
+            if color_given
+            else {"red": 0.0, "green": 0.0, "blue": 0.0},
+        }
+        sides = [side for k in keys for side in BORDER_SIDE_ALIASES[k]]
+        summary = f"{style} borders ({', '.join(tokens)})"
+        if color_given:
+            summary += f" in {border_color.strip()}"
+
+    return {"updateBorders": {side: dict(border) for side in sides}}, summary
+
+
+def _build_dropdown_request(
+    dropdown_values: Optional[List[str]] = None,
+    dropdown_strict: Optional[bool] = None,
+    clear_dropdown: Optional[bool] = None,
+) -> tuple[dict, str]:
+    """
+    Build a setDataValidation request that adds or removes a dropdown list.
+    The caller sets its "range" once the GridRange is known, so input errors
+    surface before any API call.
+
+    Args:
+        dropdown_values: Allowed values, shown as a dropdown (ONE_OF_LIST).
+        dropdown_strict: Reject values outside the list (default True). False
+            only shows a warning.
+        clear_dropdown: Remove all data validation from the range instead
+            (dropdowns, but also checkboxes and other rules).
+
+    Returns:
+        The request dict (without range) and a short human-readable summary.
+    """
+    if clear_dropdown:
+        if dropdown_values is not None:
+            raise UserInputError(
+                "Pass either dropdown_values or clear_dropdown, not both."
+            )
+        return {"setDataValidation": {}}, "data validation removed"
+
+    values = [str(v).strip() for v in (dropdown_values or [])]
+    values = [v for v in values if v]
+    if not values:
+        raise UserInputError("dropdown_values must contain at least one value.")
+
+    strict = dropdown_strict is not False
+    request = {
+        "setDataValidation": {
+            "rule": {
+                "condition": {
+                    "type": "ONE_OF_LIST",
+                    "values": [{"userEnteredValue": v} for v in values],
+                },
+                "strict": strict,
+                "showCustomUi": True,
+            },
+        }
+    }
+    summary = f"dropdown [{', '.join(values)}]"
+    if not strict:
+        summary += " (warning only)"
+    return request, summary
+
+
 def _normalize_merge_type(
     merge_cells: Optional[bool], merge_type: Optional[str]
 ) -> Optional[str]:
@@ -394,7 +583,10 @@ def _a1_range_for_values(a1_range: str, values: List[List[object]]) -> Optional[
         return None
 
     start_part = range_part.split(":", 1)[0]
-    start_col, start_row = _parse_a1_part(start_part)
+    try:
+        start_col, start_row = _parse_a1_part(start_part)
+    except UserInputError:
+        return None
     if start_col is None or start_row is None:
         return None
 
@@ -415,6 +607,57 @@ def _a1_range_for_values(a1_range: str, values: List[List[object]]) -> Optional[
     if sheet_name:
         return f"{_quote_sheet_title_for_a1(sheet_name)}!{range_ref}"
     return range_ref
+
+
+def _values_start(a1_range: str) -> Optional[tuple[int, int]]:
+    """Return the zero-based (column, row) of an A1 range's first cell, else None."""
+    _, range_part = _split_sheet_and_range(a1_range)
+    if not range_part:
+        return None
+    try:
+        start_col, start_row = _parse_a1_part(range_part.split(":", 1)[0])
+    except UserInputError:
+        return None
+    # A bare "Totals" is a named range, not column TOTALS.
+    if ":" not in range_part and (start_col is None or start_row is None):
+        return None
+    if start_col is None and start_row is None:
+        return None
+    return start_col or 0, start_row or 0
+
+
+_TSV_ESCAPES = str.maketrans({"\\": "\\\\", "\t": "\\t", "\r": "\\r", "\n": "\\n"})
+
+
+def _format_sheet_values_rows(a1_range: str, values: List[List[object]]) -> str:
+    """Render values as lines of sheet row number, then tab-separated cells."""
+    start = _values_start(a1_range)
+    if start is None:
+        start_col, start_row = 0, 0
+        legend = "Each line: row number within the range, then tab-separated cells."
+    else:
+        start_col, start_row = start
+        legend = (
+            "Each line: sheet row number, then tab-separated cells from column "
+            f"{_index_to_column(start_col)}."
+        )
+
+    lines = []
+    escaped = False
+    for offset, row in enumerate(values):
+        cells = ["" if cell is None else str(cell) for cell in row]
+        while cells and cells[-1] == "":
+            cells.pop()
+        escaped_cells = [cell.translate(_TSV_ESCAPES) for cell in cells]
+        escaped = escaped or escaped_cells != cells
+        lines.append("\t".join([str(start_row + offset + 1), *escaped_cells]))
+
+    if escaped:
+        legend += (
+            " Tabs, line breaks and backslashes inside a cell are shown as \\t, "
+            "\\n, \\r and \\\\."
+        )
+    return "\n".join([legend, *lines])
 
 
 def _a1_range_cell_count(a1_range: str) -> Optional[int]:
@@ -877,6 +1120,112 @@ def _select_sheet(sheets: List[dict], sheet_name: Optional[str]) -> dict:
     raise UserInputError(
         f"Sheet '{sheet_name}' not found. Available sheets: {', '.join(available_titles)}."
     )
+
+
+async def _copy_paste_range(
+    service,
+    spreadsheet_id: str,
+    source_range: str,
+    destination_range: str,
+    paste_type: str,
+) -> str:
+    """Copy source_range onto destination_range with a copyPaste request; return the paste type used."""
+    normalized = paste_type.strip().upper()
+    if normalized not in PASTE_TYPES:
+        raise UserInputError(f"paste_type must be one of {list(PASTE_TYPES)}.")
+
+    metadata = await asyncio.to_thread(
+        service.spreadsheets()
+        .get(
+            spreadsheetId=spreadsheet_id,
+            fields="sheets(properties(sheetId,title,hidden))",
+        )
+        .execute
+    )
+    sheets = sorted(
+        metadata.get("sheets", []),
+        key=lambda sheet: sheet.get("properties", {}).get("hidden", False),
+    )
+    destination = _parse_a1_range(destination_range, sheets)
+    if set(destination) == {"sheetId"}:
+        raise UserInputError("range_name must include a row or column to paste into.")
+    request = {
+        "copyPaste": {
+            "source": _parse_a1_range(source_range, sheets),
+            "destination": destination,
+            "pasteType": normalized,
+        }
+    }
+    await asyncio.to_thread(
+        service.spreadsheets()
+        .batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": [request]})
+        .execute
+    )
+    return normalized
+
+
+async def _copy_sheet_to_spreadsheet(
+    service,
+    spreadsheet_id: str,
+    sheet_id: int,
+    destination_spreadsheet_id: str,
+    sheet_name: Optional[str],
+    insert_sheet_index: Optional[int],
+) -> dict:
+    """Copy a sheet into another spreadsheet with an optional title and index; return its properties."""
+    new_props = await asyncio.to_thread(
+        service.spreadsheets()
+        .sheets()
+        .copyTo(
+            spreadsheetId=spreadsheet_id,
+            sheetId=sheet_id,
+            body={"destinationSpreadsheetId": destination_spreadsheet_id},
+        )
+        .execute
+    )
+
+    updates: dict[str, Any] = {}
+    if sheet_name is not None:
+        updates["title"] = sheet_name
+    if insert_sheet_index is not None:
+        updates["index"] = insert_sheet_index
+    if not updates:
+        return new_props
+
+    new_id = new_props["sheetId"]
+    update_request = {
+        "updateSheetProperties": {
+            "properties": {"sheetId": new_id, **updates},
+            "fields": ",".join(updates),
+        }
+    }
+    try:
+        await asyncio.to_thread(
+            service.spreadsheets()
+            .batchUpdate(
+                spreadsheetId=destination_spreadsheet_id,
+                body={"requests": [update_request]},
+            )
+            .execute
+        )
+    except Exception:
+        try:
+            await asyncio.to_thread(
+                service.spreadsheets()
+                .batchUpdate(
+                    spreadsheetId=destination_spreadsheet_id,
+                    body={"requests": [{"deleteSheet": {"sheetId": new_id}}]},
+                )
+                .execute
+            )
+        except Exception as cleanup_error:
+            raise RuntimeError(
+                f"Copied sheet '{new_props['title']}' (ID: {new_id}) to spreadsheet "
+                f"{destination_spreadsheet_id} but could not set its title or index; "
+                "delete or rename it before retrying."
+            ) from cleanup_error
+        raise
+    return {**new_props, **updates}
 
 
 def _parse_condition_values(

@@ -82,6 +82,16 @@ docker build -t workspace-mcp .
 docker run -p 8000:8000 -e GOOGLE_OAUTH_CLIENT_ID=... -e GOOGLE_OAUTH_CLIENT_SECRET=... workspace-mcp --transport streamable-http
 ```
 
+## Auth tool
+
+### start_google_auth
+Manually start the legacy OAuth 2.0 browser flow, e.g. to re-authenticate with different credentials or retry a failed automatic flow. Disabled when OAuth 2.1 is enabled; normally just call the tool you need and auth happens automatically.
+
+| Parameter | Type | Required | Default | Notes |
+|-----------|------|----------|---------|-------|
+| user_google_email | string | no | `USER_GOOGLE_EMAIL` env | |
+| service_name | string | yes | | Service to authorize, e.g. `"gmail"`, `"drive"` |
+
 ## Credential loading priority
 
 1. Environment variables (including those from `~/.claude/settings.local.json` or `~/.claude/settings.json` `env` blocks)

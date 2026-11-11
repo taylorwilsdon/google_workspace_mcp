@@ -5,7 +5,6 @@ This module provides MCP tools for interacting with Google Slides API.
 """
 
 import asyncio
-import base64
 import json
 import logging
 from typing import Any, Dict, Iterator, List, Optional, Tuple
@@ -16,11 +15,16 @@ from mcp.types import ImageContent, TextContent, ToolAnnotations
 
 from auth.service_decorator import require_google_service
 from core.server import server
-from core.utils import handle_http_errors
+from core.utils import (
+    handle_http_errors,
+    image_content_from_bytes,
+    sniff_inline_image_mime_type,
+)
 from core.comments import create_comment_tools
 from gslides.slides_helpers import (
     validate_batch_update_requests,
     validate_insert_text_targets,
+    validate_page_image_size,
 )
 
 logger = logging.getLogger(__name__)
@@ -711,6 +715,11 @@ async def batch_update_presentation(
                 confirmation_message += (
                     f"\n  Request {i}: Created shape with ID {shape_id}"
                 )
+            elif "replaceAllText" in reply:
+                count = reply["replaceAllText"].get("occurrencesChanged", 0)
+                confirmation_message += (
+                    f"\n  Request {i}: Replaced {count} occurrence(s)"
+                )
             else:
                 confirmation_message += f"\n  Request {i}: Operation completed"
 
@@ -811,8 +820,8 @@ Page Elements:
     return confirmation_message
 
 
-async def _fetch_thumbnail_image(url: str) -> Optional[ImageContent]:
-    """Download a rendered thumbnail, or return None if it cannot be retrieved."""
+async def _fetch_page_image(url: str) -> Optional[ImageContent]:
+    """Download a rendered page image, or return None if it cannot be retrieved."""
     try:
         async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
             response = await client.get(url)
@@ -821,22 +830,19 @@ async def _fetch_thumbnail_image(url: str) -> Optional[ImageContent]:
         # The URL grants the requester's access to anyone holding it, so it
         # stays out of the log.
         logger.warning(
-            f"[get_page_thumbnail] Inline fetch failed: {type(exc).__name__}"
+            f"[render_page_to_image] Image fetch failed: {type(exc).__name__}"
         )
         return None
-    mime_type = response.headers.get("content-type", "").split(";")[0].strip()
-    if not mime_type.startswith("image/"):
-        logger.warning("[get_page_thumbnail] Inline fetch returned a non-image")
+    content_type = response.headers.get("content-type", "").lower()
+    mime_type = sniff_inline_image_mime_type(response.content)
+    if not content_type.startswith("image/") or mime_type is None:
+        logger.warning("[render_page_to_image] Image fetch returned a non-image")
         return None
-    return ImageContent(
-        type="image",
-        data=base64.b64encode(response.content).decode("ascii"),
-        mimeType=mime_type,
-    )
+    return image_content_from_bytes(response.content, mime_type)
 
 
 @server.tool(
-    title="Get Page Thumbnail",
+    title="Render Page to Image",
     annotations=ToolAnnotations(
         readOnlyHint=True,
         destructiveHint=False,
@@ -844,36 +850,42 @@ async def _fetch_thumbnail_image(url: str) -> Optional[ImageContent]:
         openWorldHint=True,
     ),
 )
-@handle_http_errors("get_page_thumbnail", is_read_only=True, service_type="slides")
+@handle_http_errors("render_page_to_image", is_read_only=True, service_type="slides")
 @require_google_service("slides", "slides_read")
-async def get_page_thumbnail(
+async def render_page_to_image(
     service,
     user_google_email: str,
     presentation_id: str,
     page_object_id: str,
-    thumbnail_size: str = "MEDIUM",
-    inline: bool = False,
+    size: str = "MEDIUM",
 ) -> str:
     """
-    Generate a thumbnail URL for a specific page (slide) in a presentation.
+    Render a slide (or any page, including notes pages) to an image and return it as image content, for looking at a slide's layout and visuals.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
         presentation_id (str): The ID of the presentation.
-        page_object_id (str): The object ID of the page/slide.
-        thumbnail_size (str): Size of thumbnail ("LARGE", "MEDIUM", "SMALL"). Defaults to "MEDIUM".
-        inline (bool): Also return the rendered PNG itself as image content, so
-            a multimodal client can look at the slide without fetching the URL.
-            The URL is a short-lived googleusercontent link that sandboxed or
-            egress-restricted clients often cannot reach. If the image cannot
-            be fetched, the URL-only result is returned with a note saying so.
-            Defaults to False.
+        page_object_id (str): The object ID of the page/slide to render.
+        size (str): Image width. One of "SMALL" (200px), "MEDIUM" (800px),
+            "LARGE" (1600px) or "WIDTH2000_PX" (2000px). Defaults to "MEDIUM".
+            Start at MEDIUM: it reads titles and body text. Use LARGE for small
+            text such as tables, chart labels and footnotes. WIDTH2000_PX
+            rarely reads more than LARGE. SMALL shows layout only; its text is
+            unreadable. Token cost and the resolution the model sees depend on
+            the model: Claude models with high-resolution vision read MEDIUM at
+            ~460 image tokens, LARGE at ~1,850 and WIDTH2000_PX at ~2,900, while
+            other models may downscale LARGE and WIDTH2000_PX and count tokens
+            differently.
 
     Returns:
-        str: URL to the generated thumbnail image.
+        A short text block (presentation ID, page ID, size and a temporary
+        image URL) followed by the rendered PNG as image content. If the image
+        cannot be fetched, only the text block is returned, with a note saying
+        so.
     """
+    requested_width = validate_page_image_size(size)
     logger.info(
-        f"[get_page_thumbnail] Invoked. Email: '{user_google_email}', Presentation: '{presentation_id}', Page: '{page_object_id}', Size: '{thumbnail_size}'"
+        f"[render_page_to_image] Invoked. Email: '{user_google_email}', Presentation: '{presentation_id}', Page: '{page_object_id}', Size: '{size}'"
     )
 
     result = await asyncio.to_thread(
@@ -882,40 +894,37 @@ async def get_page_thumbnail(
         .getThumbnail(
             presentationId=presentation_id,
             pageObjectId=page_object_id,
-            thumbnailProperties_thumbnailSize=thumbnail_size,
+            thumbnailProperties_thumbnailSize=size,
             thumbnailProperties_mimeType="PNG",
         )
         .execute
     )
 
-    thumbnail_url = result.get("contentUrl", "")
+    image_url = result.get("contentUrl", "")
+    width = result.get("width", requested_width)
+    dimensions = (
+        f"{width}x{result['height']}px" if "height" in result else f"{width}px wide"
+    )
 
-    confirmation_message = f"""Thumbnail Generated for {user_google_email}:
+    text = f"""Rendered page:
 - Presentation ID: {presentation_id}
 - Page ID: {page_object_id}
-- Thumbnail Size: {thumbnail_size}
-- Thumbnail URL: {thumbnail_url}
+- Size: {size} ({dimensions})
+- Image URL: {image_url or "(none returned)"}
+  (expires after about 30 minutes and is tagged with the requesting account;
+  anyone holding it can open the image while it lasts)"""
 
-You can view or download the thumbnail using the provided URL."""
-
-    logger.info(f"Thumbnail generated successfully for {user_google_email}")
-    if not inline or not thumbnail_url:
-        return confirmation_message
-
-    image = await _fetch_thumbnail_image(thumbnail_url)
+    image = await _fetch_page_image(image_url) if image_url else None
     if image is None:
-        # The URL may still be reachable by the caller, so a failed fetch
-        # degrades to the URL-only result instead of failing the call.
-        return (
-            f"{confirmation_message}\n\n"
-            "Inline image unavailable: the thumbnail could not be fetched."
-        )
-    # structured_content mirrors the plain-string result so clients that
-    # validate against the tool's output schema still get what they expect.
-    return ToolResult(
-        content=[TextContent(type="text", text=confirmation_message), image],
-        structured_content={"result": confirmation_message},
-    )
+        text += "\n\nImage unavailable: the rendered page could not be fetched."
+        if image_url:
+            text += " Open the image URL above instead, before it expires."
+    content: List[TextContent | ImageContent] = [TextContent(type="text", text=text)]
+    if image is not None:
+        content.append(image)
+    logger.info(f"Page rendered for {user_google_email}")
+    # structured_content mirrors the text to satisfy the `str` output schema.
+    return ToolResult(content=content, structured_content={"result": text})
 
 
 # Create comment management tools for slides

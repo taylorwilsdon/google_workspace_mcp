@@ -1,20 +1,105 @@
 """
 Google Contacts Helper Functions
 
-This module provides pure utility functions for parsing, normalizing,
-formatting, and merging Google Contacts (People API) data. These helpers
-operate purely on plain dicts/strings and are kept separate from the MCP
-tool definitions and Pydantic input models in contacts_tools.py.
+This module provides listing, parsing, normalizing, formatting, and merging
+logic for Google Contacts (People API), separate from the MCP tool definitions
+and Pydantic input models in contacts_tools.py.
 """
 
+import asyncio
 import datetime
 import logging
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
+
+from googleapiclient.errors import HttpError
 
 from core.utils import UserInputError
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_PERSON_FIELDS = "names,nicknames,emailAddresses,phoneNumbers,organizations"
+
+_URL_SCHEME_HOST_RE = re.compile(
+    r"([a-z][a-z0-9+.-]*:)(?!//)|((?:[a-z][a-z0-9+.-]*:)?//)?([^/?#@]*@)?([^/?#]*)",
+    re.IGNORECASE,
+)
+
+
+def _is_expired_sync_token(exc: HttpError) -> bool:
+    """Recognize the People API expiry reason, retaining HTTP 410 as a fallback."""
+    status = getattr(exc.resp, "status", None)
+    if status == 410:
+        return True
+    details = getattr(exc, "error_details", None)
+    return (
+        status == 400
+        and isinstance(details, list)
+        and any(
+            isinstance(detail, dict) and detail.get("reason") == "EXPIRED_SYNC_TOKEN"
+            for detail in details
+        )
+    )
+
+
+async def _list_contacts(
+    service: Any,
+    user_google_email: str,
+    page_size: int,
+    page_token: Optional[str],
+    sort_order: Optional[str],
+    request_sync_token: bool,
+    sync_token: Optional[str],
+) -> str:
+    """List one page of contacts, ending the last sync page with a sync token."""
+    if page_size < 1:
+        raise UserInputError("page_size must be >= 1")
+    if sync_token is not None and not sync_token.strip():
+        raise UserInputError("sync_token must not be empty")
+    syncing = request_sync_token or sync_token is not None
+    if syncing and sort_order:
+        raise UserInputError("sort_order is not supported when syncing contacts")
+
+    params: Dict[str, Any] = {
+        "resourceName": "people/me",
+        "personFields": DEFAULT_PERSON_FIELDS,
+        "pageSize": min(page_size, 1000),
+    }
+    if page_token:
+        params["pageToken"] = page_token
+    if sort_order:
+        params["sortOrder"] = sort_order
+    if syncing:
+        params["personFields"] += ",metadata"
+        params["requestSyncToken"] = True
+    if sync_token:
+        params["syncToken"] = sync_token
+
+    try:
+        result = await asyncio.to_thread(
+            service.people().connections().list(**params).execute
+        )
+    except HttpError as exc:
+        if sync_token and _is_expired_sync_token(exc):
+            return "Sync token expired. Start a new full sync with request_sync_token=true."
+        raise
+
+    connections = result.get("connections", [])
+    if connections:
+        total_people = result.get("totalPeople", len(connections))
+        response = f"Contacts for {user_google_email} ({len(connections)} of {total_people}):\n\n"
+        response += "".join(f"{_format_contact(person)}\n\n" for person in connections)
+    elif syncing:
+        response = f"No contacts returned for {user_google_email}.\n\n"
+    else:
+        return f"No contacts found for {user_google_email}."
+
+    if result.get("nextPageToken"):
+        response += f"Next page token: {result['nextPageToken']}"
+    if result.get("nextSyncToken"):
+        response += f"Next sync token: {result['nextSyncToken']}"
+    return response
+
 
 # Name fields the People API derives from the structured parts. Sending them
 # back alongside an edited part would conflict with (or override) the edit.
@@ -37,12 +122,12 @@ def _parse_birthday(s: str) -> Dict[str, Any]:
         else:
             raise ValueError
     except ValueError:
-        raise ValueError(
+        raise UserInputError(
             f"Invalid birthday format '{s}'. Use 'YYYY-MM-DD' or 'MM-DD'."
         ) from None
 
     if not 1 <= month <= 12 or not 1 <= day <= 31:
-        raise ValueError(
+        raise UserInputError(
             f"Invalid birthday '{s}': month must be 1-12 and day must be 1-31."
         )
 
@@ -52,7 +137,9 @@ def _parse_birthday(s: str) -> Dict[str, Any]:
     try:
         datetime.date(year if year is not None else 2000, month, day)
     except ValueError:
-        raise ValueError(f"Invalid birthday '{s}': not a real calendar date.") from None
+        raise UserInputError(
+            f"Invalid birthday '{s}': not a real calendar date."
+        ) from None
 
     date = {"month": month, "day": day}
     if year is not None:
@@ -78,10 +165,12 @@ def _normalize_nickname(value: str) -> str:
 
 def _normalize_url(value: str) -> str:
     """Return a normalized URL string for deduplication. Lowercases scheme/host, strips trailing slash."""
-    stripped = value.strip().lower()
-    if stripped.endswith("/"):
-        stripped = stripped[:-1]
-    return stripped
+    stripped = value.strip()
+    match = _URL_SCHEME_HOST_RE.match(stripped)
+    opaque_scheme, scheme, userinfo, host = match.groups(default="")
+    prefix = (opaque_scheme + scheme).lower()
+    normalized = prefix + userinfo + host.lower() + stripped[match.end() :]
+    return normalized.removesuffix("/")
 
 
 def _normalize_user_defined_key(value: str) -> str:
@@ -149,6 +238,8 @@ def _format_contact(person: Dict[str, Any], detailed: bool = False) -> str:
     contact_id = resource_name.replace("people/", "") if resource_name else "Unknown"
 
     lines = [f"Contact ID: {contact_id}"]
+    if person.get("metadata", {}).get("deleted"):
+        lines.append("Deleted: yes")
 
     # Names
     names = person.get("names", [])
@@ -432,7 +523,7 @@ def _merge_urls(
     mode: str,
 ) -> List[Dict[str, Any]]:
     """
-    Merge URL lists according to mode. Dedup by normalized URL (lowercased, trailing slash stripped).
+    Merge URL lists according to mode. Dedup by normalized URL (scheme/host lowercased, trailing slash stripped).
     """
     if mode == "replace":
         return new_urls
