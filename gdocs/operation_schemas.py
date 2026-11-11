@@ -10,8 +10,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from typing import Annotated, Any, Literal, Optional, Union
-
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from zoneinfo import available_timezones
 
 from pydantic import (
     BaseModel,
@@ -421,19 +420,29 @@ class InsertDateOperation(InsertionLocationOperation, SegmentTargetDocOperation)
     type: Literal["insert_date"]
     date: str = Field(
         min_length=1,
-        description="Date for the smart chip, YYYY-MM-DD or an ISO 8601 timestamp with a time zone.",
+        description="YYYY-MM-DD, or an ISO 8601 timestamp with an offset (displayed in UTC unless timezone is set).",
     )
-    date_format: Optional[str] = Field(
+    date_format: Optional[
+        Literal[
+            "DATE_FORMAT_MONTH_DAY_ABBREVIATED",
+            "DATE_FORMAT_MONTH_DAY_FULL",
+            "DATE_FORMAT_MONTH_DAY_YEAR_ABBREVIATED",
+            "DATE_FORMAT_ISO8601",
+        ]
+    ] = Field(
         default=None,
-        description="Docs API DateFormat enum, e.g. DATE_FORMAT_MONTH_DAY_YEAR_ABBREVIATED (default) or DATE_FORMAT_ISO8601.",
+        description="Defaults to DATE_FORMAT_MONTH_DAY_YEAR_ABBREVIATED.",
     )
-    time_format: Optional[str] = Field(
-        default=None,
-        description="Docs API TimeFormat enum, e.g. TIME_FORMAT_DISABLED or TIME_FORMAT_HOUR_MINUTE.",
-    )
+    time_format: Optional[
+        Literal[
+            "TIME_FORMAT_DISABLED",
+            "TIME_FORMAT_HOUR_MINUTE",
+            "TIME_FORMAT_HOUR_MINUTE_TIMEZONE",
+        ]
+    ] = Field(default=None, description="Omit to show no time.")
     timezone: Optional[str] = Field(
         default=None,
-        description="IANA time zone ID. Sent to Docs only with TIME_FORMAT_HOUR_MINUTE_TIMEZONE; otherwise it only picks local noon for a date-only value.",
+        description="IANA time zone ID shown on the chip. Requires time_format TIME_FORMAT_HOUR_MINUTE_TIMEZONE.",
     )
 
     @field_validator("date")
@@ -458,13 +467,17 @@ class InsertDateOperation(InsertionLocationOperation, SegmentTargetDocOperation)
     @classmethod
     def _validate_timezone(cls, value: Optional[str]) -> Optional[str]:
         """Reject names the IANA time zone database does not know."""
-        if value is None:
-            return value
-        try:
-            ZoneInfo(value)
-        except (ZoneInfoNotFoundError, ValueError) as exc:
-            raise ValueError(f"unknown IANA time zone: {value}") from exc
+        if value is not None and value not in available_timezones():
+            raise ValueError(f"unknown IANA time zone: {value}")
         return value
+
+    @model_validator(mode="after")
+    def validate_timezone_format(self) -> "InsertDateOperation":
+        if self.timezone and self.time_format != "TIME_FORMAT_HOUR_MINUTE_TIMEZONE":
+            raise ValueError(
+                "timezone requires time_format TIME_FORMAT_HOUR_MINUTE_TIMEZONE."
+            )
+        return self
 
 
 class InsertDocTabOperation(BaseModel):

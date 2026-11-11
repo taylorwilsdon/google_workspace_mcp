@@ -954,13 +954,19 @@
             "type": "string"
           },
           "date": {
-            "description": "Date for the smart chip, YYYY-MM-DD or an ISO 8601 timestamp with a time zone.",
+            "description": "YYYY-MM-DD, or an ISO 8601 timestamp with an offset (displayed in UTC unless timezone is set).",
             "minLength": 1,
             "type": "string"
           },
           "date_format": {
             "anyOf": [
               {
+                "enum": [
+                  "DATE_FORMAT_MONTH_DAY_ABBREVIATED",
+                  "DATE_FORMAT_MONTH_DAY_FULL",
+                  "DATE_FORMAT_MONTH_DAY_YEAR_ABBREVIATED",
+                  "DATE_FORMAT_ISO8601"
+                ],
                 "type": "string"
               },
               {
@@ -968,11 +974,16 @@
               }
             ],
             "default": null,
-            "description": "Docs API DateFormat enum, e.g. DATE_FORMAT_MONTH_DAY_YEAR_ABBREVIATED (default) or DATE_FORMAT_ISO8601."
+            "description": "Defaults to DATE_FORMAT_MONTH_DAY_YEAR_ABBREVIATED."
           },
           "time_format": {
             "anyOf": [
               {
+                "enum": [
+                  "TIME_FORMAT_DISABLED",
+                  "TIME_FORMAT_HOUR_MINUTE",
+                  "TIME_FORMAT_HOUR_MINUTE_TIMEZONE"
+                ],
                 "type": "string"
               },
               {
@@ -980,7 +991,7 @@
               }
             ],
             "default": null,
-            "description": "Docs API TimeFormat enum, e.g. TIME_FORMAT_DISABLED or TIME_FORMAT_HOUR_MINUTE."
+            "description": "Omit to show no time."
           },
           "timezone": {
             "anyOf": [
@@ -992,7 +1003,7 @@
               }
             ],
             "default": null,
-            "description": "IANA time zone ID. Sent to Docs only with TIME_FORMAT_HOUR_MINUTE_TIMEZONE; otherwise it only picks local noon for a date-only value."
+            "description": "IANA time zone ID shown on the chip. Requires time_format TIME_FORMAT_HOUR_MINUTE_TIMEZONE."
           }
         },
         "required": [

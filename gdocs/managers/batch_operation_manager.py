@@ -1475,7 +1475,7 @@ class BatchOperationManager:
                         "time_format",
                         "timezone",
                     ],
-                    "description": "Insert a date smart chip (date is YYYY-MM-DD)",
+                    "description": "Insert a date smart chip",
                 },
                 "insert_doc_tab": {
                     "required": ["title", "index"],
