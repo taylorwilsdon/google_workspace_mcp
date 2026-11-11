@@ -29,6 +29,7 @@ from gchat.chat_helpers import (
     _name_spaces,
     _none_if_blank,
     _none_if_null_sentinel,
+    _normalize_space_resource_name,
     _resolve_sender,
 )
 
@@ -156,6 +157,7 @@ async def get_messages(
         str: Formatted messages from the specified space. When more messages
             remain, a "Next page token" line is appended.
     """
+    space_id = _normalize_space_resource_name(space_id)
     logger.info(f"[get_messages] Space ID: '{space_id}' for user '{user_google_email}'")
 
     # Get space info first
@@ -291,6 +293,7 @@ async def send_message(
     Returns:
         str: Confirmation message with the sent or updated message details.
     """
+    space_id = _normalize_space_resource_name(space_id)
     logger.info(f"[send_message] Email: '{user_google_email}', Space: '{space_id}'")
 
     thread_key = _none_if_blank(thread_key)
@@ -432,6 +435,7 @@ async def search_messages(
 
     # If specific space provided, search within that space
     if space_id:
+        space_id = _normalize_space_resource_name(space_id)
         list_params = {
             "parent": space_id,
             "pageSize": page_size,
