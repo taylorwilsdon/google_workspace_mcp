@@ -1,8 +1,12 @@
 """Tests for list_spaces listing the members of one space."""
 
+import json
 from unittest.mock import Mock
 
+import httplib2
 import pytest
+from fastmcp.exceptions import ToolError
+from googleapiclient.errors import HttpError
 
 from core.utils import UserInputError
 from gchat import chat_helpers
@@ -23,14 +27,18 @@ def _clear_name_cache():
     chat_helpers._sender_name_cache.clear()
 
 
-def _services(pages=None):
+def _services(pages=None, members_error=None):
     chat = Mock()
     chat.spaces.return_value.get.return_value.execute.return_value = {
         "name": "spaces/S",
         "displayName": "Project 8542",
         "spaceType": "SPACE",
     }
-    chat.spaces.return_value.members.return_value.list.return_value.execute.side_effect = pages
+    members_list = chat.spaces.return_value.members.return_value.list
+    if members_error is not None:
+        members_list.return_value.execute.side_effect = members_error
+    else:
+        members_list.return_value.execute.side_effect = pages
     people = Mock()
     people.people.return_value.getBatchGet.return_value.execute.return_value = {
         "responses": [
@@ -212,6 +220,36 @@ async def test_unnamed_space_header_uses_type_fallback_without_extra_lookups():
     assert result.splitlines()[0] == "Members of 'Direct message' (ID: spaces/D): 2"
     chat.spaces.return_value.members.return_value.list.assert_called_once()
     people.people.return_value.get.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_other_member_listing_errors_propagate() -> None:
+    body = {"error": {"code": 403, "message": "Forbidden"}}
+    error = HttpError(httplib2.Response({"status": 403}), json.dumps(body).encode())
+    chat, people = _services(members_error=error)
+
+    with pytest.raises(HttpError) as raised:
+        await _list_members(chat, people)
+
+    assert raised.value is error
+
+
+@pytest.mark.asyncio
+async def test_missing_memberships_scope_is_explained() -> None:
+    detail = {
+        "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+        "reason": "ACCESS_TOKEN_SCOPE_INSUFFICIENT",
+    }
+    body = {"error": {"code": 403, "message": "Forbidden", "details": [detail]}}
+    error = HttpError(httplib2.Response({"status": 403}), json.dumps(body).encode())
+    chat, people = _services(members_error=error)
+
+    with pytest.raises(ToolError) as raised:
+        await _list_members(chat, people)
+
+    message = str(raised.value)
+    assert "chat.memberships.readonly" in message
+    assert "service-account" in message
 
 
 @pytest.mark.asyncio
