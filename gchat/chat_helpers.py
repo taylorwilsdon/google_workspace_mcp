@@ -7,10 +7,13 @@ resolution for Chat senders and spaces via the People API.
 
 import asyncio
 import logging
+import re
 import ssl
 from typing import Dict, List, Optional, Tuple
 
 from googleapiclient.errors import HttpError
+
+from core.utils import UserInputError
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +29,7 @@ _PEOPLE_BATCH_SIZE = 200  # people.getBatchGet limit
 _MAX_CONSECUTIVE_MEMBER_LOOKUP_FAILURES = 2
 _SCOPE_ERROR_REASON = "ACCESS_TOKEN_SCOPE_INSUFFICIENT"
 _SEARCH_MESSAGES_RETRY_BASE_DELAY_SECONDS = 1
+_SPACE_ID_PATTERN = re.compile(r"(?:spaces/)?([^/\s]+)")
 
 
 def _cache_key(cache_owner: Optional[str], user_id: str) -> Optional[Tuple[str, str]]:
@@ -251,6 +255,16 @@ def _none_if_blank(value: Optional[str]) -> Optional[str]:
     """Treat a null sentinel or whitespace-only string as an omitted arg."""
     value = _none_if_null_sentinel(value)
     return value if value and value.strip() else None
+
+
+def _normalize_space_resource_name(space_id: str) -> str:
+    """Return spaces/<id> for a space resource name or a bare space ID."""
+    match = _SPACE_ID_PATTERN.fullmatch(space_id.strip())
+    if match is None:
+        raise UserInputError(
+            f"Invalid space_id '{space_id}'. Expected spaces/X or a bare space ID X."
+        )
+    return f"spaces/{match.group(1)}"
 
 
 async def _execute_chat_request(
