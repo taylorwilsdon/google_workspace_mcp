@@ -72,7 +72,7 @@ def test_whitespace_and_quotes_combined_are_stripped() -> None:
         ("2026-11-10T00:00:00", None, "2026-11-10T00:00:00Z"),
         ("2026-11-10T00:00:00", "Not/AZone", "2026-11-10T00:00:00Z"),
         ("0001-01-01T00:00:00", "Asia/Kolkata", "0001-01-01T00:00:00Z"),
-        ("9999-12-31", "America/Los_Angeles", "9999-12-31T00:00:00Z"),
+        ("9999-12-31T23:00:00", "America/Los_Angeles", "9999-12-31T23:00:00Z"),
     ],
 )
 def test_offset_free_values_use_timezone(
