@@ -4,6 +4,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from core.utils import UserInputError
 from gchat import chat_helpers
 from gchat.chat_tools import list_spaces
 
@@ -223,3 +224,25 @@ async def test_blank_space_id_still_lists_spaces(space_id):
 
     assert result == "No Chat spaces found for type 'all'."
     chat.spaces.return_value.members.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_bare_space_id_is_normalized_for_member_listing() -> None:
+    chat, people = _services([{"memberships": []}])
+
+    result = await _list_members(chat, people, space_id="S")
+
+    assert "(ID: spaces/S)" in result
+    chat.spaces.return_value.get.assert_called_once_with(name="spaces/S")
+    members_list = chat.spaces.return_value.members.return_value.list
+    assert members_list.call_args.kwargs["parent"] == "spaces/S"
+
+
+@pytest.mark.asyncio
+async def test_malformed_space_id_is_rejected_before_any_request() -> None:
+    chat, people = _services()
+
+    with pytest.raises(UserInputError):
+        await _list_members(chat, people, space_id="spaces/a/b")
+
+    chat.spaces.return_value.get.assert_not_called()
