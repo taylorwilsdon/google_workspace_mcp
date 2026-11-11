@@ -10,7 +10,6 @@ import logging
 import ssl
 from typing import Dict, List, Optional, Tuple
 
-from fastmcp.exceptions import ToolError
 from googleapiclient.errors import HttpError
 
 logger = logging.getLogger(__name__)
@@ -149,14 +148,9 @@ def _is_scope_error(error: HttpError) -> bool:
 async def _list_memberships(
     chat_service, space_name: str, limit: Optional[int] = None, **list_params
 ) -> List[dict]:
-    """Return the memberships of a space, following nextPageToken.
-
-    With a limit, stop after limit + 1 memberships, so the caller can tell that
-    more exist without paging through the whole space.
-    """
+    """Return a space's memberships, stopping once more than limit are found."""
     memberships = []
-    # pageSize stays the same on every page: the API expects follow-up page
-    # requests to repeat the original parameters.
+    # Page-token requests must repeat the original pageSize.
     page_size = 100 if limit is None else min(100, limit + 1)
     params = {"parent": space_name, "pageSize": page_size, **list_params}
     while True:
@@ -262,24 +256,14 @@ _MEMBER_ROLE_LABELS = {
 async def _format_space_members(
     chat_service, people_service, space_id: str, limit: int
 ) -> str:
-    """List up to limit members of a space (people, apps and groups), including
-    pending invites."""
+    """List up to limit space members: people, apps, groups and pending invites."""
     space = await asyncio.to_thread(chat_service.spaces().get(name=space_id).execute)
-    space_label = (await _name_spaces(chat_service, people_service, [space]))[
-        space.get("name")
-    ]
-    try:
-        memberships = await _list_memberships(
-            chat_service, space_id, limit, showInvited=True, showGroups=True
-        )
-    except HttpError as e:
-        if _is_scope_error(e):
-            raise ToolError(
-                "Listing members needs the chat.memberships.readonly scope, which "
-                "this token lacks. Re-authenticate with the default Chat scopes "
-                "and retry."
-            ) from e
-        raise
+    space_label = space.get("displayName") or _UNNAMED_SPACE_FALLBACKS.get(
+        space.get("spaceType"), "Unnamed Space"
+    )
+    memberships = await _list_memberships(
+        chat_service, space_id, limit, showInvited=True, showGroups=True
+    )
 
     has_more = len(memberships) > limit
     memberships = memberships[:limit]
