@@ -24,6 +24,7 @@ from pydantic import (
 
 ParagraphBorderEdge = Literal["top", "bottom", "left", "right", "between"]
 TableBorderEdge = Literal["top", "bottom", "left", "right"]
+_IANA_TIME_ZONES = frozenset(available_timezones())
 
 
 def _coerce_json_str_to_list(v: Any) -> Any:
@@ -467,7 +468,7 @@ class InsertDateOperation(InsertionLocationOperation, SegmentTargetDocOperation)
     @classmethod
     def _validate_timezone(cls, value: Optional[str]) -> Optional[str]:
         """Reject names the IANA time zone database does not know."""
-        if value is not None and value not in available_timezones():
+        if value is not None and value not in _IANA_TIME_ZONES:
             raise ValueError(f"unknown IANA time zone: {value}")
         return value
 
