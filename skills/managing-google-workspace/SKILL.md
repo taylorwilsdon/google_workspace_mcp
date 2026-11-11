@@ -80,7 +80,9 @@ For server options, transport, auth modes, tool filtering, and deployment: [refe
 | Read a thread | `get_gmail_thread_content` |
 | Read multiple threads | `get_gmail_threads_content_batch` |
 | Send email (new or reply) | `send_gmail_message` |
+| Send a reviewed draft as-is | `send_gmail_message` (`draft_id`) |
 | Create draft | `draft_gmail_message` |
+| Revise, delete, or list drafts | `draft_gmail_message` (`action`) |
 | Download attachment | `get_gmail_attachment_content` |
 | Add/remove labels (one) | `modify_gmail_message_labels` |
 | Add/remove labels (batch) | `batch_modify_gmail_message_labels` |
