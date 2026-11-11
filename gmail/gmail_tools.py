@@ -3075,6 +3075,80 @@ async def send_gmail_message(
 
 
 # Internal implementation function for testing
+async def _download_message_attachments(
+    service, message_id: str, payload: dict
+) -> List[Dict[str, Any]]:
+    """Download a message's attachments as standard-base64 ``content`` dicts.
+
+    The result is ready for ``_prepare_gmail_message``. Shared by the forward
+    paths and by a draft update that carries the stored attachments over.
+    Raises UserInputError if any attachment exceeds the configured size cap or
+    cannot be downloaded, so a caller never builds a message that silently
+    lost a file.
+    """
+    attachments: List[Dict[str, Any]] = []
+    failed_attachments = []
+    for att in _extract_attachments(payload):
+        try:
+            ensure_within_file_size_limit(
+                att.get("size"),
+                file_name=att.get("filename"),
+                file_id=att.get("attachmentId"),
+                kind="attachment",
+            )
+        except FileTooLargeError as exc:
+            # Do not let the broad per-attachment download handler turn a
+            # configured safety rejection into a generic partial failure.
+            raise UserInputError(str(exc)) from exc
+        try:
+            attachment_data = await asyncio.to_thread(
+                service.users()
+                .messages()
+                .attachments()
+                .get(userId="me", messageId=message_id, id=att["attachmentId"])
+                .execute
+            )
+            # Gmail normally repeats the decoded byte size in this
+            # response. Re-check it before making padded/decoded/re-encoded
+            # copies in case it differs from the message metadata.
+            ensure_within_file_size_limit(
+                attachment_data.get("size"),
+                file_name=att.get("filename"),
+                file_id=att.get("attachmentId"),
+                kind="attachment",
+            )
+            # Gmail returns URL-safe base64 (often unpadded). Decode it
+            # tolerantly and re-encode as standard, padded base64 so the
+            # downstream base64.b64decode() in _prepare_gmail_message succeeds.
+            urlsafe_data = attachment_data.get("data", "")
+            padded = urlsafe_data + "=" * (-len(urlsafe_data) % 4)
+            standard_b64 = base64.b64encode(base64.urlsafe_b64decode(padded)).decode()
+            attachments.append(
+                {
+                    "content": standard_b64,
+                    "filename": att["filename"],
+                    "mime_type": att["mimeType"],
+                }
+            )
+            logger.info(f"[gmail] Downloaded attachment: {att['filename']}")
+        except FileTooLargeError as exc:
+            raise UserInputError(str(exc)) from exc
+        except Exception as e:
+            logger.warning(
+                f"[gmail] Failed to download attachment {att['filename']}: {e}"
+            )
+            failed_attachments.append(att["filename"])
+
+    # Fail loudly rather than silently building an incomplete message when the
+    # caller asked for the original attachments to be preserved.
+    if failed_attachments:
+        raise UserInputError(
+            "Failed to include requested attachment(s): "
+            + ", ".join(failed_attachments)
+        )
+    return attachments
+
+
 async def _forward_gmail_message_impl(
     service,
     message_id: str,
@@ -3114,76 +3188,11 @@ async def _forward_gmail_message_impl(
 
     payload = original_message.get("payload", {})
 
-    # Handle attachments
-    attachments_to_send = []
-    if include_attachments:
-        attachment_metadata = _extract_attachments(payload)
-        failed_attachments = []
-        for att in attachment_metadata:
-            try:
-                ensure_within_file_size_limit(
-                    att.get("size"),
-                    file_name=att.get("filename"),
-                    file_id=att.get("attachmentId"),
-                    kind="attachment",
-                )
-            except FileTooLargeError as exc:
-                # Do not let the broad per-attachment download handler turn a
-                # configured safety rejection into a generic partial-forward
-                # failure, and never send the message without requested files.
-                raise UserInputError(str(exc)) from exc
-            try:
-                # Download attachment content
-                attachment_data = await asyncio.to_thread(
-                    service.users()
-                    .messages()
-                    .attachments()
-                    .get(userId="me", messageId=message_id, id=att["attachmentId"])
-                    .execute
-                )
-                # Gmail normally repeats the decoded byte size in this
-                # response. Re-check it before making padded/decoded/re-encoded
-                # copies in case it differs from the message metadata.
-                ensure_within_file_size_limit(
-                    attachment_data.get("size"),
-                    file_name=att.get("filename"),
-                    file_id=att.get("attachmentId"),
-                    kind="attachment",
-                )
-                # Gmail returns URL-safe base64 (often unpadded). Decode it
-                # tolerantly and re-encode as standard, padded base64 so the
-                # downstream base64.b64decode() in _prepare_gmail_message succeeds.
-                urlsafe_data = attachment_data.get("data", "")
-                padded = urlsafe_data + "=" * (-len(urlsafe_data) % 4)
-                standard_b64 = base64.b64encode(
-                    base64.urlsafe_b64decode(padded)
-                ).decode()
-                attachments_to_send.append(
-                    {
-                        "content": standard_b64,
-                        "filename": att["filename"],
-                        "mime_type": att["mimeType"],
-                    }
-                )
-                logger.info(
-                    f"[forward_gmail_message] Downloaded attachment: {att['filename']}"
-                )
-            except FileTooLargeError as exc:
-                raise UserInputError(str(exc)) from exc
-            except Exception as e:
-                logger.warning(
-                    f"[forward_gmail_message] Failed to download attachment {att['filename']}: {e}"
-                )
-                failed_attachments.append(att["filename"])
-
-        # Fail loudly rather than silently delivering an incomplete forward when
-        # the caller asked for the original attachments to be preserved.
-        if failed_attachments:
-            raise Exception(
-                "Failed to include requested attachment(s): "
-                + ", ".join(failed_attachments)
-            )
-
+    attachments_to_send = (
+        await _download_message_attachments(service, message_id, payload)
+        if include_attachments
+        else []
+    )
     attachments_to_send.extend(await _resolve_url_attachments(attachments) or [])
 
     forward_subject, forward_plain, forward_html = _build_forward_content(
