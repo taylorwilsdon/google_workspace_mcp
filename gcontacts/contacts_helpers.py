@@ -20,6 +20,11 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_PERSON_FIELDS = "names,nicknames,emailAddresses,phoneNumbers,organizations"
 
+_URL_SCHEME_HOST_RE = re.compile(
+    r"([a-z][a-z0-9+.-]*:)(?!//)|((?:[a-z][a-z0-9+.-]*:)?//)?([^/?#@]*@)?([^/?#]*)",
+    re.IGNORECASE,
+)
+
 
 def _is_expired_sync_token(exc: HttpError) -> bool:
     """Recognize the People API expiry reason, retaining HTTP 410 as a fallback."""
@@ -160,10 +165,12 @@ def _normalize_nickname(value: str) -> str:
 
 def _normalize_url(value: str) -> str:
     """Return a normalized URL string for deduplication. Lowercases scheme/host, strips trailing slash."""
-    stripped = value.strip().lower()
-    if stripped.endswith("/"):
-        stripped = stripped[:-1]
-    return stripped
+    stripped = value.strip()
+    match = _URL_SCHEME_HOST_RE.match(stripped)
+    opaque_scheme, scheme, userinfo, host = match.groups(default="")
+    prefix = (opaque_scheme + scheme).lower()
+    normalized = prefix + userinfo + host.lower() + stripped[match.end() :]
+    return normalized.removesuffix("/")
 
 
 def _normalize_user_defined_key(value: str) -> str:
@@ -516,7 +523,7 @@ def _merge_urls(
     mode: str,
 ) -> List[Dict[str, Any]]:
     """
-    Merge URL lists according to mode. Dedup by normalized URL (lowercased, trailing slash stripped).
+    Merge URL lists according to mode. Dedup by normalized URL (scheme/host lowercased, trailing slash stripped).
     """
     if mode == "replace":
         return new_urls
