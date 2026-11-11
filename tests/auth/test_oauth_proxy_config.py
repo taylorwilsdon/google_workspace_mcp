@@ -1,4 +1,8 @@
+from urllib.parse import parse_qs, urlparse
+
 import pytest
+from fastmcp.server.auth.providers.google import GoogleProvider
+from key_value.aio.stores.memory import MemoryStore
 
 from auth.oauth_proxy_config import (
     MAX_OAUTH_ACCESS_TOKEN_EXPIRY_SECONDS,
@@ -152,10 +156,8 @@ def test_google_prompt_env_unset_leaves_fastmcp_default(monkeypatch, value):
     [
         ("select_account consent", "select_account consent"),
         (" Select_Account   CONSENT ", "select_account consent"),
+        ("select_account\tconsent", "select_account consent"),
         ("consent", "consent"),
-        ("select_account", "select_account"),
-        ("consent consent", "consent"),
-        ("none", "none"),
     ],
 )
 def test_google_prompt_env_maps_to_extra_authorize_params(monkeypatch, value, expected):
@@ -167,7 +169,17 @@ def test_google_prompt_env_maps_to_extra_authorize_params(monkeypatch, value, ex
 
 
 @pytest.mark.parametrize(
-    "value", ["login", "select-account", "none consent", "consent,select_account"]
+    "value",
+    [
+        "none",
+        "select_account",
+        "consent select_account",
+        "consent consent",
+        "none none",
+        "login",
+        "select-account",
+        "consent,select_account",
+    ],
 )
 def test_google_prompt_env_rejects_unsupported_values(monkeypatch, value):
     monkeypatch.setenv(OAUTH_GOOGLE_PROMPT_ENV, value)
@@ -176,28 +188,19 @@ def test_google_prompt_env_rejects_unsupported_values(monkeypatch, value):
         get_oauth_proxy_google_prompt_kwargs()
 
 
-def test_google_prompt_without_consent_warns(monkeypatch, caplog):
-    monkeypatch.setenv(OAUTH_GOOGLE_PROMPT_ENV, "select_account")
-
-    with caplog.at_level("WARNING"):
-        get_oauth_proxy_google_prompt_kwargs()
-
-    assert "refresh token" in caplog.text
-
-
-def test_google_prompt_reaches_google_provider(monkeypatch):
-    from fastmcp.server.auth.providers.google import GoogleProvider
-
+def test_google_prompt_reaches_google_authorize_url(monkeypatch):
     monkeypatch.setenv(OAUTH_GOOGLE_PROMPT_ENV, "select_account consent")
     provider = GoogleProvider(
         client_id="client-id.apps.googleusercontent.com",
         client_secret="client-secret",
         base_url="https://workspace-mcp.example.test",
         jwt_signing_key="k" * 32,
+        client_storage=MemoryStore(),
         **get_oauth_proxy_google_prompt_kwargs(),
     )
 
-    assert provider._extra_authorize_params == {
-        "access_type": "offline",
-        "prompt": "select_account consent",
-    }
+    url = provider._build_upstream_authorize_url("txn-id", {"scopes": ["openid"]})
+    query = parse_qs(urlparse(url).query)
+
+    assert query["prompt"] == ["select_account consent"]
+    assert query["access_type"] == ["offline"]
