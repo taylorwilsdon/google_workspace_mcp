@@ -25,6 +25,7 @@ from html.parser import HTMLParser
 from threading import Lock
 from time import monotonic
 from typing import Any, Callable, Dict, Iterable, List, Literal, Mapping, Optional
+from urllib.parse import quote
 
 import httplib2
 from fastmcp.exceptions import ToolError as ToolExecutionError
@@ -467,6 +468,19 @@ def _normalize_email(address: str) -> str:
 def _new_attachment_id() -> str:
     """Return a random attachment id in the shape Gmail web uses (``f_...``)."""
     return f"f_{secrets.token_hex(5)}"
+
+
+def _generate_gmail_web_url(
+    item_id: str, account_index: int = 0, user_google_email: Optional[str] = None
+) -> str:
+    """Return the Gmail web URL for a message or thread ID in any label (#all).
+
+    The account is addressed by email when known, else by browser account index.
+    """
+    account = (
+        quote(user_google_email, safe="@") if user_google_email else str(account_index)
+    )
+    return f"https://mail.google.com/mail/u/{account}/#all/{item_id}"
 
 
 def _http_error_status(error: HttpError) -> Optional[int]:
