@@ -12,7 +12,9 @@ from unittest.mock import AsyncMock, Mock, patch
 import sys
 import os
 
-from gchat.chat_tools import get_messages, search_messages
+from core.utils import UserInputError
+from gchat.chat_helpers import _normalize_space_resource_name
+from gchat.chat_tools import get_messages, search_messages, send_message
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
@@ -181,6 +183,32 @@ async def test_get_messages_exposes_message_filter_and_forwards_it(mock_resolve)
     assert "Filtered message" in result
     list_kwargs = chat_service.spaces().messages().list.call_args.kwargs
     assert list_kwargs["filter"] == "thread.name = spaces/S/threads/T"
+
+
+@pytest.mark.asyncio
+@patch("gchat.chat_tools._resolve_sender", new_callable=AsyncMock)
+async def test_get_messages_accepts_bare_space_id(mock_resolve: AsyncMock) -> None:
+    """get_messages should normalize a bare space id to spaces/<id>."""
+    mock_resolve.return_value = "Test User"
+
+    msg = _make_message(text="Normalized")
+    chat_service = Mock()
+    chat_service.spaces().get().execute.return_value = {"displayName": "Test Space"}
+    chat_service.spaces().messages().list().execute.return_value = {"messages": [msg]}
+    people_service = Mock()
+
+    await _unwrap(get_messages)(
+        chat_service=chat_service,
+        people_service=people_service,
+        user_google_email="test@example.com",
+        space_id="AAQAGqUsooo",
+    )
+
+    assert chat_service.spaces().get.call_args.kwargs["name"] == "spaces/AAQAGqUsooo"
+    assert (
+        chat_service.spaces().messages().list.call_args.kwargs["parent"]
+        == "spaces/AAQAGqUsooo"
+    )
 
 
 @pytest.mark.asyncio
@@ -454,6 +482,37 @@ async def test_search_messages_fetches_newest_messages_first(mock_resolve, space
 
 
 @pytest.mark.asyncio
+@patch("gchat.chat_tools._resolve_sender", new_callable=AsyncMock)
+async def test_search_messages_accepts_bare_space_id(
+    mock_resolve: AsyncMock,
+) -> None:
+    """search_messages should normalize a bare space id to spaces/<id>."""
+    mock_resolve.return_value = "Test User"
+
+    chat_service = Mock()
+    space = {"name": "spaces/AAQAGqUsooo", "displayName": "General"}
+    chat_service.spaces().get().execute.return_value = space
+    chat_service.spaces().messages().list().execute.return_value = {
+        "messages": [_make_message(text="Deploy finished")]
+    }
+    people_service = Mock()
+
+    await _unwrap(search_messages)(
+        chat_service=chat_service,
+        people_service=people_service,
+        user_google_email="test@example.com",
+        query="deploy",
+        space_id="AAQAGqUsooo",
+    )
+
+    assert (
+        chat_service.spaces().messages().list.call_args.kwargs["parent"]
+        == "spaces/AAQAGqUsooo"
+    )
+    assert chat_service.spaces().get.call_args.kwargs["name"] == "spaces/AAQAGqUsooo"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "space_count, list_extra, expected",
     [
@@ -491,6 +550,65 @@ async def test_search_messages_reports_how_many_spaces_it_searched(
     )
 
     assert f"in {expected}." in result
+
+
+@pytest.mark.parametrize(
+    "space_id, expected",
+    [
+        ("AAQAGqUsooo", "spaces/AAQAGqUsooo"),
+        ("spaces/AAQAGqUsooo", "spaces/AAQAGqUsooo"),
+        ("  spaces/AAQAGqUsooo\n", "spaces/AAQAGqUsooo"),
+    ],
+)
+def test_normalize_space_resource_name(space_id: str, expected: str) -> None:
+    assert _normalize_space_resource_name(space_id) == expected
+
+
+@pytest.mark.parametrize(
+    "space_id",
+    ["", "   ", "spaces/", "spaces/AA B", "AA B", "spaces/X/threads/T", "users/1"],
+)
+def test_normalize_space_resource_name_rejects_malformed_ids(space_id: str) -> None:
+    with pytest.raises(UserInputError):
+        _normalize_space_resource_name(space_id)
+
+
+@pytest.mark.asyncio
+async def test_send_message_edit_accepts_bare_space_id() -> None:
+    service, messages = _mock_chat_service()
+    messages.patch.return_value.execute.return_value = {"name": "spaces/S/messages/M"}
+
+    await _unwrap(send_message)(
+        service=service,
+        user_google_email="test@example.com",
+        space_id="S",
+        message_text="corrected text",
+        message_name="spaces/S/messages/M",
+    )
+
+    assert messages.patch.call_args.kwargs["name"] == "spaces/S/messages/M"
+
+
+@pytest.mark.asyncio
+async def test_send_message_accepts_bare_space_id() -> None:
+    """send_message should normalize a bare space id to spaces/<id>."""
+    chat_service = Mock()
+    chat_service.spaces().messages().create().execute.return_value = {
+        "name": "spaces/AAQAGqUsooo/messages/M1",
+        "createTime": "2025-01-01T00:00:00Z",
+    }
+
+    await _unwrap(send_message)(
+        service=chat_service,
+        user_google_email="test@example.com",
+        space_id="AAQAGqUsooo",
+        message_text="Hello",
+    )
+
+    assert (
+        chat_service.spaces().messages().create.call_args.kwargs["parent"]
+        == "spaces/AAQAGqUsooo"
+    )
 
 
 @pytest.mark.asyncio
