@@ -7,6 +7,7 @@ resolution for Chat senders and spaces via the People API.
 
 import asyncio
 import logging
+import re
 import ssl
 import uuid
 from typing import Dict, List, Optional, Tuple
@@ -32,6 +33,7 @@ _SCOPE_ERROR_REASON = "ACCESS_TOKEN_SCOPE_INSUFFICIENT"
 _SPACE_SETUP_MAX_MEMBERS = 49  # spaces.setup limit, not counting the caller
 _SPACE_DISPLAY_NAME_MAX_LENGTH = 128
 _SEARCH_MESSAGES_RETRY_BASE_DELAY_SECONDS = 1
+_SPACE_ID_PATTERN = re.compile(r"(?:spaces/)?([^/\s?#]+)")
 
 
 def _cache_key(cache_owner: Optional[str], user_id: str) -> Optional[Tuple[str, str]]:
@@ -151,16 +153,22 @@ def _is_scope_error(error: HttpError) -> bool:
     )
 
 
-async def _list_memberships(chat_service, space_name: str) -> List[dict]:
-    """Return every membership of a space, following nextPageToken."""
+async def _list_memberships(
+    chat_service, space_name: str, limit: Optional[int] = None, **list_params
+) -> List[dict]:
+    """Return a space's memberships, stopping once more than limit are found."""
     memberships = []
-    params = {"parent": space_name, "pageSize": 100}
+    # Page-token requests must repeat the original pageSize.
+    page_size = 100 if limit is None else min(100, limit + 1)
+    params = {"parent": space_name, "pageSize": page_size, **list_params}
     while True:
         response = await asyncio.to_thread(
             chat_service.spaces().members().list(**params).execute
         )
         memberships.extend(response.get("memberships", []))
-        if not response.get("nextPageToken"):
+        if not response.get("nextPageToken") or (
+            limit is not None and len(memberships) > limit
+        ):
             return memberships
         params["pageToken"] = response["nextPageToken"]
 
@@ -246,6 +254,74 @@ async def _name_spaces(
     return labels
 
 
+_MEMBER_ROLE_LABELS = {
+    "ROLE_MANAGER": "manager",
+    "ROLE_ASSISTANT_MANAGER": "assistant manager",
+    "ROLE_MEMBER": "member",
+}
+
+
+async def _format_space_members(
+    chat_service, people_service, space_id: str, limit: int
+) -> str:
+    """List up to limit space members: people, apps, groups and pending invites."""
+    space = await asyncio.to_thread(chat_service.spaces().get(name=space_id).execute)
+    space_label = space.get("displayName") or _UNNAMED_SPACE_FALLBACKS.get(
+        space.get("spaceType"), "Unnamed Space"
+    )
+    try:
+        memberships = await _list_memberships(
+            chat_service, space_id, limit, showInvited=True, showGroups=True
+        )
+    except HttpError as e:
+        if _is_scope_error(e):
+            raise ToolError(
+                "Listing members needs the chat.memberships.readonly scope, which "
+                "this token lacks. Re-authenticate with the default Chat scopes and "
+                "retry. In service-account (domain-wide delegation) mode list_spaces "
+                "does not request that scope, so member listing is unavailable there."
+            ) from e
+        raise
+
+    has_more = len(memberships) > limit
+    memberships = memberships[:limit]
+    user_ids = [
+        m["member"]["name"]
+        for m in memberships
+        if m.get("member", {}).get("type") == "HUMAN" and m["member"].get("name")
+    ]
+    people_names = await _lookup_people_names(people_service, user_ids)
+
+    count = (
+        f"first {len(memberships)} shown, more exist (raise page_size to see more)"
+        if has_more
+        else str(len(memberships))
+    )
+    lines = [f"Members of '{space_label}' (ID: {space_id}): {count}"]
+    for membership in memberships:
+        role = _MEMBER_ROLE_LABELS.get(membership.get("role"), "unknown")
+        state = membership.get("state")
+        suffix = ", invited" if state == "INVITED" else ""
+        if "groupMember" in membership:
+            group_id = membership["groupMember"].get("name", "")
+            lines.append(f"- Group {group_id}" + (" (invited)" if suffix else ""))
+            continue
+        member = membership.get("member", {})
+        member_id = member.get("name", "")
+        name = (
+            people_names.get(member_id)
+            or member.get("displayName")
+            or member_id
+            or "Unknown"
+        )
+        kind = " [app]" if member.get("type") == "BOT" else ""
+        detail = (
+            f"{role}{suffix}" if name == member_id else f"{member_id}, {role}{suffix}"
+        )
+        lines.append(f"- {name}{kind} ({detail})")
+    return "\n".join(lines)
+
+
 def _none_if_null_sentinel(value: Optional[str]) -> Optional[str]:
     """Map the literal "null"/"None" some clients send for an omitted arg to None."""
     if value is not None and value.strip().lower() in ("null", "none"):
@@ -257,6 +333,16 @@ def _none_if_blank(value: Optional[str]) -> Optional[str]:
     """Treat a null sentinel or whitespace-only string as an omitted arg."""
     value = _none_if_null_sentinel(value)
     return value if value and value.strip() else None
+
+
+def _normalize_space_resource_name(space_id: str) -> str:
+    """Return spaces/<id> for a space resource name or a bare space ID."""
+    match = _SPACE_ID_PATTERN.fullmatch(space_id.strip())
+    if match is None:
+        raise UserInputError(
+            f"Invalid space_id '{space_id}'. Expected spaces/X or a bare space ID X."
+        )
+    return f"spaces/{match.group(1)}"
 
 
 async def _execute_chat_request(
