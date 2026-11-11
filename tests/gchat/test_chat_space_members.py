@@ -1,6 +1,8 @@
 """Tests for list_spaces listing the members of one space."""
 
 import json
+from collections.abc import Callable, Iterator
+from typing import Any, Optional
 from unittest.mock import Mock
 
 import httplib2
@@ -13,7 +15,7 @@ from gchat import chat_helpers
 from gchat.chat_tools import list_spaces
 
 
-def _unwrap(tool):
+def _unwrap(tool: Any) -> Callable[..., Any]:
     fn = getattr(tool, "fn", tool)
     while hasattr(fn, "__wrapped__"):
         fn = fn.__wrapped__
@@ -21,13 +23,16 @@ def _unwrap(tool):
 
 
 @pytest.fixture(autouse=True)
-def _clear_name_cache():
+def _clear_name_cache() -> Iterator[None]:
     chat_helpers._sender_name_cache.clear()
     yield
     chat_helpers._sender_name_cache.clear()
 
 
-def _services(pages=None, members_error=None):
+def _services(
+    pages: Optional[list[dict[str, Any]]] = None,
+    members_error: Optional[Exception] = None,
+) -> tuple[Mock, Mock]:
     chat = Mock()
     chat.spaces.return_value.get.return_value.execute.return_value = {
         "name": "spaces/S",
@@ -51,7 +56,9 @@ def _services(pages=None, members_error=None):
     return chat, people
 
 
-async def _list_members(chat, people, space_id="spaces/S", **kwargs):
+async def _list_members(
+    chat: Mock, people: Mock, space_id: Optional[str] = "spaces/S", **kwargs: Any
+) -> str:
     return await _unwrap(list_spaces)(
         chat_service=chat,
         people_service=people,
@@ -62,7 +69,7 @@ async def _list_members(chat, people, space_id="spaces/S", **kwargs):
 
 
 @pytest.mark.asyncio
-async def test_labels_assistant_managers_unknown_roles_and_invited_groups():
+async def test_labels_assistant_managers_unknown_roles_and_invited_groups() -> None:
     pages = [
         {
             "memberships": [
@@ -92,7 +99,7 @@ async def test_labels_assistant_managers_unknown_roles_and_invited_groups():
 
 
 @pytest.mark.asyncio
-async def test_lists_people_apps_groups_and_invites_across_pages():
+async def test_lists_people_apps_groups_and_invites_across_pages() -> None:
     pages = [
         {
             "memberships": [
@@ -154,7 +161,7 @@ async def test_lists_people_apps_groups_and_invites_across_pages():
 
 
 @pytest.mark.asyncio
-async def test_member_listing_stops_at_page_size():
+async def test_member_listing_stops_at_page_size() -> None:
     def member(i):
         return {
             "member": {"name": f"users/{i}", "type": "HUMAN"},
@@ -181,7 +188,7 @@ async def test_member_listing_stops_at_page_size():
 
 
 @pytest.mark.asyncio
-async def test_non_positive_page_size_shows_one_member():
+async def test_non_positive_page_size_shows_one_member() -> None:
     pages = [
         {
             "memberships": [
@@ -200,7 +207,7 @@ async def test_non_positive_page_size_shows_one_member():
 
 
 @pytest.mark.asyncio
-async def test_unnamed_space_header_uses_type_fallback_without_extra_lookups():
+async def test_unnamed_space_header_uses_type_fallback_without_extra_lookups() -> None:
     pages = [
         {
             "memberships": [
@@ -254,7 +261,7 @@ async def test_missing_memberships_scope_is_explained() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("space_id", [None, "", "  "])
-async def test_blank_space_id_still_lists_spaces(space_id):
+async def test_blank_space_id_still_lists_spaces(space_id: Optional[str]) -> None:
     chat, people = _services()
     chat.spaces.return_value.list.return_value.execute.return_value = {"spaces": []}
 
