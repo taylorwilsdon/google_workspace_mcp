@@ -24,9 +24,9 @@ from core.server import server
 from core.utils import TransientNetworkError, UserInputError, handle_http_errors
 from gchat.chat_helpers import (
     _execute_chat_request,
-    _format_space_members,
     _extract_rich_links,
     _format_search_message_ids,
+    _format_space_members,
     _name_spaces,
     _none_if_blank,
     _none_if_null_sentinel,
@@ -77,10 +77,8 @@ async def list_spaces(
     or the members of one space.
 
     Args:
-        space_id: List the members of this space (e.g. spaces/X) instead of
-            listing spaces: people, apps and groups, with their role and any
-            pending invitation. Shows at most page_size members. Needs the
-            chat.memberships.readonly scope (part of the default Chat scopes).
+        space_id: Space (spaces/X) whose members to list instead of spaces, up
+            to page_size: people, apps and groups with role and invite state.
 
     Returns:
         str: A formatted list of Google Chat spaces, or of the members of space_id.
