@@ -376,4 +376,3 @@ def test_local_files_disabled_hides_file_path_from_shipped_schema() -> None:
 def test_local_files_enabled_advertises_file_path() -> None:
     """Verify that enabled local file access exposes the file_path schema parameter."""
     assert "file_path" in _shipped({})["properties"]
-
