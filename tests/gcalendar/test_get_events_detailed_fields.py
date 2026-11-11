@@ -241,6 +241,70 @@ async def test_default_event_type_and_confirmed_status_are_omitted(detail):
     assert "Recurring Event ID:" not in result
 
 
+PRIVATE_EVENT_WITH_REMINDER = {
+    **ORDINARY_MEETING,
+    "reminders": {
+        "useDefault": False,
+        "overrides": [{"method": "popup", "minutes": 6600}],
+    },
+    "visibility": "private",
+    "transparency": "transparent",
+}
+
+
+@pytest.mark.asyncio
+@both_branches
+@pytest.mark.parametrize(
+    "line",
+    [
+        'Reminders: [{"method": "popup", "minutes": 6600}]',
+        "Visibility: private",
+        "Transparency: transparent",
+    ],
+)
+async def test_detailed_output_emits_reminders_visibility_transparency(detail, line):
+    """manage_event sets these three, so get_events must be able to confirm them."""
+    assert line in await detail(PRIVATE_EVENT_WITH_REMINDER)
+
+
+@pytest.mark.asyncio
+@both_branches
+async def test_disabled_reminders_render_as_empty_list(detail):
+    """useDefault=False without overrides means no reminders at all, not defaults."""
+    result = await detail({**ORDINARY_MEETING, "reminders": {"useDefault": False}})
+
+    assert "Reminders: []" in result
+
+
+@pytest.mark.asyncio
+@both_branches
+async def test_default_reminders_visibility_transparency_are_omitted(detail):
+    """Calendar-default reminders and API-default values keep output compact."""
+    result = await detail(
+        {
+            **ORDINARY_MEETING,
+            "reminders": {"useDefault": True},
+            "visibility": "default",
+            "transparency": "opaque",
+        }
+    )
+
+    assert "Reminders:" not in result
+    assert "Visibility:" not in result
+    assert "Transparency:" not in result
+
+
+@pytest.mark.asyncio
+@basic_branches
+async def test_basic_output_omits_reminders_visibility_transparency(read):
+    """detailed=False output stays compact even when the fields are set."""
+    result = await read(PRIVATE_EVENT_WITH_REMINDER)
+
+    assert "Reminders:" not in result
+    assert "Visibility:" not in result
+    assert "Transparency:" not in result
+
+
 @pytest.mark.asyncio
 @both_branches
 async def test_missing_color_id_renders_as_none(detail):

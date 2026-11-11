@@ -28,6 +28,15 @@ SHEET_TITLE_SAFE_RE = re.compile(r"^[A-Za-z0-9_]+$")
 COLUMN_LETTER_REGEX = re.compile(r"^[A-Za-z]+$")
 QUOTED_SHEET_ONLY_REGEX = re.compile(r"^'(?:[^']|'')+'$")
 MERGE_TYPES = ("MERGE_ALL", "MERGE_COLUMNS", "MERGE_ROWS")
+PASTE_TYPES = (
+    "PASTE_NORMAL",
+    "PASTE_VALUES",
+    "PASTE_FORMAT",
+    "PASTE_NO_BORDERS",
+    "PASTE_FORMULA",
+    "PASTE_DATA_VALIDATION",
+    "PASTE_CONDITIONAL_FORMATTING",
+)
 
 
 def _column_to_index(column: str) -> Optional[int]:
@@ -574,7 +583,10 @@ def _a1_range_for_values(a1_range: str, values: List[List[object]]) -> Optional[
         return None
 
     start_part = range_part.split(":", 1)[0]
-    start_col, start_row = _parse_a1_part(start_part)
+    try:
+        start_col, start_row = _parse_a1_part(start_part)
+    except UserInputError:
+        return None
     if start_col is None or start_row is None:
         return None
 
@@ -595,6 +607,57 @@ def _a1_range_for_values(a1_range: str, values: List[List[object]]) -> Optional[
     if sheet_name:
         return f"{_quote_sheet_title_for_a1(sheet_name)}!{range_ref}"
     return range_ref
+
+
+def _values_start(a1_range: str) -> Optional[tuple[int, int]]:
+    """Return the zero-based (column, row) of an A1 range's first cell, else None."""
+    _, range_part = _split_sheet_and_range(a1_range)
+    if not range_part:
+        return None
+    try:
+        start_col, start_row = _parse_a1_part(range_part.split(":", 1)[0])
+    except UserInputError:
+        return None
+    # A bare "Totals" is a named range, not column TOTALS.
+    if ":" not in range_part and (start_col is None or start_row is None):
+        return None
+    if start_col is None and start_row is None:
+        return None
+    return start_col or 0, start_row or 0
+
+
+_TSV_ESCAPES = str.maketrans({"\\": "\\\\", "\t": "\\t", "\r": "\\r", "\n": "\\n"})
+
+
+def _format_sheet_values_rows(a1_range: str, values: List[List[object]]) -> str:
+    """Render values as lines of sheet row number, then tab-separated cells."""
+    start = _values_start(a1_range)
+    if start is None:
+        start_col, start_row = 0, 0
+        legend = "Each line: row number within the range, then tab-separated cells."
+    else:
+        start_col, start_row = start
+        legend = (
+            "Each line: sheet row number, then tab-separated cells from column "
+            f"{_index_to_column(start_col)}."
+        )
+
+    lines = []
+    escaped = False
+    for offset, row in enumerate(values):
+        cells = ["" if cell is None else str(cell) for cell in row]
+        while cells and cells[-1] == "":
+            cells.pop()
+        escaped_cells = [cell.translate(_TSV_ESCAPES) for cell in cells]
+        escaped = escaped or escaped_cells != cells
+        lines.append("\t".join([str(start_row + offset + 1), *escaped_cells]))
+
+    if escaped:
+        legend += (
+            " Tabs, line breaks and backslashes inside a cell are shown as \\t, "
+            "\\n, \\r and \\\\."
+        )
+    return "\n".join([legend, *lines])
 
 
 def _a1_range_cell_count(a1_range: str) -> Optional[int]:
@@ -1057,6 +1120,112 @@ def _select_sheet(sheets: List[dict], sheet_name: Optional[str]) -> dict:
     raise UserInputError(
         f"Sheet '{sheet_name}' not found. Available sheets: {', '.join(available_titles)}."
     )
+
+
+async def _copy_paste_range(
+    service,
+    spreadsheet_id: str,
+    source_range: str,
+    destination_range: str,
+    paste_type: str,
+) -> str:
+    """Copy source_range onto destination_range with a copyPaste request; return the paste type used."""
+    normalized = paste_type.strip().upper()
+    if normalized not in PASTE_TYPES:
+        raise UserInputError(f"paste_type must be one of {list(PASTE_TYPES)}.")
+
+    metadata = await asyncio.to_thread(
+        service.spreadsheets()
+        .get(
+            spreadsheetId=spreadsheet_id,
+            fields="sheets(properties(sheetId,title,hidden))",
+        )
+        .execute
+    )
+    sheets = sorted(
+        metadata.get("sheets", []),
+        key=lambda sheet: sheet.get("properties", {}).get("hidden", False),
+    )
+    destination = _parse_a1_range(destination_range, sheets)
+    if set(destination) == {"sheetId"}:
+        raise UserInputError("range_name must include a row or column to paste into.")
+    request = {
+        "copyPaste": {
+            "source": _parse_a1_range(source_range, sheets),
+            "destination": destination,
+            "pasteType": normalized,
+        }
+    }
+    await asyncio.to_thread(
+        service.spreadsheets()
+        .batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": [request]})
+        .execute
+    )
+    return normalized
+
+
+async def _copy_sheet_to_spreadsheet(
+    service,
+    spreadsheet_id: str,
+    sheet_id: int,
+    destination_spreadsheet_id: str,
+    sheet_name: Optional[str],
+    insert_sheet_index: Optional[int],
+) -> dict:
+    """Copy a sheet into another spreadsheet with an optional title and index; return its properties."""
+    new_props = await asyncio.to_thread(
+        service.spreadsheets()
+        .sheets()
+        .copyTo(
+            spreadsheetId=spreadsheet_id,
+            sheetId=sheet_id,
+            body={"destinationSpreadsheetId": destination_spreadsheet_id},
+        )
+        .execute
+    )
+
+    updates: dict[str, Any] = {}
+    if sheet_name is not None:
+        updates["title"] = sheet_name
+    if insert_sheet_index is not None:
+        updates["index"] = insert_sheet_index
+    if not updates:
+        return new_props
+
+    new_id = new_props["sheetId"]
+    update_request = {
+        "updateSheetProperties": {
+            "properties": {"sheetId": new_id, **updates},
+            "fields": ",".join(updates),
+        }
+    }
+    try:
+        await asyncio.to_thread(
+            service.spreadsheets()
+            .batchUpdate(
+                spreadsheetId=destination_spreadsheet_id,
+                body={"requests": [update_request]},
+            )
+            .execute
+        )
+    except Exception:
+        try:
+            await asyncio.to_thread(
+                service.spreadsheets()
+                .batchUpdate(
+                    spreadsheetId=destination_spreadsheet_id,
+                    body={"requests": [{"deleteSheet": {"sheetId": new_id}}]},
+                )
+                .execute
+            )
+        except Exception as cleanup_error:
+            raise RuntimeError(
+                f"Copied sheet '{new_props['title']}' (ID: {new_id}) to spreadsheet "
+                f"{destination_spreadsheet_id} but could not set its title or index; "
+                "delete or rename it before retrying."
+            ) from cleanup_error
+        raise
+    return {**new_props, **updates}
 
 
 def _parse_condition_values(

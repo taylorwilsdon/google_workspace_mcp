@@ -25,6 +25,7 @@ from core.utils import TransientNetworkError, UserInputError, handle_http_errors
 from gchat.chat_helpers import (
     _execute_chat_request,
     _extract_rich_links,
+    _format_search_message_ids,
     _name_spaces,
     _none_if_blank,
     _none_if_null_sentinel,
@@ -116,7 +117,9 @@ async def list_spaces(
     if not spaces:
         return f"No Chat spaces found for type '{space_type}'."
 
-    space_labels = await _name_spaces(chat_service, people_service, spaces)
+    space_labels = await _name_spaces(
+        chat_service, people_service, spaces, user_google_email
+    )
     output = [f"Found {len(spaces)} Chat spaces (type: {space_type}):"]
     for space in spaces:
         space_id = space.get("name", "")
@@ -155,6 +158,7 @@ async def get_messages(
     page_size: int = 50,
     order_by: str = "createTime desc",
     message_filter: Optional[str] = None,
+    page_token: Optional[str] = None,
 ) -> str:
     """
     Retrieves messages from a Google Chat space.
@@ -166,9 +170,11 @@ async def get_messages(
                           'createTime > "2026-03-18T00:00:00-03:00"'
                           'createTime > "2026-03-18T00:00:00-03:00" AND createTime < "2026-03-19T00:00:00-03:00"'
                           'thread.name = spaces/X/threads/Y'
+        page_token: Token for the next page, taken from a previous response. Keep all other arguments unchanged.
 
     Returns:
-        str: Formatted messages from the specified space.
+        str: Formatted messages from the specified space. When more messages
+            remain, a "Next page token" line is appended.
     """
     normalized_space_id = _normalize_space_resource_name(space_id)
     logger.info(
@@ -179,7 +185,9 @@ async def get_messages(
     space_info = await asyncio.to_thread(
         chat_service.spaces().get(name=normalized_space_id).execute
     )
-    space_labels = await _name_spaces(chat_service, people_service, [space_info])
+    space_labels = await _name_spaces(
+        chat_service, people_service, [space_info], user_google_email
+    )
     space_name = space_labels[space_info.get("name")]
 
     # Get messages
@@ -190,16 +198,26 @@ async def get_messages(
     }
     if message_filter is not None:
         list_params["filter"] = message_filter
+    if page_token:
+        list_params["pageToken"] = page_token
     response = await asyncio.to_thread(
         chat_service.spaces().messages().list(**list_params).execute
     )
 
     messages = response.get("messages", [])
+    next_page_token = response.get("nextPageToken")
     if not messages:
-        return (
-            f"No messages found in space '{space_name}' "
-            f"(ID: {normalized_space_id})."
-        )
+        if next_page_token:
+            return (
+                f"No messages on this page in space '{space_name}' (ID: {normalized_space_id}), "
+                f"and more pages remain.\nNext page token: {next_page_token}"
+            )
+        matching = " matching the filter" if message_filter else ""
+        if page_token:
+            return (
+                f"No more messages{matching} in space '{space_name}' (ID: {normalized_space_id})."
+            )
+        return f"No messages{matching} found in space '{space_name}' (ID: {normalized_space_id})."
 
     # Pre-resolve unique senders sequentially. The underlying googleapiclient/httplib2
     # service objects are not safe to fan out across worker threads.
@@ -211,14 +229,16 @@ async def get_messages(
             sender_lookup[key] = s
     sender_map = {}
     for key, sender_obj in sender_lookup.items():
-        sender_map[key] = await _resolve_sender(people_service, sender_obj)
+        sender_map[key] = await _resolve_sender(
+            people_service, sender_obj, user_google_email
+        )
 
     output = [f"Messages from '{space_name}' (ID: {normalized_space_id}):\n"]
     for msg in messages:
         sender_obj = msg.get("sender", {})
         sender_key = sender_obj.get("name", "")
         sender = sender_map.get(sender_key) or await _resolve_sender(
-            people_service, sender_obj
+            people_service, sender_obj, user_google_email
         )
         create_time = msg.get("createTime", "Unknown Time")
         text_content = msg.get("text", "No text content")
@@ -259,6 +279,8 @@ async def get_messages(
             output.append(f"  [reactions: {', '.join(parts)}]")
         output.append(f"  (Message ID: {msg_name})\n")
 
+    if next_page_token:
+        output.append(f"Next page token: {next_page_token}")
     return "\n".join(output)
 
 
@@ -558,12 +580,15 @@ async def search_messages(
             sender_lookup[key] = s
     sender_map = {}
     for key, sender_obj in sender_lookup.items():
-        sender_map[key] = await _resolve_sender(people_service, sender_obj)
+        sender_map[key] = await _resolve_sender(
+            people_service, sender_obj, user_google_email
+        )
 
     space_names = await _name_spaces(
         chat_service,
         people_service,
         [msg["_space"] for msg in messages if msg.get("_space")],
+        user_google_email,
     )
 
     output = [f"Found {len(messages)} messages matching '{search_desc}' in {context}:"]
@@ -571,7 +596,7 @@ async def search_messages(
         sender_obj = msg.get("sender", {})
         sender_key = sender_obj.get("name", "")
         sender = sender_map.get(sender_key) or await _resolve_sender(
-            people_service, sender_obj
+            people_service, sender_obj, user_google_email
         )
         create_time = msg.get("createTime", "Unknown Time")
         text_content = msg.get("text", "No text content")
@@ -588,8 +613,9 @@ async def search_messages(
             f" [attachment: {a.get('contentName', 'unnamed')} ({a.get('contentType', 'unknown type')})]"
             for a in attachments
         )
+        summary = f"[{create_time}] {sender} in '{space_name}': {text_content}{links_suffix}{att_suffix}"
         output.append(
-            f"- [{create_time}] {sender} in '{space_name}': {text_content}{links_suffix}{att_suffix}"
+            f"- {' '.join(summary.split())}\n  {_format_search_message_ids(msg)}"
         )
 
     return "\n".join(output)

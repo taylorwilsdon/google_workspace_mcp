@@ -2,21 +2,28 @@
 
 from __future__ import annotations
 
+import sys
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import httpx
 import pytest
 
 from core.file_limits import (
+    DEFAULT_MAX_CONTENT_CHARS,
     DEFAULT_MAX_OFFICE_XML_BYTES,
+    DEFAULT_PAGED_CONTENT_CACHE_BYTES,
     DEFAULT_STATELESS_INLINE_MAX_BYTES,
     FileTooLargeError,
+    PagedContentCache,
     download_http_url_bytes,
     download_media_bytes,
     ensure_within_file_size_limit,
+    get_max_content_chars,
     get_max_file_bytes,
     get_max_office_xml_bytes,
+    get_paged_content_cache_bytes,
     get_stateless_inline_max_bytes,
+    page_content_text,
     validate_file_limit_settings,
 )
 
@@ -328,3 +335,204 @@ def test_get_stateless_inline_max_bytes_rejects_invalid(monkeypatch, raw):
         get_stateless_inline_max_bytes()
     with pytest.raises(ValueError, match="WORKSPACE_MCP_STATELESS_INLINE_MAX_BYTES"):
         validate_file_limit_settings()
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (None, DEFAULT_MAX_CONTENT_CHARS),
+        ("", DEFAULT_MAX_CONTENT_CHARS),
+        ("0", None),
+        (" 4096 ", 4096),
+    ],
+)
+def test_get_max_content_chars(monkeypatch, raw, expected):
+    """On by default, like the Office expansion limit; 0 turns it off."""
+    if raw is None:
+        monkeypatch.delenv("WORKSPACE_MCP_MAX_CONTENT_CHARS", raising=False)
+    else:
+        monkeypatch.setenv("WORKSPACE_MCP_MAX_CONTENT_CHARS", raw)
+    assert get_max_content_chars() == expected
+
+
+@pytest.mark.parametrize("raw", ["-1", "50k", "1.5"])
+def test_get_max_content_chars_rejects_invalid(monkeypatch, raw):
+    monkeypatch.setenv("WORKSPACE_MCP_MAX_CONTENT_CHARS", raw)
+    with pytest.raises(ValueError, match="integer character count"):
+        get_max_content_chars()
+    with pytest.raises(ValueError, match="WORKSPACE_MCP_MAX_CONTENT_CHARS"):
+        validate_file_limit_settings()
+
+
+@pytest.mark.parametrize("length", [99, 100])
+def test_page_content_text_returns_text_up_to_the_limit_whole(length):
+    text = "x" * length
+    assert page_content_text(text, max_chars=100) == text
+
+
+def test_page_content_text_returns_text_whole_without_a_limit():
+    text = "x" * 1_000_000
+    assert page_content_text(text, max_chars=None) == text
+    assert page_content_text(text, offset=10, max_chars=None) == text[10:]
+
+
+def test_page_content_text_ends_a_page_at_a_line_break():
+    text = "".join(f"row {i:03d}\n" for i in range(30))  # 8 characters a line
+
+    page = page_content_text(text, max_chars=100, alternative=", or download it")
+
+    assert page == (
+        text[:96] + "\n\n[Truncated: showing characters 0 to 96 of 240; 144 more "
+        "follow (default page size 100, set by WORKSPACE_MCP_MAX_CONTENT_CHARS). "
+        "Call again with offset=96 to read on, or download it.]"
+    )
+
+
+def test_page_content_text_cuts_mid_line_when_the_last_break_is_early():
+    text = "short\n" + "y" * 200
+
+    page = page_content_text(text, max_chars=100)
+
+    assert page.startswith(
+        "short\n" + "y" * 94 + "\n\n[Truncated: showing characters 0 to 100 of 206;"
+    )
+
+
+def test_page_content_text_pages_rejoin_to_the_whole_text():
+    text = "".join(f"line {i}: {'z' * (i % 17)}\n" for i in range(500))
+    pages, offset = [], 0
+    while True:
+        page = page_content_text(text, offset=offset, max_chars=300)
+        body, _, note = page.partition("\n\n[Truncated: ")
+        pages.append(body)
+        if not note:
+            break
+        offset = int(note.split("offset=")[1].split(" ")[0])
+
+    assert "".join(pages) == text
+    assert len(pages) > 1
+
+
+def test_page_content_text_reports_an_offset_past_the_end():
+    assert page_content_text("abc", offset=10, max_chars=100) == (
+        "[offset=10 is past the end of the content (3 characters).]"
+    )
+
+
+def _cache(ttl_seconds=60):
+    now = [0.0]
+    return PagedContentCache(ttl_seconds=ttl_seconds, clock=lambda: now[0]), now
+
+
+def _text(chars: int) -> str:
+    return "x" * chars
+
+
+_ROOM = 8 * sys.getsizeof(_text(1000))
+
+
+def test_paged_content_cache_returns_what_was_put():
+    cache, _ = _cache()
+    cache.put("a", "12345", max_bytes=_ROOM)
+
+    assert cache.get("a") == "12345"
+    assert cache.get("b") is None
+
+
+def test_paged_content_cache_entries_expire():
+    cache, now = _cache(ttl_seconds=60)
+    cache.put("a", "12345", max_bytes=_ROOM)
+
+    now[0] = 60
+    assert cache.get("a") == "12345"
+    now[0] = 61
+    assert cache.get("a") is None
+
+
+def test_paged_content_cache_put_drops_expired_entries():
+    cache, now = _cache(ttl_seconds=60)
+    cache.put("a", _text(1000), max_bytes=_ROOM)
+    cache.put("b", _text(1000), max_bytes=_ROOM)
+
+    now[0] = 61
+    cache.put("c", _text(1000), max_bytes=_ROOM)
+
+    assert list(cache._entries) == ["c"]
+    assert cache._bytes == sys.getsizeof(_text(1000))
+
+
+def test_paged_content_cache_drops_the_least_recently_used_over_the_limit():
+    cache, _ = _cache()
+    room_for_four = 4 * sys.getsizeof(_text(1000))
+    for key in "abcd":
+        cache.put(key, _text(1000), max_bytes=room_for_four)
+    cache.get("a")
+    cache.put("e", _text(1000), max_bytes=room_for_four)
+
+    assert cache.get("b") is None
+    assert [cache.get(key) is not None for key in "acde"] == [True] * 4
+
+
+def test_paged_content_cache_does_not_keep_a_string_over_a_quarter_of_the_limit():
+    cache, _ = _cache()
+    size = sys.getsizeof(_text(1000))
+    cache.put("a", _text(1000), max_bytes=size * 4)
+    cache.put("b", _text(1001), max_bytes=size * 4)
+
+    assert cache.get("a") == _text(1000)
+    assert cache.get("b") is None
+
+
+def test_paged_content_cache_counts_memory_not_characters():
+    """A wide character makes every character of a string take 4 bytes."""
+    cache, _ = _cache()
+    size = sys.getsizeof(_text(1000))
+    cache.put("wide", "\U0001f600" + _text(999), max_bytes=size * 4)
+
+    assert cache.get("wide") is None
+
+
+def test_paged_content_cache_put_replaces_an_entry():
+    cache, _ = _cache()
+    big = sys.getsizeof(_text(1000)) * 4
+    cache.put("a", _text(10), max_bytes=big)
+    cache.put("a", _text(20), max_bytes=big)
+
+    assert cache.get("a") == _text(20)
+    assert cache._bytes == sys.getsizeof(_text(20))
+
+
+def test_paged_content_cache_put_of_a_string_too_big_to_keep_drops_the_old_one():
+    cache, _ = _cache()
+    size = sys.getsizeof(_text(1000))
+    cache.put("a", _text(10), max_bytes=size * 4)
+    cache.put("a", _text(2000), max_bytes=size * 4)
+
+    assert cache.get("a") is None
+    assert cache._bytes == 0
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (None, DEFAULT_PAGED_CONTENT_CACHE_BYTES),
+        ("", DEFAULT_PAGED_CONTENT_CACHE_BYTES),
+        ("0", 0),
+        ("1048576", 1048576),
+    ],
+)
+def test_get_paged_content_cache_bytes(monkeypatch, value, expected):
+    if value is None:
+        monkeypatch.delenv("WORKSPACE_MCP_PAGED_CONTENT_CACHE_BYTES", raising=False)
+    else:
+        monkeypatch.setenv("WORKSPACE_MCP_PAGED_CONTENT_CACHE_BYTES", value)
+
+    assert get_paged_content_cache_bytes() == expected
+
+
+@pytest.mark.parametrize("value", ["-1", "lots"])
+def test_get_paged_content_cache_bytes_rejects_invalid_values(monkeypatch, value):
+    monkeypatch.setenv("WORKSPACE_MCP_PAGED_CONTENT_CACHE_BYTES", value)
+
+    with pytest.raises(ValueError):
+        get_paged_content_cache_bytes()

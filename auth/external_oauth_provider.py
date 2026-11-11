@@ -288,10 +288,17 @@ class ExternalOAuthProvider(GoogleProvider):
 
                 # Shield the worker future so request cancellation does not mark it
                 # complete and release the slot while its HTTPS call is still running.
-                validation_future.add_done_callback(
-                    lambda _: self._token_validation_slots.release()
-                )
-                user_info = await asyncio.shield(validation_future)
+                # Release inline once the worker is done rather than relying on the
+                # event loop running a done callback before this coroutine resumes.
+                try:
+                    user_info = await asyncio.shield(validation_future)
+                finally:
+                    if validation_future.done():
+                        self._token_validation_slots.release()
+                    else:
+                        validation_future.add_done_callback(
+                            lambda _: self._token_validation_slots.release()
+                        )
 
                 if user_info and user_info.get("email"):
                     logger.info(
