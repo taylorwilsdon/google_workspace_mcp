@@ -51,7 +51,7 @@ def _prepare_contact_photo(
                 photo = image.read(_MAX_CONTACT_PHOTO_BYTES + 1)
         except (OSError, ValueError) as exc:
             raise UserInputError(f"Cannot read contact photo: {exc}") from exc
-    else:
+    elif photo_base64 is not None:
         max_encoded = 4 * ((_MAX_CONTACT_PHOTO_BYTES + 2) // 3)
         if len(photo_base64) > max_encoded:
             raise UserInputError("Contact photo exceeds the 5 MiB tool limit.")
