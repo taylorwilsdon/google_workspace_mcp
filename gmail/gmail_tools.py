@@ -79,6 +79,7 @@ from gmail.gmail_helpers import (
     _derive_reply_headers,
     _fetch_with_retry,
     _format_id_list,
+    _generate_gmail_web_url,
     _get_send_as_identity_and_signature,
     _html_signature_separator,
     _http_error_status,
@@ -1561,21 +1562,6 @@ def _prepare_gmail_message(
     return raw_message, thread_id, attached_count, attachment_errors
 
 
-def _generate_gmail_web_url(item_id: str, account_index: int = 0) -> str:
-    """
-    Generate Gmail web interface URL for a message or thread ID.
-    Uses #all to access messages from any Gmail folder/label (not just inbox).
-
-    Args:
-        item_id: Gmail message ID or thread ID
-        account_index: Google account index (default 0 for primary account)
-
-    Returns:
-        Gmail web interface URL that opens the message/thread in Gmail web interface
-    """
-    return f"https://mail.google.com/mail/u/{account_index}/#all/{item_id}"
-
-
 async def _fetch_search_result_headers(
     service, message_ids: List[str]
 ) -> Dict[str, Optional[Dict[str, str]]]:
@@ -1686,6 +1672,7 @@ def _format_gmail_results_plain(
     query: str,
     next_page_token: Optional[str] = None,
     headers_by_id: Optional[Dict[str, Optional[Dict[str, str]]]] = None,
+    user_google_email: Optional[str] = None,
 ) -> str:
     """Format Gmail search results in clean, LLM-friendly plain text."""
     if not messages:
@@ -1720,12 +1707,16 @@ def _format_gmail_results_plain(
             thread_id = "unknown"
 
         if message_id != "unknown":
-            message_url = _generate_gmail_web_url(message_id)
+            message_url = _generate_gmail_web_url(
+                message_id, user_google_email=user_google_email
+            )
         else:
             message_url = "N/A"
 
         if thread_id != "unknown":
-            thread_url = _generate_gmail_web_url(thread_id)
+            thread_url = _generate_gmail_web_url(
+                thread_id, user_google_email=user_google_email
+            )
         else:
             thread_url = "N/A"
 
@@ -1863,7 +1854,7 @@ async def search_gmail_messages(
             headers_by_id = dict.fromkeys(result_ids)
 
     formatted_output = _format_gmail_results_plain(
-        messages, query, next_page_token, headers_by_id
+        messages, query, next_page_token, headers_by_id, user_google_email
     )
 
     logger.info(f"[search_gmail_messages] Found {len(messages)} messages")
@@ -2279,7 +2270,7 @@ async def get_gmail_messages_content_batch(
                     msg_output = "\n".join(
                         _format_message_header_lines(headers, message_id=mid)
                     )
-                    msg_output += f"\nWeb Link: {_generate_gmail_web_url(mid)}\n"
+                    msg_output += f"\nWeb Link: {_generate_gmail_web_url(mid, user_google_email=user_google_email)}\n"
 
                     output_messages.append(msg_output)
                 else:
@@ -2314,7 +2305,7 @@ async def get_gmail_messages_content_batch(
                     msg_output = "\n".join(
                         _format_message_header_lines(headers, message_id=mid)
                     )
-                    msg_output += f"\nWeb Link: {_generate_gmail_web_url(mid)}\n"
+                    msg_output += f"\nWeb Link: {_generate_gmail_web_url(mid, user_google_email=user_google_email)}\n"
                     msg_output += f"\n--- {body_label} ---\n{body_data}\n"
 
                     if attachments:
