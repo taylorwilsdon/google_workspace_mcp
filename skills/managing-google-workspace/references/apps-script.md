@@ -85,7 +85,10 @@ Generates Apps Script code for creating triggers. The API cannot create triggers
 ### list_script_deployments
 List deployments and their bound version numbers.
 
-Required parameters: `user_google_email`, `script_id`.
+| Parameter | Type | Required | Default | Notes |
+|-----------|------|----------|---------|-------|
+| user_google_email | string | yes | | |
+| script_id | string | yes | | |
 
 ### manage_deployment
 Create, update, or delete deployments.

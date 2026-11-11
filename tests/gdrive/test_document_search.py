@@ -135,3 +135,16 @@ def test_scope_parameters_are_optional_in_tool_schema(name):
     for param in ("page_token", "corpora", "drive_id"):
         assert param not in parameters.get("required", [])
         assert parameters["properties"][param]["default"] is None
+
+
+@pytest.mark.asyncio
+async def test_search_docs_escapes_backslashes_and_quotes():
+    service = Mock()
+    service.files().list().execute.return_value = {"files": []}
+
+    await inspect.unwrap(search_docs)(
+        service=service, user_google_email="user@example.com", query="a\\b'c"
+    )
+
+    q = service.files().list.call_args.kwargs["q"]
+    assert q.startswith("name contains 'a\\\\b\\'c' and ")

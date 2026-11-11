@@ -312,3 +312,20 @@ class TestPublicToolWiring:
         assert "unordered list" in result
         request = service.documents.return_value.batchUpdate.call_args.kwargs["body"]
         assert "createParagraphBullets" in request["requests"][0]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("list_type", [None, "NONE"])
+    async def test_bullet_preset_requires_a_list_type(self, service, list_type):
+        result = await _unwrap(docs_tools.update_paragraph_style)(
+            service=service,
+            user_google_email="user@example.com",
+            document_id="a" * 25,
+            start_index=1,
+            end_index=10,
+            alignment="CENTER",
+            list_type=list_type,
+            bullet_preset="BULLET_CHECKBOX",
+        )
+
+        assert result.startswith("Error: bullet_preset requires list_type")
+        service.documents.return_value.batchUpdate.return_value.execute.assert_not_called()

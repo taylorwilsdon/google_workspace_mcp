@@ -8,6 +8,7 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
+from core.utils import UserInputError
 from gcalendar.calendar_tools import _rsvp_event_impl
 
 
@@ -95,7 +96,7 @@ async def test_rsvp_custom_send_updates():
 @pytest.mark.asyncio
 async def test_rsvp_invalid_response():
     service = Mock()
-    with pytest.raises(ValueError, match="Invalid response 'maybe'"):
+    with pytest.raises(UserInputError, match="Invalid response 'maybe'"):
         await _rsvp_event_impl(
             service=service,
             user_google_email="user@example.com",

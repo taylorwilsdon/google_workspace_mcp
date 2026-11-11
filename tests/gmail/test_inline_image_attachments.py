@@ -86,6 +86,36 @@ def test_content_id_attachment_uses_multipart_related():
     )
 
 
+def test_inline_image_carries_x_attachment_id():
+    """An inline part needs X-Attachment-Id equal to its Content-ID, as Gmail
+    web writes for pasted images. Without it, sending the draft from the Gmail
+    web composer drops the part and rewrites the <img> to a URL only the
+    sender can load."""
+    raw_b64, _, _, errors = _prepare_gmail_message(
+        subject="inline-img-test",
+        body='<html><body><img src="cid:ii_a20330ff4a"></body></html>',
+        body_format="html",
+        to="someone@example.com",
+        attachments=[
+            {
+                "content": _TINY_PNG_B64,
+                "filename": "fig.png",
+                "mime_type": "image/png",
+                "content_id": "ii_a20330ff4a",
+            }
+        ],
+    )
+
+    assert errors == []
+    img = next(
+        p
+        for p in _walk_parts(_decode_raw(raw_b64))
+        if p.get_content_type() == "image/png"
+    )
+    assert img.get("X-Attachment-Id") == "ii_a20330ff4a"
+    assert img.get("Content-ID") == "<ii_a20330ff4a>"
+
+
 def test_url_based_inline_attachment_preserves_content_id(monkeypatch):
     """A URL-resolved attachment must keep content_id so it remains inline."""
 

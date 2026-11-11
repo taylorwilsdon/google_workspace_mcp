@@ -20,6 +20,7 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
+from core.utils import UserInputError
 from gcalendar.calendar_tools import get_events, list_calendars
 
 EMAIL = "user@example.com"
@@ -173,7 +174,7 @@ class TestGetEventsPagination:
         # The helper primes the mock by calling list() once; ignore that setup call.
         service.events().list.reset_mock()
 
-        with pytest.raises(ValueError, match="page_token requires time_min"):
+        with pytest.raises(UserInputError, match="page_token requires time_min"):
             await _unwrap(get_events)(
                 service=service,
                 user_google_email=EMAIL,

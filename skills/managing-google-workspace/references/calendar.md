@@ -1,6 +1,6 @@
 # Google Calendar Tools Reference
 
-MCP tools for Google Calendar event management and availability queries. All tools require `user_google_email` (string, required).
+MCP tools for Google Calendar event management, Out of Office and Focus Time blocks, calendar creation and sharing, and availability queries. All tools require `user_google_email` (string, required).
 
 ---
 
@@ -14,6 +14,24 @@ List a single page of calendars accessible to the authenticated user. Returns su
 | user_google_email | string | yes | | |
 | max_results | integer | no | | Max calendars per page. Omit for the API default |
 | page_token | string | no | | Token from a previous response's `Next page token` |
+
+### manage_calendar
+Create a secondary calendar, or list, share, update, or remove a calendar's access control rules. `create` returns the new calendar's ID for use as `calendar_id` elsewhere. `list_sharing` returns each rule's role, scope, and rule ID for use with `update_sharing` and `unshare`.
+
+| Parameter | Type | Required | Default | Notes |
+|-----------|------|----------|---------|-------|
+| user_google_email | string | yes | | |
+| action | string | yes | | `create`, `list_sharing`, `share`, `update_sharing`, or `unshare` |
+| summary | string | for create | | Calendar name |
+| description | string | no | | Calendar description (create only) |
+| timezone | string | no | | IANA timezone, e.g. `America/New_York` (create only) |
+| calendar_id | string | no | primary | Calendar ID for the sharing actions |
+| role | string | for share/update_sharing | | `freeBusyReader`, `reader`, `writerWithoutPrivateAccess`, `writer`, `owner`, or `none` |
+| scope_type | string | no | user | `user`, `group`, `domain`, or `default` (public). Used by share |
+| scope_value | string | for share | | Email for user/group, domain name for domain. Omit for `default` |
+| rule_id | string | for update_sharing/unshare | | Rule ID from `list_sharing`, e.g. `user:alice@example.com` |
+| send_notifications | boolean | no | true | Email the grantee on share/update_sharing |
+| page_token | string | no | | Next-page token (list_sharing only) |
 
 ### get_events
 Retrieve events from a calendar. Fetch a single event by ID, list events in a time range, or search by keyword.
@@ -42,35 +60,97 @@ range instead of letting the default current time move between pages. With
 `single_events=false` and no initial `time_min`, continue leaving `time_min` unset.
 
 ### manage_event
-Create, update, or delete a calendar event.
+Create, update, delete, or RSVP to a calendar event.
 
 | Parameter | Type | Required | Default | Notes |
 |-----------|------|----------|---------|-------|
 | user_google_email | string | yes | | |
-| action | string | yes | | `create`, `update`, or `delete` |
+| action | string | yes | | `create`, `update`, `delete`, or `rsvp` |
 | summary | string | for create | | Event title |
-| start_time | string | for create | | RFC 3339 format |
-| end_time | string | for create | | RFC 3339 format |
-| event_id | string | for update/delete | | Event ID |
+| start_time | string | for create | | RFC 3339. An explicit offset fixes the instant; without one, pass `start_timezone` or `timezone`. Date-only creates an all-day event |
+| end_time | string | for create | | RFC 3339, same rules as `start_time`. All-day end dates are exclusive |
+| event_id | string | for update/delete/rsvp | | Event ID |
 | calendar_id | string | no | primary | |
 | description | string | no | | Event description |
 | location | string | no | | Event location |
 | attendees | array | no | | Email strings or attendee objects |
-| timezone | string | no | | e.g. `Australia/Melbourne` |
-| attachments | array of strings | no | | Google Drive file URLs or IDs |
-| add_google_meet | boolean | no | | Add or remove Google Meet link |
+| timezone | string | no | | IANA zone for both boundaries, e.g. `Australia/Melbourne`. Overridden per boundary by `start_timezone`/`end_timezone` |
+| start_timezone | string | no | | IANA zone for the start only (e.g. a flight departing in another zone) |
+| end_timezone | string | no | | IANA zone for the end only |
+| attachments | array of strings | no | | Google Drive file URLs or IDs. On update, replaces existing attachments |
+| add_google_meet | boolean | no | | Add or remove Google Meet link. Not combinable with a third-party conference |
+| conference_data | object | no | | Raw Calendar `conferenceData` payload for a third-party add-on. Exclusive with the `conference_*` helpers and `add_google_meet` (create/update) |
+| conference_provider | string | no | | Third-party provider, e.g. `zoom`, `webex`, `teams`. Requires `conference_uri` (create/update) |
+| conference_uri | string | no | | Join URL. Required with `conference_provider` |
+| conference_passcode | string | no | | Passcode for the third-party conference |
+| conference_id | string | no | | Provider-side meeting ID |
 | reminders | array | no | | Custom reminder objects (see below) |
-| use_default_reminders | boolean | no | | Use account default reminders |
+| use_default_reminders | boolean | no | true on create | Use account default reminders |
 | transparency | string | no | | `opaque` (busy) or `transparent` (free) |
 | visibility | string | no | | `default`, `public`, `private`, or `confidential` |
-| color_id | string | no | | Event color 1-11 (update only) |
+| color_id | string | no | | Event color by name or ID: `lavender` (1), `sage` (2), `grape` (3), `flamingo` (4), `banana` (5), `tangerine` (6), `peacock` (7), `graphite` (8), `blueberry` (9), `basil` (10), `tomato` (11) |
+| recurrence | array of strings | no | | RFC 5545 rules, e.g. `["RRULE:FREQ=WEEKLY;COUNT=10"]` |
 | guests_can_modify | boolean | no | | Attendees can edit the event |
 | guests_can_invite_others | boolean | no | | Attendees can invite others |
 | guests_can_see_other_guests | boolean | no | | Attendees can see other attendees |
+| response | string | for rsvp | | `accepted`, `declined`, `tentative`, or `needsAction` |
+| rsvp_comment | string | no | | Message sent with the RSVP (rsvp only) |
+| send_updates | string | no | all | `all`, `externalOnly`, or `none`. Applies to every action |
+| this_and_following | boolean | no | false | Update only. With a recurring instance `event_id`, splits the series there so the change applies to that instance and all later ones while earlier instances keep the original schedule. Updating the series ID moves every instance and can drop past ones |
 
 **Reminder format** (each item is a dict):
 - `{"method": "email", "minutes": 30}` -- email reminder 30 minutes before
 - `{"method": "popup", "minutes": 10}` -- popup reminder 10 minutes before
+
+---
+
+## Status Events
+
+Out of Office and Focus Time are special event types that auto-decline conflicting invitations. They live on primary calendars only and require `dateTime` boundaries: date-only values become midnight, and a `timezone` is required unless timestamps carry an explicit UTC offset. `list` expands recurring series and paginates like `get_events` (pass back both `page_token` and the returned `Pagination time_min`).
+
+### manage_out_of_office
+Create, list, update, or delete Out of Office events, which set the user's status to "Out of office".
+
+| Parameter | Type | Required | Default | Notes |
+|-----------|------|----------|---------|-------|
+| user_google_email | string | yes | | |
+| action | string | yes | | `create`, `list`, `update`, or `delete` |
+| start_time | string | for create | | `YYYY-MM-DD` (full day) or RFC 3339 |
+| end_time | string | for create | | Exclusive. One full day on 5 April: `2026-04-05` to `2026-04-06` |
+| summary | string | no | Out of Office | Display text |
+| auto_decline_mode | string | no | declineAllConflictingInvitations | `declineAllConflictingInvitations`, `declineOnlyNewConflictingInvitations`, or `declineNone` |
+| decline_message | string | no | | Message sent with auto-declines |
+| recurrence | array of strings | no | | RFC 5545 rules, e.g. `["RRULE:FREQ=WEEKLY;COUNT=10"]` |
+| timezone | string | no | | IANA zone. Required for date-only or offset-free times |
+| time_min | string | no | now | Start of range (list only) |
+| time_max | string | no | | End of range (list only) |
+| max_results | integer | no | 10 | Page size (list only) |
+| event_id | string | for update/delete | | Event ID |
+| calendar_id | string | no | primary | Must be a primary calendar |
+| page_token | string | no | | Next-page token (list only) |
+
+### manage_focus_time
+Create, list, update, or delete Focus Time events, which protect work blocks and by default set Chat to Do Not Disturb.
+
+| Parameter | Type | Required | Default | Notes |
+|-----------|------|----------|---------|-------|
+| user_google_email | string | yes | | |
+| action | string | yes | | `create`, `list`, `update`, or `delete` |
+| start_time | string | for create | | `YYYY-MM-DD` (full day) or RFC 3339 |
+| end_time | string | for create | | Exclusive, same format as `start_time` |
+| summary | string | no | Focus Time | Display text |
+| description | string | no | | Event description |
+| auto_decline_mode | string | no | declineAllConflictingInvitations | `declineAllConflictingInvitations`, `declineOnlyNewConflictingInvitations`, or `declineNone` |
+| decline_message | string | no | | Message sent with auto-declines |
+| chat_status | string | no | doNotDisturb | `doNotDisturb` or `available` |
+| recurrence | array of strings | no | | RFC 5545 rules, e.g. `["RRULE:FREQ=WEEKLY;COUNT=10"]` |
+| timezone | string | no | | IANA zone. Required for date-only or offset-free times |
+| time_min | string | no | now | Start of range (list only) |
+| time_max | string | no | | End of range (list only) |
+| max_results | integer | no | 10 | Page size (list only) |
+| event_id | string | for update/delete | | Event ID |
+| calendar_id | string | no | primary | Must be a primary calendar |
+| page_token | string | no | | Next-page token (list only) |
 
 ---
 
@@ -94,7 +174,7 @@ Check free/busy status for one or more calendars over a time interval.
 
 **Calendar IDs**: Use `list_calendars` to discover IDs. The primary calendar can always be referenced as `primary`.
 
-**Time format**: All time parameters use RFC 3339. Date-only values (e.g. `2026-03-19`) are accepted and interpreted as midnight UTC.
+**Time format**: Time parameters use RFC 3339. What a date-only value (e.g. `2026-03-19`) means depends on the parameter: date-only `manage_event` boundaries create an all-day event, Out of Office and Focus Time boundaries need a `timezone` (see Status Events), and query bounds such as `get_events` and `query_freebusy` `time_min`/`time_max` are read as midnight UTC.
 
 **All-day events**: Set `start_time` and `end_time` to date-only strings (e.g. `2026-03-20` and `2026-03-21` for a single all-day event on 20 March).
 

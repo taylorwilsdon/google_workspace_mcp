@@ -3,26 +3,68 @@
 from __future__ import annotations
 
 import asyncio
-import html
+import base64
+import binascii
+import codecs
+import contextlib
+import hashlib
+import itertools
 import logging
 import re
 import secrets
 import ssl
-from collections import Counter
+import sys
+from collections import Counter, OrderedDict
 from datetime import datetime, timezone
+from email.header import Header
+from email.message import Message
+from email.parser import BytesParser
+from email.policy import default as default_email_policy
 from email.utils import getaddresses, parseaddr, parsedate_to_datetime
 from html.parser import HTMLParser
+from threading import Lock
+from time import monotonic
 from typing import Any, Callable, Dict, Iterable, List, Literal, Mapping, Optional
+from urllib.parse import quote
 
 import httplib2
 from fastmcp.exceptions import ToolError as ToolExecutionError
 from googleapiclient.errors import HttpError
 
+from core.file_limits import (
+    FileTooLargeError,
+    ensure_within_file_size_limit,
+    get_max_file_bytes,
+)
 from core.utils import UserInputError
+from gmail.gmail_web_mime import (
+    TextDirection,
+    assemble_alternative,
+    base_text_direction,
+    build_forwarded_container_html,
+    build_forwarded_plain,
+    build_quote_container_html,
+    build_quote_plain,
+    encode_raw,
+    format_address_list,
+    format_attribution_html,
+    format_attribution_plain,
+    format_display_address,
+    format_gmail_date,
+    gmail_boundary,
+    new_message_html,
+    plain_body_to_html,
+)
 
 logger = logging.getLogger(__name__)
 
 RAW_BODY_TRUNCATE_LIMIT = 20000
+MAX_PAGINATED_MESSAGE_BYTES = 64 * 1024 * 1024
+_PAGE_CACHE_BYTES = 64 * 1024 * 1024
+_PAGE_CACHE_ENTRIES = 128
+_PAGE_CACHE_TTL = 300
+_PAGE_CACHE = OrderedDict()
+_PAGE_CACHE_LOCK = Lock()
 GMAIL_QUOTA_ERROR_MARKERS = (
     "dailyLimitExceeded",
     "quotaExceeded",
@@ -180,6 +222,195 @@ GMAIL_LABEL_COLORS = frozenset(
 )
 
 
+def _render_paginated_message_body(
+    raw: bytes, body_format: str, formatter: Callable
+) -> str:
+    """Render the outer message body, excluding attachments and attached messages."""
+    message = BytesParser(policy=default_email_policy).parsebytes(raw)
+    pending = [(message, 0)]
+    while pending:
+        part, depth = pending.pop()
+        if (
+            part.get_content_disposition() == "attachment"
+            or part.get_content_maintype() == "message"
+        ):
+            continue
+        if depth > 50:
+            raise ToolExecutionError("Message MIME nesting is too deep to paginate.")
+        if part.get_content_maintype() == "multipart" and not part.is_multipart():
+            raise ToolExecutionError(
+                "Malformed multipart message cannot be paginated completely."
+            )
+        if part.is_multipart():
+            pending.extend((child, depth + 1) for child in part.iter_parts())
+
+    def decode(part):
+        try:
+            return part.get_content()
+        except LookupError:
+            return (part.get_payload(decode=True) or b"").decode(
+                "utf-8", errors="replace"
+            )
+
+    def render(part):
+        if (
+            part.get_content_disposition() == "attachment"
+            or part.get_content_maintype() == "message"
+        ):
+            return ""
+        if part.get_content_type() == "multipart/alternative":
+            plain = part.get_body(preferencelist=("plain",))
+            html = part.get_body(preferencelist=("html",))
+            return formatter(
+                decode(plain) if plain is not None else "",
+                decode(html) if html is not None else "",
+                body_format=body_format,
+                truncate_limit=None,
+            )
+        if part.get_content_type() == "multipart/related":
+            children = list(part.iter_parts())
+            if not children:
+                return ""
+            start = part.get_param("start")
+            root = next(
+                (p for p in children if start and p.get("Content-ID") == start),
+                children[0],
+            )
+            return render(root)
+        if part.is_multipart():
+            return "\n".join(filter(None, (render(p) for p in part.iter_parts())))
+        if part.get_content_type() == "text/plain":
+            return decode(part)
+        if part.get_content_type() == "text/html":
+            return formatter(
+                "", decode(part), body_format=body_format, truncate_limit=None
+            )
+        return ""
+
+    return render(message)
+
+
+async def _fetch_paginated_message_body(
+    service, message_id, body_format, formatter, limit
+):
+    """Read and render a bounded message for the page cache."""
+    response = await asyncio.to_thread(
+        service.users().messages().get(userId="me", id=message_id, format="raw").execute
+    )
+    encoded = response.get("raw")
+    if not isinstance(encoded, str) or not encoded:
+        raise ToolExecutionError("Gmail returned no raw message body to paginate.")
+    if len(encoded) > ((limit + 2) // 3) * 4:
+        raise ToolExecutionError("Message exceeds the paginated-read size limit.")
+    try:
+        raw = await asyncio.to_thread(
+            base64.b64decode,
+            encoded + "=" * (-len(encoded) % 4),
+            altchars=b"-_",
+            validate=True,
+        )
+    except (binascii.Error, ValueError) as exc:
+        raise ToolExecutionError("Gmail returned invalid raw message data.") from exc
+    ensure_within_file_size_limit(
+        len(raw),
+        file_id=message_id,
+        kind="message page",
+        max_bytes=limit,
+    )
+    try:
+        text = await asyncio.to_thread(
+            _render_paginated_message_body, raw, body_format, formatter
+        )
+    except RecursionError as exc:
+        raise ToolExecutionError(
+            "Message MIME nesting is too deep to paginate."
+        ) from exc
+    encoded_body = await asyncio.to_thread(text.encode, "utf-8")
+    ensure_within_file_size_limit(
+        len(encoded_body),
+        file_id=message_id,
+        kind="message page",
+        max_bytes=limit,
+    )
+    digest = await asyncio.to_thread(hashlib.sha256, encoded_body)
+    return text, len(raw), len(encoded_body), digest.hexdigest()
+
+
+async def read_gmail_message_page(
+    service,
+    message_id: str,
+    declared_size: Optional[int],
+    body_format: str,
+    page_offset: int,
+    page_size: int,
+    expected_sha256: Optional[str],
+    formatter: Callable,
+    *,
+    account: str,
+    include_links: bool = False,
+) -> dict:
+    """Fetch an authorized body and return a bounded page using a bounded process-local cache."""
+    limit = min(
+        get_max_file_bytes() or MAX_PAGINATED_MESSAGE_BYTES, MAX_PAGINATED_MESSAGE_BYTES
+    )
+    ensure_within_file_size_limit(
+        declared_size,
+        file_id=message_id,
+        kind="message page",
+        max_bytes=limit,
+    )
+    key = (account.lower(), message_id, body_format, include_links) if account else None
+    with _PAGE_CACHE_LOCK:
+        now = monotonic()
+        for old_key, (expires, _) in list(_PAGE_CACHE.items()):
+            if expires <= now:
+                del _PAGE_CACHE[old_key]
+        cached = _PAGE_CACHE.get(key)
+    body = cached[1] if cached is not None else None
+    if body is None:
+        body = await _fetch_paginated_message_body(
+            service, message_id, body_format, formatter, limit
+        )
+        cost = sys.getsizeof(body[0]) + 256
+        if key is not None and cost <= _PAGE_CACHE_BYTES:
+            with _PAGE_CACHE_LOCK:
+                _PAGE_CACHE.pop(key, None)
+                while _PAGE_CACHE and (
+                    len(_PAGE_CACHE) >= _PAGE_CACHE_ENTRIES
+                    or sum(
+                        sys.getsizeof(entry[1][0]) + 256
+                        for entry in _PAGE_CACHE.values()
+                    )
+                    + cost
+                    > _PAGE_CACHE_BYTES
+                ):
+                    _PAGE_CACHE.popitem(last=False)
+                _PAGE_CACHE[key] = (monotonic() + _PAGE_CACHE_TTL, body)
+    text, raw_size, encoded_size, digest = body
+    for size in (raw_size, encoded_size):
+        ensure_within_file_size_limit(
+            size, file_id=message_id, kind="message page", max_bytes=limit
+        )
+    if expected_sha256 is not None and digest != expected_sha256:
+        raise UserInputError(
+            "Message representation changed; restart at page_offset=0."
+        )
+    if page_offset > len(text):
+        raise UserInputError("page_offset exceeds total_chars.")
+    end = min(page_offset + page_size, len(text))
+    return {
+        "message_id": message_id,
+        "body_format": body_format,
+        "body": text[page_offset:end],
+        "page_offset": page_offset,
+        "next_offset": end if end < len(text) else None,
+        "total_chars": len(text),
+        "complete": end == len(text),
+        "body_sha256": digest,
+        "scope": "Decoded outer message body, excluding attachments and attached messages.",
+    }
+
+
 def _validate_label_color(field: str, value: str) -> str:
     """Normalize one label color and check it against Gmail's fixed palette.
 
@@ -237,6 +468,19 @@ def _normalize_email(address: str) -> str:
 def _new_attachment_id() -> str:
     """Return a random attachment id in the shape Gmail web uses (``f_...``)."""
     return f"f_{secrets.token_hex(5)}"
+
+
+def _generate_gmail_web_url(
+    item_id: str, account_index: int = 0, user_google_email: Optional[str] = None
+) -> str:
+    """Return the Gmail web URL for a message or thread ID in any label (#all).
+
+    The account is addressed by email when known, else by browser account index.
+    """
+    account = (
+        quote(user_google_email, safe="@") if user_google_email else str(account_index)
+    )
+    return f"https://mail.google.com/mail/u/{account}/#all/{item_id}"
 
 
 def _http_error_status(error: HttpError) -> Optional[int]:
@@ -314,6 +558,77 @@ async def _fetch_with_retry(
 
     logger.error(f"[{log_prefix}] Failed to fetch {item_label} {item_id}: {last_error}")
     return item_id, None, last_error
+
+
+async def _fetch_body_data(
+    service, message_id: Optional[str], attachment_id: str, body: Dict[str, Any]
+) -> Optional[str]:
+    """Store an attachment-backed body part's data on ``body``; return why it failed."""
+    try:
+        ensure_within_file_size_limit(
+            body.get("size"), file_id=attachment_id, kind="message body"
+        )
+        _, response, error = await _fetch_with_retry(
+            lambda: (
+                service.users()
+                .messages()
+                .attachments()
+                .get(userId="me", messageId=message_id, id=attachment_id)
+            ),
+            item_id=attachment_id,
+            item_label="message body",
+            log_prefix="fetch_attachment_backed_bodies",
+        )
+        if error is not None:
+            return f"Could not fetch message body {attachment_id}: {error}"
+        response = response or {}
+        ensure_within_file_size_limit(
+            response.get("size"), file_id=attachment_id, kind="message body"
+        )
+    except FileTooLargeError as error:
+        logger.warning(f"Skipping message body of {message_id}: {error}")
+        return str(error)
+    data = response.get("data") or ""
+    try:
+        decoded = _decode_base64url(data)
+    except binascii.Error:
+        decoded = b""
+    if not decoded:
+        return f"Message body {attachment_id} came back empty or undecodable"
+    body["data"] = data
+    return None
+
+
+async def fetch_attachment_backed_bodies(
+    service, messages: Iterable[Mapping[str, Any]]
+) -> List[str]:
+    """Fill in the text/plain and text/html bodies Gmail stores behind an attachmentId.
+
+    Returns why each body that is still missing could not be fetched.
+    """
+    errors: List[str] = []
+    for message in messages:
+        pending = [message.get("payload") or {}]
+        failures: Dict[str, str] = {}
+        wanted = {"text/plain", "text/html"}
+        while pending and wanted:
+            part = pending.pop(0)
+            mime_type = part.get("mimeType", "")
+            body = part.get("body") or {}
+            attachment_id = None if part.get("filename") else body.get("attachmentId")
+            if mime_type in wanted and not body.get("data") and attachment_id:
+                error = await _fetch_body_data(
+                    service, message.get("id"), attachment_id, body
+                )
+                if error:
+                    failures[mime_type] = error
+            if mime_type in wanted and body.get("data"):
+                wanted.discard(mime_type)
+                failures.pop(mime_type, None)
+            if mime_type.startswith("multipart/"):
+                pending.extend(part.get("parts") or [])
+        errors.extend(failures.values())
+    return errors
 
 
 async def send_message_once(service, send_body: Dict[str, Any]) -> Dict[str, Any]:
@@ -491,7 +806,7 @@ def _derive_reply_all_recipients(
         )
 
     derived_cc = cc
-    if not derived_cc:
+    if derived_cc is None:
         seen = {addr.lower() for _n, addr in getaddresses([derived_to or ""]) if addr}
         seen |= excluded
         others = []
@@ -641,80 +956,6 @@ def _analyze_thread_ownership_impl(
     }
 
 
-def _build_forward_content(
-    headers: dict[str, str],
-    bodies: dict[str, str],
-    forward_message: Optional[str],
-    forward_message_format: Literal["plain", "html"],
-    subject_override: Optional[str],
-) -> tuple[str, str, Literal["plain", "html"]]:
-    """Build the (subject, body, body_format) for a forwarded message.
-
-    Pure formatting kept out of the @server.tool wrapper so it is independently
-    testable: quotes the original headers/body and prepends an optional note.
-    An explicit subject_override wins over the derived 'Fwd: <subject>'.
-    """
-    original_subject = headers.get("Subject", "(no subject)")
-    original_from = headers.get("From", "(unknown sender)")
-    original_date = headers.get("Date", "(unknown date)")
-    original_to = headers.get("To", "")
-    original_text = bodies.get("text", "")
-    original_html = bodies.get("html", "")
-    has_html = bool(original_html.strip())
-
-    forward_header_text = (
-        "---------- Forwarded message ---------\n"
-        f"From: {original_from}\n"
-        f"Date: {original_date}\n"
-        f"Subject: {original_subject}\n"
-        f"To: {original_to}"
-    )
-    # Header values are escaped; they render as text but may carry markup.
-    forward_header_html = (
-        '<div style="color: #777;">'
-        "---------- Forwarded message ---------<br/>"
-        f"From: {html.escape(original_from)}<br/>"
-        f"Date: {html.escape(original_date)}<br/>"
-        f"Subject: {html.escape(original_subject)}<br/>"
-        f"To: {html.escape(original_to)}"
-        "</div>"
-    )
-
-    # Render as HTML when the original is HTML or the note is explicitly HTML.
-    if has_html or (forward_message and forward_message_format == "html"):
-        note_html = ""
-        if forward_message:
-            if forward_message_format == "html":
-                note_html = f"<div>{html_newlines_to_br(forward_message)}</div><br/>"
-            else:
-                escaped = html.escape(forward_message).replace("\n", "<br/>")
-                note_html = f"<div>{escaped}</div><br/>"
-        original_body_html = (
-            original_html
-            if has_html
-            else html.escape(original_text).replace("\n", "<br/>")
-        )
-        forward_body = (
-            f"{note_html}"
-            '<div style="border-left: 1px solid #ccc; padding-left: 10px; margin-left: 10px;">'
-            f"{forward_header_html}<br/>{original_body_html}</div>"
-        )
-        body_format: Literal["plain", "html"] = "html"
-    else:
-        note = f"{forward_message}\n\n" if forward_message else ""
-        forward_body = f"{note}{forward_header_text}\n\n{original_text}"
-        body_format = "plain"
-
-    # Derive the subject, avoiding a double prefix for existing "Fwd:"/"FW:".
-    subject = subject_override or original_subject
-    if not subject_override and not subject.lower().lstrip().startswith(
-        ("fwd:", "fw:")
-    ):
-        subject = f"Fwd: {original_subject}"
-
-    return subject, forward_body, body_format
-
-
 class _HTMLBlockTextExtractor(HTMLParser):
     """Extract text from HTML, preserving block-level line breaks.
 
@@ -737,7 +978,7 @@ class _HTMLBlockTextExtractor(HTMLParser):
 
     # Elements whose boundaries are visible line breaks once the markup is
     # gone. Table cells are deliberately absent: a line per cell would wreck
-    # table-based layouts, and the separator they do need is its own issue.
+    # table-based layouts, so handle_starttag separates them with a space.
     _BLOCK_TAGS = frozenset(
         {
             "address",
@@ -803,6 +1044,12 @@ class _HTMLBlockTextExtractor(HTMLParser):
             # A nested block starts a new visual line even when its parent
             # already contains text (for example, Name<div>Title</div>).
             self._append_line_break()
+            if ("data-smartmail", "gmail_signature") in attrs:
+                self._append_line_break(force=True)
+        elif tag in ("td", "th"):
+            # Separating at the start tag also covers omitted </td> and </th>.
+            if self._text and not self._text[-1].endswith((" ", "\n")):
+                self._text.append(" ")
 
     def handle_endtag(self, tag):
         # Closing a block ends its visual line. _append_line_break avoids a
@@ -834,6 +1081,31 @@ class _HTMLBlockTextExtractor(HTMLParser):
         return text.strip()
 
 
+def _decode_base64url(data: str) -> bytes:
+    """Decode Gmail base64url data, which may arrive without padding."""
+    return base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
+
+
+def decode_part_body(part: Mapping[str, Any]) -> str:
+    """Decode a Gmail payload part's inline body using its declared charset."""
+    raw = _decode_base64url(part["body"]["data"])
+    headers = Message()
+    for header in part.get("headers", []):
+        headers[header["name"]] = header["value"]
+    charset = headers.get_content_charset() or "utf-8"
+    attempts = [(charset, "strict"), ("utf-8", "strict"), (charset, "ignore")]
+    # WHATWG reads these labels as windows-1252, and they often mislabel UTF-8.
+    with contextlib.suppress(LookupError):
+        if codecs.lookup(charset).name in {"ascii", "cp1252", "iso8859-1"}:
+            attempts = [("utf-8", "strict"), ("cp1252", "strict"), ("cp1252", "ignore")]
+    for codec, errors in attempts:
+        try:
+            return raw.decode(codec, errors)
+        except (LookupError, UnicodeError):
+            continue
+    return raw.decode("utf-8", errors="ignore")
+
+
 def html_to_text_preserving_breaks(html_content: str) -> str:
     """Convert HTML to plain text, keeping block boundaries as line breaks.
 
@@ -851,6 +1123,83 @@ def html_to_text_preserving_breaks(html_content: str) -> str:
         return parser.get_text()
     except Exception:
         return html_content
+
+
+class _HTMLLinkExtractor(HTMLParser):
+    """Collect http(s) anchor URLs mapped to their visible text, in document order."""
+
+    def __init__(self):
+        super().__init__()
+        self.links: Dict[str, str] = {}
+        self._href: Optional[str] = None
+        self._text: List[str] = []
+
+    def _flush(self) -> None:
+        if self._href is not None and not self.links.get(self._href):
+            self.links[self._href] = " ".join("".join(self._text).split())
+        self._href = None
+        self._text = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "br":
+            self.handle_data(" ")
+        if tag != "a":
+            return
+        self._flush()
+        href = re.sub(r"[\t\n\r]", "", dict(attrs).get("href") or "").strip()
+        if href.lower().startswith(("http://", "https://")):
+            self._href = href
+
+    def handle_endtag(self, tag):
+        if tag == "a":
+            self._flush()
+
+    def handle_data(self, data):
+        if self._href is not None:
+            self._text.append(data)
+
+    def parse_marked_section(self, i, report=1):
+        # Older CPython patch releases raise on unknown <![...]> sections.
+        try:
+            return super().parse_marked_section(i, report)
+        except AssertionError:
+            return self.parse_bogus_comment(i)
+
+    def close(self):
+        super().close()
+        self._flush()
+
+
+_TEXT_URL_RE = re.compile(r"https?://[^\s<>\"]+", re.IGNORECASE)
+
+
+def format_html_links(
+    html_body: str, known_text: str, limit: Optional[int] = None
+) -> str:
+    """Return a LINKS section of http(s) anchors missing from ``known_text``, capped at ``limit``."""
+    if not html_body:
+        return ""
+    parser = _HTMLLinkExtractor()
+    parser.feed(html_body)
+    parser.close()
+    shown = {
+        url
+        for token in _TEXT_URL_RE.findall(known_text)
+        for url in (token, token.rstrip(".,;:!?)]"))
+    }
+    lines = [
+        f"- {text}: {url}" if text and text != url else f"- {url}"
+        for url, text in parser.links.items()
+        if url not in shown
+    ]
+    if limit is not None:
+        kept = sum(
+            size <= limit
+            for size in itertools.accumulate(len(line) + 1 for line in lines)
+        )
+        if kept < len(lines):
+            lines = lines[:kept] + [f"[{len(lines) - kept} more links omitted]"]
+    return "\n\n--- LINKS ---\n" + "\n".join(lines) if lines else ""
 
 
 _HTML_BLOCK_TAGS = frozenset(
@@ -1002,9 +1351,332 @@ def html_newlines_to_br(html_body: str) -> str:
     return "".join(out)
 
 
+# A body that already opens with a ``<div ... dir=...>`` container; group
+# ``dir`` spans the attribute value (quoted or bare). Attributes before ``dir``
+# are consumed whole (name plus quoted or bare value), so ``dir=`` text inside
+# another attribute's quoted value is never mistaken for the attribute itself.
+_HTML_ATTR_VALUE = r"(?:\"[^\"]*\"|'[^']*'|[^\s\"'=<>`]+)"
+_LEADING_DIR_DIV_RE = re.compile(
+    r"\s*<div"
+    rf"(?:\s+(?!dir\s*=)[^\s\"'>/=]+(?:\s*=\s*{_HTML_ATTR_VALUE})?)*"
+    rf"\s+dir\s*=\s*(?P<dir>{_HTML_ATTR_VALUE})",
+    re.IGNORECASE,
+)
+
+
+def _force_leading_dir(body: str, direction: str) -> str:
+    """Point a body's own leading ``<div dir=...>`` container at ``direction``."""
+    wrapper = _LEADING_DIR_DIV_RE.match(body)
+    if wrapper is None:
+        return body
+    return f'{body[: wrapper.start("dir")]}"{direction}"{body[wrapper.end("dir") :]}'
+
+
+def _resolve_direction(direction: TextDirection, text: str) -> str:
+    """Resolve ``"auto"`` to the base direction of ``text``."""
+    return base_text_direction(text) if direction == "auto" else direction
+
+
+def _derive_web_bodies(
+    body: str, body_format: Literal["plain", "html"], direction: TextDirection
+) -> tuple[str, str]:
+    """Derive the (text/plain, text/html) parts of a Gmail-web compose.
+
+    Plain text becomes Gmail's typed ``<div>`` structure inside the direction
+    container; HTML is wrapped in that container unless it already starts with
+    one, and its plain part keeps block breaks.
+    """
+    if body_format == "plain":
+        html_part = plain_body_to_html(body)
+        return body, new_message_html(html_part, _resolve_direction(direction, body))
+    plain_part = html_to_text_preserving_breaks(body).strip()
+    if _LEADING_DIR_DIV_RE.match(body) is None:
+        resolved = _resolve_direction(direction, plain_part)
+        return plain_part, new_message_html(body, resolved)
+    # Keep the caller's own container; an explicit direction wins over its dir.
+    if direction == "auto":
+        return plain_part, body
+    return plain_part, _force_leading_dir(body, direction)
+
+
+def _parse_message_date(value: str) -> Optional[datetime]:
+    """Parse a Date header in the sender's own offset, or return None.
+
+    Gmail shows the sender's wall-clock time, not UTC.
+    """
+    try:
+        return parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _fill_missing_body(plain: str, html_body: str) -> tuple[str, str]:
+    """Derive whichever of a message's plain or HTML body is missing."""
+    if not plain and html_body:
+        plain = html_to_text_preserving_breaks(html_body).strip()
+    if not html_body and plain:
+        html_body = plain_body_to_html(plain)
+    return plain, html_body
+
+
+def _build_web_reply_bodies(
+    new_plain: str, new_html: str, target: Mapping[str, Any]
+) -> tuple[str, str]:
+    """Append a Gmail-web ``gmail_quote`` reply trail to both body parts.
+
+    ``target`` is the parent message from the thread reply context. When it
+    lacks a usable sender address or date, the bodies are returned unchanged so
+    the reply still sends, just without a quote.
+    """
+    parent_name, parent_email = parseaddr(target.get("from") or "")
+    parent_dt = _parse_message_date(target.get("date") or "")
+    if "@" not in parent_email or parent_dt is None:
+        return new_plain, new_html
+    parent_name = parent_name.strip() or parent_email
+    parent_text, parent_html = _fill_missing_body(
+        target.get("text_body") or "", target.get("html_body") or ""
+    )
+
+    attr_plain = format_attribution_plain(parent_name, parent_email, parent_dt)
+    attr_html = format_attribution_html(parent_name, parent_email, parent_dt)
+    reply_plain = f"{new_plain}\n\n{attr_plain}\n\n{build_quote_plain(parent_text)}"
+    reply_html = f"{new_html}<br>{build_quote_container_html(attr_html, parent_html)}"
+    return reply_plain, reply_html
+
+
+def _build_forward_content(
+    headers: Mapping[str, str],
+    bodies: Mapping[str, str],
+    forward_message: Optional[str],
+    forward_message_format: Literal["plain", "html"],
+    subject_override: Optional[str],
+    direction: TextDirection = "auto",
+) -> tuple[str, str, str]:
+    """Build the (subject, text/plain, text/html) of a Gmail-web forward.
+
+    An explicit ``subject_override`` wins over the derived 'Fwd: <subject>'.
+    The optional note leads the body and sets its base direction.
+    """
+    orig_subject = headers.get("Subject", "(no subject)")
+    orig_from = headers.get("From", "(unknown sender)")
+    orig_date = headers.get("Date", "(unknown date)")
+
+    if subject_override:
+        subject = subject_override
+    elif orig_subject.lower().lstrip().startswith(("fwd:", "fw:")):
+        subject = orig_subject
+    else:
+        subject = f"Fwd: {orig_subject}"
+
+    from_name, from_email = parseaddr(orig_from)
+    if "@" not in from_email:
+        # No usable address: show the raw From as text, never as a dead mailto link.
+        from_name, from_email = orig_from, ""
+    orig_dt = _parse_message_date(orig_date)
+    header = {
+        "from_name": from_name.strip(),
+        "from_email": from_email,
+        "date": format_gmail_date(orig_dt) if orig_dt else orig_date,
+        "subject": orig_subject,
+        "to": headers.get("To", ""),
+    }
+    orig_plain, orig_html = _fill_missing_body(
+        bodies.get("text", ""), bodies.get("html", "")
+    )
+    forward_plain = build_forwarded_plain(**header, orig_plain=orig_plain)
+    container = build_forwarded_container_html(**header, orig_html=orig_html)
+
+    if not forward_message:
+        # Nothing user-authored to orient, so "auto" stays ltr.
+        resolved = "ltr" if direction == "auto" else direction
+        return subject, forward_plain, new_message_html(f"<br>{container}", resolved)
+
+    if forward_message_format == "html":
+        note_html = html_newlines_to_br(forward_message)
+        note_plain = html_to_text_preserving_breaks(note_html).strip()
+        if direction != "auto":
+            # As on a regular send, an explicit direction wins over the note's dir.
+            note_html = _force_leading_dir(note_html, direction)
+    else:
+        note_plain, note_html = forward_message, plain_body_to_html(forward_message)
+
+    if note_plain:
+        forward_plain = f"{note_plain}\n\n{forward_plain}"
+    # The note sets the base direction; the original keeps its own dir markup.
+    forward_html = new_message_html(
+        f"{note_html}<br><br>{container}", _resolve_direction(direction, note_plain)
+    )
+    return subject, forward_plain, forward_html
+
+
+_REPLY_PREFIX_RE = re.compile(r"^\s*(?:\[[^\]]*\]\s*)*re\s*:", re.IGNORECASE)
+
+
+def _reply_subject(subject: str, in_reply_to: Optional[str]) -> str:
+    """Prefix ``Re:`` onto a reply's subject unless one follows any ``[tag]`` prefixes."""
+    if in_reply_to and not _REPLY_PREFIX_RE.match(subject):
+        return f"Re: {subject}"
+    return subject
+
+
+def _inherit_reply_subject(thread_id: str, target: Optional[Mapping[str, Any]]) -> str:
+    """Return the replied-to message's subject, raising when it has none."""
+    subject = (target or {}).get("subject") or ""
+    if not subject.strip():
+        raise UserInputError(
+            f"Could not inherit a subject from thread '{thread_id}'. Pass 'subject' explicitly."
+        )
+    return subject
+
+
+def _checked_header(field: str, value: str) -> str:
+    """Reject CR/LF in a caller-supplied header value (RFC 5322 injection)."""
+    if "\r" in value or "\n" in value:
+        raise ValueError(f"Invalid {field} header value: line breaks not allowed.")
+    return value
+
+
+def _prepare_gmail_message_web(
+    subject: str,
+    plain_body: str,
+    html_body: str,
+    to: Optional[str] = None,
+    cc: Optional[str] = None,
+    bcc: Optional[str] = None,
+    in_reply_to: Optional[str] = None,
+    references: Optional[str] = None,
+    from_email: Optional[str] = None,
+    from_name: Optional[str] = None,
+) -> str:
+    """Assemble a Gmail-web faithful ``multipart/alternative`` raw message.
+
+    ``plain_body`` and ``html_body`` are the finished text/plain and text/html
+    parts. Headers are authored in Gmail's order; To/Cc/Bcc are validated and
+    their non-ASCII display names RFC 2047 encoded. Message-ID is left for
+    Gmail to assign. Returns the base64url raw message.
+    """
+    subject = _reply_subject(_checked_header("Subject", subject), in_reply_to)
+    if not subject.isascii():
+        # Encode after the check: a long encoded subject folds with a legal CRLF.
+        subject = Header(subject, "utf-8", header_name="Subject").encode(
+            maxlinelen=76, linesep="\r\n"
+        )
+
+    headers: List[tuple[str, str]] = [("MIME-Version", "1.0")]
+    if references:
+        # Fold the References chain with CRLF + TAB per RFC 5322 continuation.
+        folded = "\r\n\t".join(_checked_header("References", references).split())
+        headers.append(("References", folded))
+    if in_reply_to:
+        headers.append(("In-Reply-To", _checked_header("In-Reply-To", in_reply_to)))
+    if bcc:
+        headers.append(("Bcc", format_address_list(_checked_header("Bcc", bcc))))
+    headers.append(("Subject", subject))
+    if from_email:
+        headers.append(("From", format_display_address(from_name, from_email)))
+    if to:
+        headers.append(("To", format_address_list(_checked_header("To", to))))
+    if cc:
+        headers.append(("Cc", format_address_list(_checked_header("Cc", cc))))
+
+    message = assemble_alternative(
+        headers=headers,
+        plain_text=plain_body,
+        html_text=html_body,
+        boundary=gmail_boundary(),
+    )
+    return encode_raw(message)
+
+
+def _build_web_compose_raw(
+    *,
+    subject: str,
+    body: str,
+    body_format: Literal["plain", "html"],
+    to: Optional[str],
+    cc: Optional[str],
+    bcc: Optional[str],
+    from_email: str,
+    from_name: Optional[str],
+    in_reply_to: Optional[str],
+    references: Optional[str],
+    direction: TextDirection,
+    reply_target: Optional[Mapping[str, Any]],
+) -> str:
+    """Build a Gmail-web raw message for the attachment-free send/draft paths.
+
+    Both body parts are derived from ``body``; when ``reply_target`` (the
+    parent from the thread reply context) is given, Gmail's reply trail is
+    appended to them.
+    """
+    plain_part, html_part = _derive_web_bodies(body, body_format, direction)
+    if reply_target:
+        plain_part, html_part = _build_web_reply_bodies(
+            plain_part, html_part, reply_target
+        )
+    return _prepare_gmail_message_web(
+        subject=subject,
+        plain_body=plain_part,
+        html_body=html_part,
+        to=to,
+        cc=cc,
+        bcc=bcc,
+        in_reply_to=in_reply_to,
+        references=references,
+        from_email=from_email,
+        from_name=from_name,
+    )
+
+
 def _signature_html_to_text(signature_html: str) -> str:
     """Convert Gmail signature HTML to plain text, preserving line breaks."""
     return html_to_text_preserving_breaks(signature_html)
+
+
+_MARGIN_BLOCK_TAGS = frozenset(
+    {
+        "blockquote",
+        "dl",
+        "figure",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "ol",
+        "p",
+        "pre",
+        "ul",
+    }
+)
+_END_TAG_RE = re.compile(r"</([a-zA-Z][a-zA-Z0-9]*)\s*>\s*")
+_TRAILING_BREAK_RE = re.compile(r"<[bh]r\b[^<>]*>\s*\Z", re.IGNORECASE)
+_RESTYLED_MARGIN_RE = re.compile(
+    rf"<style\b[^<>]*>[^<]*margin|<(?:{'|'.join(sorted(_MARGIN_BLOCK_TAGS))})\b[^<>]*margin",
+    re.IGNORECASE,
+)
+
+
+def _html_signature_separator(body: str) -> str:
+    """Return markup leaving one blank line between an HTML body and a signature."""
+    body = body.rstrip()
+    while body.endswith("-->") and (start := body.rfind("<!--")) != -1:
+        body = body[:start].rstrip()
+    if not body:
+        return ""
+    if _TRAILING_BREAK_RE.search(body):
+        return "<br>"
+    closed_tags = set()
+    end = len(body)
+    while match := _END_TAG_RE.fullmatch(body, body.rfind("</", 0, end), end):
+        closed_tags.add(match[1].lower())
+        end = match.start()
+    if closed_tags & _MARGIN_BLOCK_TAGS and not _RESTYLED_MARGIN_RE.search(body):
+        return ""
+    if closed_tags & _HTMLBlockTextExtractor._BLOCK_TAGS:
+        return "<br>"
+    return "<br><br>"
 
 
 def _wrap_signature_html(signature_html: str) -> str:
@@ -1064,10 +1736,11 @@ async def _get_send_as_identity_and_signature(
 ) -> tuple[str, str, str]:
     """Resolve (sender_email, display_name, signature_html) for a send-as identity.
 
-    With require_match, raises when from_email is not a usable send-as address,
-    since Gmail would silently send from the default address instead; without
-    it, an unlisted from_email takes the primary entry's signature. Validation
-    is skipped when the send-as list is unreadable.
+    ``display_name`` is the name Gmail web renders in the From line, or "" when
+    unset. With require_match, raises when from_email is not a usable send-as
+    address, since Gmail would silently send from the default address instead;
+    without it, an unlisted from_email takes the primary entry's signature.
+    Validation is skipped when the send-as list is unreadable.
     """
     send_as_entries = await _get_send_as_entries(service)
     selected_entry = None

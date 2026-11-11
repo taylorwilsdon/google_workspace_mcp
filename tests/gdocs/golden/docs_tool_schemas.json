@@ -11,8 +11,16 @@
         "description": "ID of the document to update"
       },
       "start_index": {
-        "type": "integer",
-        "description": "Start position for operation using Docs API indices from\ninspect_doc_structure. For the main body, 0 is also accepted as an\nalias for the first writable position."
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Start position for operation using Docs API indices from\ninspect_doc_structure. For the main body, 0 is also accepted as an\nalias for the first writable position. Required unless heading is set."
       },
       "end_index": {
         "anyOf": [
@@ -36,7 +44,31 @@
           }
         ],
         "default": null,
-        "description": "New text to insert or replace with (optional - can format existing text without changing it)"
+        "description": "New text to insert or replace with (optional - can format existing text without changing it).\nRendered as Markdown when heading is set."
+      },
+      "heading": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Text of a body heading (case-insensitive, must match exactly one) whose\nsection to edit instead of start_index/end_index"
+      },
+      "heading_level": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Optional 1-6 heading level to narrow the heading match"
       },
       "tab_id": {
         "anyOf": [
@@ -48,7 +80,7 @@
           }
         ],
         "default": null,
-        "description": "Optional document tab ID to target"
+        "description": "Optional document tab ID to target (required with heading when the doc has multiple tabs)"
       },
       "segment_id": {
         "anyOf": [
@@ -226,8 +258,7 @@
     },
     "required": [
       "user_google_email",
-      "document_id",
-      "start_index"
+      "document_id"
     ],
     "type": "object"
   },
@@ -1071,6 +1102,111 @@
         },
         "required": [
           "type"
+        ],
+        "type": "object"
+      },
+      "InsertPersonOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "tab_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional document tab ID to target."
+          },
+          "segment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional header/footer/footnote segment ID. Use a real ID returned by inspect_doc_structure; do not guess values like 'kix.header'."
+          },
+          "index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Insertion index. Omit when end_of_segment=true."
+          },
+          "end_of_segment": {
+            "default": false,
+            "description": "Append to the end of the targeted body/segment instead of using index.",
+            "type": "boolean"
+          },
+          "after_heading": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Insert immediately after the heading paragraph with this exact text, resolved to an index at execution time. Errors when it matches zero or more than one heading."
+          },
+          "before_heading": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Insert immediately before the heading paragraph with this exact text. Errors when it matches zero or more than one heading."
+          },
+          "anchor_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Insert relative to this literal text, which must occur exactly once within a single paragraph. Use anchor_position to pick which side."
+          },
+          "anchor_position": {
+            "default": "after",
+            "description": "Which side of anchor_text to insert on. Defaults to 'after'.",
+            "enum": [
+              "before",
+              "after"
+            ],
+            "type": "string"
+          },
+          "type": {
+            "const": "insert_person",
+            "type": "string"
+          },
+          "email": {
+            "description": "Email of the person to @mention as a smart chip.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "email"
         ],
         "type": "object"
       },
@@ -2674,6 +2810,7 @@
               "insert_doc_tab": "#/$defs/InsertDocTabOperation",
               "insert_image": "#/$defs/InsertImageOperation",
               "insert_page_break": "#/$defs/InsertPageBreakOperation",
+              "insert_person": "#/$defs/InsertPersonOperation",
               "insert_section_break": "#/$defs/InsertSectionBreakOperation",
               "insert_table": "#/$defs/InsertTableOperation",
               "insert_table_column": "#/$defs/InsertTableColumnOperation",
@@ -2775,6 +2912,9 @@
             },
             {
               "$ref": "#/$defs/InsertImageOperation"
+            },
+            {
+              "$ref": "#/$defs/InsertPersonOperation"
             },
             {
               "$ref": "#/$defs/InsertDocTabOperation"

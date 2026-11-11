@@ -1283,6 +1283,27 @@ def create_insert_image_request(
     return request
 
 
+def create_insert_person_request(
+    index: Optional[int],
+    email: str,
+    tab_id: Optional[str] = None,
+    segment_id: Optional[str] = None,
+    end_of_segment: bool = False,
+) -> Dict[str, Any]:
+    """Create an insertPerson request that adds a person smart chip for ``email``."""
+    return {
+        "insertPerson": {
+            "personProperties": {"email": email},
+            **_build_location(
+                index=index,
+                tab_id=tab_id,
+                segment_id=segment_id,
+                end_of_segment=end_of_segment,
+            ),
+        }
+    }
+
+
 def create_bullet_list_request(
     start_index: int,
     end_index: int,
@@ -1890,6 +1911,7 @@ def validate_operation(operation: Dict[str, Any]) -> tuple[bool, str]:
         "update_section_style": ["start_index", "end_index"],
         "create_header_footer": ["section_type"],
         "insert_image": ["image_uri"],
+        "insert_person": ["email"],
         "insert_doc_tab": ["title", "index"],
         "delete_doc_tab": ["tab_id"],
         "update_doc_tab": ["tab_id", "title"],
@@ -1929,6 +1951,7 @@ def validate_operation(operation: Dict[str, Any]) -> tuple[bool, str]:
         "insert_page_break",
         "insert_section_break",
         "insert_image",
+        "insert_person",
     }:
         provided = sum(
             [operation.get("index") is not None, bool(operation.get("end_of_segment"))]

@@ -25,6 +25,7 @@ from gdocs.docs_helpers import (
     create_insert_page_break_request,
     create_insert_section_break_request,
     create_insert_image_request,
+    create_insert_person_request,
     create_bullet_list_request,
     create_delete_bullet_list_request,
     create_named_range_request,
@@ -246,6 +247,7 @@ class BatchOperationManager:
                 "insert_page_break",
                 "insert_section_break",
                 "insert_image",
+                "insert_person",
             }:
                 return "Semantic anchors are supported only for insertion operations."
             valid, error = validate_operation(op)
@@ -969,6 +971,20 @@ class BatchOperationManager:
                 else f"insert image at {op.get('index')}"
             )
 
+        elif op_type == "insert_person":
+            request = create_insert_person_request(
+                op.get("index"),
+                op["email"],
+                tab_id,
+                segment_id=segment_id,
+                end_of_segment=end_of_segment,
+            )
+            description = (
+                f"mention {op['email']} at end of segment '{segment_id or 'body'}'"
+                if end_of_segment
+                else f"mention {op['email']} at {op.get('index')}"
+            )
+
         elif op_type == "insert_doc_tab":
             request = create_insert_doc_tab_request(
                 op["title"], op["index"], op.get("parent_tab_id")
@@ -1120,6 +1136,7 @@ class BatchOperationManager:
                 "update_section_style",
                 "create_header_footer",
                 "insert_image",
+                "insert_person",
                 "insert_doc_tab",
                 "delete_doc_tab",
                 "update_doc_tab",
@@ -1421,6 +1438,11 @@ class BatchOperationManager:
                         "height",
                     ],
                     "description": "Insert an inline image at a location or at the end of a segment",
+                },
+                "insert_person": {
+                    "required": ["email"],
+                    "optional": ["index", "end_of_segment", "segment_id", "tab_id"],
+                    "description": "Insert a person @mention smart chip",
                 },
                 "insert_doc_tab": {
                     "required": ["title", "index"],

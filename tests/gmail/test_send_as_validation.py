@@ -130,7 +130,7 @@ async def test_send_without_from_email_keeps_the_authenticated_sender():
     await _send(service)
 
     sent = _sent_message(service)
-    assert sent["From"] == "primary@example.com"
+    assert sent["From"] == "Primary Person <primary@example.com>"
     assert "Primary sig" in sent.get_body().get_content()
 
 
@@ -178,7 +178,7 @@ async def test_send_without_from_email_tolerates_an_unlisted_login_address():
     await _send(service)
 
     sent = _sent_message(service)
-    assert sent["From"] == "primary@example.com"
+    assert sent["From"] == "Primary Person <primary@example.com>"
     assert "Login sig" in sent.get_body().get_content()
 
 

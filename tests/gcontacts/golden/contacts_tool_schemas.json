@@ -430,7 +430,7 @@
           }
         ],
         "default": null,
-        "description": "Street address (for create/update)."
+        "description": "Street address, replacing any existing addresses. \"\" clears them (for create/update)."
       },
       "birthday": {
         "anyOf": [
@@ -492,7 +492,7 @@
           "remove"
         ],
         "type": "string",
-        "description": "How to update urls on \"update\": \"merge\" (default), \"replace\", or \"remove\".\nmerge dedups by normalized URL (lowercased, trailing slash stripped)."
+        "description": "How to update urls on \"update\": \"merge\" (default), \"replace\", or \"remove\".\nmerge and remove match URLs case-insensitively on scheme and host only, ignoring a trailing slash."
       },
       "user_defined_mode": {
         "default": "merge",
@@ -1267,7 +1267,7 @@
           }
         ],
         "default": null,
-        "description": "List of contact dicts for \"create\" action.\nEach dict may contain: given_name, family_name, phones, emails, organizations,\nnotes, address. Deprecated: phone, email, organization, job_title."
+        "description": "List of contact dicts for \"create\" action.\nEach dict may contain: given_name, family_name, phones, emails,\norganizations, nicknames, urls, user_defined, relations, notes, address,\nbirthday. Deprecated: phone, email, organization, job_title."
       },
       "updates": {
         "anyOf": [
@@ -1322,7 +1322,7 @@
           }
         ],
         "default": null,
-        "description": "For \"update\" action \u2014 the single People API field to update across\nall contacts in this batch. Required. Must be one of: names, phoneNumbers,\nemailAddresses, organizations, nicknames, urls, userDefined, relations,\nbiographies, addresses, birthdays. Using a single field per batch call prevents\nunintentional data loss from a union updateMask overwriting unrelated fields."
+        "description": "For \"update\" action, the single People API field to update across\nall contacts in this batch. Required. Must be one of: names, phoneNumbers,\nemailAddresses, organizations, nicknames, urls, userDefined, relations,\nbiographies, addresses, birthdays. Using a single field per batch call prevents\nunintentional data loss from a union updateMask overwriting unrelated fields."
       }
     },
     "required": [

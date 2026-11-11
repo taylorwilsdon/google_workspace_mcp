@@ -315,6 +315,38 @@ def fatal(ui: StartupDisplay, text: str, *details: str) -> NoReturn:
     sys.exit(1)
 
 
+def _local_ipv4_addresses() -> list[str]:
+    """Best-effort list of this machine's IPv4 addresses, loopback first."""
+    try:
+        infos = socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)
+    except (OSError, UnicodeError):
+        infos = []
+    return list(dict.fromkeys(["127.0.0.1", *(info[4][0] for info in infos)]))
+
+
+def _http_port_conflict(host: str, port: int) -> str | None:
+    """Return why uvicorn could not serve host:port, or None if it can."""
+    # macOS SO_REUSEADDR wildcard binds coexist with specific-address listeners.
+    connect_hosts = _local_ipv4_addresses() if host in ("", "0.0.0.0") else [host]
+    for connect_host in connect_hosts:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(0.5)
+                if s.connect_ex((connect_host, port)) == 0:
+                    return f"a server is already listening on {connect_host}:{port}"
+        except OSError:
+            pass
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            if os.name != "nt":  # matches asyncio's reuse_address default
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind((host, port))
+    except OSError as e:
+        return str(e)
+    return None
+
+
 def configure_safe_logging():
     """Replace console handlers with ASCII-safe formatters for Windows compatibility."""
 
@@ -1013,15 +1045,9 @@ def main():
 
         if args.transport == "streamable-http":
             # Check port availability before starting HTTP server
-            try:
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    s.bind((host, port))
-            except OSError as e:
-                fatal(
-                    ui,
-                    f"Port {port} is already in use. Cannot start HTTP server.",
-                    str(e),
-                )
+            conflict = _http_port_conflict(host, port)
+            if conflict is not None:
+                fatal(ui, f"Cannot start HTTP server on {host}:{port}", conflict)
 
             server.run(
                 transport="streamable-http",
@@ -1043,13 +1069,12 @@ def main():
                 async def _run_dual() -> None:
                     """Run stdio and HTTP transports concurrently."""
                     http_available = True
-                    try:
-                        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                            s.bind((http_host, http_port))
-                    except OSError:
+                    conflict = _http_port_conflict(http_host, http_port)
+                    if conflict is not None:
                         logger.warning(
-                            "Port %d in use, workspace-cli HTTP endpoint unavailable",
+                            "workspace-cli HTTP endpoint unavailable on port %d: %s",
                             http_port,
+                            conflict,
                         )
                         http_available = False
 

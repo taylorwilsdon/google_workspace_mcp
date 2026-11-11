@@ -12,13 +12,16 @@ import os
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
+from core.utils import UserInputError
+from gcalendar.calendar_helpers import (
+    _status_event_time_entry,
+    _validate_auto_decline_mode,
+)
 from gcalendar.calendar_tools import (
     _create_ooo_event_impl,
     _list_ooo_events_impl,
     _update_ooo_event_impl,
     _delete_ooo_event_impl,
-    _validate_auto_decline_mode,
-    _ooo_time_entry,
 )
 
 
@@ -52,19 +55,19 @@ class TestValidateAutoDeclineMode:
             assert _validate_auto_decline_mode(mode, "test") == mode
 
     def test_rejects_invalid_mode(self):
-        with pytest.raises(ValueError, match="Invalid auto_decline_mode"):
+        with pytest.raises(UserInputError, match="Invalid auto_decline_mode"):
             _validate_auto_decline_mode("invalidMode", "test")
 
 
 # ---------------------------------------------------------------------------
-# _ooo_time_entry — date-only to dateTime conversion
+# _status_event_time_entry: date-only to dateTime conversion
 # ---------------------------------------------------------------------------
 
 
-class TestOooTimeEntry:
+class TestStatusEventTimeEntry:
     def test_date_only_start_converts_to_midnight_when_timezone_provided(self):
-        result = _ooo_time_entry(
-            "2026-04-05", is_end=False, timezone="America/New_York"
+        result = _status_event_time_entry(
+            "2026-04-05", "Out of Office", timezone="America/New_York"
         )
         assert result == {
             "dateTime": "2026-04-05T00:00:00",
@@ -72,19 +75,21 @@ class TestOooTimeEntry:
         }
 
     def test_date_only_end_converts_to_midnight_when_timezone_provided(self):
-        result = _ooo_time_entry("2026-04-06", is_end=True, timezone="America/New_York")
+        result = _status_event_time_entry(
+            "2026-04-06", "Out of Office", timezone="America/New_York"
+        )
         assert result == {
             "dateTime": "2026-04-06T00:00:00",
             "timeZone": "America/New_York",
         }
 
     def test_datetime_passed_through_unchanged(self):
-        result = _ooo_time_entry("2026-04-05T09:00:00Z", is_end=False)
+        result = _status_event_time_entry("2026-04-05T09:00:00Z", "Out of Office")
         assert result == {"dateTime": "2026-04-05T09:00:00Z"}
 
     def test_timezone_added_when_provided(self):
-        result = _ooo_time_entry(
-            "2026-04-05", is_end=False, timezone="America/New_York"
+        result = _status_event_time_entry(
+            "2026-04-05", "Out of Office", timezone="America/New_York"
         )
         assert result == {
             "dateTime": "2026-04-05T00:00:00",
@@ -92,8 +97,8 @@ class TestOooTimeEntry:
         }
 
     def test_timezone_added_to_datetime_input(self):
-        result = _ooo_time_entry(
-            "2026-04-05T09:00:00", is_end=False, timezone="Europe/London"
+        result = _status_event_time_entry(
+            "2026-04-05T09:00:00", "Out of Office", timezone="Europe/London"
         )
         assert result == {
             "dateTime": "2026-04-05T09:00:00",
@@ -101,12 +106,14 @@ class TestOooTimeEntry:
         }
 
     def test_rejects_date_only_without_timezone(self):
-        with pytest.raises(ValueError, match="require either a timezone"):
-            _ooo_time_entry("2026-04-05", is_end=False, timezone=None)
+        with pytest.raises(UserInputError, match="Out of Office events require"):
+            _status_event_time_entry("2026-04-05", "Out of Office", timezone=None)
 
     def test_rejects_naive_datetime_without_timezone(self):
-        with pytest.raises(ValueError, match="require either a timezone"):
-            _ooo_time_entry("2026-04-05T09:00:00", is_end=False, timezone=None)
+        with pytest.raises(UserInputError, match="Out of Office events require"):
+            _status_event_time_entry(
+                "2026-04-05T09:00:00", "Out of Office", timezone=None
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -299,10 +306,10 @@ async def test_create_ooo_custom_calendar_id():
 
 @pytest.mark.asyncio
 async def test_create_ooo_invalid_decline_mode_never_calls_api():
-    """Invalid decline mode raises ValueError before any API call."""
+    """Invalid decline mode raises UserInputError before any API call."""
     mock_service = _create_mock_service()
 
-    with pytest.raises(ValueError, match="Invalid auto_decline_mode"):
+    with pytest.raises(UserInputError, match="Invalid auto_decline_mode"):
         await _create_ooo_event_impl(
             service=mock_service,
             user_google_email="user@example.com",
@@ -318,7 +325,7 @@ async def test_create_ooo_date_only_requires_timezone():
     """Date-only OOO input must be anchored with a timezone."""
     mock_service = _create_mock_service()
 
-    with pytest.raises(ValueError, match="require either a timezone"):
+    with pytest.raises(UserInputError, match="Out of Office events require"):
         await _create_ooo_event_impl(
             service=mock_service,
             user_google_email="user@example.com",
@@ -516,7 +523,7 @@ async def test_list_ooo_page_token_requires_time_min():
     mock_service = _create_mock_service()
     mock_service.events().list.reset_mock()
 
-    with pytest.raises(ValueError, match="page_token requires time_min"):
+    with pytest.raises(UserInputError, match="page_token requires time_min"):
         await _list_ooo_events_impl(
             service=mock_service,
             user_google_email="user@example.com",
@@ -693,7 +700,7 @@ async def test_update_ooo_can_patch_recurrence():
 
 @pytest.mark.asyncio
 async def test_update_non_ooo_event_raises_error():
-    """Update raises ValueError when event is not an OOO event."""
+    """Update raises UserInputError when event is not an OOO event."""
     mock_service = _create_mock_service()
     mock_service.events().get().execute = Mock(
         return_value={
@@ -703,7 +710,7 @@ async def test_update_non_ooo_event_raises_error():
         }
     )
 
-    with pytest.raises(ValueError, match="not an Out of Office event"):
+    with pytest.raises(UserInputError, match="not an Out of Office event"):
         await _update_ooo_event_impl(
             service=mock_service,
             user_google_email="user@example.com",
@@ -793,7 +800,7 @@ async def test_delete_non_ooo_event_raises_error():
         return_value={"id": "regular123", "eventType": "default"}
     )
 
-    with pytest.raises(ValueError, match="not an Out of Office event"):
+    with pytest.raises(UserInputError, match="not an Out of Office event"):
         await _delete_ooo_event_impl(
             service=mock_service,
             user_google_email="user@example.com",

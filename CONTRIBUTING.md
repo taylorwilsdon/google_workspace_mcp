@@ -49,6 +49,7 @@ gmail/
 
 - Keep changes focused. One bug fix or one improvement per PR.
 - Include tests for new behavior. Look at the existing `tests/` directory for patterns.
+- Adding, renaming, or removing a tool or parameter means updating the bundled skill in the same PR: a routing row in `skills/managing-google-workspace/SKILL.md` and the parameter table in its `references/` file. `tests/test_skill_sync.py` fails until they match.
 - Follow PEP 8. Imports go at the top of the file in the standard order (stdlib, third-party, local), never nested inside functions or classes.
 - Don't introduce new dependencies without discussion in an issue first.
 - Enable "Allow edits from maintainers" on your PR (required by CI for forks).

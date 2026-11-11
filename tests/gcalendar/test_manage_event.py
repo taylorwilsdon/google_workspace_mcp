@@ -16,11 +16,13 @@ from pydantic import TypeAdapter
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from core.utils import UserInputError, handle_http_errors
-from gcalendar.calendar_tools import (
+from gcalendar.calendar_helpers import (
     _build_addon_conference_data,
+    _resolve_conference_data,
+)
+from gcalendar.calendar_tools import (
     _create_event_impl,
     _modify_event_impl,
-    _resolve_conference_data,
     manage_event,
 )
 
@@ -199,19 +201,19 @@ def test_resolve_conference_data_returns_none_when_nothing_requested():
 
 
 def test_resolve_conference_data_rejects_helper_without_uri():
-    with pytest.raises(ValueError):
+    with pytest.raises(UserInputError):
         _resolve_conference_data(None, "zoom", None, None, None, None)
 
 
 def test_resolve_conference_data_rejects_raw_and_helper_combined():
-    with pytest.raises(ValueError):
+    with pytest.raises(UserInputError):
         _resolve_conference_data(
             {"a": 1}, "zoom", "https://zoom.us/j/1", None, None, None
         )
 
 
 def test_resolve_conference_data_rejects_conflict_with_google_meet():
-    with pytest.raises(ValueError):
+    with pytest.raises(UserInputError):
         _resolve_conference_data(
             None, "zoom", "https://zoom.us/j/1", None, None, add_google_meet=True
         )
@@ -290,7 +292,7 @@ async def test_modify_event_attaches_conference_data():
 @pytest.mark.asyncio
 async def test_manage_event_rejects_conference_helper_without_uri():
     fn = _unwrap(manage_event)
-    with pytest.raises(ValueError, match="conference_provider and conference_uri"):
+    with pytest.raises(UserInputError, match="conference_provider and conference_uri"):
         await fn(
             service=Mock(),
             user_google_email="user@example.com",
@@ -306,7 +308,7 @@ async def test_manage_event_rejects_conference_helper_without_uri():
 @pytest.mark.parametrize("action", ["create", "update", "delete", "rsvp"])
 async def test_manage_event_rejects_invalid_send_updates(action):
     fn = _unwrap(manage_event)
-    with pytest.raises(ValueError, match="Invalid send_updates 'invalid'"):
+    with pytest.raises(UserInputError, match="Invalid send_updates 'invalid'"):
         await fn(
             service=Mock(),
             user_google_email="user@example.com",
@@ -433,7 +435,7 @@ async def test_manage_event_create_action_routes_attendee_objects():
 async def test_create_event_rejects_attendee_without_email():
     mock_service = _create_mock_service()
 
-    with pytest.raises(ValueError, match="'email' key"):
+    with pytest.raises(UserInputError, match="'email' key"):
         await _create_event_impl(
             service=mock_service,
             user_google_email="user@example.com",
@@ -448,7 +450,7 @@ async def test_create_event_rejects_attendee_without_email():
 async def test_modify_event_rejects_attendee_without_email():
     mock_service = _create_mock_service()
 
-    with pytest.raises(ValueError, match="'email' key"):
+    with pytest.raises(UserInputError, match="'email' key"):
         await _modify_event_impl(
             service=mock_service,
             user_google_email="user@example.com",
@@ -468,7 +470,7 @@ async def test_manage_event_attendee_errors_are_user_input(action, invalid_atten
         _unwrap(manage_event)
     )
 
-    with pytest.raises(UserInputError, match="'email' key") as exc_info:
+    with pytest.raises(UserInputError, match="'email' key"):
         await fn(
             service=mock_service,
             user_google_email="user@example.com",
@@ -480,26 +482,22 @@ async def test_manage_event_attendee_errors_are_user_input(action, invalid_atten
             attendees=["kept@example.com", invalid_attendee],
         )
 
-    assert isinstance(exc_info.value, ValueError)
     assert mock_service.mock_calls == []
 
 
 @pytest.mark.asyncio
-async def test_manage_event_unrelated_value_error_keeps_existing_handling():
+async def test_manage_event_validation_errors_are_user_input():
     fn = handle_http_errors("manage_event", service_type="calendar")(
         _unwrap(manage_event)
     )
 
-    with pytest.raises(Exception, match="An unexpected error occurred") as exc_info:
+    with pytest.raises(UserInputError, match="Invalid send_updates"):
         await fn(
             service=Mock(),
             user_google_email="user@example.com",
             action="create",
             send_updates="invalid",
         )
-
-    assert isinstance(exc_info.value.__cause__, ValueError)
-    assert not isinstance(exc_info.value.__cause__, UserInputError)
 
 
 @pytest.mark.parametrize(
@@ -521,3 +519,316 @@ def test_manage_event_attendees_schema_accepts_mixed_and_json_string(raw, expect
     )
 
     assert TypeAdapter(annotation).validate_python(raw) == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["create", "update"])
+@pytest.mark.parametrize(
+    "color, expected", [("Tomato", "11"), (" basil ", "10"), ("5", "5")]
+)
+async def test_manage_event_resolves_color_names_and_ids(action, color, expected):
+    mock_service = _create_mock_service()
+
+    await _unwrap(manage_event)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        action=action,
+        event_id="evt123",
+        summary="Meeting",
+        start_time="2026-04-06T09:00:00Z",
+        end_time="2026-04-06T09:30:00Z",
+        color_id=color,
+    )
+
+    write = (
+        mock_service.events().insert
+        if action == "create"
+        else mock_service.events().patch
+    )
+    assert write.call_args[1]["body"]["colorId"] == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("color", ["chartreuse", "0", "12"])
+async def test_manage_event_rejects_unknown_color(color):
+    mock_service = _create_mock_service()
+    mock_service.reset_mock()
+
+    with pytest.raises(UserInputError, match="tomato \\(11\\)"):
+        await _unwrap(manage_event)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            action="create",
+            summary="Meeting",
+            start_time="2026-04-06T09:00:00Z",
+            end_time="2026-04-06T09:30:00Z",
+            color_id=color,
+        )
+
+    assert mock_service.mock_calls == []
+
+
+_NY = "America/New_York"
+_SERIES = {
+    "id": "series1",
+    "iCalUID": "series1@google.com",
+    "etag": '"3181"',
+    "htmlLink": "https://calendar.google.com/event?eid=series1",
+    "summary": "Weekly sync",
+    "attendees": [{"email": "teammate@example.com"}],
+    "start": {"dateTime": "2026-01-05T12:00:00-05:00", "timeZone": _NY},
+    "end": {"dateTime": "2026-01-05T13:00:00-05:00", "timeZone": _NY},
+    "recurrence": [
+        "RRULE:FREQ=WEEKLY;BYDAY=MO;COUNT=52",
+        "EXDATE;TZID=America/New_York:20260119T120000",
+    ],
+}
+_INSTANCE = {
+    "id": "series1_20260511T160000Z",
+    "recurringEventId": "series1",
+    "originalStartTime": {"dateTime": "2026-05-11T12:00:00-04:00", "timeZone": _NY},
+    "start": {"dateTime": "2026-05-11T12:00:00-04:00", "timeZone": _NY},
+    "end": {"dateTime": "2026-05-11T13:00:00-04:00", "timeZone": _NY},
+}
+
+
+def _series_service(instance, series, *later_gets):
+    service = Mock()
+    events = service.events.return_value
+    events.get.return_value.execute.side_effect = [instance, series, *later_gets]
+    events.insert.return_value.execute.return_value = {
+        "id": "series2",
+        "summary": series.get("summary"),
+    }
+    return service, events
+
+
+@pytest.mark.asyncio
+async def test_manage_event_this_and_following_splits_series():
+    service, events = _series_service(_INSTANCE, _SERIES)
+
+    result = await _unwrap(manage_event)(
+        service=service,
+        user_google_email="user@example.com",
+        action="update",
+        event_id=_INSTANCE["id"],
+        start_time="2026-05-13T10:00:00-04:00",
+        end_time="2026-05-13T11:00:00-04:00",
+        recurrence=["RRULE:FREQ=WEEKLY;BYDAY=WE"],
+        this_and_following=True,
+    )
+
+    events.patch.assert_called_once_with(
+        calendarId="primary",
+        eventId="series1",
+        body={
+            "recurrence": [
+                "RRULE:FREQ=WEEKLY;BYDAY=MO;UNTIL=20260511T155959Z",
+                "EXDATE;TZID=America/New_York:20260119T120000",
+            ]
+        },
+        sendUpdates="all",
+    )
+    inserted = events.insert.call_args.kwargs["body"]
+    assert inserted["summary"] == "Weekly sync"
+    assert inserted["attendees"] == [{"email": "teammate@example.com"}]
+    assert inserted["start"] == {
+        "dateTime": "2026-05-13T10:00:00-04:00",
+        "timeZone": _NY,
+    }
+    assert inserted["end"] == {
+        "dateTime": "2026-05-13T11:00:00-04:00",
+        "timeZone": _NY,
+    }
+    assert inserted["recurrence"] == ["RRULE:FREQ=WEEKLY;BYDAY=WE"]
+    assert inserted["id"] != "series1"
+    assert not {"iCalUID", "etag", "htmlLink"} & inserted.keys()
+    assert "series ID series2" in result
+
+
+@pytest.mark.asyncio
+async def test_this_and_following_moved_instance_keeps_series_slot():
+    moved = {
+        **_INSTANCE,
+        "start": {"dateTime": "2026-05-12T15:00:00-04:00", "timeZone": _NY},
+        "end": {"dateTime": "2026-05-12T17:30:00-04:00", "timeZone": _NY},
+    }
+    service, events = _series_service(moved, _SERIES)
+
+    await _modify_event_impl(
+        service=service,
+        user_google_email="user@example.com",
+        event_id=moved["id"],
+        summary="Renamed",
+        recurrence=["RRULE:FREQ=WEEKLY;BYDAY=MO"],
+        this_and_following=True,
+    )
+
+    inserted = events.insert.call_args.kwargs["body"]
+    assert inserted["start"] == _INSTANCE["originalStartTime"]
+    assert inserted["end"] == {
+        "dateTime": "2026-05-11T13:00:00-04:00",
+        "timeZone": _NY,
+    }
+
+
+@pytest.mark.asyncio
+async def test_this_and_following_all_day_keeps_rules_and_instance_times():
+    series = {
+        "id": "weekly1",
+        "summary": "Garden",
+        "start": {"date": "2026-01-03"},
+        "end": {"date": "2026-01-04"},
+        "recurrence": ["RRULE:FREQ=WEEKLY;UNTIL=20261231"],
+    }
+    instance = {
+        "id": "weekly1_20260509",
+        "recurringEventId": "weekly1",
+        "originalStartTime": {"date": "2026-05-09"},
+        "start": {"date": "2026-05-09"},
+        "end": {"date": "2026-05-10"},
+    }
+    service, events = _series_service(instance, series)
+
+    await _modify_event_impl(
+        service=service,
+        user_google_email="user@example.com",
+        event_id=instance["id"],
+        summary="Vegetable garden",
+        this_and_following=True,
+    )
+
+    assert events.patch.call_args.kwargs["body"] == {
+        "recurrence": ["RRULE:FREQ=WEEKLY;UNTIL=20260508"]
+    }
+    inserted = events.insert.call_args.kwargs["body"]
+    assert inserted["summary"] == "Vegetable garden"
+    assert inserted["start"] == {"date": "2026-05-09"}
+    assert inserted["end"] == {"date": "2026-05-10"}
+    assert inserted["recurrence"] == ["RRULE:FREQ=WEEKLY;UNTIL=20261231"]
+
+
+@pytest.mark.asyncio
+async def test_this_and_following_restores_series_when_insert_fails():
+    service, events = _series_service(_INSTANCE, _SERIES, RuntimeError("not found"))
+    events.insert.return_value.execute.side_effect = RuntimeError("insert failed")
+
+    with pytest.raises(RuntimeError, match="insert failed"):
+        await _modify_event_impl(
+            service=service,
+            user_google_email="user@example.com",
+            event_id=_INSTANCE["id"],
+            recurrence=["RRULE:FREQ=WEEKLY;BYDAY=WE"],
+            this_and_following=True,
+        )
+
+    restored = events.patch.call_args_list[-1].kwargs
+    assert events.patch.call_count == 2
+    assert restored["eventId"] == "series1"
+    assert restored["body"] == {"recurrence": _SERIES["recurrence"]}
+
+
+@pytest.mark.asyncio
+async def test_this_and_following_reports_truncated_series_when_restore_fails():
+    service, events = _series_service(_INSTANCE, _SERIES, RuntimeError("not found"))
+    events.insert.return_value.execute.side_effect = RuntimeError("insert failed")
+    events.patch.return_value.execute.side_effect = [{}, RuntimeError("rate limit")]
+
+    with pytest.raises(Exception, match="now ends before instance") as excinfo:
+        await _modify_event_impl(
+            service=service,
+            user_google_email="user@example.com",
+            event_id=_INSTANCE["id"],
+            recurrence=["RRULE:FREQ=WEEKLY;BYDAY=WE"],
+            this_and_following=True,
+        )
+
+    assert "COUNT=52" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_this_and_following_keeps_insert_that_landed_despite_error():
+    created = {"id": "series2", "summary": "Weekly sync"}
+    service, events = _series_service(_INSTANCE, _SERIES, created)
+    events.insert.return_value.execute.side_effect = TimeoutError("read timed out")
+
+    result = await _modify_event_impl(
+        service=service,
+        user_google_email="user@example.com",
+        event_id=_INSTANCE["id"],
+        recurrence=["RRULE:FREQ=WEEKLY;BYDAY=WE"],
+        this_and_following=True,
+    )
+
+    inserted_id = events.insert.call_args.kwargs["body"]["id"]
+    assert events.get.call_args.kwargs["eventId"] == inserted_id
+    assert events.patch.call_count == 1
+    assert "series ID series2" in result
+
+
+@pytest.mark.asyncio
+async def test_this_and_following_rejects_series_with_rdate():
+    series = {**_SERIES, "recurrence": ["RRULE:FREQ=WEEKLY", "RDATE:20260601T130000Z"]}
+    service, events = _series_service(_INSTANCE, series)
+
+    with pytest.raises(UserInputError, match="RDATE"):
+        await _modify_event_impl(
+            service=service,
+            user_google_email="user@example.com",
+            event_id=_INSTANCE["id"],
+            recurrence=["RRULE:FREQ=WEEKLY;BYDAY=WE"],
+            this_and_following=True,
+        )
+
+    events.patch.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_this_and_following_rejects_non_update_actions():
+    service = Mock()
+
+    with pytest.raises(UserInputError, match="only to the update action"):
+        await _unwrap(manage_event)(
+            service=service,
+            user_google_email="user@example.com",
+            action="delete",
+            event_id=_INSTANCE["id"],
+            this_and_following=True,
+        )
+
+    assert service.mock_calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "instance, recurrence, error",
+    [
+        (_SERIES, ["RRULE:FREQ=WEEKLY"], "not an active instance"),
+        (
+            {**_INSTANCE, "status": "cancelled"},
+            ["RRULE:FREQ=WEEKLY"],
+            "not an active instance",
+        ),
+        (
+            {**_INSTANCE, "originalStartTime": {"dateTime": "2026-01-05T17:00:00Z"}},
+            ["RRULE:FREQ=WEEKLY"],
+            "first instance",
+        ),
+        (_INSTANCE, None, "fixed COUNT"),
+    ],
+)
+async def test_this_and_following_rejects_before_writing(instance, recurrence, error):
+    service, events = _series_service(instance, _SERIES)
+
+    with pytest.raises(UserInputError, match=error):
+        await _modify_event_impl(
+            service=service,
+            user_google_email="user@example.com",
+            event_id=instance["id"],
+            summary="Renamed",
+            recurrence=recurrence,
+            this_and_following=True,
+        )
+
+    events.patch.assert_not_called()
+    events.insert.assert_not_called()

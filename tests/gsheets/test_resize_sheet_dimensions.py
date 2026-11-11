@@ -374,6 +374,63 @@ async def test_delete_columns_orders_requests_descending():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "delete_kwargs, insert_kwargs, expected_insert_index",
+    [
+        # Rows 2 and 3 go first, so original row 5 is now at index 2.
+        ({"delete_rows": [3, 2]}, {"insert_rows": 1, "insert_rows_at": 5}, 2),
+        # Deletions after the insert point do not move it.
+        ({"delete_rows": [7]}, {"insert_rows": 1, "insert_rows_at": 5}, 4),
+        # An insert inside a deleted span lands where the span was.
+        ({"delete_row_range": "3:6"}, {"insert_rows": 1, "insert_rows_at": 5}, 2),
+        # Column A goes first, so original column C is now at index 1.
+        ({"delete_columns": ["A"]}, {"insert_columns": 1, "insert_columns_at": "C"}, 1),
+    ],
+)
+async def test_insert_and_delete_use_original_positions(
+    delete_kwargs, insert_kwargs, expected_insert_index
+):
+    """Deletes run before inserts and insert positions refer to the original layout."""
+    mock_service = create_mock_service()
+
+    await _resize_sheet_dimensions_impl(
+        service=mock_service,
+        spreadsheet_id="test_123",
+        **delete_kwargs,
+        **insert_kwargs,
+    )
+
+    call_args = mock_service.spreadsheets().batchUpdate.call_args
+    requests = call_args[1]["body"]["requests"]
+    assert all("deleteDimension" in request for request in requests[:-1])
+    assert requests[-1]["insertDimension"]["range"]["startIndex"] == (
+        expected_insert_index
+    )
+
+
+@pytest.mark.asyncio
+async def test_duplicate_deletes_remove_each_position_once():
+    """Repeated rows or columns must not delete a neighbor after the shift."""
+    mock_service = create_mock_service()
+
+    await _resize_sheet_dimensions_impl(
+        service=mock_service,
+        spreadsheet_id="test_123",
+        delete_rows=[4, 4],
+        delete_columns=["b", "B"],
+    )
+
+    call_args = mock_service.spreadsheets().batchUpdate.call_args
+    requests = call_args[1]["body"]["requests"]
+    assert [
+        request["deleteDimension"]["range"]["startIndex"] for request in requests
+    ] == [
+        3,
+        1,
+    ]
+
+
+@pytest.mark.asyncio
 async def test_json_string_column_sizes():
     """Test column_sizes accepts JSON string input."""
     mock_service = create_mock_service()
@@ -496,7 +553,7 @@ async def test_sheet_not_found_raises_error():
     """Test that targeting a non-existent sheet raises UserInputError."""
     mock_service = create_mock_service()
 
-    with pytest.raises(UserInputError, match="not found"):
+    with pytest.raises(UserInputError, match="not found. Available sheets: Sheet1"):
         await _resize_sheet_dimensions_impl(
             service=mock_service,
             spreadsheet_id="test_123",

@@ -7,9 +7,10 @@ Converts Google Docs API JSON responses to clean Markdown, preserving:
 - Ordered and unordered lists with nesting
 - Checklists with checked/unchecked state
 - Tables with header row separators
-- Smart chips: person (@mentions), rich links, dates, inline images,
-  footnotes, horizontal rules, auto-text (page numbers), equations
+- Smart chips: person (@mentions), rich links, dates, dropdowns, inline
+  images, footnotes, horizontal rules, auto-text (page numbers), equations
 - Document tabs (multi-tab and nested child tabs)
+- Explicit RGB text color as a trailing ``[color: #rrggbb]`` note (opt-in)
 """
 
 from __future__ import annotations
@@ -38,7 +39,7 @@ HEADING_MAP = {
 }
 
 
-def convert_doc_to_markdown(doc: dict[str, Any]) -> str:
+def convert_doc_to_markdown(doc: dict[str, Any], include_colors: bool = False) -> str:
     """Convert a Google Docs API document response to markdown.
 
     Supports both legacy (top-level body) and tab-aware responses
@@ -47,6 +48,7 @@ def convert_doc_to_markdown(doc: dict[str, Any]) -> str:
 
     Args:
         doc: The document JSON from docs.documents.get()
+        include_colors: Mark text with an explicit RGB color as ``[color: #rrggbb]``
 
     Returns:
         Markdown string
@@ -54,24 +56,26 @@ def convert_doc_to_markdown(doc: dict[str, Any]) -> str:
     tabs = doc.get("tabs", [])
 
     if tabs:
-        return _convert_tabs_to_markdown(tabs)
+        return _convert_tabs_to_markdown(tabs, include_colors=include_colors)
 
     # Legacy: no tabs, use top-level body/lists/footnotes/inlineObjects
-    return _convert_body_to_markdown(doc)
+    return _convert_body_to_markdown(doc, include_colors=include_colors)
 
 
-def _convert_tabs_to_markdown(tabs: list[dict[str, Any]]) -> str:
+def _convert_tabs_to_markdown(
+    tabs: list[dict[str, Any]], include_colors: bool = False
+) -> str:
     """Convert a list of document tabs to markdown, recursing into child tabs."""
     all_tab_docs: list[tuple[str, dict[str, Any]]] = []
     _collect_tabs(tabs, all_tab_docs)
 
     if len(all_tab_docs) == 1:
         _, tab_doc = all_tab_docs[0]
-        return _convert_body_to_markdown(tab_doc)
+        return _convert_body_to_markdown(tab_doc, include_colors=include_colors)
 
     sections: list[str] = []
     for title, tab_doc in all_tab_docs:
-        tab_md = _convert_body_to_markdown(tab_doc)
+        tab_md = _convert_body_to_markdown(tab_doc, include_colors=include_colors)
         sections.append(f"# {title}\n\n{tab_md}")
 
     return "\n".join(sections).rstrip("\n") + "\n"
@@ -92,7 +96,7 @@ def _collect_tabs(
             _collect_tabs([child], result)
 
 
-def _convert_body_to_markdown(doc: dict[str, Any]) -> str:
+def _convert_body_to_markdown(doc: dict[str, Any], include_colors: bool = False) -> str:
     """Convert a single document body (or documentTab) to markdown."""
     body = doc.get("body", {})
     content = body.get("content", [])
@@ -113,6 +117,7 @@ def _convert_body_to_markdown(doc: dict[str, Any]) -> str:
                 footnotes_meta=footnotes_meta,
                 inline_objects=inline_objects,
                 footnote_defs=footnote_defs,
+                include_colors=include_colors,
             )
 
             if not text.strip():
@@ -136,6 +141,7 @@ def _convert_body_to_markdown(doc: dict[str, Any]) -> str:
                             footnotes_meta=footnotes_meta,
                             inline_objects=inline_objects,
                             footnote_defs=footnote_defs,
+                            include_colors=include_colors,
                         )
                         if checked
                         else text
@@ -178,6 +184,7 @@ def _convert_body_to_markdown(doc: dict[str, Any]) -> str:
                 footnotes_meta=footnotes_meta,
                 inline_objects=inline_objects,
                 footnote_defs=footnote_defs,
+                include_colors=include_colors,
             )
             lines.append(table_md)
             lines.append("")
@@ -203,26 +210,46 @@ def _convert_paragraph_text(
     inline_objects: dict[str, Any] | None = None,
     footnote_defs: list[tuple[str, str]] | None = None,
     active_footnotes: set[str] | None = None,
+    include_colors: bool = False,
 ) -> str:
     """Convert paragraph elements to inline markdown text."""
     parts: list[str] = []
     elements = para.get("elements", [])
     link_start = 0
+    color_visible = False
     for position, elem in enumerate(elements):
         if "textRun" in elem:
             link = text_run_link(elements, position)
             if text_run_link(elements, position - 1) != link:
                 link_start = len(parts)
             parts.append(_convert_text_run(elem["textRun"], skip_strikethrough))
-            # Link a label split across styled runs once, after its final run.
-            if link and text_run_link(elements, position + 1) != link:
+            color = _text_run_color(elements, position) if include_colors else None
+            if color:
+                if _text_run_color(elements, position - 1) != color:
+                    color_visible = False
+                color_visible |= bool(elem["textRun"].get("content", "").strip())
+            color_ends = (
+                color is not None
+                and color_visible
+                and _text_run_color(elements, position + 1) != color
+            )
+            # Link a label split across styled runs once, after its final run
+            # or before a color note.
+            if link and (color_ends or text_run_link(elements, position + 1) != link):
                 parts[link_start:] = [_apply_link("".join(parts[link_start:]), link)]
+                link_start = len(parts)
+            if color_ends:
+                label = parts[-1].rstrip()
+                parts[-1] = f"{label} [color: {color}]{parts[-1][len(label) :]}"
         elif "person" in elem:
             parts.append(_convert_person_chip(elem["person"]))
         elif "richLink" in elem:
             parts.append(_convert_rich_link_chip(elem["richLink"]))
         elif "dateElement" in elem:
             parts.append(_convert_date_chip(elem["dateElement"]))
+        elif "dropdown" in elem:
+            props = elem["dropdown"].get("dropdownProperties", {})
+            parts.append(props.get("displayValue", ""))
         elif "inlineObjectElement" in elem:
             parts.append(
                 _convert_inline_object(elem["inlineObjectElement"], inline_objects)
@@ -235,6 +262,7 @@ def _convert_paragraph_text(
                     inline_objects,
                     footnote_defs,
                     active_footnotes,
+                    include_colors=include_colors,
                 )
             )
         elif "horizontalRule" in elem:
@@ -337,6 +365,7 @@ def _convert_footnote_reference(
     inline_objects: dict[str, Any] | None,
     footnote_defs: list[tuple[str, str]] | None,
     active_footnotes: set[str] | None = None,
+    include_colors: bool = False,
 ) -> str:
     """Convert a footnote reference to a markdown footnote marker.
 
@@ -359,6 +388,7 @@ def _convert_footnote_reference(
                     inline_objects=inline_objects,
                     footnote_defs=footnote_defs,
                     active_footnotes=next_active,
+                    include_colors=include_colors,
                 )
                 footnote_defs.append((fn_id, fn_text))
     return f"[^{fn_id}]"
@@ -371,6 +401,7 @@ def _convert_footnote_content(
     inline_objects: dict[str, Any] | None,
     footnote_defs: list[tuple[str, str]] | None,
     active_footnotes: set[str] | None = None,
+    include_colors: bool = False,
 ) -> str:
     """Convert footnote content with the same inline handling as body paragraphs."""
     parts: list[str] = []
@@ -382,6 +413,7 @@ def _convert_footnote_content(
                 inline_objects=inline_objects,
                 footnote_defs=footnote_defs,
                 active_footnotes=active_footnotes,
+                include_colors=include_colors,
             )
             if text.strip():
                 parts.append(text.strip())
@@ -392,6 +424,7 @@ def _convert_footnote_content(
                 inline_objects=inline_objects,
                 footnote_defs=footnote_defs,
                 active_footnotes=active_footnotes,
+                include_colors=include_colors,
             )
             if table_text.strip():
                 parts.append(table_text.replace("\n", " "))
@@ -449,6 +482,21 @@ def _apply_text_style(
         text = f"~~{text}~~"
 
     return text
+
+
+def _text_run_color(elements: list[dict[str, Any]], index: int) -> str | None:
+    """Return the explicit RGB foreground color of the run at ``index`` as ``#rrggbb``.
+
+    Theme colors have no fixed hex value and return None.
+    """
+    if not 0 <= index < len(elements):
+        return None
+    style = elements[index].get("textRun", {}).get("textStyle", {})
+    rgb = style.get("foregroundColor", {}).get("color", {}).get("rgbColor")
+    if rgb is None:
+        return None
+    channels = (rgb.get(key, 0.0) for key in ("red", "green", "blue"))
+    return "#" + "".join(f"{min(255, max(0, round(c * 255))):02x}" for c in channels)
 
 
 def _apply_link(text: str, link: dict[str, Any]) -> str:
@@ -521,6 +569,7 @@ def _convert_table(
     inline_objects: dict[str, Any] | None = None,
     footnote_defs: list[tuple[str, str]] | None = None,
     active_footnotes: set[str] | None = None,
+    include_colors: bool = False,
 ) -> str:
     """Convert a table element to markdown."""
     rows = table.get("tableRows", [])
@@ -537,6 +586,7 @@ def _convert_table(
                 inline_objects=inline_objects,
                 footnote_defs=footnote_defs,
                 active_footnotes=active_footnotes,
+                include_colors=include_colors,
             )
             cells.append(cell_text)
         md_rows.append("| " + " | ".join(cells) + " |")
@@ -555,6 +605,7 @@ def _extract_cell_text(
     inline_objects: dict[str, Any] | None = None,
     footnote_defs: list[tuple[str, str]] | None = None,
     active_footnotes: set[str] | None = None,
+    include_colors: bool = False,
 ) -> str:
     """Extract text from a table cell."""
     parts: list[str] = []
@@ -566,6 +617,7 @@ def _extract_cell_text(
                 inline_objects=inline_objects,
                 footnote_defs=footnote_defs,
                 active_footnotes=active_footnotes,
+                include_colors=include_colors,
             )
             if text.strip():
                 parts.append(text.strip())

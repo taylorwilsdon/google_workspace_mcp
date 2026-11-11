@@ -22,6 +22,7 @@ from fastmcp.tools import ToolResult
 from mcp.types import (
     BlobResourceContents,
     EmbeddedResource,
+    ImageContent,
     TextContent,
     ToolAnnotations,
 )
@@ -31,18 +32,27 @@ from auth.oauth_config import is_stateless_mode
 from core.attachment_storage import get_attachment_storage, get_attachment_url
 from core.file_limits import (
     FileTooLargeError,
+    PagedContentCache,
     download_media_bytes,
     ensure_within_file_size_limit,
+    get_max_content_chars,
+    get_paged_content_cache_bytes,
     get_stateless_inline_max_bytes,
+    page_content_text,
 )
 from core.gcs_attachment_storage import gcs_files_enabled
 from core.utils import (
     GOOGLE_API_WRITE_RETRIES,
     IMAGE_MIME_TYPES,
+    INLINE_IMAGE_MIME_TYPES,
+    SVG_MIME_TYPE,
     hide_local_file_args,
     hide_remote_only_args,
     local_file_access_enabled,
     encode_image_content,
+    image_content_from_bytes,
+    sniff_inline_image_mime_type,
+    svg_content,
     OfficeXmlExtractionError,
     OfficeXmlTooLargeError,
     UserInputError,
@@ -52,6 +62,7 @@ from core.utils import (
     validate_file_path,
 )
 from core.server import server
+from core.telemetry import record_degraded_failure
 from core.config import get_transport_mode
 from gdrive.drive_helpers import (
     DRIVE_QUERY_PATTERNS,
@@ -59,6 +70,7 @@ from gdrive.drive_helpers import (
     GOOGLE_APPS_MIME_PREFIX,
     GOOGLE_DOCS_IMPORT_FORMATS,
     GOOGLE_DOCS_MIME_TYPE,
+    GOOGLE_DRAWINGS_MIME_TYPE,
     GOOGLE_SHEETS_IMPORT_FORMATS,
     GOOGLE_SHEETS_MIME_TYPE,
     GOOGLE_SLIDES_IMPORT_FORMATS,
@@ -67,6 +79,7 @@ from gdrive.drive_helpers import (
     SHORTCUT_MIME_TYPE,
     UPLOAD_CHUNK_SIZE_BYTES,
     _create_drive_folder_impl,
+    _create_drive_shortcut_impl,
     _decode_base64_upload,
     _download_file_bytes,
     _download_file_to_temp,
@@ -83,6 +96,8 @@ from gdrive.drive_helpers import (
     flag_incomplete_search,
     list_all_permissions,
     derive_shared_state,
+    drawing_export_target,
+    escape_drive_query_value,
     format_permission_info,
     get_drive_image_url,
     has_explicit_trashed_clause,
@@ -99,9 +114,12 @@ from gdrive.drive_helpers import (
     validate_expiration_time,
     validate_share_role,
     validate_share_type,
+    validate_shortcut_request,
 )
 
 logger = logging.getLogger(__name__)
+
+_paged_content_cache = PagedContentCache(ttl_seconds=600)
 
 
 def _stateless_too_large_message(
@@ -221,7 +239,7 @@ async def search_drive_files(
         logger.debug(f"[search_drive_files] Using structured query: '{final_query}'")
     else:
         # For free text queries, wrap in fullText contains
-        escaped_query = query.replace("\\", "\\\\").replace("'", "\\'")
+        escaped_query = escape_drive_query_value(query)
         final_query = f"fullText contains '{escaped_query}'"
         logger.debug(
             f"[search_drive_files] Reformatting free text query '{query}' to '{final_query}'"
@@ -310,79 +328,35 @@ async def search_drive_files(
     return flag_incomplete_search("\n".join(formatted_files_text_parts), results)
 
 
-@server.tool(
-    title="Get Drive File Content",
-    annotations=ToolAnnotations(
-        readOnlyHint=True,
-        destructiveHint=False,
-        idempotentHint=True,
-        openWorldHint=True,
-    ),
-)
-@handle_http_errors("get_drive_file_content", is_read_only=True, service_type="drive")
-@require_google_service("drive", "drive_read")
-async def get_drive_file_content(
+async def _read_drive_file_body(
     service,
-    user_google_email: str,
     file_id: str,
-) -> str:
-    """
-    Retrieves the content of a specific Google Drive file by ID, supporting files in shared drives.
-
-    • Native Google Docs, Sheets, Slides → exported as text / CSV.
-    • Office files (.docx, .xlsx, .pptx) → unzipped & parsed with std-lib to
-      extract readable text.
-    • PDFs → text extracted with pypdf when possible; scanned/image-only PDFs
-      fall back to a download hint.
-    • Images → returned as base64 with MIME metadata for multimodal clients.
-    • Any other file → downloaded; tries UTF-8 decode, else notes binary.
-
-    Args:
-        user_google_email: The user’s Google email address.
-        file_id: Drive file ID.
-
-    Returns:
-        str: The file content as plain text with metadata header.
-    """
-    logger.info(f"[get_drive_file_content] Invoked. File ID: '{file_id}'")
-
-    resolved_file_id, file_metadata = await resolve_drive_item(
-        service,
-        file_id,
-        extra_fields="name, webViewLink, size",
-    )
-    file_id = resolved_file_id
+    file_metadata: Dict[str, Any],
+    export_mime_type: Optional[str],
+    max_chars: Optional[int],
+) -> tuple[str, List[ImageContent], bool]:
+    """Download and extract a Drive file; return its text, attached images, and
+    whether the text is pageable. Raises FileTooLargeError over a size limit."""
     mime_type = file_metadata.get("mimeType", "")
     file_name = file_metadata.get("name", "Unknown File")
     web_view_link = file_metadata.get("webViewLink", "#")
-    export_mime_type = {
-        "application/vnd.google-apps.document": "text/plain",
-        "application/vnd.google-apps.spreadsheet": "text/csv",
-        "application/vnd.google-apps.presentation": "text/plain",
-    }.get(mime_type)
 
     # Declared Drive size is only meaningful for binary downloads (not exports).
     if not export_mime_type:
-        try:
-            ensure_within_file_size_limit(
-                file_metadata.get("size"),
-                file_name=file_name,
-                file_id=file_id,
-                web_view_link=web_view_link,
-            )
-        except FileTooLargeError as e:
-            return str(e)
-
-    request_obj = _media_request(service, file_id, export_mime_type)
-    try:
-        file_content_bytes = await download_media_bytes(
-            request_obj,
+        ensure_within_file_size_limit(
+            file_metadata.get("size"),
             file_name=file_name,
             file_id=file_id,
             web_view_link=web_view_link,
         )
-    except FileTooLargeError as e:
-        return str(e)
+
+    request_obj = _media_request(service, file_id, export_mime_type)
+    file_content_bytes = await download_media_bytes(
+        request_obj,
+        file_name=file_name,
+        file_id=file_id,
+        web_view_link=web_view_link,
+    )
 
     # Attempt Office XML extraction only for actual Office XML files
     office_mime_types = {
@@ -391,6 +365,8 @@ async def get_drive_file_content(
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     }
 
+    images: List[ImageContent] = []
+    paged = True
     if mime_type in office_mime_types:
         # Offload Office XML extraction to a thread to avoid blocking the event loop
         try:
@@ -427,8 +403,36 @@ async def get_drive_file_content(
                 f"- the file may be scanned/image-only. "
                 f"Use get_drive_file_download_url to get a direct download link instead.]"
             )
+    elif mime_type in INLINE_IMAGE_MIME_TYPES and (
+        inline_mime_type := sniff_inline_image_mime_type(file_content_bytes)
+    ):
+        images.append(image_content_from_bytes(file_content_bytes, inline_mime_type))
+        body_text = (
+            f"[Image attached as image content - {len(file_content_bytes)} bytes]"
+        )
+        paged = False
+    elif mime_type == SVG_MIME_TYPE:
+        svg = svg_content(file_content_bytes)
+        if svg is not None:
+            body_text = svg.markup
+            images.extend(svg.images)
+        else:
+            body_text = (
+                f"[SVG is not UTF-8 text (it may be a compressed .svgz) - "
+                f"{len(file_content_bytes)} bytes. "
+                f"Use get_drive_file_download_url to get the file instead.]"
+            )
     elif mime_type in IMAGE_MIME_TYPES:
         body_text = encode_image_content(file_content_bytes, mime_type)
+        paged = False
+        if max_chars is not None and len(body_text) > max_chars:
+            body_text = (
+                f"[Image is {len(file_content_bytes):,} bytes, {len(body_text):,} "
+                f"characters as base64, over the default page size of "
+                f"{max_chars:,} (set by WORKSPACE_MCP_MAX_CONTENT_CHARS). Pass "
+                f"full_content=True to get it anyway, or use "
+                f"get_drive_file_download_url to get the file instead.]"
+            )
     else:
         # For non-Office files (including Google native files), try UTF-8 decode directly
         try:
@@ -439,11 +443,141 @@ async def get_drive_file_content(
                 f"{len(file_content_bytes)} bytes]"
             )
 
+    return body_text, images, paged
+
+
+@server.tool(
+    title="Get Drive File Content",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("get_drive_file_content", is_read_only=True, service_type="drive")
+@require_google_service("drive", "drive_read")
+async def get_drive_file_content(
+    service,
+    user_google_email: str,
+    file_id: str,
+    offset: int = 0,
+    full_content: bool = False,
+) -> str:
+    """
+    Retrieves the content of a specific Google Drive file by ID, supporting files in shared drives.
+
+    • Native Google Docs, Sheets, Slides → exported as text / CSV.
+    • Office files (.docx, .xlsx, .pptx) → unzipped & parsed with std-lib to
+      extract readable text.
+    • PDFs → text extracted with pypdf when possible; scanned/image-only PDFs
+      fall back to a download hint.
+    • Images (PNG, JPEG, GIF, WebP) → returned as MCP image content after the
+      metadata header. SVG → returned as its markup; raster images it embeds
+      as base64 are attached as image content, numbered to match their place
+      in the markup. BMP and TIFF → base64 text, or a download hint when over
+      the default page size.
+    • Any other file → downloaded; tries UTF-8 decode, else notes binary.
+
+    Args:
+        user_google_email: The user’s Google email address.
+        file_id: Drive file ID.
+        offset: Character offset to read on from after a truncated result.
+        full_content: Return all content from offset onward in one call
+            instead of a page of the default size.
+
+    Returns:
+        str: The file content as plain text with a metadata header that carries
+        the file's version, so a reader paging by offset can tell when it
+        changed and restart from offset=0. For images, a ToolResult with that
+        text followed by the image as image content.
+    """
+    logger.info(f"[get_drive_file_content] Invoked. File ID: '{file_id}'")
+    if offset < 0:
+        raise UserInputError(f"offset must be >= 0, got {offset}.")
+
+    resolved_file_id, file_metadata = await resolve_drive_item(
+        service,
+        file_id,
+        extra_fields="name, webViewLink, size, version, capabilities(canDownload)",
+    )
+    file_id = resolved_file_id
+    mime_type = file_metadata.get("mimeType", "")
+    file_name = file_metadata.get("name", "Unknown File")
+    web_view_link = file_metadata.get("webViewLink", "#")
+    export_mime_type = {
+        "application/vnd.google-apps.document": "text/plain",
+        "application/vnd.google-apps.spreadsheet": "text/csv",
+        "application/vnd.google-apps.presentation": "text/plain",
+    }.get(mime_type)
+
+    max_chars = None if full_content else get_max_content_chars()
+    version = file_metadata.get("version")
+    # Policy and DLP download restrictions can change without a new version.
+    can_download = (file_metadata.get("capabilities") or {}).get("canDownload")
+    cache_bytes = get_paged_content_cache_bytes()
+    cache_key = (
+        (user_google_email.lower(), file_id, version, export_mime_type)
+        if cache_bytes
+        and user_google_email
+        and version is not None
+        and can_download is True
+        and not is_stateless_mode()
+        else None
+    )
+    cached = _paged_content_cache.get(cache_key) if cache_key and offset else None
+    if cached is not None:
+        logger.debug(
+            "[get_drive_file_content] Reading on from kept text of %s", file_id
+        )
+        body_text, images, paged = cached, [], True
+    else:
+        try:
+            body_text, images, paged = await _read_drive_file_body(
+                service, file_id, file_metadata, export_mime_type, max_chars
+            )
+        except FileTooLargeError as e:
+            return str(e)
+        truncated = max_chars is not None and len(body_text) > max_chars
+        if paged and (truncated or offset) and version is not None:
+            current = await asyncio.to_thread(
+                service.files()
+                .get(fileId=file_id, fields="version", supportsAllDrives=True)
+                .execute
+            )
+            if current.get("version") != version:
+                return (
+                    f'File "{file_name}" (ID: {file_id}) changed while it was '
+                    f"being read. Call again with offset=0 to read the current "
+                    f"version from the start."
+                )
+        if cache_key and paged and truncated:
+            _paged_content_cache.put(cache_key, body_text, max_bytes=cache_bytes)
+
+    if paged:
+        body_text = page_content_text(
+            body_text,
+            offset=offset,
+            max_chars=max_chars,
+            alternative=", or pass full_content=True for the whole file",
+        )
+        if offset:
+            images = []
+
     # Assemble response
+    version_text = f", Version: {version}" if version is not None else ""
     header = (
-        f'File: "{file_name}" (ID: {file_id}, Type: {mime_type})\n'
+        f'File: "{file_name}" (ID: {file_id}, Type: {mime_type}{version_text})\n'
         f"Link: {web_view_link}\n\n--- CONTENT ---\n"
     )
+    if images:
+        # structured_content mirrors the plain-string result so clients that
+        # validate against the tool's output schema still get a string.
+        text = header + body_text
+        return ToolResult(
+            content=[TextContent(type="text", text=text), *images],
+            structured_content={"result": text},
+        )
     return header + body_text
 
 
@@ -475,10 +609,11 @@ async def get_drive_file_download_url(
     resource, up to WORKSPACE_MCP_STATELESS_INLINE_MAX_BYTES (default 10 MiB,
     and never more than WORKSPACE_MCP_MAX_FILE_BYTES when that is set).
 
-    For Google native files (Docs, Sheets, Slides), exports to a useful format:
+    For Google native files (Docs, Sheets, Slides, Drawings), exports to a useful format:
     - Google Docs -> PDF (default) or DOCX if export_format='docx'
     - Google Sheets -> XLSX (default), PDF if export_format='pdf', or CSV if export_format='csv'
     - Google Slides -> PDF (default) or PPTX if export_format='pptx'
+    - Google Drawings -> PNG (default), or PDF, JPG or SVG if export_format='pdf', 'jpg' or 'svg'
 
     For other files, downloads the original file format.
 
@@ -486,12 +621,16 @@ async def get_drive_file_download_url(
         user_google_email: The user's Google email address. Required.
         file_id: The Google Drive file ID to download.
         export_format: Optional export format for Google native files.
-                      Options: 'pdf', 'docx', 'xlsx', 'csv', 'pptx'.
-                      If not specified, uses sensible defaults (PDF for Docs/Slides, XLSX for Sheets).
+                      Options: 'pdf', 'docx', 'xlsx', 'csv', 'pptx', 'png', 'jpg', 'svg'.
+                      If not specified, uses sensible defaults (PDF for Docs/Slides, XLSX for Sheets,
+                      PNG for Drawings).
                       For Sheets: supports 'csv', 'pdf', or 'xlsx' (default).
 
     Returns:
-        str: File metadata with either a local file path or download URL.
+        str: File metadata with either a local file path or download URL. In
+        stateless mode the same text comes back as a ToolResult that also
+        embeds the file; the annotation stays str so the advertised output
+        schema is unchanged.
     """
     logger.info(
         f"[get_drive_file_download_url] Invoked. File ID: '{file_id}', Export format: {export_format}"
@@ -560,6 +699,13 @@ async def get_drive_file_download_url(
             output_mime_type = export_mime_type
             if not output_filename.endswith(".pdf"):
                 output_filename = f"{Path(output_filename).stem}.pdf"
+
+    elif mime_type == GOOGLE_DRAWINGS_MIME_TYPE:
+        # Google Drawings
+        extension, export_mime_type = drawing_export_target(export_format)
+        output_mime_type = export_mime_type
+        if not output_filename.endswith(f".{extension}"):
+            output_filename = f"{output_filename}.{extension}"
 
     # Stateless mode has no attachment storage to hand out a URL from, so the
     # file itself goes back as an embedded resource, up to inline_max_bytes.
@@ -678,6 +824,7 @@ async def get_drive_file_download_url(
         # raised before the move completed the temp file is still ours to drop.
         tmp_path.unlink(missing_ok=True)
         logger.error(f"[get_drive_file_download_url] Failed to save file: {e}")
+        record_degraded_failure(e)
         return (
             f"Error: Failed to save file for download.\n"
             f"File was downloaded successfully ({size_kb:.1f} KB) but could not be saved.\n\n"
@@ -897,12 +1044,14 @@ async def create_drive_file(
     content_mime_type: Optional[str] = None,
     base64_sha256: Optional[str] = None,
     return_upload_url: bool = False,
+    shortcut_target_id: Optional[str] = None,
 ) -> str:
     """
     Creates a new file in Google Drive, supporting creation within shared drives.
     Accepts direct text content, inline base64 bytes, or a fileUrl to fetch content from.
     Where local file access is disabled it can instead return an upload URL for the
-    caller to PUT file bytes to.
+    caller to PUT file bytes to. With shortcut_target_id it creates a Drive shortcut
+    to an existing file or folder instead.
     This stores the supplied bytes without converting them to Google Docs, Sheets, or
     Slides. Use the matching import_to_google_* tool for Google-native conversion.
 
@@ -917,6 +1066,7 @@ async def create_drive_file(
         content_mime_type (Optional[str]): MIME type for base64_content uploads.
         base64_sha256 (Optional[str]): Expected SHA-256 of decoded base64_content. Recommended for binary payload integrity checks.
         return_upload_url (bool): Return a Google resumable-upload session URL for a new file of mime_type instead of creating it from inline content; the caller PUTs the bytes there directly (no Authorization header). Preferred for large or binary files. Not combinable with other content sources. Offered only where local file access is disabled.
+        shortcut_target_id (Optional[str]): ID of an existing file or folder. Creates a shortcut named file_name in folder_id that points to it, so the item shows up in a second folder without being copied. Not combinable with content sources; mime_type may be omitted.
 
     Returns:
         str: Confirmation message of the successful file creation with file link,
@@ -925,7 +1075,8 @@ async def create_drive_file(
     logger.info(
         f"[create_drive_file] Invoked. Email: '{user_google_email}', "
         f"file_name_len={len(file_name) if file_name else 0}, Folder ID: {folder_id}, "
-        f"has_fileUrl={bool(fileUrl)}, return_upload_url={return_upload_url}"
+        f"has_fileUrl={bool(fileUrl)}, return_upload_url={return_upload_url}, "
+        f"shortcut_target_id={shortcut_target_id}"
     )
     logger.debug(f"[create_drive_file] File Name: {file_name}")
 
@@ -933,6 +1084,25 @@ async def create_drive_file(
         mime_type = mime_type.strip().lower()
     if content_mime_type is not None:
         content_mime_type = content_mime_type.strip().lower()
+
+    if shortcut_target_id is not None:
+        validate_shortcut_request(
+            shortcut_target_id,
+            mime_type=mime_type,
+            content=content,
+            fileUrl=fileUrl,
+            base64_content=base64_content,
+            content_mime_type=content_mime_type,
+            base64_sha256=base64_sha256,
+            return_upload_url=return_upload_url,
+        )
+        return await _create_drive_shortcut_impl(
+            service,
+            user_google_email,
+            file_name,
+            shortcut_target_id.strip(),
+            folder_id,
+        )
 
     if return_upload_url:
         if local_file_access_enabled():
@@ -977,6 +1147,11 @@ async def create_drive_file(
         )
 
     mime_type = mime_type or "text/plain"
+    if mime_type == SHORTCUT_MIME_TYPE:
+        raise ValueError(
+            "Creating a shortcut requires shortcut_target_id: the ID of the file "
+            "or folder the shortcut points to."
+        )
     has_existing_content_source = content is not None or bool(fileUrl)
     if (
         not has_existing_content_source
@@ -1704,7 +1879,7 @@ async def check_drive_file_public_access(
     logger.debug(f"[check_drive_file_public_access] Searching for {file_name}")
 
     # Search for the file
-    escaped_name = file_name.replace("'", "\\'")
+    escaped_name = escape_drive_query_value(file_name)
     query = f"name = '{escaped_name}'"
 
     list_params: Dict[str, Any] = {

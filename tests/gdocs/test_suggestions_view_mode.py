@@ -83,7 +83,9 @@ async def test_get_doc_as_markdown_passes_suggestions_view_mode_to_docs_api(
     docs_service.documents.return_value.get.return_value.execute = Mock(
         return_value={"body": {"content": []}}
     )
-    monkeypatch.setattr(docs_tools, "convert_doc_to_markdown", lambda doc: "# Doc")
+    monkeypatch.setattr(
+        docs_tools, "convert_doc_to_markdown", lambda doc, include_colors=False: "# Doc"
+    )
 
     result = await _unwrap(docs_tools.get_doc_as_markdown)(
         drive_service=Mock(),
