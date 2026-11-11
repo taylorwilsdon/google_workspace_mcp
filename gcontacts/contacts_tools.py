@@ -1405,6 +1405,7 @@ async def manage_contacts_batch(
 
         # Build contacts map (Dict[resourceName, Person]) — required by batchUpdateContacts API
         contacts_map: Dict[str, Any] = {}
+        skipped = []
 
         for update in updates:
             cid = update.contact_id
@@ -1414,6 +1415,7 @@ async def manage_contacts_batch(
             current = current_people.get(cid)
             if not current:
                 logger.warning(f"No etag found for {cid}, skipping")
+                skipped.append(f"{cid}: not found")
                 continue
 
             body = _build_person_body(
@@ -1440,6 +1442,7 @@ async def manage_contacts_batch(
                 logger.warning(
                     f"Field '{field}' (key '{body_key}') not present in update for {cid}, skipping"
                 )
+                skipped.append(f"{cid}: no {field} in the update")
                 continue
 
             if body_key == "names":
@@ -1472,6 +1475,10 @@ async def manage_contacts_batch(
         for rname, update_result in update_results.items():
             person = update_result.get("person", {})
             response += _format_contact(person) + "\n\n"
+
+        if skipped:
+            response += f"Skipped {len(skipped)} contacts:\n"
+            response += "".join(f"  {line}\n" for line in skipped)
 
         logger.info(
             f"Batch updated {len(update_results)} contacts for {user_google_email}"
