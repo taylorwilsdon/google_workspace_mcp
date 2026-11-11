@@ -101,6 +101,11 @@ def test_every_tiered_tool_is_registered():
     )
 
 
+def test_every_registered_tool_is_tiered():
+    untiered = set(TOOLS) - set(get_tools_for_tier("complete"))
+    assert not untiered, f"Add these tools to core/tool_tiers.yaml: {sorted(untiered)}"
+
+
 def test_no_stale_tool_names():
     stale = (ROUTED | set(SECTIONS)) - set(TOOLS)
     assert not stale, (

@@ -21,9 +21,11 @@ from gcalendar.calendar_helpers import (
     _build_attachment_entries,
     _build_time_boundary,
     _correct_time_format_for_api,
+    _create_calendar,
     _format_event_detail_lines,
     _format_event_time,
     _get_meeting_link,
+    _manage_calendar_acl,
     _normalize_attendees,
     _parse_reminders_json,
     _preserve_existing_fields,
@@ -2143,50 +2145,71 @@ async def query_freebusy(
 
 
 @server.tool(
-    title="Create Calendar",
+    title="Manage Calendar",
     annotations=ToolAnnotations(
         readOnlyHint=False,
-        destructiveHint=False,
+        destructiveHint=True,
         idempotentHint=False,
         openWorldHint=True,
     ),
 )
-@handle_http_errors("create_calendar", is_read_only=False, service_type="calendar")
+@handle_http_errors("manage_calendar", service_type="calendar")
 @require_google_service("calendar", "calendar")
-async def create_calendar(
+async def manage_calendar(
     service,
     user_google_email: str,
-    summary: str,
+    action: str,
+    summary: Optional[str] = None,
     description: Optional[str] = None,
     timezone: Optional[str] = None,
+    calendar_id: str = "primary",
+    role: Optional[str] = None,
+    scope_type: str = "user",
+    scope_value: Optional[str] = None,
+    rule_id: Optional[str] = None,
+    send_notifications: bool = True,
+    page_token: Optional[str] = None,
 ) -> str:
     """
-    Creates a new secondary Google Calendar.
+    Creates secondary Google Calendars and manages who a calendar is shared with (its access control rules).
 
     Args:
         user_google_email (str): The user's Google email address. Required.
-        summary (str): The title/name of the new calendar.
-        description (Optional[str]): An optional description for the calendar.
-        timezone (Optional[str]): IANA timezone for the calendar (e.g. 'America/New_York').
+        action (str): Action to perform. One of:
+            - "create": Create a new secondary calendar. Uses summary, description, timezone.
+            - "list_sharing": List the calendar's sharing rules. Uses calendar_id, page_token.
+            - "share": Grant access to the calendar. Uses calendar_id, role, scope_type, scope_value, send_notifications.
+            - "update_sharing": Change the role of an existing rule. Uses calendar_id, rule_id, role, send_notifications.
+            - "unshare": Remove an existing rule. Uses calendar_id, rule_id.
+        summary (Optional[str]): The title/name of the new calendar. Required for "create".
+        description (Optional[str]): An optional description for the new calendar. Used by "create".
+        timezone (Optional[str]): IANA timezone for the new calendar (e.g. 'America/New_York'). Used by "create".
+        calendar_id (str): Calendar ID for the sharing actions. Defaults to 'primary'.
+        role (Optional[str]): Access level for "share" and "update_sharing". One of: "freeBusyReader", "reader", "writerWithoutPrivateAccess", "writer", "owner", "none".
+        scope_type (str): Who "share" grants access to: "user", "group", "domain", or "default" (public). Defaults to "user".
+        scope_value (Optional[str]): Email address for "user"/"group" or domain name for "domain". Required for "share" unless scope_type is "default".
+        rule_id (Optional[str]): Rule ID from "list_sharing" (e.g. "user:alice@example.com"). Required for "update_sharing" and "unshare".
+        send_notifications (bool): Whether to email the grantee on "share" and "update_sharing". Defaults to True.
+        page_token (Optional[str]): For "list_sharing" action: token for the next page, taken from a previous response.
 
     Returns:
-        str: The ID and summary of the newly created calendar.
+        str: The new calendar's summary and ID, the calendar's sharing rules, or a confirmation of the rule that changed.
     """
     logger.info(
-        f"[create_calendar] Invoked. Email: '{user_google_email}', summary_len={len(summary)}"
+        f"[manage_calendar] Invoked. Email: '{user_google_email}', Action: '{action}'"
     )
-
-    body: Dict[str, Any] = {"summary": summary}
-    if description:
-        body["description"] = description
-    if timezone:
-        body["timeZone"] = timezone
-
-    result = await asyncio.to_thread(
-        lambda: service.calendars().insert(body=body).execute()
+    action = action.lower().strip()
+    if action == "create":
+        return await _create_calendar(service, summary, description, timezone)
+    return await _manage_calendar_acl(
+        service,
+        user_google_email=user_google_email,
+        action=action,
+        calendar_id=calendar_id,
+        role=role,
+        scope_type=scope_type,
+        scope_value=scope_value,
+        rule_id=rule_id,
+        send_notifications=send_notifications,
+        page_token=page_token,
     )
-
-    calendar_id = result["id"]
-    calendar_summary = result.get("summary", summary)
-    logger.info(f"[create_calendar] Created calendar with ID: {calendar_id}")
-    return f"Created calendar '{calendar_summary}' (ID: {calendar_id})"

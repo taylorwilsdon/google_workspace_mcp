@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 # Limit returned ranges; the count remains exact.
 EMPTY_PARAGRAPH_RANGE_LIMIT = 100
+HEADING_LIST_LIMIT = 50
 
 
 def truncate_preview(text: str, preview_chars: Optional[int]) -> str:
@@ -456,10 +457,8 @@ def _iter_tabs(tabs: list[dict[str, Any]]) -> Iterator[dict[str, Any]]:
         yield from _iter_tabs(tab.get("childTabs", []))
 
 
-def _body_content_for_tab(
-    doc: dict[str, Any], tab_id: Optional[str]
-) -> list[dict[str, Any]]:
-    """Return the body content of ``tab_id``, or of the only tab when omitted."""
+def _document_tab(doc: dict[str, Any], tab_id: Optional[str]) -> dict[str, Any]:
+    """Return the document tab ``tab_id``, or the only tab when omitted."""
     tabs = list(_iter_tabs(doc.get("tabs", [])))
     if tab_id is None:
         if len(tabs) > 1:
@@ -476,13 +475,75 @@ def _body_content_for_tab(
         )
         if tab is None:
             raise UserInputError(f"tab_id {tab_id!r} not found in document.")
-    return tab.get("documentTab", {}).get("body", {}).get("content", [])
+    return tab.get("documentTab", {})
 
 
 def _paragraph_heading_level(paragraph: dict[str, Any]) -> Optional[int]:
     """Return N for a ``HEADING_N`` paragraph, otherwise ``None``."""
     style = paragraph.get("paragraphStyle", {}).get("namedStyleType", "")
     return int(style[len("HEADING_") :]) if style.startswith("HEADING_") else None
+
+
+def _resolve_heading_section(
+    content: list[dict[str, Any]],
+    heading: str,
+    heading_level: Optional[int],
+    tab_id: Optional[str],
+) -> tuple[int, int]:
+    """Return the content positions of the one matching heading and its section end.
+
+    The section ends at the next ``TITLE`` or equal-or-shallower heading, or at
+    ``len(content)``.
+    """
+    if not heading.strip():
+        raise UserInputError("'heading' must not be empty.")
+    if heading_level is not None and not 1 <= heading_level <= 6:
+        raise UserInputError("'heading_level' must be between 1 and 6.")
+    wanted = heading.strip().casefold()
+    headings = []
+    for idx, element in enumerate(content):
+        paragraph = element.get("paragraph", {})
+        level = _paragraph_heading_level(paragraph)
+        if level is not None:
+            headings.append((idx, level, _extract_paragraph_text(paragraph).strip()))
+    matches = [
+        (idx, level)
+        for idx, level, text in headings
+        if text.casefold() == wanted and heading_level in (None, level)
+    ]
+    if not matches:
+        named = [text for _, _, text in headings if text]
+        available = ", ".join(map(repr, named[:HEADING_LIST_LIMIT]))
+        if len(named) > HEADING_LIST_LIMIT:
+            available += f" and {len(named) - HEADING_LIST_LIMIT} more"
+        raise UserInputError(
+            f"No heading matching {heading!r} found in the document body "
+            f"(heading_level={heading_level!r}, tab_id={tab_id!r}). "
+            + (
+                f"Available headings: {available}. "
+                if available
+                else "The document body has no headings. "
+            )
+            + "Headings inside tables, footnotes, headers and footers are not "
+            "addressable by heading; use index-based editing for those."
+        )
+    if len(matches) > 1:
+        starts = ", ".join(str(content[idx].get("startIndex")) for idx, _ in matches)
+        raise UserInputError(
+            f"Heading {heading!r} matches {len(matches)} headings (at indices "
+            f"{starts}). Pass heading_level to narrow it, or use document indices."
+        )
+
+    match_idx, matched_level = matches[0]
+    for idx in range(match_idx + 1, len(content)):
+        paragraph = content[idx].get("paragraph")
+        if not paragraph:
+            continue
+        level = _paragraph_heading_level(paragraph)
+        style = paragraph.get("paragraphStyle", {}).get("namedStyleType")
+        if style == "TITLE" or (level is not None and level <= matched_level):
+            return match_idx, idx
+    return match_idx, len(content)
 
 
 def find_heading_section(
@@ -497,46 +558,15 @@ def find_heading_section(
     the body's undeletable final newline. Returns ``body_start``,
     ``section_end``, ``last_paragraph`` and ``footnote_refs``.
     """
-    content = _body_content_for_tab(doc, tab_id)
-    wanted = heading.strip().casefold()
-    matches = []
-    for idx, element in enumerate(content):
-        paragraph = element.get("paragraph", {})
-        level = _paragraph_heading_level(paragraph)
-        if level is None or heading_level not in (None, level):
-            continue
-        if _extract_paragraph_text(paragraph).strip().casefold() == wanted:
-            matches.append(idx)
-    if not matches:
-        raise UserInputError(
-            f"No heading matching {heading!r} found in the document body "
-            f"(heading_level={heading_level!r}, tab_id={tab_id!r}). Headings inside "
-            "tables, footnotes, headers and footers are not addressable by heading; "
-            "use index-based editing for those."
-        )
-    if len(matches) > 1:
-        starts = ", ".join(str(content[idx].get("startIndex")) for idx in matches)
-        raise UserInputError(
-            f"Heading {heading!r} matches {len(matches)} headings (at indices "
-            f"{starts}). Pass heading_level to narrow it, or edit by index."
-        )
-
-    match_idx = matches[0]
-    matched_level = _paragraph_heading_level(content[match_idx]["paragraph"])
+    content = _document_tab(doc, tab_id).get("body", {}).get("content", [])
+    match_idx, end_idx = _resolve_heading_section(
+        content, heading, heading_level, tab_id
+    )
     body_start = content[match_idx]["endIndex"]
-    section_end = None
-    last_paragraph = content[match_idx]
-    for element in content[match_idx + 1 :]:
-        paragraph = element.get("paragraph")
-        if not paragraph:
-            continue
-        level = _paragraph_heading_level(paragraph)
-        style = paragraph.get("paragraphStyle", {}).get("namedStyleType")
-        if style == "TITLE" or (level is not None and level <= matched_level):
-            section_end = element["startIndex"]
-            break
-        last_paragraph = element
-    if section_end is None:
+    last_paragraph = [e for e in content[match_idx:end_idx] if e.get("paragraph")][-1]
+    if end_idx < len(content):
+        section_end = content[end_idx]["startIndex"]
+    else:
         # The body's final newline cannot be deleted.
         section_end = last_paragraph["endIndex"] - 1
 
@@ -552,4 +582,40 @@ def find_heading_section(
         "section_end": section_end,
         "last_paragraph": last_paragraph,
         "footnote_refs": footnote_refs,
+    }
+
+
+def heading_section_document(
+    doc: dict[str, Any],
+    heading: str,
+    heading_level: Optional[int] = None,
+    tab_id: Optional[str] = None,
+) -> dict[str, Any]:
+    """Return the tab cut down to the section under ``heading``, heading included.
+
+    Headers, footers and positioned objects anchored outside the section are
+    dropped. An empty ``tab_id`` is treated as omitted.
+    """
+    tab_id = tab_id or None
+    document_tab = _document_tab(doc, tab_id)
+    content = document_tab.get("body", {}).get("content", [])
+    match_idx, end_idx = _resolve_heading_section(
+        content, heading, heading_level, tab_id
+    )
+    section = content[match_idx:end_idx]
+    anchored = {
+        object_id
+        for element in section
+        for object_id in element.get("paragraph", {}).get("positionedObjectIds", [])
+    }
+    return {
+        **document_tab,
+        "body": {"content": section},
+        "headers": {},
+        "footers": {},
+        "positionedObjects": {
+            object_id: obj
+            for object_id, obj in document_tab.get("positionedObjects", {}).items()
+            if object_id in anchored
+        },
     }

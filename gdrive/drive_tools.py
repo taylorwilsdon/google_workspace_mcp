@@ -62,6 +62,7 @@ from core.utils import (
     validate_file_path,
 )
 from core.server import server
+from core.telemetry import record_degraded_failure
 from core.config import get_transport_mode
 from gdrive.drive_helpers import (
     DRIVE_QUERY_PATTERNS,
@@ -78,6 +79,7 @@ from gdrive.drive_helpers import (
     SHORTCUT_MIME_TYPE,
     UPLOAD_CHUNK_SIZE_BYTES,
     _create_drive_folder_impl,
+    _create_drive_shortcut_impl,
     _decode_base64_upload,
     _download_file_bytes,
     _download_file_to_temp,
@@ -112,6 +114,7 @@ from gdrive.drive_helpers import (
     validate_expiration_time,
     validate_share_role,
     validate_share_type,
+    validate_shortcut_request,
 )
 
 logger = logging.getLogger(__name__)
@@ -821,6 +824,7 @@ async def get_drive_file_download_url(
         # raised before the move completed the temp file is still ours to drop.
         tmp_path.unlink(missing_ok=True)
         logger.error(f"[get_drive_file_download_url] Failed to save file: {e}")
+        record_degraded_failure(e)
         return (
             f"Error: Failed to save file for download.\n"
             f"File was downloaded successfully ({size_kb:.1f} KB) but could not be saved.\n\n"
@@ -1040,12 +1044,14 @@ async def create_drive_file(
     content_mime_type: Optional[str] = None,
     base64_sha256: Optional[str] = None,
     return_upload_url: bool = False,
+    shortcut_target_id: Optional[str] = None,
 ) -> str:
     """
     Creates a new file in Google Drive, supporting creation within shared drives.
     Accepts direct text content, inline base64 bytes, or a fileUrl to fetch content from.
     Where local file access is disabled it can instead return an upload URL for the
-    caller to PUT file bytes to.
+    caller to PUT file bytes to. With shortcut_target_id it creates a Drive shortcut
+    to an existing file or folder instead.
     This stores the supplied bytes without converting them to Google Docs, Sheets, or
     Slides. Use the matching import_to_google_* tool for Google-native conversion.
 
@@ -1060,6 +1066,7 @@ async def create_drive_file(
         content_mime_type (Optional[str]): MIME type for base64_content uploads.
         base64_sha256 (Optional[str]): Expected SHA-256 of decoded base64_content. Recommended for binary payload integrity checks.
         return_upload_url (bool): Return a Google resumable-upload session URL for a new file of mime_type instead of creating it from inline content; the caller PUTs the bytes there directly (no Authorization header). Preferred for large or binary files. Not combinable with other content sources. Offered only where local file access is disabled.
+        shortcut_target_id (Optional[str]): ID of an existing file or folder. Creates a shortcut named file_name in folder_id that points to it, so the item shows up in a second folder without being copied. Not combinable with content sources; mime_type may be omitted.
 
     Returns:
         str: Confirmation message of the successful file creation with file link,
@@ -1068,7 +1075,8 @@ async def create_drive_file(
     logger.info(
         f"[create_drive_file] Invoked. Email: '{user_google_email}', "
         f"file_name_len={len(file_name) if file_name else 0}, Folder ID: {folder_id}, "
-        f"has_fileUrl={bool(fileUrl)}, return_upload_url={return_upload_url}"
+        f"has_fileUrl={bool(fileUrl)}, return_upload_url={return_upload_url}, "
+        f"shortcut_target_id={shortcut_target_id}"
     )
     logger.debug(f"[create_drive_file] File Name: {file_name}")
 
@@ -1076,6 +1084,25 @@ async def create_drive_file(
         mime_type = mime_type.strip().lower()
     if content_mime_type is not None:
         content_mime_type = content_mime_type.strip().lower()
+
+    if shortcut_target_id is not None:
+        validate_shortcut_request(
+            shortcut_target_id,
+            mime_type=mime_type,
+            content=content,
+            fileUrl=fileUrl,
+            base64_content=base64_content,
+            content_mime_type=content_mime_type,
+            base64_sha256=base64_sha256,
+            return_upload_url=return_upload_url,
+        )
+        return await _create_drive_shortcut_impl(
+            service,
+            user_google_email,
+            file_name,
+            shortcut_target_id.strip(),
+            folder_id,
+        )
 
     if return_upload_url:
         if local_file_access_enabled():
@@ -1120,6 +1147,11 @@ async def create_drive_file(
         )
 
     mime_type = mime_type or "text/plain"
+    if mime_type == SHORTCUT_MIME_TYPE:
+        raise ValueError(
+            "Creating a shortcut requires shortcut_target_id: the ID of the file "
+            "or folder the shortcut points to."
+        )
     has_existing_content_source = content is not None or bool(fileUrl)
     if (
         not has_existing_content_source
