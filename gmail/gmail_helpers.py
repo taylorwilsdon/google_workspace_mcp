@@ -824,6 +824,61 @@ def _derive_reply_all_recipients(
     return derived_to or None, derived_cc
 
 
+# threads.get returns every message in a thread, drafts and trashed messages
+# included. This order sets the order of the per-status counts in a thread header.
+_THREAD_MESSAGE_STATUSES = (
+    "sent",
+    "received",
+    "draft",
+    "sent in trash",
+    "received in trash",
+    "draft in trash",
+)
+_THREAD_STATUS_PLURALS = {"draft": "drafts", "draft in trash": "drafts in trash"}
+_THREAD_STATUS_MARKERS = {
+    "sent": "SENT",
+    "received": "RECEIVED",
+    "draft": "DRAFT, NOT SENT",
+    "sent in trash": "SENT, IN TRASH",
+    "received in trash": "RECEIVED, IN TRASH",
+    "draft in trash": "DRAFT IN TRASH, NOT SENT",
+}
+
+
+def thread_message_status(message: Mapping[str, Any]) -> str:
+    """Classify a thread message as sent, received or draft, plus "in trash"."""
+    labels = set(message.get("labelIds") or ())
+    if "DRAFT" in labels:
+        status = "draft"
+    elif "SENT" in labels:
+        status = "sent"
+    else:
+        status = "received"
+    return f"{status} in trash" if "TRASH" in labels else status
+
+
+def is_draft_or_trashed(message: Mapping[str, Any]) -> bool:
+    """True for a draft or a trashed message: neither is live mail in the thread."""
+    return bool({"DRAFT", "TRASH"} & set(message.get("labelIds") or ()))
+
+
+def thread_status_marker(status: str) -> str:
+    """The upper-case marker shown in a message's entry header."""
+    return _THREAD_STATUS_MARKERS[status]
+
+
+def format_thread_status_counts(statuses: Iterable[str]) -> str:
+    """Count statuses as e.g. "1 sent, 1 received, 2 drafts in trash"."""
+    counts = Counter(statuses)
+    parts = []
+    for status in _THREAD_MESSAGE_STATUSES:
+        count = counts.get(status, 0)
+        if count:
+            name = _THREAD_STATUS_PLURALS.get(status, status) if count > 1 else status
+            parts.append(f"{count} {name}")
+    return ", ".join(parts)
+
+
 def _analyze_thread_ownership_impl(
     thread_response: dict,
     user_google_email: str,
@@ -846,6 +901,7 @@ def _analyze_thread_ownership_impl(
             "message_count_by_sender": {},
             "participants": [],
             "excluded_drafts": 0,
+            "excluded_trashed": 0,
             "message_count": 0,
         }
 
@@ -862,12 +918,14 @@ def _analyze_thread_ownership_impl(
     participants: set[str] = set()
     non_draft_participants: set[str] = set()
     excluded_drafts = 0
+    excluded_trashed = 0
 
     last_non_draft = None  # (datetime, message_dict, headers_dict)
 
     for message in messages:
         label_ids = message.get("labelIds", []) or []
         is_draft = "DRAFT" in label_ids
+        is_trashed = "TRASH" in label_ids
 
         raw_headers = message.get("payload", {}).get("headers", [])
         headers = {h["name"].lower(): h["value"] for h in raw_headers}
@@ -894,6 +952,9 @@ def _analyze_thread_ownership_impl(
         if is_draft:
             excluded_drafts += 1
             continue
+        if is_trashed:
+            excluded_trashed += 1
+            continue
 
         non_draft_participants.update(message_participants)
 
@@ -908,7 +969,7 @@ def _analyze_thread_ownership_impl(
                 last_non_draft = (dt, message, headers)
 
     if last_non_draft is None:
-        # All messages were drafts - no sent state to reason about
+        # Every message was a draft or trashed - no sent state to reason about
         return {
             "thread_id": thread_id,
             "thread_subject": thread_subject,
@@ -918,6 +979,7 @@ def _analyze_thread_ownership_impl(
             "message_count_by_sender": dict(sender_counter),
             "participants": sorted(participants),
             "excluded_drafts": excluded_drafts,
+            "excluded_trashed": excluded_trashed,
             "message_count": len(messages),
         }
 
@@ -952,6 +1014,7 @@ def _analyze_thread_ownership_impl(
         "message_count_by_sender": dict(sender_counter),
         "participants": sorted(participants),
         "excluded_drafts": excluded_drafts,
+        "excluded_trashed": excluded_trashed,
         "message_count": len(messages),
     }
 

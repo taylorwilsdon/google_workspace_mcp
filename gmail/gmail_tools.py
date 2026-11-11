@@ -95,11 +95,15 @@ from gmail.gmail_helpers import (
     format_filter_apply_result,
     format_html_links,
     format_thread_label_outcomes,
+    format_thread_status_counts,
     html_newlines_to_br,
     html_to_text_preserving_breaks,
+    is_draft_or_trashed,
     modify_gmail_thread_labels,
     read_gmail_message_page,
     send_message_once,
+    thread_message_status,
+    thread_status_marker,
     update_gmail_filter,
 )
 from gmail.gmail_web_mime import TextDirection
@@ -122,6 +126,12 @@ DIRECTION_DESCRIPTION = (
 INCLUDE_LINKS_DESCRIPTION = (
     "When True, append a LINKS section listing the http(s) URLs from the HTML "
     "body that the text output omits. Only applies to body_format='text'."
+)
+
+INCLUDE_DRAFTS_DESCRIPTION = (
+    "When True, also show drafts and trashed messages, each marked in its entry "
+    "header. Defaults to False: they are left out and only counted in the thread "
+    "header, so a draft or deleted message is never read as sent mail."
 )
 
 # Keep ``None`` valid at runtime without publishing it as an ``anyOf`` branch.
@@ -3693,6 +3703,7 @@ def _format_thread_content(
     body_format: Literal["text", "html", "raw"] = "text",
     raw_contents: Optional[Dict[str, str]] = None,
     include_links: bool = False,
+    include_drafts: bool = False,
 ) -> str:
     """
     Helper function to format thread content from Gmail API response.
@@ -3703,6 +3714,7 @@ def _format_thread_content(
         body_format: Output format - "text" (default), "html", or "raw"
         raw_contents: Optional mapping of message IDs to decoded raw MIME content
         include_links: In text mode, append each body's http(s) links missing from the text
+        include_drafts: Show drafts and trashed messages instead of only counting them
 
     Returns:
         str: Formatted thread content
@@ -3711,21 +3723,34 @@ def _format_thread_content(
     if not messages:
         return f"No messages found in thread '{thread_id}'."
 
-    # Extract thread subject from the first message
-    first_message = messages[0]
+    shown = [m for m in messages if include_drafts or not is_draft_or_trashed(m)]
+    hidden = [m for m in messages if not include_drafts and is_draft_or_trashed(m)]
+
+    # Extract thread subject from the first shown message
+    first_message = (shown or messages)[0]
     first_headers = _extract_headers(first_message.get("payload", {}), ["Subject"])
     thread_subject = first_headers.get("Subject", "(no subject)")
 
-    # Build the thread content
+    # Build the thread content. Count by status so a reader cannot take a
+    # draft or trashed message for sent mail.
+    shown_counts = format_thread_status_counts(thread_message_status(m) for m in shown)
     content_lines = [
         f"Thread ID: {thread_id}",
         f"Subject: {thread_subject}",
-        f"Messages: {len(messages)}",
-        "",
+        f"Messages: {len(shown)}" + (f" ({shown_counts})" if shown_counts else ""),
     ]
+    if hidden:
+        hidden_counts = format_thread_status_counts(
+            thread_message_status(m) for m in hidden
+        )
+        content_lines.append(
+            f"Not shown: {len(hidden)} ({hidden_counts}); "
+            "pass include_drafts=True to show drafts and trashed messages"
+        )
+    content_lines.append("")
 
     # Process each message in the thread
-    for i, message in enumerate(messages, 1):
+    for i, message in enumerate(shown, 1):
         payload = message.get("payload", {})
         # Extract headers
         headers = _extract_headers(payload, GMAIL_METADATA_HEADERS)
@@ -3767,13 +3792,11 @@ def _format_thread_content(
         message_id = message.get("id", "")
 
         # Add message to content
-        content_lines.extend(
-            [
-                f"=== Message {i} ===",
-                f"From: {sender}",
-                f"Date: {date}",
-            ]
-        )
+        status_marker = thread_status_marker(thread_message_status(message))
+        content_lines.append(f"=== Message {i} [{status_marker}] ===")
+        if label_ids := message.get("labelIds"):
+            content_lines.append(f"Labels: {', '.join(label_ids)}")
+        content_lines.extend([f"From: {sender}", f"Date: {date}"])
         if reply_to:
             content_lines.append(f"Reply-To: {reply_to}")
         content_lines.append(
@@ -3862,9 +3885,13 @@ async def get_gmail_thread_content(
     include_links: Annotated[
         bool, Field(description=INCLUDE_LINKS_DESCRIPTION)
     ] = False,
+    include_drafts: Annotated[
+        bool, Field(description=INCLUDE_DRAFTS_DESCRIPTION)
+    ] = False,
 ) -> "str | Dict[str, Any]":
     """
-    Retrieves the complete content of a Gmail conversation thread, including all messages.
+    Retrieves the complete content of a Gmail conversation thread. Drafts and
+    trashed messages are left out unless include_drafts is True.
 
     Optionally also returns structured ownership analysis so a caller can
     determine who sent the last message and who owes whom a response without
@@ -3882,6 +3909,9 @@ async def get_gmail_thread_content(
             False (default), returns the formatted content string (existing
             behavior, unchanged).
         include_links (bool): Append the HTML body's http(s) links missing from the text output.
+        include_drafts (bool): Also show drafts and trashed messages, marked in
+            each entry header. When False (default) they are only counted in the
+            thread header. Ownership analysis ignores them either way.
 
     Returns:
         str: When `include_analysis=False` (default). The complete thread
@@ -3907,13 +3937,19 @@ async def get_gmail_thread_content(
             message["id"]
             for message in thread_response.get("messages", [])
             if message.get("id")
+            and (include_drafts or not is_draft_or_trashed(message))
         ]
         raw_contents = await _fetch_raw_message_contents(
             service, message_ids, log_prefix="get_gmail_thread_content"
         )
     else:
         await fetch_attachment_backed_bodies(
-            service, thread_response.get("messages", [])
+            service,
+            [
+                message
+                for message in thread_response.get("messages", [])
+                if include_drafts or not is_draft_or_trashed(message)
+            ],
         )
 
     content = _format_thread_content(
@@ -3922,6 +3958,7 @@ async def get_gmail_thread_content(
         body_format=body_format,
         raw_contents=raw_contents,
         include_links=include_links,
+        include_drafts=include_drafts,
     )
 
     if not include_analysis:
@@ -3962,6 +3999,9 @@ async def get_gmail_threads_content_batch(
     include_links: Annotated[
         bool, Field(description=INCLUDE_LINKS_DESCRIPTION)
     ] = False,
+    include_drafts: Annotated[
+        bool, Field(description=INCLUDE_DRAFTS_DESCRIPTION)
+    ] = False,
 ) -> str:
     """
     Retrieves the content of multiple Gmail threads in a single batch request.
@@ -3975,6 +4015,9 @@ async def get_gmail_threads_content_batch(
             "html" returns the raw HTML body as-is without conversion.
             "raw" fetches each message's full raw MIME content and returns the base64url-decoded body.
         include_links (bool): Append the HTML body's http(s) links missing from the text output.
+        include_drafts (bool): Also show drafts and trashed messages, marked in
+            each entry header. When False (default) they are only counted in
+            each thread header.
 
     Returns:
         str: A formatted list of thread contents with separators.
@@ -4067,6 +4110,7 @@ async def get_gmail_threads_content_batch(
                         message["id"]
                         for message in thread.get("messages", [])
                         if message.get("id")
+                        and (include_drafts or not is_draft_or_trashed(message))
                     ]
                     raw_contents = await _fetch_raw_message_contents(
                         service,
@@ -4075,7 +4119,12 @@ async def get_gmail_threads_content_batch(
                     )
                 else:
                     await fetch_attachment_backed_bodies(
-                        service, thread.get("messages", [])
+                        service,
+                        [
+                            message
+                            for message in thread.get("messages", [])
+                            if include_drafts or not is_draft_or_trashed(message)
+                        ],
                     )
 
                 output_threads.append(
@@ -4085,6 +4134,7 @@ async def get_gmail_threads_content_batch(
                         body_format=body_format,
                         raw_contents=raw_contents,
                         include_links=include_links,
+                        include_drafts=include_drafts,
                     )
                 )
 

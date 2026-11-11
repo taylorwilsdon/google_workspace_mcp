@@ -158,7 +158,7 @@ async def test_thread_subject_header_is_case_insensitive(header_name):
     assert result.splitlines()[:3] == [
         "Thread ID: t1",
         "Subject: Test thread",
-        "Messages: 2",
+        "Messages: 2 (2 received)",
     ]
 
 
@@ -183,6 +183,7 @@ async def test_analysis_keys_match_helper_contract():
         "message_count_by_sender",
         "participants",
         "excluded_drafts",
+        "excluded_trashed",
         "message_count",
     }
     assert set(result["analysis"].keys()) == expected_keys
