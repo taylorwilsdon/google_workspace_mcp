@@ -1651,8 +1651,8 @@ async def test_attachment_backed_html_only_body_is_converted_to_text():
     ],
 )
 async def test_attachment_backed_body_keeps_its_declared_charset(
-    charset, raw, expected
-):
+    charset: str, raw: bytes, expected: str
+) -> None:
     service = _stored_body_service(
         [_stored_part("text/plain", "att-legacy", charset=charset)],
         {("msg-1", "att-legacy"): _attachment_data(raw)},
