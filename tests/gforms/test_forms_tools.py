@@ -19,6 +19,7 @@ from gforms.forms_tools import (
     _serialize_form_item,
     create_form,
     get_form,
+    get_form_response,
     set_publish_settings,
 )
 
@@ -350,6 +351,44 @@ async def test_get_form_returns_structured_item_metadata():
     assert '"type": "GRID"' in result
     assert '"columns": [' in result
     assert '"rows": [' in result
+
+
+@pytest.mark.asyncio
+async def test_get_form_response_lists_uploaded_files():
+    """A file-upload answer names the uploaded files instead of 'No answer provided'."""
+    mock_service = Mock()
+    mock_service.forms().responses().get().execute.return_value = {
+        "responseId": "resp_1",
+        "answers": {
+            "q_upload": {
+                "questionId": "q_upload",
+                "fileUploadAnswers": {
+                    "answers": [
+                        {
+                            "fileId": "file_1",
+                            "fileName": "receipt.pdf",
+                            "mimeType": "application/pdf",
+                        },
+                        {
+                            "fileId": "file_2",
+                            "fileName": "invoice.pdf",
+                            "mimeType": "application/pdf",
+                        },
+                    ]
+                },
+            }
+        },
+    }
+
+    result = await get_form_response.__wrapped__.__wrapped__(
+        mock_service, "user@example.com", "form_1", "resp_1"
+    )
+
+    assert (
+        "Question ID q_upload: receipt.pdf (file ID: file_1), "
+        "invoice.pdf (file ID: file_2)" in result
+    )
+    assert "No answer provided" not in result
 
 
 @pytest.mark.asyncio

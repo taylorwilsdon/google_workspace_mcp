@@ -64,6 +64,7 @@ from gdocs.docs_structure import (
     summarize_paragraph_layout,
     truncate_preview,
     find_heading_section,
+    heading_section_document,
 )
 from gdocs.docs_tables import extract_table_as_data
 from gdocs.docs_markdown import (
@@ -267,6 +268,8 @@ async def get_doc_content(
     suggestions_view_mode: str = "DEFAULT_FOR_CURRENT_ACCESS",
     tab_id: Optional[str] = None,
     preserve_context: bool = False,
+    heading: Optional[str] = None,
+    heading_level: Optional[int] = None,
 ) -> str:
     """
     Retrieves content of a Google Doc or a Drive file (like .docx) identified by document_id.
@@ -307,6 +310,13 @@ async def get_doc_content(
         preserve_context: Include readable semantic annotations for native Docs.
             Defaults to False to retain index alignment. Office extraction is
             unaffected. With tab_id, only the selected tab is rendered.
+        heading: Text of a body heading (case-insensitive, must match exactly one)
+            whose section to return instead of the whole document: the heading and
+            everything below it up to the next heading of equal or shallower level.
+            The header reports the section's start index s, and in the default
+            output offset n is document index n + s. Native Google Docs only;
+            tab_id is required when the doc has multiple tabs.
+        heading_level: Optional 1-6 heading level to narrow the heading match.
 
     Returns:
         str: The document content with metadata header.
@@ -350,7 +360,23 @@ async def get_doc_content(
             )
             .execute
         )
-        if tab_id:
+        if heading is not None:
+            section = heading_section_document(doc_data, heading, heading_level, tab_id)
+            content = section["body"]["content"]
+            notice = (
+                f"Showing only the section under heading {heading!r}, "
+                f"starting at document index {content[0]['startIndex']}."
+            )
+            if tab_from_url:
+                tabs = doc_data.get("tabs", [])
+                tab_notice = _url_tab_notice(tabs, _find_tab(tabs, tab_id), tab_id)
+                notice = f"{tab_notice} {notice}".lstrip()
+            body_text = (
+                render_doc_to_plain_text(section, tab_id)
+                if preserve_context
+                else extract_text_from_elements(content)
+            )
+        elif tab_id:
             tabs = doc_data.get("tabs", [])
             tab = _find_tab(tabs, tab_id)
             if tab is None:
@@ -387,6 +413,8 @@ async def get_doc_content(
                     processed_text_lines.append(tab_content)
 
             body_text = "".join(processed_text_lines)
+    elif heading is not None:
+        return "Error: 'heading' is only supported for native Google Docs."
     else:
         logger.info(
             f"[get_doc_content] Processing as Drive file (e.g., .docx, other). MimeType: {mime_type}"
@@ -2759,6 +2787,8 @@ async def get_doc_as_markdown(
     suggestions_view_mode: str = "DEFAULT_FOR_CURRENT_ACCESS",
     tab_id: Optional[str] = None,
     include_colors: bool = False,
+    heading: Optional[str] = None,
+    heading_level: Optional[int] = None,
 ) -> str:
     """
     Reads a Google Doc and returns it as clean Markdown with optional comment context.
@@ -2794,6 +2824,12 @@ async def get_doc_as_markdown(
             is still fetched.
         include_colors: Follow text that has an explicit RGB foreground color
             with "[color: #rrggbb]" (default: False). Theme colors are not shown.
+        heading: Text of a body heading (case-insensitive, must match exactly one)
+            whose section to render instead of the whole document: the heading and
+            everything below it up to the next heading of equal or shallower level.
+            Comments are listed as document-wide. tab_id is required when the doc
+            has multiple tabs.
+        heading_level: Optional 1-6 heading level to narrow the heading match.
 
     Returns:
         str: The document content as Markdown, optionally with comments
@@ -2833,7 +2869,12 @@ async def get_doc_as_markdown(
         )
 
     notice = ""
-    if tab_id:
+    if heading is not None:
+        tabs = doc.get("tabs", [])
+        doc = heading_section_document(doc, heading, heading_level, tab_id)
+        if tab_from_url:
+            notice = _url_tab_notice(tabs, _find_tab(tabs, tab_id), tab_id)
+    elif tab_id:
         tabs = doc.get("tabs", [])
         tab = _find_tab(tabs, tab_id)
         if tab is None:
@@ -2885,10 +2926,11 @@ async def get_doc_as_markdown(
 
     # Drive comments carry no tab association, so with one tab selected they
     # stay document-wide instead of being pinned to matching text in this tab.
-    if comment_mode == "inline" and not tab_id:
+    partial = bool(tab_id) or heading is not None
+    if comment_mode == "inline" and not partial:
         return format_comments_inline(markdown, comments)
     appendix = format_comments_appendix(
-        comments, title="Comments (entire document)" if tab_id else "Comments"
+        comments, title="Comments (entire document)" if partial else "Comments"
     )
     return markdown.rstrip("\n") + "\n\n" + appendix
 
