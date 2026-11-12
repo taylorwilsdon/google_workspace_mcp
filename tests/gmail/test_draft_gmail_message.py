@@ -1490,7 +1490,6 @@ def test_try_read_local_attachment_requires_metadata_without_scan_fallback(
     tmp_path, monkeypatch
 ):
     file_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-    monkeypatch.setattr(gmail_tools, "STORAGE_DIR", tmp_path)
     (tmp_path / f"report_{file_id[:8]}.pdf").write_bytes(b"%PDF-fake")
 
     storage = gmail_tools.get_attachment_storage()
