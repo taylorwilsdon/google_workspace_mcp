@@ -747,6 +747,36 @@ class TestBatchUpdateWithFieldParam:
         assert "people/c2: no phoneNumbers in the update" in result
         assert "people/c3: not found" in result
 
+    def test_error_lists_skipped_when_nothing_to_update(self):
+        svc = self._make_batch_service({"updateResult": {}})
+        svc.people.return_value.getBatchGet.return_value.execute.return_value = {
+            "responses": [
+                {"person": {"resourceName": "people/c1", "etag": "E1"}},
+                {
+                    "requestedResourceName": "people/c2",
+                    "status": {"code": 5, "message": "Requested entity was not found."},
+                },
+            ]
+        }
+
+        with pytest.raises(UserInputError) as exc_info:
+            run(
+                manage_contacts_batch(
+                    service=svc,
+                    user_google_email="test@example.com",
+                    action="update",
+                    updates=[
+                        {"contact_id": "c1", "emails": [{"address": "a@example.com"}]},
+                        {"contact_id": "c2", "phones": [{"number": "+15550101"}]},
+                    ],
+                    field="phoneNumbers",
+                )
+            )
+
+        message = str(exc_info.value)
+        assert "people/c1: no phoneNumbers in the update" in message
+        assert "people/c2: not found" in message
+
 
 # =============================================================================
 # Test 12: manage_contacts_batch without field param raises UserInputError
