@@ -8,7 +8,7 @@ from gdocs.managers.batch_operation_manager import BatchOperationManager
 
 
 @pytest.mark.asyncio
-async def test_batch_find_replace_reports_occurrence_counts():
+async def test_batch_find_replace_reports_occurrence_counts() -> None:
     service = Mock()
     service.documents.return_value.get.return_value.execute.return_value = {
         "revisionId": "rev1",
