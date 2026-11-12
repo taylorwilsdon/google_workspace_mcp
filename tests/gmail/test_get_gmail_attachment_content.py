@@ -10,6 +10,8 @@ from unittest.mock import DEFAULT, Mock
 
 import pytest
 
+import gmail.gmail_tools as gmail_tools
+from core.attachment_storage import AttachmentStorage
 from core.server import server
 from core.tool_registry import get_tool_components
 from gmail.gmail_tools import (
@@ -73,6 +75,7 @@ def isolated_attachment_env(tmp_path, monkeypatch):
     monkeypatch.setattr(
         oauth_config_module.get_oauth_config(), "_transport_mode", "streamable-http"
     )
+    monkeypatch.delenv("WORKSPACE_MCP_FILES_GCS_BUCKET", raising=False)
 
     # Reset the cached module-level storage singleton so our patched
     # STORAGE_DIR actually takes effect.
@@ -399,6 +402,26 @@ async def test_return_base64_preserves_file_save_behavior(isolated_attachment_en
     assert "Download URL" in result
     # ...and includes the base64 block.
     assert "📦 Base64 content" in result
+
+
+@pytest.mark.asyncio
+async def test_save_failure_marks_span_as_degraded(
+    isolated_attachment_env, monkeypatch
+):
+    error = OSError(30, "Read-only file system")
+    monkeypatch.setattr(AttachmentStorage, "save_attachment", Mock(side_effect=error))
+    record = Mock()
+    monkeypatch.setattr(gmail_tools, "record_degraded_failure", record)
+
+    result = await _unwrap(get_gmail_attachment_content)(
+        service=_build_mock_service(b"payload"),
+        message_id="msg-1",
+        attachment_id="att-123",
+        user_google_email="user@example.com",
+    )
+
+    assert "Failed to save attachment file. Showing preview instead." in result
+    record.assert_called_once_with(error)
 
 
 @pytest.mark.asyncio

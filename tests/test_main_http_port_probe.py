@@ -2,6 +2,7 @@
 
 import os
 import socket
+import subprocess
 import sys
 import time
 
@@ -10,6 +11,8 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import main  # noqa: E402
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 pytestmark = pytest.mark.skipif(
     os.name == "nt", reason="TIME_WAIT bind semantics differ on Windows"
@@ -89,3 +92,71 @@ def test_unused_port_is_free():
 def test_unencodable_hostname_falls_back_to_loopback(monkeypatch, hostname):
     monkeypatch.setattr(main.socket, "gethostname", lambda: hostname)
     assert main._local_ipv4_addresses() == ["127.0.0.1"]
+
+
+def _start_server(tmp_path, *args: str, **env: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, "main.py", "--tools", "gmail", *args],
+        cwd=REPO_ROOT,
+        env={
+            **{k: v for k, v in os.environ.items() if k != "PORT"},
+            "MCP_ENABLE_OAUTH21": "false",
+            "WORKSPACE_MCP_CREDENTIALS_DIR": str(tmp_path),
+            **env,
+        },
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+
+def test_streamable_http_port_conflict_is_logged_at_error(tmp_path):
+    srv = _listener()
+    try:
+        port = srv.getsockname()[1]
+        result = _start_server(
+            tmp_path,
+            "--transport",
+            "streamable-http",
+            WORKSPACE_MCP_HOST="127.0.0.1",
+            WORKSPACE_MCP_PORT=str(port),
+        )
+    finally:
+        srv.close()
+
+    assert result.returncode == 1
+    assert "ERROR" in result.stderr
+    assert f"Cannot start HTTP server on 127.0.0.1:{port}" in result.stderr
+    assert f"a server is already listening on 127.0.0.1:{port}" in result.stderr
+
+
+def test_streamable_http_bind_failure_is_not_reported_as_port_in_use(tmp_path):
+    # 192.0.2.0/24 is TEST-NET-1, never assigned locally, so bind fails EADDRNOTAVAIL.
+    result = _start_server(
+        tmp_path,
+        "--transport",
+        "streamable-http",
+        WORKSPACE_MCP_HOST="192.0.2.1",
+        WORKSPACE_MCP_PORT="8000",
+    )
+
+    assert result.returncode == 1
+    assert "Cannot start HTTP server on 192.0.2.1:8000" in result.stderr
+    assert "assign requested address" in result.stderr
+    assert "already in use" not in result.stderr
+
+
+def test_sidecar_port_conflict_warning_includes_the_reason(tmp_path):
+    srv = _listener()
+    try:
+        port = srv.getsockname()[1]
+        result = _start_server(tmp_path, WORKSPACE_MCP_HTTP_PORT=str(port))
+    finally:
+        srv.close()
+
+    assert (
+        f"workspace-cli HTTP endpoint unavailable on port {port}: "
+        f"a server is already listening on 127.0.0.1:{port}"
+    ) in result.stderr

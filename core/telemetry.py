@@ -65,6 +65,23 @@ def record_google_principal(auth_mode: str, email: Optional[str]) -> None:
         _set_span_attribute("workspace_mcp.google.principal", email)
 
 
+def record_degraded_failure(error: BaseException) -> None:
+    """Mark the active span as failed for an error a tool caught and recovered from.
+
+    Records only the exception type and errno, since the message can carry file
+    paths derived from email subjects and attachment names.
+    """
+    span = trace.get_current_span()
+    if not span.is_recording():
+        return
+    error_type = type(error).__name__
+    attributes = {"exception.type": error_type}
+    if isinstance(getattr(error, "errno", None), int):
+        attributes["exception.errno"] = error.errno
+    span.add_event("exception", attributes)
+    span.set_status(trace.Status(trace.StatusCode.ERROR, error_type))
+
+
 def _set_span_attribute(key: str, value: str) -> None:
     """Set an attribute on the active span if one is recording."""
     span = trace.get_current_span()

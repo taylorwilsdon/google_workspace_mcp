@@ -7,15 +7,20 @@ resolution for Chat senders and spaces via the People API.
 
 import asyncio
 import logging
+import re
 import ssl
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
+from fastmcp.exceptions import ToolError
 from googleapiclient.errors import HttpError
+
+from core.utils import UserInputError
 
 logger = logging.getLogger(__name__)
 
 _SENDER_CACHE_MAX_SIZE = 256
-_sender_name_cache: Dict[str, str] = {}
+# Keyed per owner: People API names can include the owner's own contact labels.
+_sender_name_cache: Dict[Tuple[str, str], str] = {}
 _UNNAMED_SPACE_FALLBACKS = {
     "DIRECT_MESSAGE": "Direct message",
     "GROUP_CHAT": "Group chat",
@@ -25,15 +30,30 @@ _PEOPLE_BATCH_SIZE = 200  # people.getBatchGet limit
 _MAX_CONSECUTIVE_MEMBER_LOOKUP_FAILURES = 2
 _SCOPE_ERROR_REASON = "ACCESS_TOKEN_SCOPE_INSUFFICIENT"
 _SEARCH_MESSAGES_RETRY_BASE_DELAY_SECONDS = 1
+_SPACE_ID_PATTERN = re.compile(r"(?:spaces/)?([^/\s?#]+)")
 
 
-def _cache_sender(user_id: str, name: str) -> None:
+def _cache_key(cache_owner: Optional[str], user_id: str) -> Optional[Tuple[str, str]]:
+    """Return cache_owner's cache key for user_id, or None when there is no owner."""
+    owner = (cache_owner or "").strip().lower()
+    return (owner, user_id) if owner else None
+
+
+def _cached_name(cache_owner: Optional[str], user_id: str) -> Optional[str]:
+    key = _cache_key(cache_owner, user_id)
+    return _sender_name_cache.get(key) if key else None
+
+
+def _cache_sender(cache_owner: Optional[str], user_id: str, name: str) -> None:
     """Store a resolved sender name, evicting oldest entries if cache is full."""
+    key = _cache_key(cache_owner, user_id)
+    if key is None:
+        return
     if len(_sender_name_cache) >= _SENDER_CACHE_MAX_SIZE:
         to_remove = list(_sender_name_cache.keys())[: _SENDER_CACHE_MAX_SIZE // 2]
         for k in to_remove:
             del _sender_name_cache[k]
-    _sender_name_cache[user_id] = name
+    _sender_name_cache[key] = name
 
 
 def _person_name(person: dict) -> Optional[str]:
@@ -43,11 +63,13 @@ def _person_name(person: dict) -> Optional[str]:
     return names[0].get("displayName") or emails[0].get("value")
 
 
-async def _resolve_sender(people_service, sender_obj: dict) -> str:
+async def _resolve_sender(
+    people_service, sender_obj: dict, cache_owner: Optional[str] = None
+) -> str:
     """Resolve a Chat message sender to a display name.
 
     Fast path: use displayName if the API already provided it.
-    Slow path: look up the user via the People API directory and cache the result.
+    Slow path: look up the user via the People API and cache the result per cache_owner.
     """
     display_name = sender_obj.get("displayName")
     if display_name:
@@ -57,8 +79,9 @@ async def _resolve_sender(people_service, sender_obj: dict) -> str:
     if not user_id:
         return "Unknown Sender"
 
-    if user_id in _sender_name_cache:
-        return _sender_name_cache[user_id]
+    cached = _cached_name(cache_owner, user_id)
+    if cached:
+        return cached
 
     # Chat API uses "users/ID" but People API expects "people/ID"
     people_resource = user_id.replace("users/", "people/", 1)
@@ -71,7 +94,7 @@ async def _resolve_sender(people_service, sender_obj: dict) -> str:
             )
             resolved = _person_name(person)
             if resolved:
-                _cache_sender(user_id, resolved)
+                _cache_sender(cache_owner, user_id, resolved)
                 return resolved
         except HttpError as e:
             logger.debug(f"People API lookup failed for {user_id}: {e}")
@@ -81,13 +104,16 @@ async def _resolve_sender(people_service, sender_obj: dict) -> str:
     return user_id
 
 
-async def _lookup_people_names(people_service, user_ids: List[str]) -> Dict[str, str]:
+async def _lookup_people_names(
+    people_service, user_ids: List[str], cache_owner: Optional[str] = None
+) -> Dict[str, str]:
     """Resolve Chat user ids to display names with batched People API calls."""
     names = {}
     missing = []
     for user_id in user_ids:
-        if user_id in _sender_name_cache:
-            names[user_id] = _sender_name_cache[user_id]
+        cached = _cached_name(cache_owner, user_id)
+        if cached:
+            names[user_id] = cached
         else:
             missing.append(user_id)
     for start in range(0, len(missing), _PEOPLE_BATCH_SIZE):
@@ -112,7 +138,7 @@ async def _lookup_people_names(people_service, user_ids: List[str]) -> Dict[str,
             if name and requested:
                 user_id = requested.replace("people/", "users/", 1)
                 names[user_id] = name
-                _cache_sender(user_id, name)
+                _cache_sender(cache_owner, user_id, name)
     return names
 
 
@@ -124,22 +150,31 @@ def _is_scope_error(error: HttpError) -> bool:
     )
 
 
-async def _list_memberships(chat_service, space_name: str) -> List[dict]:
-    """Return every membership of a space, following nextPageToken."""
+async def _list_memberships(
+    chat_service, space_name: str, limit: Optional[int] = None, **list_params
+) -> List[dict]:
+    """Return a space's memberships, stopping once more than limit are found."""
     memberships = []
-    params = {"parent": space_name, "pageSize": 100}
+    # Page-token requests must repeat the original pageSize.
+    page_size = 100 if limit is None else min(100, limit + 1)
+    params = {"parent": space_name, "pageSize": page_size, **list_params}
     while True:
         response = await asyncio.to_thread(
             chat_service.spaces().members().list(**params).execute
         )
         memberships.extend(response.get("memberships", []))
-        if not response.get("nextPageToken"):
+        if not response.get("nextPageToken") or (
+            limit is not None and len(memberships) > limit
+        ):
             return memberships
         params["pageToken"] = response["nextPageToken"]
 
 
 async def _name_spaces(
-    chat_service, people_service, spaces: List[dict]
+    chat_service,
+    people_service,
+    spaces: List[dict],
+    cache_owner: Optional[str] = None,
 ) -> Dict[str, str]:
     """Map space resource names to labels, naming unnamed spaces after their members."""
     labels = {}
@@ -204,7 +239,7 @@ async def _name_spaces(
         for user_id in others[:_SPACE_NAME_MAX_MEMBERS]:
             if user_id not in shown_ids:
                 shown_ids.append(user_id)
-    people_names = await _lookup_people_names(people_service, shown_ids)
+    people_names = await _lookup_people_names(people_service, shown_ids, cache_owner)
 
     for space_name, others in others_by_space.items():
         shown = others[:_SPACE_NAME_MAX_MEMBERS]
@@ -214,6 +249,74 @@ async def _name_spaces(
             label += f" and {remaining} other{'s' if remaining > 1 else ''}"
         labels[space_name] = label
     return labels
+
+
+_MEMBER_ROLE_LABELS = {
+    "ROLE_MANAGER": "manager",
+    "ROLE_ASSISTANT_MANAGER": "assistant manager",
+    "ROLE_MEMBER": "member",
+}
+
+
+async def _format_space_members(
+    chat_service, people_service, space_id: str, limit: int
+) -> str:
+    """List up to limit space members: people, apps, groups and pending invites."""
+    space = await asyncio.to_thread(chat_service.spaces().get(name=space_id).execute)
+    space_label = space.get("displayName") or _UNNAMED_SPACE_FALLBACKS.get(
+        space.get("spaceType"), "Unnamed Space"
+    )
+    try:
+        memberships = await _list_memberships(
+            chat_service, space_id, limit, showInvited=True, showGroups=True
+        )
+    except HttpError as e:
+        if _is_scope_error(e):
+            raise ToolError(
+                "Listing members needs the chat.memberships.readonly scope, which "
+                "this token lacks. Re-authenticate with the default Chat scopes and "
+                "retry. In service-account (domain-wide delegation) mode list_spaces "
+                "does not request that scope, so member listing is unavailable there."
+            ) from e
+        raise
+
+    has_more = len(memberships) > limit
+    memberships = memberships[:limit]
+    user_ids = [
+        m["member"]["name"]
+        for m in memberships
+        if m.get("member", {}).get("type") == "HUMAN" and m["member"].get("name")
+    ]
+    people_names = await _lookup_people_names(people_service, user_ids)
+
+    count = (
+        f"first {len(memberships)} shown, more exist (raise page_size to see more)"
+        if has_more
+        else str(len(memberships))
+    )
+    lines = [f"Members of '{space_label}' (ID: {space_id}): {count}"]
+    for membership in memberships:
+        role = _MEMBER_ROLE_LABELS.get(membership.get("role"), "unknown")
+        state = membership.get("state")
+        suffix = ", invited" if state == "INVITED" else ""
+        if "groupMember" in membership:
+            group_id = membership["groupMember"].get("name", "")
+            lines.append(f"- Group {group_id}" + (" (invited)" if suffix else ""))
+            continue
+        member = membership.get("member", {})
+        member_id = member.get("name", "")
+        name = (
+            people_names.get(member_id)
+            or member.get("displayName")
+            or member_id
+            or "Unknown"
+        )
+        kind = " [app]" if member.get("type") == "BOT" else ""
+        detail = (
+            f"{role}{suffix}" if name == member_id else f"{member_id}, {role}{suffix}"
+        )
+        lines.append(f"- {name}{kind} ({detail})")
+    return "\n".join(lines)
 
 
 def _none_if_null_sentinel(value: Optional[str]) -> Optional[str]:
@@ -227,6 +330,16 @@ def _none_if_blank(value: Optional[str]) -> Optional[str]:
     """Treat a null sentinel or whitespace-only string as an omitted arg."""
     value = _none_if_null_sentinel(value)
     return value if value and value.strip() else None
+
+
+def _normalize_space_resource_name(space_id: str) -> str:
+    """Return spaces/<id> for a space resource name or a bare space ID."""
+    match = _SPACE_ID_PATTERN.fullmatch(space_id.strip())
+    if match is None:
+        raise UserInputError(
+            f"Invalid space_id '{space_id}'. Expected spaces/X or a bare space ID X."
+        )
+    return f"spaces/{match.group(1)}"
 
 
 async def _execute_chat_request(
@@ -273,3 +386,12 @@ def _extract_rich_links(msg: dict) -> List[str]:
             if uri and uri not in text:
                 urls.append(uri)
     return urls
+
+
+def _format_search_message_ids(message: dict) -> str:
+    identifiers = (
+        ("space_id", message.get("_space", {}).get("name")),
+        ("message_id", message.get("name")),
+        ("thread_id", message.get("thread", {}).get("name")),
+    )
+    return " ".join(f"[{label}: {value}]" for label, value in identifiers if value)
