@@ -12,6 +12,7 @@ from typing import Any, Union, Dict, List, Tuple
 from gdocs.docs_anchors import (
     AnchorResolutionError,
     resolve_operation_anchor,
+    resolve_quoted_text,
 )
 from gdocs.docs_helpers import (
     utf16_length,
@@ -27,6 +28,7 @@ from gdocs.docs_helpers import (
     create_insert_image_request,
     create_insert_person_request,
     create_insert_date_request,
+    create_insert_comment_request,
     create_bullet_list_request,
     create_delete_bullet_list_request,
     create_named_range_request,
@@ -124,7 +126,9 @@ class BatchOperationManager:
         try:
             # Anchor resolution rewrites locations and order; leave caller data intact.
             operations = [dict(op) for op in operations]
-            anchor_error = await self._resolve_semantic_anchors(document_id, operations)
+            anchor_error = await self._resolve_quoted_comments(
+                document_id, operations
+            ) or await self._resolve_semantic_anchors(document_id, operations)
             if anchor_error:
                 return False, anchor_error, {}
 
@@ -206,6 +210,15 @@ class BatchOperationManager:
             if created_tabs:
                 metadata["created_tabs"] = created_tabs
 
+            created_comments = [
+                reply["insertComment"]["commentThread"]
+                for reply in result.get("replies", [])
+                if "commentThread" in reply.get("insertComment", {})
+            ]
+            if created_comments:
+                metadata["created_comments"] = created_comments
+                metadata["comment_update_state"] = result.get("commentUpdateState")
+
             summary = self._build_operation_summary(operation_descriptions)
             msg = f"Successfully executed {len(operations)} operations ({summary})"
             if created_tabs:
@@ -220,6 +233,48 @@ class BatchOperationManager:
             error_msg = self._rewrite_execution_error(str(e), operations)
             logger.error(f"Failed to execute batch operations: {error_msg}")
             return False, error_msg, {}
+
+    async def _resolve_quoted_comments(
+        self, document_id: str, operations: list[dict[str, Any]]
+    ) -> str | None:
+        """
+        Rewrite insert_comment quoted_text into a start/end range from the live doc.
+
+        Comments never shift indices, so a batch of only comments can all be
+        resolved against one read. Mixing them with text mutations could not.
+        """
+        quoted = [op for op in operations if op.get("quoted_text") is not None]
+        if not quoted:
+            return None
+        if any(op.get("type") != "insert_comment" for op in operations):
+            return (
+                "quoted_text comments cannot be mixed with other operations in one "
+                "batch. Submit them separately or use start_index/end_index."
+            )
+        for op in quoted:
+            valid, error = validate_operation(op)
+            if not valid:
+                return error
+
+        doc = await asyncio.to_thread(
+            self.service.documents()
+            .get(documentId=document_id, includeTabsContent=True)
+            .execute
+        )
+        for op in quoted:
+            body = self._target_segment(doc, op.get("tab_id"), op.get("segment_id"))
+            if body is None:
+                return (
+                    f"Tab '{op.get('tab_id')}' or segment '{op.get('segment_id')}' "
+                    f"not found in document {document_id}."
+                )
+            try:
+                op["start_index"], op["end_index"] = resolve_quoted_text(
+                    body, op.pop("quoted_text")
+                )
+            except AnchorResolutionError as e:
+                return str(e)
+        return None
 
     ANCHOR_FIELDS = ("after_heading", "before_heading", "anchor_text")
 
@@ -1004,6 +1059,17 @@ class BatchOperationManager:
                 else f"date chip {op['date']} at {op.get('index')}"
             )
 
+        elif op_type == "insert_comment":
+            request = create_insert_comment_request(
+                op["start_index"],
+                op["end_index"],
+                op["content"],
+                op.get("assignee_email"),
+                tab_id,
+                segment_id=segment_id,
+            )
+            description = f"comment on {op['start_index']}-{op['end_index']}"
+
         elif op_type == "insert_doc_tab":
             request = create_insert_doc_tab_request(
                 op["title"], op["index"], op.get("parent_tab_id")
@@ -1157,6 +1223,7 @@ class BatchOperationManager:
                 "insert_image",
                 "insert_person",
                 "insert_date",
+                "insert_comment",
                 "insert_doc_tab",
                 "delete_doc_tab",
                 "update_doc_tab",
@@ -1476,6 +1543,18 @@ class BatchOperationManager:
                         "timezone",
                     ],
                     "description": "Insert a date smart chip",
+                },
+                "insert_comment": {
+                    "required": ["content"],
+                    "optional": [
+                        "start_index",
+                        "end_index",
+                        "quoted_text",
+                        "assignee_email",
+                        "segment_id",
+                        "tab_id",
+                    ],
+                    "description": "Add a comment anchored to a text range (start_index+end_index or quoted_text)",
                 },
                 "insert_doc_tab": {
                     "required": ["title", "index"],

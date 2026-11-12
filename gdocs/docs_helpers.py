@@ -1345,6 +1345,24 @@ def create_insert_date_request(
     }
 
 
+def create_insert_comment_request(
+    start_index: int,
+    end_index: int,
+    content: str,
+    assignee_email: Optional[str] = None,
+    tab_id: Optional[str] = None,
+    segment_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create an insertComment request anchoring ``content`` to a document range."""
+    request: Dict[str, Any] = {
+        "content": content,
+        "range": _build_range(start_index, end_index, tab_id, segment_id),
+    }
+    if assignee_email:
+        request["assigneeEmailAddress"] = assignee_email
+    return {"insertComment": request}
+
+
 def create_bullet_list_request(
     start_index: int,
     end_index: int,
@@ -1954,6 +1972,7 @@ def validate_operation(operation: Dict[str, Any]) -> tuple[bool, str]:
         "insert_image": ["image_uri"],
         "insert_person": ["email"],
         "insert_date": ["date"],
+        "insert_comment": ["content"],
         "insert_doc_tab": ["title", "index"],
         "delete_doc_tab": ["tab_id"],
         "update_doc_tab": ["tab_id", "title"],
@@ -2008,6 +2027,16 @@ def validate_operation(operation: Dict[str, Any]) -> tuple[bool, str]:
                 False,
                 "Provide exactly one of 'index', 'end_of_segment=true', "
                 "'after_heading', 'before_heading' or 'anchor_text'.",
+            )
+
+    if op_type == "insert_comment":
+        has_start = operation.get("start_index") is not None
+        has_end = operation.get("end_index") is not None
+        has_quote = operation.get("quoted_text") is not None
+        if has_start != has_end or (has_start and has_end) == has_quote:
+            return (
+                False,
+                "Provide exactly one of 'start_index'+'end_index' or 'quoted_text'.",
             )
 
     return True, ""

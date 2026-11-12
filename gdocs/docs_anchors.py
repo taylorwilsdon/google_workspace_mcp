@@ -81,24 +81,32 @@ def resolve_heading(body: dict[str, Any], heading: str, position: str) -> int:
     return _only_match(matches, kind, heading)
 
 
-def resolve_anchor_text(body: dict[str, Any], anchor: str, position: str) -> int:
+def _text_match_starts(body: dict[str, Any], needle: str) -> list[int]:
     """
-    Resolve literal text to an index at its start ("before") or end ("after").
+    Document indices where literal text starts, searched per paragraph.
 
-    The search runs per paragraph, so an anchor spanning a paragraph break will
-    not match; that is deliberate, since such an anchor is ambiguous to place.
+    An anchor spanning a paragraph break will not match; that is deliberate,
+    since such an anchor is ambiguous to place.
     """
     matches = []
     for start_index, _end_index, text, _style in iter_paragraphs(body):
-        offset = text.find(anchor)
+        offset = text.find(needle)
         while offset != -1:
-            matches.append(
-                start_index
-                + utf16_length(text[:offset])
-                + (utf16_length(anchor) if position == "after" else 0)
-            )
-            offset = text.find(anchor, offset + 1)
-    return _only_match(matches, "anchor_text", anchor)
+            matches.append(start_index + utf16_length(text[:offset]))
+            offset = text.find(needle, offset + 1)
+    return matches
+
+
+def resolve_anchor_text(body: dict[str, Any], anchor: str, position: str) -> int:
+    """Resolve literal text to an index at its start ("before") or end ("after")."""
+    start = _only_match(_text_match_starts(body, anchor), "anchor_text", anchor)
+    return start + (utf16_length(anchor) if position == "after" else 0)
+
+
+def resolve_quoted_text(body: dict[str, Any], quote: str) -> tuple[int, int]:
+    """Resolve literal text that occurs exactly once to its (start, end) range."""
+    start = _only_match(_text_match_starts(body, quote), "quoted_text", quote)
+    return start, start + utf16_length(quote)
 
 
 def resolve_operation_anchor(

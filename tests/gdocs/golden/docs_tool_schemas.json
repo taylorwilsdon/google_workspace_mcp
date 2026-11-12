@@ -860,6 +860,98 @@
         ],
         "type": "object"
       },
+      "InsertCommentOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "tab_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional document tab ID to target."
+          },
+          "segment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional header/footer/footnote segment ID. Use a real ID returned by inspect_doc_structure; do not guess values like 'kix.header'."
+          },
+          "type": {
+            "const": "insert_comment",
+            "type": "string"
+          },
+          "content": {
+            "description": "Comment text as plain text.",
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          },
+          "start_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Start of the commented range. Pair with end_index."
+          },
+          "end_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "End of the commented range. Pair with start_index."
+          },
+          "quoted_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Anchor the comment to this literal text, resolved to a range at execution time. Must occur exactly once within a single paragraph."
+          },
+          "assignee_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional email to assign the comment to."
+          }
+        },
+        "required": [
+          "type",
+          "content"
+        ],
+        "type": "object"
+      },
       "InsertDateOperation": {
         "additionalProperties": false,
         "properties": {
@@ -2959,6 +3051,7 @@
               "delete_text": "#/$defs/DeleteTextOperation",
               "find_replace": "#/$defs/FindReplaceOperation",
               "format_text": "#/$defs/FormatTextOperation",
+              "insert_comment": "#/$defs/InsertCommentOperation",
               "insert_date": "#/$defs/InsertDateOperation",
               "insert_doc_tab": "#/$defs/InsertDocTabOperation",
               "insert_image": "#/$defs/InsertImageOperation",
@@ -3071,6 +3164,9 @@
             },
             {
               "$ref": "#/$defs/InsertDateOperation"
+            },
+            {
+              "$ref": "#/$defs/InsertCommentOperation"
             },
             {
               "$ref": "#/$defs/InsertDocTabOperation"

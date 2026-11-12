@@ -1536,6 +1536,12 @@ async def batch_update_doc(
                          optional: index (int), end_of_segment, tab_id, segment_id,
                          date_format, time_format, timezone
                          Inserts a date smart chip.
+      insert_comment   - required: content (str), plus start_index+end_index (int)
+                                   or quoted_text (str, must occur exactly once)
+                         optional: assignee_email, tab_id, segment_id
+                         Adds a comment anchored to that text, like the Docs
+                         editor. quoted_text batches may only contain comments.
+                         Created threads are returned as created_comments.
       insert_section_break
                        - optional: index (int), end_of_segment, section_type
                                    ('CONTINUOUS'|'NEXT_PAGE')
