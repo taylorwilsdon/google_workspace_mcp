@@ -1455,7 +1455,11 @@ async def manage_contacts_batch(
             contacts_map[cid] = person_body
 
         if not contacts_map:
-            raise UserInputError("No valid update data provided.")
+            raise UserInputError(
+                "No valid update data provided.\n"
+                f"Skipped {len(skipped)} contacts:\n"
+                + "".join(f"  {line}\n" for line in skipped)
+            )
 
         batch_body = {
             "contacts": contacts_map,
