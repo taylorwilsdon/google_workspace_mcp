@@ -70,9 +70,11 @@ Google Sheets can resolve them as named ranges.
 | include_smart_chips | boolean | no | false | Fetch smart chips metadata (Drive files/folders & People) |
 
 ### modify_sheet_values
-Write, update, or clear values in a range, insert Smart Chips (Drive files/folders or People), or copy another range into it. Chip writes are chunked into batches of <=8 chips to respect Google Sheets API limits.
+Write, update, or clear values in a range, write the rows of a local CSV/TSV file, insert Smart Chips (Drive files/folders or People), or copy another range into it. Chip writes are chunked into batches of <=8 chips to respect Google Sheets API limits.
 
-When providing `chips` or `source_range`, omit `values` and leave `clear_values=false`. `value_input_option` applies only to ordinary value writes.
+When providing `file_path`, `chips` or `source_range`, omit `values` and leave `clear_values=false`. `value_input_option` applies only to value writes (`values` or `file_path`).
+
+`file_path` loads a dataset into an existing, already-formatted sheet without passing every row inline. Point `range_name` at the top-left cell, e.g. `Sheet1!A2` to fill below a header row; to load into a new tab, add it with `create_sheet` first. To create a new spreadsheet from a file, or to convert XLSX/ODS, use `import_to_google_sheets`.
 
 `source_range` works like copy and paste in the Sheets UI: relative formula references shift and formatting comes along. `range_name` can be just the top-left destination cell, e.g. copy `Sheet1!A29:AO29` to `Sheet1!A30` to start a new row from the previous one.
 
@@ -81,13 +83,14 @@ When providing `chips` or `source_range`, omit `values` and leave `clear_values=
 | user_google_email | string | yes | | |
 | spreadsheet_id | string | yes | | |
 | range_name | string | yes | | A1 notation |
-| values | array or string | conditional | | 2D array of values. Required unless `clear_values=true` or `chips` is set. Accepts a JSON string or a list |
+| values | array or string | conditional | | 2D array of values. Required unless `clear_values=true`, `file_path`, `chips`, or `source_range` is set. Accepts a JSON string or a list |
 | value_input_option | string | no | USER_ENTERED | `RAW` or `USER_ENTERED` |
 | clear_values | boolean | no | false | Clear the range instead of writing |
 | chips | array, object, or string | conditional | | Smart chips instead of `values`: single URL/email, 1D/2D array of URLs/emails, or dict(s) with `type`, `uri`/`email` |
 | chip_type | string | no | null | Optional override for `chips`: `drive` or `person` (auto-detected if omitted) |
 | source_range | string | conditional | | A1 range in the same spreadsheet to copy into `range_name` instead of `values`. Both must be A1 notation, not named ranges |
 | paste_type | string | no | PASTE_NORMAL | What `source_range` pastes: `PASTE_NORMAL`, `PASTE_VALUES`, `PASTE_FORMAT`, `PASTE_NO_BORDERS`, `PASTE_FORMULA`, `PASTE_DATA_VALIDATION`, `PASTE_CONDITIONAL_FORMATTING` |
+| file_path | string | conditional | | Local `.csv` or `.tsv` file (UTF-8) whose rows are written instead of `values`. Delimiter follows the extension. Local file access only |
 
 ---
 
