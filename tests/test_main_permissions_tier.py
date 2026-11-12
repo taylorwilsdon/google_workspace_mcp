@@ -350,3 +350,56 @@ def test_main_skips_gcs_store_initialization_in_service_account_mode(monkeypatch
         main.main()
 
     assert exc.value.code == 0
+
+
+@pytest.mark.parametrize("flag, expected", [("true", True), (None, False)])
+def test_stateless_http_flag_reaches_server_run(monkeypatch, flag, expected):
+    """WORKSPACE_MCP_STATELESS_HTTP alone makes the HTTP transport sessionless."""
+    seen = {}
+
+    def fake_run(*args, **kwargs):  # noqa: ARG001
+        seen.update(kwargs)
+        raise SystemExit(0)
+
+    monkeypatch.setattr(main, "configure_safe_logging", lambda: None)
+    monkeypatch.setattr(main, "import_module", lambda name: object())  # noqa: ARG005
+    monkeypatch.setattr(main, "set_enabled_tool_names", lambda names: None)
+    monkeypatch.setattr(main, "wrap_server_tool_method", lambda server: None)
+    monkeypatch.setattr(main, "filter_server_tools", lambda server: None)
+    monkeypatch.setattr(main, "set_transport_mode", lambda transport: None)
+    monkeypatch.setattr(main, "configure_server_for_http", lambda: None)
+    monkeypatch.setattr(main, "get_selected_backend", lambda: "local_directory")
+    monkeypatch.setattr(main, "is_stateless_mode", lambda: False)
+    monkeypatch.setattr(main, "is_service_account_enabled", lambda: False)
+    monkeypatch.setattr(main, "get_credential_store", lambda: object())
+    monkeypatch.setattr(main, "check_credentials_directory_permissions", lambda: None)
+    monkeypatch.setattr(main, "_http_port_conflict", lambda host, port: None)
+    monkeypatch.setattr(
+        main,
+        "get_oauth_config",
+        lambda: SimpleNamespace(
+            service_account_key_file=None,
+            service_account_key_json=None,
+            client_secret="secret",
+            client_secrets_file=None,
+            stateless_mode=False,
+            is_oauth21_enabled=lambda: False,
+            is_configured=lambda: True,
+        ),
+    )
+    monkeypatch.setattr(main.server, "run", fake_run)
+    monkeypatch.setattr(
+        sys, "argv", ["main.py", "--tools", "gmail", "--transport", "streamable-http"]
+    )
+    monkeypatch.setenv("USER_GOOGLE_EMAIL", "user@example.com")
+    if flag is None:
+        monkeypatch.delenv("WORKSPACE_MCP_STATELESS_HTTP", raising=False)
+    else:
+        monkeypatch.setenv("WORKSPACE_MCP_STATELESS_HTTP", flag)
+
+    with pytest.raises(SystemExit) as exc:
+        main.main()
+
+    assert exc.value.code == 0
+    assert seen.get("transport") == "streamable-http"
+    assert seen.get("stateless_http") is expected

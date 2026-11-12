@@ -20,6 +20,7 @@ These mirror the MCP server's own flags. **Default setup**: use stdio transport 
 | OAuth 2.1 | `MCP_ENABLE_OAUTH21=true` | Multi-user HTTP deployment, per-session tokens |
 | External OAuth | `EXTERNAL_OAUTH21_PROVIDER=true` | External OAuth flow with bearer tokens. Requires OAuth 2.1 |
 | Stateless | `WORKSPACE_MCP_STATELESS_MODE=true` | Multi-user + stateless, requires OAuth 2.1 |
+| Sessionless HTTP | `WORKSPACE_MCP_STATELESS_HTTP=true` | No MCP sessions over streamable HTTP, for several instances behind a load balancer; keeps the auth mode and persistence |
 
 ## Tool filtering
 
