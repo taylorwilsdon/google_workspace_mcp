@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import sys
+from urllib.parse import unquote_plus
 
 
 class SuppressStatelessTransportTerminationFilter(logging.Filter):
@@ -22,8 +23,50 @@ class SuppressStatelessTransportTerminationFilter(logging.Filter):
         )
 
 
+# OAuth redirect parameters: the authorization ``code`` is a credential until it is
+# redeemed, and ``state`` binds it to the pending flow. Names are matched after
+# percent-decoding, as the server decodes them.
+_OAUTH_QUERY_NAMES = frozenset({"code", "state"})
+
+
+def redact_oauth_query_params(target: str) -> str:
+    """Replace OAuth ``code``/``state`` values in a logged request target with ``<redacted>``."""
+    path, sep, query = target.partition("?")
+    if not sep:
+        return target
+    parts = query.split("&")
+    for i, part in enumerate(parts):
+        name, eq, _value = part.partition("=")
+        if eq and unquote_plus(name) in _OAUTH_QUERY_NAMES:
+            parts[i] = f"{name}=<redacted>"
+    return f"{path}?{'&'.join(parts)}"
+
+
+class RedactOAuthQueryParamsFilter(logging.Filter):
+    """Keep OAuth ``code``/``state`` values out of the uvicorn access log.
+
+    uvicorn logs ``'%s - "%s %s HTTP/%s" %d'`` with the request target as the third
+    argument; status, size and timing are untouched.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if isinstance(args, tuple) and len(args) >= 3 and isinstance(args[2], str):
+            redacted = redact_oauth_query_params(args[2])
+            if redacted != args[2]:
+                record.args = (*args[:2], redacted, *args[3:])
+        return True
+
+
 def install_noisy_log_filters() -> None:
-    """Install targeted filters for known noisy third-party log lines."""
+    """Install targeted filters for known noisy third-party log lines, and the OAuth
+    parameter redaction on the uvicorn access logger."""
+    access_logger = logging.getLogger("uvicorn.access")
+    if not any(
+        isinstance(existing, RedactOAuthQueryParamsFilter)
+        for existing in access_logger.filters
+    ):
+        access_logger.addFilter(RedactOAuthQueryParamsFilter())
     target_logger = logging.getLogger("mcp.server.streamable_http")
     if not any(
         isinstance(existing, SuppressStatelessTransportTerminationFilter)
