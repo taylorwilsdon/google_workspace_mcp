@@ -51,7 +51,9 @@ def test_mode_rows_use_english_labels_and_name_their_env_var(monkeypatch):
     }
 
 
-def test_sessionless_http_row_follows_its_own_flag(monkeypatch):
+def test_sessionless_http_row_follows_its_own_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     modes = _modes(monkeypatch, {"WORKSPACE_MCP_STATELESS_HTTP": "true"})
 
     assert modes["Sessionless HTTP"] == ("on  · WORKSPACE_MCP_STATELESS_HTTP", "on")
