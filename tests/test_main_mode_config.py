@@ -17,6 +17,7 @@ def _modes(monkeypatch, env, **kwargs):
     for name in (
         "MCP_ENABLE_OAUTH21",
         "WORKSPACE_MCP_STATELESS_MODE",
+        "WORKSPACE_MCP_STATELESS_HTTP",
         "MCP_SINGLE_USER_MODE",
         "OAUTHLIB_INSECURE_TRANSPORT",
     ):
@@ -40,6 +41,7 @@ def test_mode_rows_use_english_labels_and_name_their_env_var(monkeypatch):
     assert modes == {
         "OAuth 2.1": ("on  · MCP_ENABLE_OAUTH21", "on"),
         "Stateless": ("on  · WORKSPACE_MCP_STATELESS_MODE", "on"),
+        "Sessionless HTTP": ("on  · WORKSPACE_MCP_STATELESS_HTTP", "on"),
         "Single-user": ("off · MCP_SINGLE_USER_MODE", "off"),
         "Insecure transport": ("off · OAUTHLIB_INSECURE_TRANSPORT", "off"),
         "Disabled tools": (
@@ -47,6 +49,13 @@ def test_mode_rows_use_english_labels_and_name_their_env_var(monkeypatch):
             "on",
         ),
     }
+
+
+def test_sessionless_http_row_follows_its_own_flag(monkeypatch):
+    modes = _modes(monkeypatch, {"WORKSPACE_MCP_STATELESS_HTTP": "true"})
+
+    assert modes["Sessionless HTTP"] == ("on  · WORKSPACE_MCP_STATELESS_HTTP", "on")
+    assert modes["Stateless"][1] == "off"
 
 
 @pytest.mark.parametrize("value", ["1", "yes", "TRUE "])
