@@ -145,8 +145,11 @@ class TestPrepareGmailMessageNewlines:
             subject="Test", body=body, to="jane@example.com", body_format="plain"
         )
         parts = _decode_parts(raw_b64)
-        assert "text/html" not in parts
         assert parts["text/plain"].strip() == body
+        assert parts["text/html"].strip() == (
+            '<div dir="ltr"><div>Hi Jane,</div><div><br></div>'
+            "<div>plain text stays plain.</div></div>"
+        )
 
 
 class TestForwardNoteNewlines:
