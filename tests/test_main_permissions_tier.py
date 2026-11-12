@@ -353,11 +353,13 @@ def test_main_skips_gcs_store_initialization_in_service_account_mode(monkeypatch
 
 
 @pytest.mark.parametrize("flag, expected", [("true", True), (None, False)])
-def test_stateless_http_flag_reaches_server_run(monkeypatch, flag, expected):
+def test_stateless_http_flag_reaches_server_run(
+    monkeypatch: pytest.MonkeyPatch, flag: str | None, expected: bool
+) -> None:
     """WORKSPACE_MCP_STATELESS_HTTP alone makes the HTTP transport sessionless."""
-    seen = {}
+    seen: dict[str, object] = {}
 
-    def fake_run(*args, **kwargs):  # noqa: ARG001
+    def fake_run(*args: object, **kwargs: object) -> None:  # noqa: ARG001
         seen.update(kwargs)
         raise SystemExit(0)
 

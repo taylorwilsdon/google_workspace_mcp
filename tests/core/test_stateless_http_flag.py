@@ -16,7 +16,9 @@ from core.server import stateless_http_flag_set
         ("1", False),
     ],
 )
-def test_stateless_http_flag_set(monkeypatch, flag, expected):
+def test_stateless_http_flag_set(
+    monkeypatch: pytest.MonkeyPatch, flag: str | None, expected: bool
+) -> None:
     if flag is None:
         monkeypatch.delenv("WORKSPACE_MCP_STATELESS_HTTP", raising=False)
     else:
