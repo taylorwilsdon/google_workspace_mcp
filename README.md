@@ -18,8 +18,6 @@
 
 By leveraging native OAuth 2.1, stateless deployment capability and external auth server & gateway passthrough auth support, it's also the only Workspace MCP you can host for your whole organization centrally & securely! Supports all free Google accounts & Google Workspace plans with expanded app options like Chat & Spaces.
 
-<a href="https://workspacemcp.com/workspace-mcp-cloud?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=hero-cloud"><img width="600" height="80" alt="workspace-cloud" src="https://github.com/user-attachments/assets/349a6bab-c83a-4254-be2e-4ac6a9e8b3e5" /></a>
-
 </div>
 
 <p align="center">
@@ -34,6 +32,10 @@ By leveraging native OAuth 2.1, stateless deployment capability and external aut
 <a href="https://www.pulsemcp.com/servers/taylorwilsdon-google-workspace">
 <img width="375" src="https://github.com/user-attachments/assets/0794ef1a-dc1c-447d-9661-9c704d7acc9d" align="center"/>
 </a>
+</div>
+
+<div align="center">
+<a href="https://workspacemcp.com/workspace-mcp-cloud?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=hero-cloud"><img width="400" height="53" alt="workspace-cloud" src="https://github.com/user-attachments/assets/349a6bab-c83a-4254-be2e-4ac6a9e8b3e5" /></a>
 </div>
 
 ---
@@ -108,7 +110,7 @@ This project is [MIT licensed](LICENSE) —
 </td>
 <td align="center" width="25%">
 <h3>📅</h3><a href="https://workspacemcp.com/google-calendar?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=services-google-calendar"><b>Calendar</b></a><br>
-<sub>7 tools - events, free/busy,<br>Out of Office, Focus Time</sub>
+<sub>7 tools - events, sharing, free/busy,<br>Out of Office, Focus Time</sub>
 </td>
 <td align="center" width="25%">
 <h3>📝</h3><a href="https://workspacemcp.com/google-docs?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=services-google-docs"><b>Docs</b></a><br>
@@ -212,6 +214,8 @@ uvx workspace-mcp --transport streamable-http --tool-tier core
 
 **Tool tiers** keep context windows lean: `core` is the essential set, `extended` adds management operations, `complete` loads everything. Combine with `--tools <service> ...`, `--read-only`, or per-service `--permissions`, and subtract individual tools with `--disabled-tools <name> ...` - details in the [server modes docs](https://workspacemcp.com/docs?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=tiers-server-modes#server-modes).
 
+**Per-request toolsets** let HTTP clients sharing one server see different tools, using the same headers as the GitHub MCP server. `X-MCP-Toolsets` takes comma-separated service names (the `--tools` names, e.g. `gmail,drive`) and `X-MCP-Tools` takes comma-separated tool names (e.g. `search_gmail_messages`); when both are sent the request gets the union. Names ignore case and whitespace, unknown names match nothing, and a blank or missing header leaves the tool list unchanged. Headers only narrow what the server already loaded: a tool removed by the tier, `--tools`, `--read-only`, `--permissions` or `--disabled-tools` stays unavailable, and calls to tools outside the request's selection fail as unknown tools.
+
 ## Connect Your Client
 
 **Claude Desktop, web & mobile** - run the server in HTTP mode and add it as a **Connector** (Settings → Connectors → Add custom connector). This is the recommended path; the [Connector guide](https://workspacemcp.com/guides/claude-connectors?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=clients-connectors) has step-by-step screenshots. Legacy stdio configuration remains available for clients without Connector support - see the [FAQ](https://workspacemcp.com/welcome/faq?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=clients-connectors-faq).
@@ -268,6 +272,7 @@ Production tuning is all environment variables; the names below link to their re
   With local files disabled, `create_drive_file`, `update_drive_file` and the import tools offer `return_upload_url`: the caller PUTs the bytes to the returned URL. If the file sits in a cloud-mirrored folder (Drive for desktop), copy it to a local directory first, since mirrored paths can stall mid-upload.
 - **OAuth 2.1 token refresh and lifetimes:** see [`.env.oauth21`](.env.oauth21)
 - **OAuth 2.1 consent screen:** `WORKSPACE_MCP_OAUTH_PROXY_REQUIRE_CONSENT=remember` shows the OAuth proxy's consent screen once per browser for each MCP client instead of on every authorization; cross-site navigations are still prompted. The default, `always`, prompts every time. Any other value fails startup.
+- **OAuth 2.1 Google account choice:** `WORKSPACE_MCP_OAUTH_PROXY_GOOGLE_PROMPT` sets the `prompt` the OAuth proxy sends to Google's authorization endpoint (default `consent`); external provider mode ignores it. `select_account consent` shows Google's account chooser, so a user signed in to Google with another account can pick the right one, and still returns a refresh token. The only other accepted value is `consent`; anything else fails startup.
 
 For downloads, horizontally scaled or scale-to-zero HTTP deployments (Cloud Run, Kubernetes) can stage attachments in Google Cloud Storage instead of instance-local disk, whose `/attachments/{id}` URL may reach a different instance. Install the `gcs` extra and set `WORKSPACE_MCP_FILES_GCS_BUCKET` to a bucket name; objects are written under `WORKSPACE_MCP_FILES_GCS_PREFIX` (default `attachments`) and handed out as V4 signed URLs valid for one hour, which the client fetches straight from GCS. This also lets stateless mode return download URLs instead of inline files. stdio ignores the setting, since its client reads the local file path directly. The runtime service account needs object read and write access on the bucket — `roles/storage.objectUser`, or `roles/storage.objectCreator` plus `roles/storage.objectViewer` — and, without an exported private key, `roles/iam.serviceAccountTokenCreator` on itself so URLs can be signed through IAM. Read access is not optional: a signed URL carries the signer's authority, so without `storage.objects.get` the upload and the signing both succeed while the client's download fails with `403`. Objects are not deleted by the server, so add a bucket lifecycle rule that removes them after a few hours.
 
@@ -295,6 +300,8 @@ Single-file service modules live in `g<service>/`, tools are registered with `@s
 ## License
 
 MIT - see [`LICENSE`](LICENSE). The license is 21 lines and says what it means.
+
+_Workspace MCP is an independent open-source project and is not affiliated with, endorsed by, or sponsored by Google LLC. Google and Google Workspace are trademarks of Google LLC._
 
 ---
 
