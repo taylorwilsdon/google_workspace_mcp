@@ -46,7 +46,7 @@ async def create_presentation(
     service, user_google_email: str, title: str = "Untitled Presentation"
 ) -> str:
     """
-    Create a new Google Slides presentation.
+    Create a new Google Slides presentation and return its ID and URL.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
@@ -294,6 +294,9 @@ async def render_page_to_image(
 ) -> str:
     """
     Render a slide (or any page, including notes pages) to an image and return it as image content, for looking at a slide's layout and visuals.
+
+    This is the way to see a slide: use it instead of exporting the
+    presentation to PPTX or PDF and rendering that.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
