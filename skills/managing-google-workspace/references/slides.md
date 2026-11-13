@@ -23,7 +23,7 @@ Read a deck through one of four actions, from cheapest to most detailed: `deck` 
 | action | string | no | deck | `deck`, `layouts`, `page`, or `markup` |
 | page_id | string | for page/markup | | Slide (or any page) object ID, from `deck` |
 | targets | list of strings | no | | `markup` only: element IDs to return instead of the whole slide, plus `"notes"` for the speaker notes |
-| raw | boolean | no | false | `markup` only: return the Slides API Page resource itself (EMU, transforms, text indices), limited to `targets`, for writing raw `batch_update_presentation` requests |
+| raw | boolean | no | false | `markup` only: return the Slides API Page resource itself (EMU, transforms, text indices), limited to `targets`, for writing raw `batch_update_presentation` requests. A target inside a group keeps its transform relative to the group; target the group, or omit `targets`, to place it on the page |
 | offset | integer | no | 0 | `deck` only: first slide to list. `deck` lists 100 slides per call and ends with the offset to read on from |
 | after | string | no | | `layouts` only: a slide ID, or `"start"`. Lists only the layouts a new slide inserted there can use |
 
@@ -39,11 +39,11 @@ Read a deck through one of four actions, from cheapest to most detailed: `deck` 
 
 - Lengths are points: a 16:9 slide is 720 x 405. `box` is the element's unrotated bounding box on the page, plus `rot` (degrees) and `flip` when set. Geometry is rounded to whole points.
 - `text` is a list of paragraphs. A paragraph is a string, or an object with `text` or `runs` and its paragraph props (`align`, `line_spacing`, `space_above`, `bullet`, ...). A run is a string, or `{"text", "s"}` where `s` names an entry in `styles`.
-- Only values set on the element itself appear; anything absent is inherited from the placeholder, layout or theme. On a shape with no placeholder, the editor's defaults are left out too: a missing `shape` means `TEXT_BOX`; a text box has no fill or outline, and its content and paragraphs are top- and start-aligned; other shapes are middle- and center-aligned; line spacing is 100.
+- Only values set on the element itself appear; anything absent is inherited from the placeholder, layout or theme. In a placeholder, `"bold": false` and zero spacing or indents are overrides of the inherited value. On a shape with no placeholder, the editor's defaults are left out too: a missing `shape` means `TEXT_BOX`; a text box has no fill or outline, and its content and paragraphs are top- and start-aligned; other shapes are middle- and center-aligned; line spacing is 100.
 - A link run omits the underline and `HYPERLINK` colour the link implies, and a bold run omits weight 700.
 - `"bullet": 1` is a level in the element's only list; with several lists, a bullet is `{"list": "L1", "level": 1}`. `lists` shows each list's rendered glyphs.
-- `autofit` is `"grow"` or `{"type": "shrink", "scale": 0.8}`. In a shrunk shape, sizes are as displayed.
-- `v` is a short hash of the element's content.
+- `autofit` is `"grow"` or `{"type": "shrink", "scale": 0.8}`, plus `line_spacing_reduction` when set. In a shrunk shape, font sizes are as displayed.
+- `v` is a short hash of the element's markup as shown here, with geometry rounded to points; it does not cover fields the markup leaves out.
 
 ### render_page_to_image
 Render a slide (or any page, including a notes page) to a PNG and return it as image content, so you can look at the slide's layout and visuals.
@@ -135,7 +135,7 @@ Each slide has a notes page, and the notes text lives in the single shape on it 
 
 Omit the `deleteText` request when the notes are already empty -- deleting an empty range is an API error. To clear notes, send `deleteText` alone.
 
-Appending uses the same clear-then-insert pair: read the existing notes, then insert `existing + new` as one `insertText` at index 0. Inserting only the new text without the `deleteText` duplicates the existing notes, and the notes text reported by `get_presentation` is normalized (blank lines dropped, trailing whitespace stripped), so its length cannot be used as an `insertionIndex` -- `insertionIndex` counts Unicode code units in the shape's actual text.
+Appending uses the same clear-then-insert pair: read the existing notes exactly with `get_presentation(action="markup", raw=true, targets=["notes"])` (the notes shape's `textRun` contents joined, without the final newline), then insert `existing + new` as one `insertText` at index 0. Inserting only the new text without the `deleteText` duplicates the existing notes. Do not rebuild the existing notes from `action="page"`: that text is normalized (blank lines dropped, whitespace stripped, bullets marked with `- `), so reinserting it changes the notes, and its length cannot be used as an `insertionIndex` -- `insertionIndex` counts Unicode code units in the shape's actual text.
 
 If an `insertText` accidentally targets the notes page instead of the notes shape, the error response names the correct shape ID to retry with.
 
