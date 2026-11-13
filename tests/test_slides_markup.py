@@ -102,8 +102,36 @@ def test_bullets_and_glyphs():
 
 def test_v_ignores_alias_names():
     a = project_page(shape_page([para(), run("x", italic=True), run("y\n", bold=True)]))
-    b = project_page(shape_page([para(), run("x", italic=True), run("y\n", bold=True)]))
-    assert a["elements"][0]["v"] == b["elements"][0]["v"]
+    b = shape_page([para(), run("x", italic=True), run("y\n", bold=True)])
+    first = shape_page([para(), run("z\n", bold=True)])["pageElements"][0]
+    b["pageElements"].insert(0, {**first, "objectId": "e0"})
+    b = project_page(b)
+    assert a["styles"]["s1"] == {"italic": True}
+    assert b["styles"]["s1"] == {"bold": True}
+    assert a["elements"][0]["v"] == b["elements"][1]["v"]
+
+
+def test_v_of_a_group_child_matches_whole_page_and_targeted_reads():
+    page = shape_page([para(), run("x\n")])
+    child = page["pageElements"][0]
+    page["pageElements"] = [{"objectId": "g1", "elementGroup": {"children": [child]}}]
+    whole = project_page(page)["elements"][0]["children"][0]
+    targeted = project_page(page, targets=["e1"])["elements"][0]
+    assert targeted["group"] == "g1"
+    assert whole["v"] == targeted["v"]
+
+
+def test_shrunk_sizes_are_displayed_for_text_and_auto_text():
+    size = {"fontSize": {"magnitude": 20, "unit": "PT"}}
+    auto = {"autoText": {"type": "SLIDE_NUMBER", "content": "3", "style": size}}
+    shrunk = {"autofit": {"autofitType": "TEXT_AUTOFIT", "fontScale": 0.5}}
+    out = project_page(
+        shape_page([para(), run("Page ", **size), auto], shapeProperties=shrunk)
+    )
+    assert out["styles"] == {"s1": {"size": 10}}
+    assert out["elements"][0]["text"] == [
+        {"runs": [{"text": "Page ", "s": "s1"}, {"auto": "SLIDE_NUMBER", "s": "s1"}]}
+    ]
 
 
 def test_table_merge_and_scoped_group_child():

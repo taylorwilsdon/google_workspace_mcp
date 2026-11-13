@@ -68,9 +68,7 @@ def _largest_font(text: Optional[Dict[str, Any]]) -> float:
 def slide_title(slide: Dict[str, Any]) -> Optional[str]:
     """Title placeholder text, else the text set in the largest font.
 
-    Slides built without placeholders (HTML imports, decks made through this
-    MCP) often put a small label above the headline, so the first text in
-    z-order is not the title; the largest type is. Ties go to z-order.
+    Ties go to z-order.
     """
     elements = [el for el, _ in iter_elements(slide.get("pageElements", []))]
     for el in elements:
@@ -205,20 +203,14 @@ def format_layouts(
 def format_deck(
     pres: Dict[str, Any], offset: int = 0, limit: int = DECK_PAGE_SLIDES
 ) -> str:
-    """Deck digest, ``limit`` slides from slide index ``offset``.
-
-    Pages the way get_drive_file_content does: a note at the end gives the
-    offset to call again with. The header's revision lets a reader paging
-    through tell that the deck changed and start again from offset 0.
-    """
+    """Deck digest, ``limit`` slides from slide index ``offset``, ending with
+    the offset to call again with when more slides follow."""
     pid = pres.get("presentationId")
     size = pres.get("pageSize") or {}
     w = size.get("width", {}).get("magnitude", 0) / EMU_PER_PT
     h = size.get("height", {}).get("magnitude", 0) / EMU_PER_PT
     slides = pres.get("slides", [])
     total = len(slides)
-    if offset < 0:
-        raise ValueError(f"offset must be >= 0, got {offset}.")
     if total and offset >= total:
         return f"[offset={offset:,} is past the last slide ({total:,} slides).]"
     shown = slides[offset : offset + limit]
@@ -246,8 +238,6 @@ def format_deck(
         lines.append("Layouts:")
         lines.extend(format_layouts(pres))
     else:
-        # On a page of a long deck, the layouts this page's slides use: enough
-        # for "another one like this", and bounded by the page size.
         page_layouts = {
             (s.get("slideProperties") or {}).get("layoutObjectId") for s in shown
         }
@@ -307,9 +297,6 @@ def _element_lines(el: Dict[str, Any], indent: str) -> List[str]:
                 )
     elif kind == "image":
         image = el["image"]
-        # contentUrl is left out: about 160 tokens each, it expires after 30
-        # minutes and is tied to the caller's account. render_page_to_image
-        # shows the image.
         head = f"{indent}- image {oid}"
         if image.get("sourceUrl"):
             head += f"  src={image['sourceUrl']}"

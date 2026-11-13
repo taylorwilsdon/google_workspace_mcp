@@ -162,6 +162,29 @@ async def test_page_lists_elements_groups_and_empty_notes_shape():
 
 
 @pytest.mark.asyncio
+async def test_page_lists_speaker_notes_text_under_the_notes_shape():
+    notes_shape = {
+        "objectId": "notes_1",
+        "shape": {
+            "shapeType": "TEXT_BOX",
+            "text": {
+                "textElements": [
+                    {"paragraphMarker": {}},
+                    {"textRun": {"content": "Open with the numbers\n"}},
+                    {"paragraphMarker": {"bullet": {"nestingLevel": 1}}},
+                    {"textRun": {"content": "then the ask\n"}},
+                ]
+            },
+        },
+    }
+    page = json.loads(json.dumps(PAGE))
+    page["slideProperties"]["notesPage"]["pageElements"] = [notes_shape]
+    service, _ = _service(page=page)
+    out = await _call(service, action="page", page_id="slide_1")
+    assert "notes shape notes_1:\n  Open with the numbers\n    - then the ask" in out
+
+
+@pytest.mark.asyncio
 async def test_markup_is_compact_json_in_points():
     service, _ = _service()
     out = await _call(service, action="markup", page_id="slide_1")

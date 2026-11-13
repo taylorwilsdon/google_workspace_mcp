@@ -194,8 +194,7 @@ def project_text_style(style: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     link = _link(s.get("link"))
     if link:
         out["link"] = link
-        # Setting a link applies underline and the HYPERLINK colour (verified
-        # live), so on a linked run they are implied.
+        # Setting a link applies underline and the HYPERLINK colour.
         if out.get("underline"):
             out.pop("underline")
         if out.get("color") == "HYPERLINK":
@@ -276,6 +275,13 @@ def _paragraph_props(
     return props
 
 
+def _run_style(style: Optional[Dict[str, Any]], scale: float) -> Dict[str, Any]:
+    out = project_text_style(style)
+    if scale != 1.0 and "size" in out:
+        out["size"] = _pt(out["size"] * scale)
+    return out
+
+
 def project_text(
     text: Optional[Dict[str, Any]],
     styles: StyleTable,
@@ -322,13 +328,10 @@ def project_text(
                 content = content[:-1]
             if not content:
                 continue
-            style = project_text_style(run.get("style"))
-            if scale != 1.0 and "size" in style:
-                style["size"] = _pt(style["size"] * scale)
-            current["runs"].append((content, style))
+            current["runs"].append((content, _run_style(run.get("style"), scale)))
         elif "autoText" in te:
             auto = te["autoText"]
-            style = project_text_style(auto.get("style"))
+            style = _run_style(auto.get("style"), scale)
             current["runs"].append(({"auto": auto.get("type", "SLIDE_NUMBER")}, style))
 
     out: List[Any] = []
@@ -389,7 +392,7 @@ def _solid(solid: Dict[str, Any]) -> Any:
     """A solid fill: a colour, {"color", "alpha"} when translucent, or "none".
 
     A fill with alpha 0 draws nothing, so it reads as "none", the same as a
-    fill that is not rendered. (HTML-imported decks set it on every text box.)
+    fill that is not rendered.
     """
     alpha = solid.get("alpha", 1)
     if alpha == 0:
@@ -545,8 +548,7 @@ class Projector:
             props = _shape_props(shape.get("shapeProperties", {}))
             if not ph:
                 # A shape with no placeholder parent reports the editor's
-                # default for a new shape (verified live): only a change from
-                # it is information.
+                # default for a new shape: only a change from it is information.
                 default_align = (
                     "TOP" if shape.get("shapeType") == "TEXT_BOX" else "MIDDLE"
                 )
@@ -567,7 +569,7 @@ class Projector:
                 para_defaults = None
                 if not ph:
                     # Resolved values the API reports on a shape with no
-                    # placeholder; the editor's defaults, verified live.
+                    # placeholder: the editor's defaults.
                     para_defaults = {
                         "align": "START" if shape_type == "TEXT_BOX" else "CENTER",
                         "line_spacing": 100,
@@ -601,7 +603,6 @@ class Projector:
         if alt:
             out["alt"] = alt
         out["v"] = version(out, self.styles.entries)
-        # v reads best right after id.
         return {"id": out.pop("id"), "v": out.pop("v"), **out}
 
     def _table(self, el: Dict[str, Any], matrix: Tuple[float, ...]) -> Dict[str, Any]:
@@ -652,7 +653,7 @@ def _resolve(value: Any, styles: Dict[str, Dict[str, Any]]) -> Any:
     if isinstance(value, dict):
         out = {}
         for k, v in value.items():
-            if k in ("v", "lists"):
+            if k in ("v", "lists", "group"):
                 continue
             if k == "s" and isinstance(v, str):
                 out.update(styles.get(v, {}))

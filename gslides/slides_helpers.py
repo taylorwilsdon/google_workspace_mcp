@@ -379,13 +379,13 @@ async def read_presentation(
         )
         return format_page(page, pres=context)
 
-    meta = await asyncio.to_thread(
-        presentations.get(presentationId=presentation_id, fields="pageSize").execute
-    )
     if targets:
         _check_targets(page, targets)
     if raw:
         body = _prune_page(page, targets) if targets else page
         return json.dumps(body, ensure_ascii=False, separators=(",", ":"))
+    meta = await asyncio.to_thread(
+        presentations.get(presentationId=presentation_id, fields="pageSize").execute
+    )
     projection = project_page(page, meta.get("pageSize"), targets=targets or None)
     return json.dumps(projection, ensure_ascii=False, separators=(",", ":"))
