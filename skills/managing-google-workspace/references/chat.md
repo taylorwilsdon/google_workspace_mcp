@@ -7,20 +7,21 @@ MCP tools for Google Chat spaces, messages, reactions, and attachments. All tool
 ## Spaces
 
 ### list_spaces
-Lists Google Chat spaces (rooms and direct messages) accessible to the user.
+Lists Google Chat spaces (rooms and direct messages) accessible to the user, or the members of one space.
 
 | Parameter | Type | Required | Default | Notes |
 |-----------|------|----------|---------|-------|
 | user_google_email | string | yes | | |
 | page_size | integer | no | 100 | |
 | space_type | string | no | "all" | |
+| space_id | string | no | | List this space's members instead: people, apps and groups, with role and pending invites; at most `page_size` are shown. Needs `chat.memberships.readonly` (in the default Chat scopes; not available in service-account mode) |
 
 ---
 
 ## Messages
 
 ### get_messages
-Retrieves messages from a Google Chat space.
+Retrieves one page of messages from a Google Chat space; use the `Next page token` from the response as `page_token` to retrieve more.
 
 | Parameter | Type | Required | Default | Notes |
 |-----------|------|----------|---------|-------|
@@ -29,6 +30,7 @@ Retrieves messages from a Google Chat space.
 | page_size | integer | no | 50 | |
 | order_by | string | no | "createTime desc" | |
 | message_filter | string | no | | Chat API filter on `createTime` and `thread.name`, e.g. `createTime > "2026-03-18T00:00:00Z"` or `thread.name = spaces/X/threads/Y` |
+| page_token | string | no | | Token from a previous response's `Next page token`. Keep all other parameters unchanged between pages |
 
 ### search_messages
 Searches for messages in Google Chat spaces by text content and/or time range.

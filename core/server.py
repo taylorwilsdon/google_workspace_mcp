@@ -19,6 +19,7 @@ from auth.auth_info_middleware import AuthInfoMiddleware
 from core.camel_case_middleware import CamelCaseArgumentsMiddleware
 from core.portable_schema_middleware import PortableSchemaMiddleware
 from core.tool_descriptions import docstring_description
+from core.toolset_header_middleware import ToolsetHeaderMiddleware
 from auth.google_auth import (
     check_client_secrets,
     get_google_api_timeout,
@@ -37,6 +38,7 @@ from auth.oauth_config import (
 from auth.oauth_proxy_config import (
     get_oauth_proxy_consent_kwargs,
     get_oauth_proxy_expiry_kwargs,
+    get_oauth_proxy_google_prompt_kwargs,
 )
 from auth.oauth_responses import (
     create_error_response,
@@ -565,6 +567,10 @@ server = SecureFastMCP(
     lifespan=_freeze_startup_heap | _google_api_executor,
 )
 
+# Narrow tools per request with X-MCP-Toolsets / X-MCP-Tools. See
+# https://github.com/taylorwilsdon/google_workspace_mcp/issues/509
+server.add_middleware(ToolsetHeaderMiddleware())
+
 # Accept camelCase argument names (calendarId, timeMin, ...) from callers that
 # mirror the Google API field names, mapping them onto the snake_case tool
 # parameters. See https://github.com/taylorwilsdon/google_workspace_mcp/issues/918
@@ -849,6 +855,20 @@ def configure_server_for_http():
                         "OAuth 2.1: restricting DCR client redirect URIs to allowlist: %s",
                         allowed_client_redirect_uris,
                     )
+                if client_storage is None:
+                    storage_fingerprint = hashlib.sha256(
+                        derive_jwt_key(
+                            high_entropy_material=jwt_signing_key.decode(),
+                            salt="fastmcp-storage-encryption-key",
+                        )
+                    ).hexdigest()[:12]
+                    logger.info(
+                        "OAuth 2.1: Using FastMCP default encrypted FileTreeStore for OAuth proxy client_storage (directory=%s). "
+                        "Set WORKSPACE_MCP_OAUTH_PROXY_STORAGE_BACKEND to memory, disk or valkey to change it.",
+                        (
+                            fastmcp.settings.home / "oauth-proxy" / storage_fingerprint
+                        ).absolute(),
+                    )
                 provider = WorkspaceGoogleProvider(
                     client_id=config.client_id,
                     client_secret=config.client_secret,
@@ -861,6 +881,7 @@ def configure_server_for_http():
                     allowed_client_redirect_uris=allowed_client_redirect_uris,
                     **expiry_kwargs,
                     **get_oauth_proxy_consent_kwargs(),
+                    **get_oauth_proxy_google_prompt_kwargs(),
                 )
                 if provider.client_registration_options is not None:
                     # Keep protocol-level auth limited to base identity scopes, but
