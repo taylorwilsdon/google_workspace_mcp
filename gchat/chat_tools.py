@@ -7,7 +7,6 @@ This module provides MCP tools for interacting with Google Chat API.
 import base64
 import logging
 import asyncio
-import re
 import ssl
 from typing import List, Optional
 
@@ -30,6 +29,7 @@ from gchat.chat_helpers import (
     _name_spaces,
     _none_if_blank,
     _none_if_null_sentinel,
+    _normalize_message_resource_name,
     _normalize_space_resource_name,
     _resolve_sender,
 )
@@ -322,13 +322,8 @@ async def send_message(
                 "message_name cannot be combined with thread_name or thread_key: "
                 "editing a message cannot move it to another thread."
             )
-        message_match = re.fullmatch(r"spaces/([^/]+)/messages/[^/]+", message_name)
-        if message_match is None:
-            raise UserInputError(
-                f"Invalid message_name '{message_name}'. "
-                "Expected the full resource name, e.g. spaces/X/messages/Y."
-            )
-        if f"spaces/{message_match.group(1)}" != space_id:
+        message_name = _normalize_message_resource_name(message_name, "message_name")
+        if message_name.split("/messages/", 1)[0] != space_id:
             raise UserInputError(
                 f"message_name '{message_name}' does not belong to space '{space_id}'. "
                 "Expected the full resource name, e.g. spaces/X/messages/Y."
@@ -634,6 +629,7 @@ async def create_reaction(
     Returns:
         str: Confirmation message.
     """
+    message_id = _normalize_message_resource_name(message_id)
     logger.info(f"[create_reaction] Message: '{message_id}', Emoji: '{emoji_unicode}'")
 
     reaction = await asyncio.to_thread(
@@ -681,6 +677,7 @@ async def download_chat_attachment(
     Returns:
         str: Attachment metadata with either a local file path or download URL.
     """
+    message_id = _normalize_message_resource_name(message_id)
     logger.info(
         f"[download_chat_attachment] Message: '{message_id}', Index: {attachment_index}"
     )
