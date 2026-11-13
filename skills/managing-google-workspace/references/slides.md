@@ -3,7 +3,7 @@
 MCP tools for reading, creating, and updating Google Slides presentations. All tools require `user_google_email` (string, required).
 
 ## Contents
-- Reading Presentations: get_presentation, get_page, render_page_to_image
+- Reading Presentations: get_presentation, render_page_to_image
 - Creating & Updating: create_presentation, batch_update_presentation
 - Speaker Notes
 - Comments: list_presentation_comments, manage_presentation_comment
@@ -14,28 +14,36 @@ MCP tools for reading, creating, and updating Google Slides presentations. All t
 ## Reading Presentations
 
 ### get_presentation
-Get presentation metadata: title, slide count, and slide object IDs.
+Read a deck through one of four actions, from cheapest to most detailed: `deck` (slides and layouts), `page` (one slide's element IDs and all its text), `markup` (one slide or chosen elements as compact JSON with geometry and styles), and `layouts` (every layout, for decks with more than 25).
 
 | Parameter | Type | Required | Default | Notes |
 |-----------|------|----------|---------|-------|
 | user_google_email | string | yes | | |
 | presentation_id | string | yes | | |
-| include_speaker_notes | boolean | no | false | Also report each slide's speaker notes shape ID and current notes text |
-| include_geometry | boolean | no | false | Also list each slide's elements with transform and size in EMU, to match an existing deck's margins |
-| include_styles | boolean | no | false | Also list each slide's elements with text styling (see `get_page`) |
-| raw | boolean | no | false | Return the full Presentation resource as JSON (can be large). Overrides the other flags |
+| action | string | no | deck | `deck`, `layouts`, `page`, or `markup` |
+| page_id | string | for page/markup | | Slide (or any page) object ID, from `deck` |
+| targets | list of strings | no | | `markup` only: element IDs to return instead of the whole slide, plus `"notes"` for the speaker notes |
+| raw | boolean | no | false | `markup` only: return the Slides API Page resource itself (EMU, transforms, text indices), limited to `targets`, for writing raw `batch_update_presentation` requests |
+| offset | integer | no | 0 | `deck` only: first slide to list. `deck` lists 100 slides per call and ends with the offset to read on from |
+| after | string | no | | `layouts` only: a slide ID, or `"start"`. Lists only the layouts a new slide inserted there can use |
 
-### get_page
-Get details about a specific slide, including its elements and layout.
+**`deck`** gives the title, URL and revision, then one entry per slide: its ID, title, layout ID, element counts and notes length. Then the deck's layouts, each with its placeholder types and the slides using it. Decks with more than 25 layouts list only the layouts their slides use, and point to `layouts` for the rest.
 
-| Parameter | Type | Required | Default | Notes |
-|-----------|------|----------|---------|-------|
-| user_google_email | string | yes | | |
-| presentation_id | string | yes | | |
-| page_object_id | string | yes | | |
-| include_geometry | boolean | no | false | Report each element's transform and intrinsic size in EMU, plus table column widths, row heights, and cell text. The only way to discover a deck's margins and content width |
-| include_styles | boolean | no | false | Report explicit text styling per paragraph and run, placeholder linkage, autofit, fill, and outline. Useful for proofing |
-| raw | boolean | no | false | Return the full Page resource as JSON. Overrides the other flags |
+**`page`** lists every element in z-order, with groups nested: shapes with their type, placeholder and text (bullets indented by level), table cells as `[row,col] text`, images with their source URL, charts with their spreadsheet and chart IDs, and the speaker notes shape ID and text. It shows no geometry or styling, and it says when the layout or master draws content that has no element ID on the slide. Use `render_page_to_image` to see that, and to see images.
+
+**`markup`** returns compact JSON:
+
+```json
+{"page_id":"g1_0","page_size":{"w":720,"h":405},"styles":{"s1":{"size":32}},"elements":[{"id":"g1_1","v":"2877e57c","box":{"x":33,"y":75,"w":344,"h":194},"placeholder":"TITLE","text":[{"text":"Q4 readout","s":"s1"}]},{"id":"g1_2","v":"ff3e2f10","box":{"x":39,"y":36,"w":179,"h":33},"shape":"ROUND_RECTANGLE","fill":"DARK2","outline":"none","text":["Commerce",{"text":"Platform","bullet":0}]}]}
+```
+
+- Lengths are points: a 16:9 slide is 720 x 405. `box` is the element's unrotated bounding box on the page, plus `rot` (degrees) and `flip` when set. Geometry is rounded to whole points.
+- `text` is a list of paragraphs. A paragraph is a string, or an object with `text` or `runs` and its paragraph props (`align`, `line_spacing`, `space_above`, `bullet`, ...). A run is a string, or `{"text", "s"}` where `s` names an entry in `styles`.
+- Only values set on the element itself appear; anything absent is inherited from the placeholder, layout or theme. On a shape with no placeholder, the editor's defaults are left out too: a missing `shape` means `TEXT_BOX`; a text box has no fill or outline, and its content and paragraphs are top- and start-aligned; other shapes are middle- and center-aligned; line spacing is 100.
+- A link run omits the underline and `HYPERLINK` colour the link implies, and a bold run omits weight 700.
+- `"bullet": 1` is a level in the element's only list; with several lists, a bullet is `{"list": "L1", "level": 1}`. `lists` shows each list's rendered glyphs.
+- `autofit` is `"grow"` or `{"type": "shrink", "scale": 0.8}`. In a shrunk shape, sizes are as displayed.
+- `v` is a short hash of the element's content.
 
 ### render_page_to_image
 Render a slide (or any page, including a notes page) to a PNG and return it as image content, so you can look at the slide's layout and visuals.
@@ -112,9 +120,9 @@ See the [Slides API reference](https://developers.google.com/slides/api/referenc
 
 Speaker notes (presenter notes) are editable -- there are no dedicated tools, they go through the two tools above.
 
-Each slide has a notes page, and the notes text lives in the single shape on it identified by `speakerNotesObjectId`. Only that shape's text is writable; the rest of the notes page and the notes master are read-only. That shape ID is **not** returned by `get_page`, and the notes *page* ID is **not** a valid `insertText` target.
+Each slide has a notes page, and the notes text lives in the single shape on it identified by `speakerNotesObjectId`. Only that shape's text is writable; the rest of the notes page and the notes master are read-only. The notes *page* ID is **not** a valid `insertText` target.
 
-**Read**: call `get_presentation` with `include_speaker_notes=true`. Each slide then reports its `Speaker Notes Shape ID` and current notes text. This costs no extra API call.
+**Read**: call `get_presentation` with `action="page"`. The slide's digest ends with `notes shape <ID>:` and the notes text, or `(empty)`.
 
 **Write**: pass that shape ID to `batch_update_presentation`. To replace notes, clear then insert:
 
@@ -159,15 +167,15 @@ Create, reply to, resolve, edit, or delete a comment.
 
 ## Tips
 
-**Workflow**: Call `get_presentation` first to get slide object IDs, then `get_page` to inspect individual slide elements. Use `batch_update_presentation` for all modifications.
+**Workflow**: Call `get_presentation` with `action="deck"` to get slide object IDs, then `action="page"` to read a slide's elements and text. Use `action="markup"` when you need positions or styles, for example to place a new element against an existing deck's margins. Use `batch_update_presentation` for all modifications, with `action="markup"` and `raw=true` when a request needs text indices or transforms.
 
-**Object IDs**: Every slide and element has a unique `objectId`. Use `get_presentation` to discover slide IDs and `get_page` to discover element IDs within a slide. You can assign custom object IDs when creating elements (useful for referencing them in subsequent requests within the same batch).
+**Object IDs**: Every slide and element has a unique `objectId`. `action="deck"` lists slide IDs and `action="page"` lists element IDs within a slide. You can assign custom object IDs when creating elements (useful for referencing them in subsequent requests within the same batch).
 
 **Adding text**: `insertText.objectId` must be a text-capable shape or table object ID, not the slide/page ID. To place new text on a slide, create a text box or shape first with `createShape` and `elementProperties.pageObjectId` set to the slide ID, then call `insertText` using the new shape `objectId`.
 
 **Keep slides skimmable**: put short headlines and bullets on the slide itself and move the narration -- full sentences, context, talking points -- into speaker notes (see above). Never create a separate document for notes.
 
-**Coordinate system**: Positions and sizes use EMU (English Metric Units). 1 inch = 914400 EMU. Standard slide dimensions are 10 inches wide (9144000 EMU) by 5.625 inches tall (5143500 EMU).
+**Coordinate system**: `batch_update_presentation` and raw markup use EMU (English Metric Units); `action="markup"` converts to points (12700 EMU per point). 1 inch = 914400 EMU. Standard slide dimensions are 10 inches wide (9144000 EMU) by 5.625 inches tall (5143500 EMU).
 
 **Batch ordering**: Requests in a batch execute sequentially. Earlier requests can create elements that later requests reference by object ID. If a request fails, subsequent requests in the batch are skipped.
 
