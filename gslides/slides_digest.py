@@ -18,6 +18,7 @@ EMU_PER_PT = 12700
 LAYOUT_CAP = 25
 DECK_PAGE_SLIDES = 100
 _TITLE_TYPES = ("TITLE", "CENTERED_TITLE")
+_BODY_TYPES = ("SUBTITLE", "BODY")
 
 
 def _paragraphs(text: Optional[Dict[str, Any]]) -> List[Tuple[Optional[int], str]]:
@@ -68,23 +69,26 @@ def _largest_font(text: Optional[Dict[str, Any]]) -> float:
 def slide_title(slide: Dict[str, Any]) -> Optional[str]:
     """Title placeholder text, else the text set in the largest font.
 
+    A subtitle or body placeholder that inherits its size outranks sized text.
     Ties go to z-order.
     """
-    elements = [el for el, _ in iter_elements(slide.get("pageElements", []))]
-    for el in elements:
-        ph = (el.get("shape") or {}).get("placeholder") or {}
-        if ph.get("type") in _TITLE_TYPES:
-            paras = _paragraphs(el["shape"].get("text"))
+    shapes = [
+        el.get("shape") or {} for el, _ in iter_elements(slide.get("pageElements", []))
+    ]
+    for shape in shapes:
+        if (shape.get("placeholder") or {}).get("type") in _TITLE_TYPES:
+            paras = _paragraphs(shape.get("text"))
             if paras:
                 return paras[0][1]
     best: Optional[str] = None
     best_size = -1.0
-    for el in elements:
-        text = (el.get("shape") or {}).get("text")
-        paras = _paragraphs(text)
+    for shape in shapes:
+        paras = _paragraphs(shape.get("text"))
         if not paras:
             continue
-        size = _largest_font(text)
+        size = _largest_font(shape.get("text"))
+        if not size and (shape.get("placeholder") or {}).get("type") in _BODY_TYPES:
+            size = float("inf")
         if size > best_size:
             best, best_size = paras[0][1], size
     return best
