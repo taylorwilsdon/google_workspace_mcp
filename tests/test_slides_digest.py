@@ -24,6 +24,18 @@ def test_title_prefers_placeholder_then_largest_font():
     assert slide_title({"pageElements": [label, headline, title]}) == "Real title"
 
 
+def test_title_prefers_inherited_size_body_over_sized_text():
+    footnote = box("a", "Source: internal", 8)
+    body = box("b", "Revenue grew 12%", placeholder="BODY")
+    assert slide_title({"pageElements": [footnote, body]}) == "Revenue grew 12%"
+    number = box("c", "7", placeholder="SLIDE_NUMBER")
+    assert slide_title({"pageElements": [number, footnote]}) == "Source: internal"
+    sized = box("d", "Fine print", 9, placeholder="BODY")
+    assert (
+        slide_title({"pageElements": [sized, box("e", "Headline", 30)]}) == "Headline"
+    )
+
+
 def test_page_lists_image_source_but_not_content_url():
     image = {
         "objectId": "i1",
