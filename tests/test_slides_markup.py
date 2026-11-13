@@ -371,3 +371,19 @@ def test_selected_group_does_not_repeat_a_selected_child():
     page["pageElements"] = [{"objectId": "g1", "elementGroup": {"children": [child]}}]
     out = project_page(page, targets=["g1", "e1"])
     assert [e["id"] for e in out["elements"]] == ["g1"]
+
+
+def test_v_changes_when_two_lists_swap_glyphs():
+    def body(first, second):
+        return project_page(
+            shape_page(
+                [
+                    para(listId="a", nestingLevel=0, glyph=first),
+                    run("One\n"),
+                    para(listId="b", nestingLevel=0, glyph=second),
+                    run("Two\n"),
+                ]
+            )
+        )["elements"][0]["v"]
+
+    assert body("●", "○") != body("○", "●")

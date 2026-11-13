@@ -674,29 +674,34 @@ class Projector:
         return out
 
 
-def _resolve(value: Any, styles: Dict[str, Dict[str, Any]]) -> Any:
-    """Canonical form: style aliases resolved, string and object runs unified."""
+def _resolve(
+    value: Any,
+    styles: Dict[str, Dict[str, Any]],
+    lists: Optional[Dict[str, Any]] = None,
+) -> Any:
+    """Canonical form: style aliases resolved, string and object runs unified,
+    and each bullet's list alias replaced by the glyph it renders."""
     if isinstance(value, dict):
+        lists = value.get("lists", lists)
         out = {}
         for k, v in value.items():
-            if k in ("v", "group"):
-                continue
-            if k == "lists":
-                out["lists"] = sorted(
-                    json.dumps(lst, sort_keys=True) for lst in v.values()
-                )
+            if k in ("v", "group", "lists"):
                 continue
             if k == "s" and isinstance(v, str):
                 out.update(styles.get(v, {}))
-            elif k == "bullet" and isinstance(v, dict):
-                out["bullet"] = {"level": v.get("level")}
-            elif k == "bullet" and isinstance(v, int):
-                out["bullet"] = {"level": v}
+            elif k == "bullet":
+                alias, level = (
+                    (next(iter(lists or {}), None), v)
+                    if isinstance(v, int)
+                    else (v.get("list"), v.get("level"))
+                )
+                glyphs = (lists or {}).get(alias, {}).get("glyphs", {})
+                out["bullet"] = {"level": level, "glyph": glyphs.get(str(level))}
             else:
-                out[k] = _resolve(v, styles)
+                out[k] = _resolve(v, styles, lists)
         return out
     if isinstance(value, list):
-        return [_resolve(v, styles) for v in value]
+        return [_resolve(v, styles, lists) for v in value]
     return value
 
 
