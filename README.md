@@ -124,7 +124,7 @@ This project is [MIT licensed](LICENSE) —
 </td>
 <td align="center" width="25%">
 <h3>🖼️</h3><a href="https://workspacemcp.com/google-slides?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=services-google-slides"><b>Slides</b></a><br>
-<sub>7 tools - create, batch update,<br>slide images, comments</sub>
+<sub>6 tools - create, read, batch update,<br>slide images, comments</sub>
 </td>
 <td align="center" width="25%">
 <h3>📋</h3><a href="https://workspacemcp.com/google-forms?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=services-google-forms"><b>Forms</b></a><br>
