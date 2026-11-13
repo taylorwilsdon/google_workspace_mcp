@@ -344,6 +344,11 @@ def test_body_colour_still_reaches_a_table() -> None:
             id="white-background-with-a-text-colour",
         ),
         pytest.param(
+            '<body bgcolor="white" style="color:black">Text</body>',
+            '<div style="background-color:white;color:black">Text</div>',
+            id="white-background-with-an-inline-text-colour",
+        ),
+        pytest.param(
             '<body bgcolor="navy" text="FFFFFF"><table><tr><td>x</td></tr></table></body>',
             '<div style="background-color:navy;color:#FFFFFF">'
             '<table style="color:inherit"><tr><td>x</td></tr></table></div>',
@@ -353,6 +358,14 @@ def test_body_colour_still_reaches_a_table() -> None:
 )
 def test_body_colour_attributes_move_to_the_div(body: str, expected: str) -> None:
     assert normalize_quoted_html(f"<html>{body}</html>") == expected
+
+
+def test_white_background_stays_when_the_style_sheet_fixes_the_text_colour() -> None:
+    out = normalize_quoted_html(
+        "<html><head><style>body{color:#111}</style></head>"
+        '<body bgcolor="#FFFFFF">x</body></html>'
+    )
+    assert out == '<div style="background-color:#FFFFFF;color:#111">x</div>'
 
 
 def test_style_sheet_and_inline_style_outrank_the_body_attributes() -> None:

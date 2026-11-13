@@ -260,13 +260,14 @@ def _with_style(raw: str, css: str) -> str:
     return f"{raw[:end]} {_style_attribute(None, css)}{raw[end:]}"
 
 
-def _presentational_css(attrs: _Attrs) -> str:
+def _presentational_css(attrs: _Attrs, text_colour_set: bool) -> str:
     """CSS for the ``<body>`` attributes that colour the page.
 
     ``bgcolor`` and ``text`` mean nothing on a ``<div>``; dropped, light text
     set further down would stand on the reader's own white page. A white
-    background without a text colour is left out: it changes nothing on a
-    white page and would put a fixed box into a reader's dark mode.
+    background is left out unless the body also fixes its text colour (here,
+    or in its style as ``text_colour_set`` says): alone it changes nothing on
+    a white page and would put a fixed box into a reader's dark mode.
     """
     first: Dict[str, str] = {}
     for name, value in attrs:
@@ -276,7 +277,8 @@ def _presentational_css(attrs: _Attrs) -> str:
         match = _LEGACY_COLOUR_RE.fullmatch(first.get(attribute, ""))
         if match:
             colours[prop] = f"#{match.group(1)}" if match.group(1) else match.group(0)
-    if "color" not in colours and colours.get("background-color", "").lower() in _WHITE:
+    fixed_text = text_colour_set or "color" in colours
+    if not fixed_text and colours.get("background-color", "").lower() in _WHITE:
         return ""
     return ";".join(f"{prop}:{colour}" for prop, colour in colours.items())
 
@@ -419,12 +421,15 @@ class _DocumentFlattener(HTMLParser):
         """Return the div standing in for ``<body>`` and whether it sets a colour."""
         for index, (_offset, kind, raw, _tag, attrs) in enumerate(self._events):
             if kind == _BODY:
+                sheet = styles.get(index, "")
+                own = next((v or "" for name, v in attrs if name == "style"), "")
                 # The colour attributes rank below every style sheet rule.
-                hints = _presentational_css(attrs)
-                css = ";".join(filter(None, (hints, styles.get(index, ""))))
+                hints = _presentational_css(
+                    attrs, bool(_COLOR_DECLARATION_RE.search(f"{sheet};{own}"))
+                )
+                css = ";".join(filter(None, (hints, sheet)))
                 wrapper = _body_wrapper(raw, css)
                 if wrapper:
-                    own = next((v or "" for name, v in attrs if name == "style"), "")
                     return wrapper, bool(_COLOR_DECLARATION_RE.search(f"{css};{own}"))
         return "", False
 
