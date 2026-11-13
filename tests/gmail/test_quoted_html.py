@@ -252,6 +252,55 @@ def test_style_sheet_rules_are_inlined(sheet: str, element: str, expected: str) 
     assert out == f"{expected}x"
 
 
+def test_custom_property_names_keep_their_case() -> None:
+    out = normalize_quoted_html(
+        "<html><head><style>p{--Theme:black;background:var(--Theme);COLOR:white}"
+        "</style></head><body><p>x</p></body></html>"
+    )
+    assert out == '<p style="--Theme:black;background:var(--Theme);color:white">x</p>'
+
+
+@pytest.mark.parametrize(
+    ("sheet", "expected"),
+    [
+        pytest.param(
+            "@media screen{p{background:#000}}p{color:#fff}",
+            '<p class="a" style="background:#000;color:#fff">',
+            id="screen",
+        ),
+        pytest.param(
+            "@media all{.a{color:red}}",
+            '<p class="a" style="color:red">',
+            id="all",
+        ),
+        pytest.param(
+            "@media screen, print{.a{margin:0}}",
+            '<p class="a" style="margin:0">',
+            id="screen-in-a-list",
+        ),
+        pytest.param(
+            "@media screen{@media all{.a{color:red}}} .a{margin:0}",
+            '<p class="a" style="color:red;margin:0">',
+            id="nested",
+        ),
+        pytest.param(
+            "@media print{.a{color:blue}}"
+            " @media screen and (max-width:480px){.a{color:green}}",
+            '<p class="a">',
+            id="print-and-conditional-are-skipped",
+        ),
+    ],
+)
+def test_media_blocks_for_the_screen_count_as_top_level(
+    sheet: str, expected: str
+) -> None:
+    out = normalize_quoted_html(
+        f"<html><head><style>{sheet}</style></head>"
+        '<body><p class="a">x</p></body></html>'
+    )
+    assert out == f"{expected}x</p>"
+
+
 def test_style_for_another_medium_is_not_inlined() -> None:
     out = normalize_quoted_html(
         '<html><head><style media="print">.a{display:none}</style>'
@@ -274,6 +323,63 @@ def test_body_colour_still_reaches_a_table() -> None:
         '<div style="color:#fff;background:#222">'
         '<table style="color:inherit"><tr><td>cell</td></tr></table></div>'
     )
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        pytest.param(
+            '<body bgcolor="#000000"><p style="color:#fff">Text</p></body>',
+            '<div style="background-color:#000000"><p style="color:#fff">Text</p></div>',
+            id="dark-background",
+        ),
+        pytest.param(
+            '<body bgcolor="#FFFFFF"><p>Text</p></body>',
+            "<p>Text</p>",
+            id="white-background-alone",
+        ),
+        pytest.param(
+            '<body bgcolor="white" text="#333">x</body>',
+            '<div style="background-color:white;color:#333">x</div>',
+            id="white-background-with-a-text-colour",
+        ),
+        pytest.param(
+            '<body bgcolor="navy" text="FFFFFF"><table><tr><td>x</td></tr></table></body>',
+            '<div style="background-color:navy;color:#FFFFFF">'
+            '<table style="color:inherit"><tr><td>x</td></tr></table></div>',
+            id="background-and-text",
+        ),
+    ],
+)
+def test_body_colour_attributes_move_to_the_div(body: str, expected: str) -> None:
+    assert normalize_quoted_html(f"<html>{body}</html>") == expected
+
+
+def test_style_sheet_and_inline_style_outrank_the_body_attributes() -> None:
+    out = normalize_quoted_html(
+        "<html><head><style>body{background-color:#222}</style></head>"
+        '<body bgcolor="#000000" style="margin:0">x</body></html>'
+    )
+    assert out == (
+        '<div style="background-color:#000000;background-color:#222;margin:0">x</div>'
+    )
+
+
+def test_selector_listed_many_times_is_indexed_once() -> None:
+    rules = gmail_quoted_html._style_rules(",".join(["p"] * 1000) + "{color:red}")
+    assert len(rules[("p", None)]) == 1
+
+
+def test_matching_rules_are_measured_before_they_are_joined() -> None:
+    """One element can match thousands of rules: nothing past the limit is joined."""
+    names = [f"c{number}" for number in range(2000)]
+    rules = gmail_quoted_html._style_rules(
+        "".join(f".{name}{{margin:0 auto 0 auto}}" for name in names)
+    )
+    attrs = [("class", " ".join(names))]
+    assert gmail_quoted_html._matching_style(rules, "p", attrs, 10_000) is None
+    joined = gmail_quoted_html._matching_style(rules, "p", attrs, 100_000)
+    assert joined is not None and joined.count("margin:0 auto 0 auto") == 2000
 
 
 def test_style_sheet_that_would_multiply_is_not_inlined(

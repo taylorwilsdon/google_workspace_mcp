@@ -40,11 +40,17 @@ _CSS_TOKEN_RE = re.compile(
     r"""/\*.*?(?:\*/|\Z)|"(?:[^"\\\n]|\\.)*"?|'(?:[^'\\\n]|\\.)*'?|[{}();]""",
     re.DOTALL,
 )
-_CSS_PROPERTY_RE = re.compile(r"-{0,2}[a-z_][a-z0-9_-]*")
+# A custom property keeps its case; every other name is lower-cased first.
+_CSS_PROPERTY_RE = re.compile(r"--[A-Za-z0-9_-]+|-?[a-z_][a-z0-9_-]*")
 _SIMPLE_SELECTOR_RE = re.compile(
     r"([a-z][a-z0-9]*)?(?:\.(-?[a-z_][\w-]*))?(:link)?", re.IGNORECASE
 )
 _COLOR_DECLARATION_RE = re.compile(r"(?:^|;)\s*color\s*:", re.IGNORECASE)
+# A legacy colour attribute value: hex digits with or without "#", or a name.
+_LEGACY_COLOUR_RE = re.compile(
+    r"#?([0-9a-f]{6}|[0-9a-f]{3})|[a-z]{3,20}", re.IGNORECASE
+)
+_WHITE = frozenset({"#fff", "#ffffff", "white"})
 _SCREEN_MEDIA = frozenset({"", "all", "screen"})
 _LINK_TAGS = frozenset({"a", "area"})
 # Inlined declarations may add this much text, or the size of the document if
@@ -73,7 +79,9 @@ def _index_rule(
     kept = []
     for declaration in declarations:
         name, colon, value = declaration.partition(":")
-        name, value = name.strip().lower(), " ".join(value.split())
+        name, value = name.strip(), " ".join(value.split())
+        if not name.startswith("--"):
+            name = name.lower()
         if (
             colon
             and value
@@ -91,24 +99,36 @@ def _index_rule(
             tag = match.group(1).lower() if match.group(1) else None
             link = bool(match.group(3))
             specificity = (int(match.group(2) is not None) + link, int(tag is not None))
-            rules.setdefault((tag, match.group(2)), []).append(
-                (specificity, order, link, style)
-            )
+            rule = (specificity, order, link, style)
+            listed = rules.setdefault((tag, match.group(2)), [])
+            # "p,p,p{...}" lists one selector many times: index its block once.
+            if not listed or listed[-1] != rule:
+                listed.append(rule)
+
+
+def _is_screen_media(prelude: str) -> bool:
+    """Whether a block prelude is an ``@media`` rule that applies on screen."""
+    prelude = prelude.strip().lower()
+    if not prelude.startswith("@media"):
+        return False
+    return any(part.strip() in _SCREEN_MEDIA for part in prelude[6:].split(","))
 
 
 def _style_rules(css: str) -> _RuleIndex:
     """Index the ``tag``, ``.class`` and ``tag.class`` rules of a style sheet.
 
-    Only what a style attribute can express is kept. At-rules and their blocks
-    (``@media``, ``@font-face``), every other selector and Office-only
-    ``mso-*`` declarations are skipped, and so is a declaration with an
-    unterminated string or bracket, which would swallow the ones after it.
+    Only what a style attribute can express is kept. The rules inside an
+    ``@media screen`` or ``@media all`` block count like top-level ones. Every
+    other at-rule and its block (a conditional ``@media``, ``@font-face``),
+    every other selector and Office-only ``mso-*`` declarations are skipped,
+    and so is a declaration with an unterminated string or bracket, which
+    would swallow the ones after it.
     """
     rules: _RuleIndex = {}
     pieces: List[str] = []
     declarations: List[str] = []
     selector = ""
-    depth = parens = position = order = 0
+    depth = parens = position = order = media_blocks = 0
     usable, nested = True, False
     # An HTML comment wrapper around the sheet is not part of any selector.
     text = css.replace("<!--", " ").replace("-->", " ")
@@ -134,24 +154,35 @@ def _style_rules(css: str) -> _RuleIndex:
         if value == "{":
             if depth == 0:
                 selector, declarations, nested = "".join(pieces), [], False
+                if _is_screen_media(selector):
+                    media_blocks += 1
+                    pieces, usable, parens = [], True, 0
+                    continue
             else:
                 nested = True
             depth += 1
-        elif value == "}" and depth:
-            depth -= 1
-            if depth == 0 and not nested:
-                _index_rule(rules, selector, declarations, order)
-                order += 1
+        elif value == "}":
+            if depth:
+                depth -= 1
+                if depth == 0 and not nested:
+                    _index_rule(rules, selector, declarations, order)
+                    order += 1
+            elif media_blocks:
+                media_blocks -= 1
         pieces, usable, parens = [], True, 0
     return rules
 
 
-def _matching_style(rules: _RuleIndex, tag: str, attrs: _Attrs) -> str:
+def _matching_style(
+    rules: _RuleIndex, tag: str, attrs: _Attrs, limit: int
+) -> Optional[str]:
     """Return the declarations of every rule that matches an element.
 
     They come in cascade order (specificity, then source order) and are not
     merged: the reader's CSS parser resolves duplicates and ``!important``
-    exactly as it would have in the style sheet.
+    exactly as it would have in the style sheet. None when they would be
+    longer than ``limit``; the length is added up before anything is joined,
+    so a style sheet cannot make this allocate more than the limit.
     """
     first: Dict[str, Optional[str]] = {}
     for name, value in attrs:
@@ -163,6 +194,8 @@ def _matching_style(rules: _RuleIndex, tag: str, attrs: _Attrs) -> str:
     if tag not in _LINK_TAGS or "href" not in first:
         # ":link" never matches a named anchor such as <a name="bookmark">.
         matched = [rule for rule in matched if not rule[2]]
+    if sum(len(rule[3]) + 1 for rule in matched) > limit:
+        return None
     return ";".join(rule[3] for rule in sorted(matched))
 
 
@@ -227,11 +260,33 @@ def _with_style(raw: str, css: str) -> str:
     return f"{raw[:end]} {_style_attribute(None, css)}{raw[end:]}"
 
 
+def _presentational_css(attrs: _Attrs) -> str:
+    """CSS for the ``<body>`` attributes that colour the page.
+
+    ``bgcolor`` and ``text`` mean nothing on a ``<div>``; dropped, light text
+    set further down would stand on the reader's own white page. A white
+    background without a text colour is left out: it changes nothing on a
+    white page and would put a fixed box into a reader's dark mode.
+    """
+    first: Dict[str, str] = {}
+    for name, value in attrs:
+        first.setdefault(name, (value or "").strip())
+    colours: Dict[str, str] = {}
+    for attribute, prop in (("bgcolor", "background-color"), ("text", "color")):
+        match = _LEGACY_COLOUR_RE.fullmatch(first.get(attribute, ""))
+        if match:
+            colours[prop] = f"#{match.group(1)}" if match.group(1) else match.group(0)
+    if "color" not in colours and colours.get("background-color", "").lower() in _WHITE:
+        return ""
+    return ";".join(f"{prop}:{colour}" for prop, colour in colours.items())
+
+
 def _body_wrapper(raw: str, css: str) -> str:
     """Return the ``<div>`` standing in for a ``<body>`` start tag, or ``""``.
 
     The div carries what still means something outside a document: the
-    body's ``dir``, ``lang`` and ``style`` (with ``css`` from the style sheet).
+    body's ``dir``, ``lang`` and ``style`` (with ``css`` from its colour
+    attributes and the style sheet).
     """
     kept: Dict[str, str] = {}
     scanned = _scan_attributes(raw)
@@ -352,10 +407,10 @@ class _DocumentFlattener(HTMLParser):
         styles: Dict[int, str] = {}
         for index, (_offset, kind, _raw, tag, attrs) in enumerate(self._events):
             if rules and kind in (_TAG, _BODY):
-                css = _matching_style(rules, tag, attrs)
-                budget -= len(css)
-                if budget < 0:
+                css = _matching_style(rules, tag, attrs, budget)
+                if css is None:
                     return {}
+                budget -= len(css)
                 if css:
                     styles[index] = css
         return styles
@@ -364,7 +419,9 @@ class _DocumentFlattener(HTMLParser):
         """Return the div standing in for ``<body>`` and whether it sets a colour."""
         for index, (_offset, kind, raw, _tag, attrs) in enumerate(self._events):
             if kind == _BODY:
-                css = styles.get(index, "")
+                # The colour attributes rank below every style sheet rule.
+                hints = _presentational_css(attrs)
+                css = ";".join(filter(None, (hints, styles.get(index, ""))))
                 wrapper = _body_wrapper(raw, css)
                 if wrapper:
                     own = next((v or "" for name, v in attrs if name == "style"), "")
@@ -404,8 +461,8 @@ def normalize_quoted_html(html_text: str) -> str:
 
     A fragment without document markup, such as Gmail's own HTML, is returned
     unchanged. A whole document loses its ``<html>`` and ``<body>`` tags (the
-    body's ``dir``, ``lang`` and ``style`` move to a ``<div>`` around the
-    fragment), its ``<head>`` with ``<title>``, ``<meta>``, ``<link>``,
+    body's ``dir``, ``lang``, ``style`` and colour attributes move to a
+    ``<div>`` around the fragment), its ``<head>`` with ``<title>``, ``<meta>``, ``<link>``,
     ``<base>`` and ``<style>``, scripts, comments (Outlook's conditional
     blocks included) and the doctype.
 
