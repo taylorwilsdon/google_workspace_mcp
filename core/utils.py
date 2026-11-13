@@ -97,6 +97,29 @@ class UserInputError(Exception):
     pass
 
 
+_PATH_SEGMENT_PATTERN = re.compile(r"[A-Za-z0-9._-]+")
+
+
+def check_path_segment(value: Any, label: str) -> str:
+    """Return value if it is safe as one segment of a Google API resource path.
+
+    Some Google APIs put resource names into the URL path without escaping
+    (reserved expansion, ``{+name}`` in the discovery document), so ``:``,
+    ``?`` or ``#`` inside an ID would change the method or the query sent.
+    An ID is accepted only if it is made of letters, digits, ``.``, ``_`` and
+    ``-``, and is not only dots.
+    """
+    if (
+        not isinstance(value, str)
+        or _PATH_SEGMENT_PATTERN.fullmatch(value) is None
+        or not value.strip(".")
+    ):
+        raise UserInputError(
+            f"Invalid {label} {value!r}: expected only letters, digits, '.', '_' or '-'."
+        )
+    return value
+
+
 def _coerce_json_str_to_type(v: Any, expected_type: type) -> Any:
     """Coerce a JSON-encoded string to a specific container type."""
     if not isinstance(v, str):
