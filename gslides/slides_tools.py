@@ -535,9 +535,10 @@ async def get_presentation(
     raw: bool = False,
 ) -> str:
     """
-    Get a Google Slides presentation's title, URL, page size and slides, with
-    each slide's object ID, element count and text. Flags add speaker notes,
-    element placement or text styles, or return the raw API resource.
+    Get a Google Slides presentation's title, URL, page size and slides.
+
+    Each slide lists its object ID, element count and text. Flags add speaker
+    notes, element placement or text styles, or return the raw API resource.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
@@ -750,10 +751,11 @@ async def get_page(
     raw: bool = False,
 ) -> str:
     """
-    Get one page (slide) of a presentation: its type and every element's
-    object ID, type and text, including elements inside groups. Flags add
-    element placement or text styles (both include table cell text), or
-    return the raw API resource.
+    Get one page (slide) of a presentation: its type and every element.
+
+    Each element lists its object ID, type and text, including elements inside
+    groups. Flags add element placement or text styles (both include table cell
+    text), or return the raw API resource.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
