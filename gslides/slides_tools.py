@@ -16,6 +16,7 @@ from mcp.types import ImageContent, TextContent, ToolAnnotations
 from auth.service_decorator import require_google_service
 from core.server import server
 from core.utils import (
+    check_path_segment,
     handle_http_errors,
     image_content_from_bytes,
     sniff_inline_image_mime_type,
@@ -561,6 +562,7 @@ async def get_presentation(
     Returns:
         str: Details about the presentation including title, slides count, and metadata.
     """
+    presentation_id = check_path_segment(presentation_id, "presentation_id")
     logger.info(
         f"[get_presentation] Invoked. Email: '{user_google_email}', ID: '{presentation_id}', Notes: {include_speaker_notes}"
     )
@@ -679,6 +681,7 @@ async def batch_update_presentation(
     Returns:
         str: Details about the batch update operation results.
     """
+    presentation_id = check_path_segment(presentation_id, "presentation_id")
     logger.info(
         f"[batch_update_presentation] Invoked. Email: '{user_google_email}', ID: '{presentation_id}', Requests: {len(requests)}"
     )

@@ -14,7 +14,7 @@ from typing import Dict, List, Optional, Tuple
 from fastmcp.exceptions import ToolError
 from googleapiclient.errors import HttpError
 
-from core.utils import UserInputError
+from core.utils import UserInputError, check_path_segment
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ _PEOPLE_BATCH_SIZE = 200  # people.getBatchGet limit
 _MAX_CONSECUTIVE_MEMBER_LOOKUP_FAILURES = 2
 _SCOPE_ERROR_REASON = "ACCESS_TOKEN_SCOPE_INSUFFICIENT"
 _SEARCH_MESSAGES_RETRY_BASE_DELAY_SECONDS = 1
-_SPACE_ID_PATTERN = re.compile(r"(?:spaces/)?([^/\s?#]+)")
+_MESSAGE_NAME_PATTERN = re.compile(r"spaces/([^/]+)/messages/([^/]+)")
 
 
 def _cache_key(cache_owner: Optional[str], user_id: str) -> Optional[Tuple[str, str]]:
@@ -334,12 +334,39 @@ def _none_if_blank(value: Optional[str]) -> Optional[str]:
 
 def _normalize_space_resource_name(space_id: str) -> str:
     """Return spaces/<id> for a space resource name or a bare space ID."""
-    match = _SPACE_ID_PATTERN.fullmatch(space_id.strip())
-    if match is None:
+    value = space_id.strip()
+    if value.startswith("spaces/"):
+        value = value[len("spaces/") :]
+    try:
+        check_path_segment(value, "space_id")
+    except UserInputError:
         raise UserInputError(
             f"Invalid space_id '{space_id}'. Expected spaces/X or a bare space ID X."
-        )
-    return f"spaces/{match.group(1)}"
+        ) from None
+    return f"spaces/{value}"
+
+
+def _normalize_message_resource_name(
+    message_name: str, label: str = "message_id"
+) -> str:
+    """Return a spaces/X/messages/Y resource name, refusing unsafe IDs in either part."""
+    error = UserInputError(
+        f"Invalid {label} '{message_name}'. "
+        "Expected the full resource name, e.g. spaces/X/messages/Y."
+    )
+    match = (
+        _MESSAGE_NAME_PATTERN.fullmatch(message_name)
+        if isinstance(message_name, str)
+        else None
+    )
+    if match is None:
+        raise error
+    try:
+        for part in match.groups():
+            check_path_segment(part, label)
+    except UserInputError:
+        raise error from None
+    return message_name
 
 
 async def _execute_chat_request(
