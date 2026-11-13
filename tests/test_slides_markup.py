@@ -286,3 +286,88 @@ def test_transparent_fill_reads_as_none():
         "elements"
     ][0]
     assert el["fill"] == {"color": "#ff0000", "alpha": 0.5}
+
+
+def test_omitted_scale_is_zero_for_a_quarter_turn():
+    page = shape_page([para(), run("x\n")])
+    page["pageElements"][0]["transform"] = {
+        "shearX": -1,
+        "shearY": 1,
+        "translateX": 70 * EMU,
+        "translateY": -30 * EMU,
+        "unit": "EMU",
+    }
+    box = project_page(page)["elements"][0]["box"]
+    assert box == {"x": 0, "y": 0, "w": 100, "h": 40, "rot": 90}
+
+
+def test_placeholder_text_keeps_false_and_zero_overrides():
+    zero = {"unit": "PT"}
+    elements = [
+        {"paragraphMarker": {"style": {"spaceAbove": zero}}},
+        run("Plain\n", bold=False),
+    ]
+    placeholder = shape_page(elements, placeholder={"type": "BODY"})
+    out = project_page(placeholder)
+    assert out["styles"] == {"s1": {"bold": False}}
+    assert out["elements"][0]["text"] == [
+        {"text": "Plain", "s": "s1", "space_above": 0}
+    ]
+    out = project_page(shape_page(elements))
+    assert "styles" not in out
+    assert out["elements"][0]["text"] == ["Plain"]
+
+
+def test_shrink_reports_line_spacing_reduction():
+    autofit = {
+        "autofitType": "TEXT_AUTOFIT",
+        "fontScale": 0.8,
+        "lineSpacingReduction": 0.2,
+    }
+    el = project_page(
+        shape_page([para(), run("x\n")], shapeProperties={"autofit": autofit})
+    )["elements"][0]
+    assert el["autofit"] == {
+        "type": "shrink",
+        "scale": 0.8,
+        "line_spacing_reduction": 0.2,
+    }
+
+
+def test_merged_cells_keep_later_cells_in_their_columns():
+    def cell(c, t, **span):
+        return {
+            "location": {"columnIndex": c},
+            "text": {"textElements": [para(), run(t + "\n")]},
+            **span,
+        }
+
+    table = {
+        "objectId": "t1",
+        "table": {
+            "rows": 1,
+            "columns": 3,
+            "tableRows": [{"tableCells": [cell(0, "A", columnSpan=2), cell(2, "C")]}],
+        },
+    }
+    out = project_page({"objectId": "p1", "pageElements": [table]})
+    assert out["elements"][0]["rows"] == [
+        {"r": 0, "cells": [{"text": ["A"], "span": [1, 2]}, None, "C"]}
+    ]
+
+
+def test_v_changes_with_the_bullet_glyph():
+    def body(glyph):
+        return project_page(
+            shape_page([para(listId="a", nestingLevel=0, glyph=glyph), run("One\n")])
+        )["elements"][0]["v"]
+
+    assert body("●") != body("○")
+
+
+def test_selected_group_does_not_repeat_a_selected_child():
+    page = shape_page([para(), run("x\n")])
+    child = page["pageElements"][0]
+    page["pageElements"] = [{"objectId": "g1", "elementGroup": {"children": [child]}}]
+    out = project_page(page, targets=["g1", "e1"])
+    assert [e["id"] for e in out["elements"]] == ["g1"]

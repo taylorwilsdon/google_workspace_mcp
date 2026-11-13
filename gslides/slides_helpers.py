@@ -307,8 +307,9 @@ def _prune_page(page: Dict[str, Any], targets: List[str]) -> Dict[str, Any]:
     pruned = {k: v for k, v in page.items() if k != "pageElements"}
     pruned["pageElements"] = [
         el
-        for el, _ in iter_elements(page.get("pageElements", []))
+        for el, ancestors in iter_elements(page.get("pageElements", []))
         if el.get("objectId") in wanted
+        and not any(group.get("objectId") in wanted for group in ancestors)
     ]
     if "notes" not in wanted and "slideProperties" in pruned:
         pruned["slideProperties"] = {

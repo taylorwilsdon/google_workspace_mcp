@@ -132,8 +132,8 @@ async def get_presentation(
             "group" ID; a group comes back with its children.
         raw (bool): For "markup": return the Slides API Page resource itself
             (EMU, transforms, text indices), limited to targets when given,
-            for writing raw batch_update_presentation requests. Defaults to
-            False.
+            for writing raw batch_update_presentation requests. A target in a
+            group keeps its group-relative transform. Defaults to False.
         offset (int): For "deck": index of the first slide to list, from the
             note at the end of a previous call. Defaults to 0.
         after (Optional[str]): For "layouts": a slide ID, or "start". Lists

@@ -51,14 +51,19 @@ def _dim_pt(dim: Optional[Dict[str, Any]]) -> Optional[float]:
 
 
 def _matrix(transform: Optional[Dict[str, Any]]) -> Tuple[float, ...]:
-    """(a, b, c, d, tx, ty) in EMU, where x' = a*x + c*y + tx, y' = b*x + d*y + ty."""
-    t = transform or {}
+    """(a, b, c, d, tx, ty) in EMU, where x' = a*x + c*y + tx, y' = b*x + d*y + ty.
+
+    The API omits zero-valued fields, so a missing scale is 0, not 1.
+    """
+    if not transform:
+        return (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+    t = transform
     scale = EMU_PER_PT if t.get("unit") == "PT" else 1
     return (
-        t.get("scaleX", 1.0),
+        t.get("scaleX", 0.0),
         t.get("shearY", 0.0),
         t.get("shearX", 0.0),
-        t.get("scaleY", 1.0),
+        t.get("scaleY", 0.0),
         t.get("translateX", 0.0) * scale,
         t.get("translateY", 0.0) * scale,
     )
@@ -157,8 +162,14 @@ def _link(link: Optional[Dict[str, Any]]) -> Optional[str]:
     return None
 
 
-def project_text_style(style: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """Locally set run style fields, in projection names."""
+def project_text_style(
+    style: Optional[Dict[str, Any]], inherits: bool = False
+) -> Dict[str, Any]:
+    """Locally set run style fields, in projection names.
+
+    Text with no placeholder parent reports every flag resolved, so only true
+    is information; text that ``inherits`` reports overrides, so false is too.
+    """
     s = style or {}
     out: Dict[str, Any] = {}
     for api, name in (
@@ -168,8 +179,8 @@ def project_text_style(style: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         ("strikethrough", "strike"),
         ("smallCaps", "small_caps"),
     ):
-        if s.get(api):
-            out[name] = True
+        if s.get(api) or (inherits and api in s):
+            out[name] = bool(s[api])
     if s.get("baselineOffset") in ("SUPERSCRIPT", "SUBSCRIPT"):
         out["baseline"] = s["baselineOffset"]
     weighted = s.get("weightedFontFamily") or {}
@@ -249,6 +260,7 @@ def _paragraph_props(
     style: Dict[str, Any],
     level: Optional[int],
     defaults: Optional[Dict[str, Any]] = None,
+    inherits: bool = False,
 ) -> Dict[str, Any]:
     props: Dict[str, Any] = {}
     for api, name in _PARA_FIELDS:
@@ -256,7 +268,9 @@ def _paragraph_props(
             continue
         value = style[api]
         if isinstance(value, dict):
-            value = _dim_pt(value)
+            # A dimension with no magnitude is zero: an override only on
+            # inheriting text, the editor default elsewhere.
+            value = _dim_pt({"magnitude": 0, **value} if inherits else value)
             if value is None:
                 continue
         elif api == "lineSpacing":
@@ -275,8 +289,10 @@ def _paragraph_props(
     return props
 
 
-def _run_style(style: Optional[Dict[str, Any]], scale: float) -> Dict[str, Any]:
-    out = project_text_style(style)
+def _run_style(
+    style: Optional[Dict[str, Any]], scale: float, inherits: bool
+) -> Dict[str, Any]:
+    out = project_text_style(style, inherits)
     if scale != 1.0 and "size" in out:
         out["size"] = _pt(out["size"] * scale)
     return out
@@ -289,11 +305,14 @@ def project_text(
     glyphs: Optional[Dict[str, Dict[str, str]]] = None,
     scale: float = 1.0,
     para_defaults: Optional[Dict[str, Any]] = None,
+    inherits: bool = False,
 ) -> List[Any]:
     """A text body as a list of paragraphs, terminal newline implicit.
 
     ``para_defaults`` are paragraph props the API reports on every paragraph of
     a shape with no placeholder, which are omitted when they match.
+    ``inherits`` marks text in a placeholder, whose false and zero values are
+    overrides of its parent.
     """
     elements = (text or {}).get("textElements", [])
     paragraphs: List[Dict[str, Any]] = []
@@ -313,7 +332,9 @@ def project_text(
                 if glyphs is not None and glyph:
                     glyphs.setdefault(alias, {}).setdefault(str(level), glyph)
             props.update(
-                _paragraph_props(marker.get("style", {}), level, para_defaults)
+                _paragraph_props(
+                    marker.get("style", {}), level, para_defaults, inherits
+                )
             )
             current = {"runs": [], "props": props}
             paragraphs.append(current)
@@ -328,10 +349,11 @@ def project_text(
                 content = content[:-1]
             if not content:
                 continue
-            current["runs"].append((content, _run_style(run.get("style"), scale)))
+            style = _run_style(run.get("style"), scale, inherits)
+            current["runs"].append((content, style))
         elif "autoText" in te:
             auto = te["autoText"]
-            style = _run_style(auto.get("style"), scale)
+            style = _run_style(auto.get("style"), scale, inherits)
             current["runs"].append(({"auto": auto.get("type", "SLIDE_NUMBER")}, style))
 
     out: List[Any] = []
@@ -448,7 +470,10 @@ def _shape_props(props: Dict[str, Any]) -> Dict[str, Any]:
     elif kind == "TEXT_AUTOFIT" or (scale is not None and scale < 1):
         # The slide shape reports the scale it is displayed at even when the
         # shrink setting is inherited from its placeholder parent.
-        out["autofit"] = {"type": "shrink", "scale": _pt(scale)}
+        shrink: Dict[str, Any] = {"type": "shrink", "scale": _pt(scale)}
+        if autofit.get("lineSpacingReduction"):
+            shrink["line_spacing_reduction"] = _pt(autofit["lineSpacingReduction"])
+        out["autofit"] = shrink
     return out
 
 
@@ -582,6 +607,7 @@ class Projector:
                         glyphs,
                         scale,
                         para_defaults,
+                        inherits=bool(ph),
                     )
                 )
                 if glyphs:
@@ -623,12 +649,12 @@ class Projector:
         covered = set()
         rows = []
         for r, row in enumerate(table.get("tableRows", [])):
-            cells: List[Any] = []
+            # The API returns a merged cell once and omits the cells it covers.
+            cells: List[Any] = [None] * table.get("columns", 0)
             for cell in row.get("tableCells", []):
                 loc = cell.get("location", {})
-                key = (loc.get("rowIndex", r), loc.get("columnIndex", len(cells)))
+                key = (loc.get("rowIndex", r), loc.get("columnIndex", 0))
                 if key in covered:
-                    cells.append(None)
                     continue
                 body = project_text(cell.get("text"), self.styles, self.lists)
                 rs, cs = cell.get("rowSpan", 1), cell.get("columnSpan", 1)
@@ -638,11 +664,11 @@ class Projector:
                             if i or j:
                                 covered.add((key[0] + i, key[1] + j))
                 if rs > 1 or cs > 1:
-                    cells.append({"text": body, "span": [rs, cs]})
+                    cells[key[1]] = {"text": body, "span": [rs, cs]}
                 elif len(body) == 1 and isinstance(body[0], str):
-                    cells.append(body[0])
+                    cells[key[1]] = body[0]
                 else:
-                    cells.append({"text": body})
+                    cells[key[1]] = {"text": body}
             rows.append({"r": r, "cells": cells})
         out["rows"] = rows
         return out
@@ -653,7 +679,12 @@ def _resolve(value: Any, styles: Dict[str, Dict[str, Any]]) -> Any:
     if isinstance(value, dict):
         out = {}
         for k, v in value.items():
-            if k in ("v", "lists", "group"):
+            if k in ("v", "group"):
+                continue
+            if k == "lists":
+                out["lists"] = sorted(
+                    json.dumps(lst, sort_keys=True) for lst in v.values()
+                )
                 continue
             if k == "s" and isinstance(v, str):
                 out.update(styles.get(v, {}))
@@ -702,7 +733,9 @@ def project_page(
         wanted = set(targets)
         out["elements"] = []
         for el, ancestors in iter_elements(elements):
-            if el.get("objectId") not in wanted:
+            if el.get("objectId") not in wanted or any(
+                group.get("objectId") in wanted for group in ancestors
+            ):
                 continue
             parent: Tuple[float, ...] = (1, 0, 0, 1, 0, 0)
             for group in ancestors:
@@ -716,7 +749,9 @@ def project_page(
         notes_id = (notes_page.get("notesProperties") or {}).get("speakerNotesObjectId")
         for el in notes_page.get("pageElements", []):
             if el.get("objectId") == notes_id and "shape" in el:
-                body = project_text(el["shape"].get("text"), proj.styles, proj.lists)
+                body = project_text(
+                    el["shape"].get("text"), proj.styles, proj.lists, inherits=True
+                )
                 if body != [""]:
                     notes = {"text": body}
                     out["notes"] = {"v": version(notes, proj.styles.entries), **notes}

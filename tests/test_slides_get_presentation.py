@@ -226,3 +226,13 @@ async def test_markup_raw_prunes_the_page_resource():
         await _call(service, action="markup", page_id="slide_1", raw=True)
     )
     assert full == PAGE
+    nested = json.loads(
+        await _call(
+            service,
+            action="markup",
+            page_id="slide_1",
+            targets=["grp", "headline"],
+            raw=True,
+        )
+    )
+    assert [e["objectId"] for e in nested["pageElements"]] == ["grp"]
