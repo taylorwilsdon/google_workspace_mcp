@@ -135,9 +135,14 @@ def get_pse_base_url() -> Optional[str]:
     raw = os.getenv(_PSE_BASE_URL_ENV, "").strip()
     if not raw:
         return None
-    if urlparse(raw).scheme not in ("http", "https"):
+    parsed = urlparse(raw)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
         raise ValueError(
             f"{_PSE_BASE_URL_ENV} must be an http:// or https:// URL, got {raw!r}"
+        )
+    if parsed.query or parsed.fragment:
+        raise ValueError(
+            f"{_PSE_BASE_URL_ENV} must not have a query string or fragment, got {raw!r}"
         )
     return raw.rstrip("/") + "/"
 
