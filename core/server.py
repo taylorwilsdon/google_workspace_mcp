@@ -6,8 +6,9 @@ import hashlib
 import inspect
 import logging
 import os
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from typing import List, Optional
+from typing import Any, List, Optional, TypeVar, overload
 from importlib import metadata
 from urllib.parse import urlparse, ParseResult
 
@@ -57,6 +58,7 @@ import fastmcp
 from fastmcp import FastMCP
 from auth.google_oauth_provider import GoogleProvider
 from fastmcp.server.lifespan import lifespan
+from fastmcp.utilities.types import AnyFunction
 from mcp.types import ToolAnnotations, Icon
 from starlette.applications import Starlette
 from starlette.datastructures import MutableHeaders
@@ -416,9 +418,22 @@ async def _google_api_executor(server: FastMCP):
     yield None
 
 
+F = TypeVar("F", bound=AnyFunction)
+
+
 # Custom FastMCP that adds secure middleware stack for OAuth 2.1
 class SecureFastMCP(FastMCP):
-    def tool(self, name_or_fn=None, **kwargs):
+    @overload
+    def tool(self, name_or_fn: F, **kwargs: Any) -> F: ...
+
+    @overload
+    def tool(
+        self, name_or_fn: str | None = None, **kwargs: Any
+    ) -> Callable[[F], F]: ...
+
+    def tool(
+        self, name_or_fn: str | AnyFunction | None = None, **kwargs: Any
+    ) -> AnyFunction | Callable[[F], F]:
         """Register a tool described by its docstring above ``Args:``, or ``description``."""
         register = super().tool
         if kwargs.get("description") is not None:
@@ -434,7 +449,7 @@ class SecureFastMCP(FastMCP):
             if name_or_fn is not None:
                 kwargs["name"] = name_or_fn
 
-            def register_with_description(fn):
+            def register_with_description(fn: F) -> F:
                 return register(fn, description=docstring_description(fn), **kwargs)
 
             return register_with_description
