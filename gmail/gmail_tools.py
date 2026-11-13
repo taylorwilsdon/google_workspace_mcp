@@ -62,6 +62,7 @@ from auth.scopes import (
     GMAIL_LABELS_SCOPE,
     has_required_scopes,
 )
+from gmail.gmail_quoted_html import normalize_quoted_html
 from gmail.gmail_helpers import (
     FILTER_APPLY_DEFAULT_MAX_MESSAGES,
     GMAIL_METADATA_HEADERS,
@@ -720,8 +721,8 @@ def _build_quoted_reply_body(
     if body_format == "html":
         signed_body = _append_signature_to_body(reply_body, "html", signature_html)
 
-        # Quoted original
-        orig_html = original.get("html_body") or ""
+        # Quoted original, as a fragment: it is nested in this message's HTML.
+        orig_html = normalize_quoted_html(original.get("html_body") or "")
         if not orig_html:
             orig_text = original.get("text_body", "")
             orig_html = f"<pre>{html.escape(orig_text)}</pre>"
@@ -744,7 +745,7 @@ def _build_quoted_reply_body(
 
     orig_text = original.get("text_body") or ""
     if not orig_text and original.get("html_body"):
-        orig_text = _html_to_text(original["html_body"])
+        orig_text = _html_to_text(normalize_quoted_html(original["html_body"]))
     quoted_lines = "\n".join(f"> {line}" for line in orig_text.splitlines())
 
     return f"{reply_body}{sig_block}\n\n{attribution}\n{quoted_lines}"

@@ -55,6 +55,7 @@ from gmail.gmail_web_mime import (
     new_message_html,
     plain_body_to_html,
 )
+from gmail.gmail_quoted_html import normalize_quoted_html
 
 logger = logging.getLogger(__name__)
 
@@ -1411,7 +1412,12 @@ def _parse_message_date(value: str) -> Optional[datetime]:
 
 
 def _fill_missing_body(plain: str, html_body: str) -> tuple[str, str]:
-    """Derive whichever of a message's plain or HTML body is missing."""
+    """Prepare an original message's bodies for nesting in a reply or forward.
+
+    An HTML document is flattened to a fragment first (``normalize_quoted_html``),
+    then whichever of the plain or HTML body is missing is derived from the other.
+    """
+    html_body = normalize_quoted_html(html_body)
     if not plain and html_body:
         plain = html_to_text_preserving_breaks(html_body).strip()
     if not html_body and plain:
