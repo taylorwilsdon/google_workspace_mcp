@@ -188,7 +188,7 @@ async def test_registered_tools_publish_every_line_above_args():
 async def test_batch_update_presentation_publishes_its_write_rules():
     description = await description_of(server, "batch_update_presentation")
     assert "insertText.objectId must be a text-capable shape" in description
-    assert "include_speaker_notes=True" in description
+    assert 'action="page" to get the slide\'s speaker notes shape ID' in description
     assert "The notes page ID is not a\n    valid target." in description
 
 
@@ -201,12 +201,14 @@ async def test_render_page_to_image_is_the_way_to_see_a_slide():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "name",
-    ["get_presentation", "get_page", "create_presentation"],
+    ("name", "returns"),
+    [
+        ("get_presentation", "element IDs and all its text"),
+        ("create_presentation", "ID and URL"),
+    ],
 )
-async def test_slides_read_descriptions_say_what_they_return(name):
-    description = await description_of(server, name)
-    assert "object ID" in description or "ID and URL" in description
+async def test_slides_read_descriptions_say_what_they_return(name, returns):
+    assert returns in await description_of(server, name)
 
 
 @pytest.mark.asyncio

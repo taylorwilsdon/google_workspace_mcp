@@ -1,4 +1,4 @@
-from gslides.slides_digest import format_page, slide_title
+from gslides.slides_digest import format_deck, format_page, slide_title
 
 
 def box(oid, text, size=None, placeholder=None):
@@ -38,8 +38,6 @@ def test_page_lists_image_source_but_not_content_url():
 
 
 def test_deck_pages_by_slide_with_offset_note():
-    from gslides.slides_digest import format_deck
-
     slides = [
         {
             "objectId": f"s{i}",
