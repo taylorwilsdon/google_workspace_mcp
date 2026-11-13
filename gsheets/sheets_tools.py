@@ -25,6 +25,8 @@ from gsheets.sheets_helpers import (
     _a1_range_for_values,
     _clamp_a1_read_rows,
     _column_to_index,
+    _copy_paste_range,
+    _copy_sheet_to_spreadsheet,
     _build_boolean_rule,
     _build_tab_style_properties,
     _build_update_borders_request,
@@ -39,6 +41,7 @@ from gsheets.sheets_helpers import (
     _format_conditional_rules_section,
     _format_named_ranges_list,
     _format_sheet_error_section,
+    _format_sheet_values_rows,
     _insert_cell_comment,
     _normalize_chips_input,
     _normalize_merge_type,
@@ -239,7 +242,8 @@ async def read_sheet_values(
     include_smart_chips: bool = False,
 ) -> str:
     """
-    Reads values from a specific range in a Google Sheet.
+    Reads values from a specific range in a Google Sheet, one line per row:
+    the sheet row number, then the row's cells separated by tabs.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
@@ -258,7 +262,7 @@ async def read_sheet_values(
             and People chips) for the range. Defaults to False to avoid expensive includeGridData requests.
 
     Returns:
-        str: The formatted values from the specified range.
+        str: The formatted values, with trailing empty cells dropped.
     """
     logger.info(
         f"[read_sheet_values] Invoked. Email: '{user_google_email}', Spreadsheet: {spreadsheet_id}, Range: {range_name}"
@@ -335,16 +339,9 @@ async def read_sheet_values(
                 exc,
             )
 
-    # Format the output as a readable table
-    formatted_rows = []
-    for i, row in enumerate(values, 1):
-        # Pad row with empty strings to show structure
-        padded_row = row + [""] * max(0, len(values[0]) - len(row)) if values else row
-        formatted_rows.append(f"Row {i:2d}: {padded_row}")
-
     text_output = (
         f"Successfully read {len(values)} rows from range '{range_name}' in spreadsheet {spreadsheet_id} for {user_google_email}:\n"
-        + "\n".join(formatted_rows)
+        + _format_sheet_values_rows(result.get("range", ""), values)
     )
     if clamp_note:
         text_output += clamp_note
@@ -381,10 +378,12 @@ async def modify_sheet_values(
     clear_values: bool = False,
     chips: Optional[Union[str, dict, List[Any]]] = None,
     chip_type: Optional[str] = None,
+    source_range: Optional[str] = None,
+    paste_type: str = "PASTE_NORMAL",
 ) -> str:
     """
     Modifies values in a specific range of a Google Sheet - can write, update, or clear values,
-    or insert Smart Chips (Drive files/folders or People).
+    insert Smart Chips (Drive files/folders or People), or copy another range into it.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
@@ -402,10 +401,30 @@ async def modify_sheet_values(
             - A dict or list of dicts with explicit properties (e.g., {"type": "drive", "uri": "..."}, {"type": "person", "email": "..."}).
             - A JSON-encoded string representing any of the above formats.
         chip_type (Optional[str]): Explicit chip type if passing raw strings in chips: "drive" (default for URLs/IDs) or "person" (default for emails).
+        source_range (Optional[str]): A1 range in the same spreadsheet to copy into range_name, like the UI copy and
+            paste: relative formula references shift and formatting comes along. Both ranges must be A1 notation (not
+            named ranges); one without a sheet name uses the first sheet. range_name may be just the top-left cell
+            (e.g., copy "Sheet1!A29:AO29" to "Sheet1!A30"). Use instead of values, chips, or clear_values.
+        paste_type (str): What source_range pastes: "PASTE_NORMAL" (values, formulas, formatting), "PASTE_VALUES",
+            "PASTE_FORMAT", "PASTE_NO_BORDERS", "PASTE_FORMULA", "PASTE_DATA_VALIDATION", or
+            "PASTE_CONDITIONAL_FORMATTING". Defaults to "PASTE_NORMAL".
 
     Returns:
         str: Confirmation message of the successful modification operation.
     """
+    if source_range is not None:
+        if values is not None or clear_values or chips is not None:
+            raise UserInputError(
+                "Provide only one of 'values', 'chips', 'source_range', or 'clear_values'."
+            )
+        applied_paste_type = await _copy_paste_range(
+            service, spreadsheet_id, source_range, range_name, paste_type
+        )
+        return (
+            f"Successfully copied '{source_range}' to '{range_name}' ({applied_paste_type}) "
+            f"in spreadsheet {spreadsheet_id} for {user_google_email}."
+        )
+
     if chips is not None:
         if values is not None or clear_values:
             raise UserInputError(
@@ -450,7 +469,7 @@ async def modify_sheet_values(
 
     if not clear_values and not values:
         raise UserInputError(
-            "Either 'values' or 'chips' must be provided, or 'clear_values' must be True."
+            "Provide 'values', 'chips', or 'source_range', or set 'clear_values' to True."
         )
 
     if clear_values:
@@ -1572,8 +1591,9 @@ async def create_sheet(
     sheet_name: Optional[str] = None,
     source_sheet_name: Optional[str] = None,
     insert_sheet_index: Optional[int] = None,
+    destination_spreadsheet_id: Optional[str] = None,
 ) -> str:
-    """Creates a new sheet or duplicates an existing sheet (user_google_email: str, spreadsheet_id: str, sheet_name: Optional[str] = None, source_sheet_name: Optional[str] = None, insert_sheet_index: Optional[int] = None)."""
+    """Creates a new sheet or duplicates an existing sheet, into destination_spreadsheet_id when given (user_google_email: str, spreadsheet_id: str, sheet_name: Optional[str] = None, source_sheet_name: Optional[str] = None, insert_sheet_index: Optional[int] = None, destination_spreadsheet_id: Optional[str] = None)."""
     if insert_sheet_index is not None and (
         isinstance(insert_sheet_index, bool)
         or not isinstance(insert_sheet_index, int)
@@ -1581,14 +1601,27 @@ async def create_sheet(
     ):
         raise UserInputError("insert_sheet_index must be a non-negative integer.")
 
+    if destination_spreadsheet_id is not None:
+        destination_spreadsheet_id = destination_spreadsheet_id.strip()
+        if not destination_spreadsheet_id:
+            raise UserInputError(
+                "destination_spreadsheet_id must be a non-empty string"
+            )
+        if source_sheet_name is None:
+            raise UserInputError(
+                "destination_spreadsheet_id requires source_sheet_name"
+            )
+
     if source_sheet_name is not None:
         source_sheet_name = source_sheet_name.strip()
         if not source_sheet_name:
             raise UserInputError("source_sheet_name must be a non-empty string")
 
+        target_spreadsheet_id = destination_spreadsheet_id or spreadsheet_id
         logger.info(
             f"[create_sheet] Duplicate invoked. Email: '{user_google_email}', "
-            f"Spreadsheet: {spreadsheet_id}, Source: {source_sheet_name}"
+            f"Spreadsheet: {spreadsheet_id}, Source: {source_sheet_name}, "
+            f"Destination: {target_spreadsheet_id}"
         )
 
         spreadsheet = await asyncio.to_thread(
@@ -1601,27 +1634,37 @@ async def create_sheet(
         source_sheet = _select_sheet(sheets, source_sheet_name)
         source_sheet_id = source_sheet["properties"]["sheetId"]
 
-        dup_request = {"sourceSheetId": source_sheet_id}
-        if sheet_name is not None:
-            dup_request["newSheetName"] = sheet_name
-        if insert_sheet_index is not None:
-            dup_request["insertSheetIndex"] = insert_sheet_index
+        if target_spreadsheet_id != spreadsheet_id:
+            new_props = await _copy_sheet_to_spreadsheet(
+                service,
+                spreadsheet_id,
+                source_sheet_id,
+                target_spreadsheet_id,
+                sheet_name,
+                insert_sheet_index,
+            )
+        else:
+            dup_request = {"sourceSheetId": source_sheet_id}
+            if sheet_name is not None:
+                dup_request["newSheetName"] = sheet_name
+            if insert_sheet_index is not None:
+                dup_request["insertSheetIndex"] = insert_sheet_index
 
-        request_body = {"requests": [{"duplicateSheet": dup_request}]}
+            request_body = {"requests": [{"duplicateSheet": dup_request}]}
 
-        response = await asyncio.to_thread(
-            service.spreadsheets()
-            .batchUpdate(spreadsheetId=spreadsheet_id, body=request_body)
-            .execute
-        )
+            response = await asyncio.to_thread(
+                service.spreadsheets()
+                .batchUpdate(spreadsheetId=spreadsheet_id, body=request_body)
+                .execute
+            )
+            new_props = response["replies"][0]["duplicateSheet"]["properties"]
 
-        new_props = response["replies"][0]["duplicateSheet"]["properties"]
         new_id = new_props["sheetId"]
         new_title = new_props["title"]
 
         text_output = (
             f"Successfully duplicated '{source_sheet_name}' to '{new_title}' "
-            f"(ID: {new_id}) in spreadsheet {spreadsheet_id} for {user_google_email}."
+            f"(ID: {new_id}) in spreadsheet {target_spreadsheet_id} for {user_google_email}."
         )
 
         logger.info(

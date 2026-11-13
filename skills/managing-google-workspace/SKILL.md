@@ -75,7 +75,7 @@ For server options, transport, auth modes, tool filtering, and deployment: [refe
 | Task | Tool |
 |------|------|
 | Search/find emails | `search_gmail_messages` |
-| Read one email | `get_gmail_message_content` |
+| Read one email, or page a long body | `get_gmail_message_content` (`page_offset`, `page_size`, `expected_sha256`) |
 | Read multiple emails | `get_gmail_messages_content_batch` |
 | Read a thread | `get_gmail_thread_content` |
 | Read multiple threads | `get_gmail_threads_content_batch` |
@@ -101,6 +101,7 @@ For parameters: [references/gmail.md](references/gmail.md)
 | Download file | `get_drive_file_download_url` |
 | Create file | `create_drive_file` |
 | Create folder | `create_drive_folder` |
+| Create shortcut | `create_drive_file` (`shortcut_target_id`) |
 | Copy file | `copy_drive_file` |
 | Update file metadata | `update_drive_file` |
 | Share / set permissions | `set_drive_file_permissions` |
@@ -119,7 +120,7 @@ For parameters: [references/drive.md](references/drive.md)
 | Task | Tool |
 |------|------|
 | List calendars | `list_calendars` |
-| Create secondary calendar | `create_calendar` |
+| Create secondary calendar / share calendar, list, update or remove access | `manage_calendar` |
 | Get events | `get_events` |
 | Create/update/delete event | `manage_event` |
 | Out of office (auto-decline) | `manage_out_of_office` |
@@ -135,6 +136,7 @@ For parameters: [references/calendar.md](references/calendar.md)
 | Read doc as Markdown | `get_doc_as_markdown` |
 | Read doc content (raw) | `get_doc_content` |
 | Read plain text with link/chip targets and document segments | `get_doc_content(preserve_context=True)` |
+| Read only the section under one heading | `get_doc_as_markdown(heading=...)` or `get_doc_content(heading=...)` |
 | Create new doc | `create_doc` |
 | Modify text / apply styles (by index or by `heading`) | `modify_doc_text` |
 | Insert elements (tables, lists, breaks) | `insert_doc_elements` |
@@ -161,6 +163,7 @@ For parameters: [references/docs.md](references/docs.md)
 | Read cell values | `read_sheet_values` |
 | Write/append/clear values | `modify_sheet_values` |
 | Insert smart chips | `modify_sheet_values` (`chips`) |
+| Copy/paste a range with formulas and formatting | `modify_sheet_values` (`source_range`) |
 | Format cells | `format_sheet_range` |
 | Conditional formatting | `manage_conditional_formatting` |
 | Get spreadsheet info | `get_spreadsheet_info` |
@@ -237,6 +240,7 @@ For parameters: [references/contacts.md](references/contacts.md)
 | Task | Tool |
 |------|------|
 | List spaces | `list_spaces` |
+| List a space's members | `list_spaces` (`space_id`) |
 | Get messages | `get_messages` |
 | Search messages | `search_messages` |
 | Send message | `send_message` |

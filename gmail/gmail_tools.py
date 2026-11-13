@@ -12,6 +12,7 @@ import json
 import re
 import mimetypes
 import html
+from functools import partial
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Annotated, Optional, List, Dict, Literal, Any, Union
@@ -33,7 +34,7 @@ from auth.service_decorator import require_google_service
 from core.attachment_storage import (
     get_attachment_storage,
     get_attachment_url,
-    STORAGE_DIR,
+    resolve_local_attachment,
 )
 from core.file_limits import (
     FileTooLargeError,
@@ -41,12 +42,7 @@ from core.file_limits import (
     get_max_file_bytes,
 )
 from core.gcs_attachment_storage import gcs_files_enabled
-from core.config import (
-    get_transport_mode,
-    WORKSPACE_EXTERNAL_URL,
-    WORKSPACE_MCP_BASE_URI,
-    WORKSPACE_MCP_PORT,
-)
+from core.config import get_transport_mode
 from core.http_utils import ssrf_safe_stream
 from core.utils import (
     GOOGLE_API_WRITE_RETRIES,
@@ -58,6 +54,7 @@ from core.utils import (
     DictList,
 )
 from core.server import server
+from core.telemetry import record_degraded_failure
 from auth.scopes import (
     GMAIL_SEND_SCOPE,
     GMAIL_COMPOSE_SCOPE,
@@ -75,8 +72,10 @@ from gmail.gmail_helpers import (
     _build_web_compose_raw,
     _derive_reply_all_recipients,
     _derive_reply_headers,
+    _derive_web_bodies,
     _fetch_with_retry,
     _format_id_list,
+    _generate_gmail_web_url,
     _get_send_as_identity_and_signature,
     _html_signature_separator,
     _http_error_status,
@@ -99,6 +98,7 @@ from gmail.gmail_helpers import (
     html_newlines_to_br,
     html_to_text_preserving_breaks,
     modify_gmail_thread_labels,
+    read_gmail_message_page,
     send_message_once,
     update_gmail_filter,
 )
@@ -250,6 +250,7 @@ def _format_body_content(
     html_body: str,
     body_format: Literal["text", "html"] = "text",
     include_links: bool = False,
+    truncate_limit: Optional[int] = HTML_BODY_TRUNCATE_LIMIT,
 ) -> str:
     """
     Helper function to format message body content with HTML fallback and truncation.
@@ -260,6 +261,7 @@ def _format_body_content(
         html_body: HTML body content
         body_format: Output format - "text" converts HTML to plaintext (default),
                      "html" returns raw HTML body as-is
+        truncate_limit: Maximum HTML-derived body characters; None preserves the complete body.
         include_links: In text mode, append the HTML body's http(s) links missing from the text
 
     Returns:
@@ -268,11 +270,8 @@ def _format_body_content(
     if body_format == "html":
         html_stripped = html_body.strip()
         if html_stripped:
-            if len(html_stripped) > HTML_BODY_TRUNCATE_LIMIT:
-                return (
-                    html_stripped[:HTML_BODY_TRUNCATE_LIMIT]
-                    + "\n\n[Content truncated...]"
-                )
+            if truncate_limit is not None and len(html_stripped) > truncate_limit:
+                return html_stripped[:truncate_limit] + "\n\n[Content truncated...]"
             return html_stripped
         # Fall back to text body when no HTML is available
         text_stripped = text_body.strip()
@@ -302,13 +301,17 @@ def _format_body_content(
     )
 
     if use_html:
-        content = _truncate_content(html_text, HTML_BODY_TRUNCATE_LIMIT)
+        content = (
+            _truncate_content(html_text, truncate_limit)
+            if truncate_limit is not None
+            else html_text
+        )
     elif text_stripped:
         content = text_body
     else:
         content = "[No readable content found]"
     if include_links:
-        content += format_html_links(html_stripped, content, HTML_BODY_TRUNCATE_LIMIT)
+        content += format_html_links(html_stripped, content, truncate_limit)
     return content
 
 
@@ -564,6 +567,7 @@ async def _export_full_message(
         saved = await asyncio.to_thread(_save_export)
     except OSError as exc:
         logger.error(f"[get_gmail_message_content] Failed to save message: {exc}")
+        record_degraded_failure(exc)
         return f"Error: failed to save message to storage: {exc}"
 
     result_lines.append(f"Saved filename: {Path(saved.path).name}")
@@ -1116,21 +1120,6 @@ def _redact_url(url: str) -> str:
     return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
 
 
-def _get_trusted_attachment_origins() -> set[tuple[str, str]]:
-    """Return local origins allowed to resolve /attachments/{id} from disk."""
-    origins: set[tuple[str, str]] = set()
-    for origin in (
-        WORKSPACE_EXTERNAL_URL,
-        f"{WORKSPACE_MCP_BASE_URI}:{WORKSPACE_MCP_PORT}",
-    ):
-        if not origin:
-            continue
-        parsed = urlparse(origin)
-        if parsed.scheme and parsed.netloc:
-            origins.add((parsed.scheme.lower(), parsed.netloc.lower()))
-    return origins
-
-
 def _read_attachment_bytes(file_path: Path) -> bytes:
     """Read a local attachment after enforcing the Gmail size limit."""
     size_bytes = file_path.stat().st_size
@@ -1204,40 +1193,15 @@ def _try_read_local_attachment(url: str) -> Optional[tuple[bytes, str, Optional[
     Returns (data, filename, mime_type) if the URL points to a local
     ``/attachments/{file_id}`` resource, otherwise ``None``.
     """
-    parsed = urlparse(url)
-    parts = parsed.path.strip("/").split("/")
-    if len(parts) != 2 or parts[0] != "attachments":
+    local = resolve_local_attachment(url)
+    if local is None:
         return None
-    if parsed.netloc:
-        origin = (parsed.scheme.lower(), parsed.netloc.lower())
-        if origin not in _get_trusted_attachment_origins():
-            return None
-
-    file_id = parts[1]
-    storage = get_attachment_storage()
-    metadata = storage.get_attachment_metadata(file_id)
-    if metadata is None:
-        logger.debug(
-            "Attachment metadata missing for %s; refusing local fallback under %s",
-            file_id,
-            STORAGE_DIR,
-        )
-        return None
-
-    file_path = storage.get_attachment_path(file_id)
-    if file_path is None:
-        logger.debug(
-            "Attachment file path missing for %s; refusing local fallback under %s",
-            file_id,
-            STORAGE_DIR,
-        )
-        return None
-
-    file_path = Path(file_path)
-    data = _read_attachment_bytes(file_path)
-    filename = metadata["filename"]
-    mime_type = metadata.get("mime_type")
-    return data, filename, mime_type
+    file_path, metadata = local
+    return (
+        _read_attachment_bytes(file_path),
+        metadata["filename"],
+        metadata.get("mime_type"),
+    )
 
 
 async def _resolve_url_attachments(
@@ -1337,6 +1301,7 @@ def _prepare_gmail_message(
     from_name: Optional[str] = None,
     attachments: Optional[List[Dict[str, str]]] = None,
     plain_body: Optional[str] = None,
+    direction: TextDirection = "auto",
 ) -> tuple[str, Optional[str], int, List[str]]:
     """
     Prepare a Gmail message with threading and attachment support.
@@ -1355,6 +1320,7 @@ def _prepare_gmail_message(
         from_name: Optional sender display name (e.g., "Peter Hartree")
         attachments: Optional list of attachments. Each can have 'path' (file path) OR 'content' (base64) + 'filename'
         plain_body: Explicit text alternative for HTML, preserving a forwarded original.
+        direction: Base text direction of the HTML part derived from a plain body.
 
     Returns:
         Tuple of (raw_message, thread_id, attached_count, attachment_errors)
@@ -1408,7 +1374,9 @@ def _prepare_gmail_message(
         message.set_content(plain_body)
         message.add_alternative(body, subtype="html")
     else:
-        message.set_content(body)
+        plain_part, html_part = _derive_web_bodies(body, "plain", direction)
+        message.set_content(plain_part)
+        message.add_alternative(html_part, subtype="html")
 
     seen_content_ids: set[str] = set()
 
@@ -1554,21 +1522,6 @@ def _prepare_gmail_message(
     return raw_message, thread_id, attached_count, attachment_errors
 
 
-def _generate_gmail_web_url(item_id: str, account_index: int = 0) -> str:
-    """
-    Generate Gmail web interface URL for a message or thread ID.
-    Uses #all to access messages from any Gmail folder/label (not just inbox).
-
-    Args:
-        item_id: Gmail message ID or thread ID
-        account_index: Google account index (default 0 for primary account)
-
-    Returns:
-        Gmail web interface URL that opens the message/thread in Gmail web interface
-    """
-    return f"https://mail.google.com/mail/u/{account_index}/#all/{item_id}"
-
-
 async def _fetch_search_result_headers(
     service, message_ids: List[str]
 ) -> Dict[str, Optional[Dict[str, str]]]:
@@ -1679,6 +1632,7 @@ def _format_gmail_results_plain(
     query: str,
     next_page_token: Optional[str] = None,
     headers_by_id: Optional[Dict[str, Optional[Dict[str, str]]]] = None,
+    user_google_email: Optional[str] = None,
 ) -> str:
     """Format Gmail search results in clean, LLM-friendly plain text."""
     if not messages:
@@ -1713,12 +1667,16 @@ def _format_gmail_results_plain(
             thread_id = "unknown"
 
         if message_id != "unknown":
-            message_url = _generate_gmail_web_url(message_id)
+            message_url = _generate_gmail_web_url(
+                message_id, user_google_email=user_google_email
+            )
         else:
             message_url = "N/A"
 
         if thread_id != "unknown":
-            thread_url = _generate_gmail_web_url(thread_id)
+            thread_url = _generate_gmail_web_url(
+                thread_id, user_google_email=user_google_email
+            )
         else:
             thread_url = "N/A"
 
@@ -1856,7 +1814,7 @@ async def search_gmail_messages(
             headers_by_id = dict.fromkeys(result_ids)
 
     formatted_output = _format_gmail_results_plain(
-        messages, query, next_page_token, headers_by_id
+        messages, query, next_page_token, headers_by_id, user_google_email
     )
 
     logger.info(f"[search_gmail_messages] Found {len(messages)} messages")
@@ -1913,9 +1871,23 @@ async def get_gmail_message_content(
     include_links: Annotated[
         bool, Field(description=INCLUDE_LINKS_DESCRIPTION)
     ] = False,
+    page_offset: Annotated[
+        Optional[int],
+        Field(
+            ge=0,
+            description="Character offset in the complete rendered body. Start at 0 and follow next_offset.",
+        ),
+    ] = None,
+    page_size: Annotated[int, Field(ge=1, le=20000)] = 20000,
+    expected_sha256: Optional[str] = None,
 ) -> str:
     """
     Retrieves the full content (subject, sender, recipients, body) of a specific Gmail message.
+
+    Set page_offset=0 to read the complete rendered body, excluding attachments and
+    attached messages, as JSON pages of at most page_size characters. Follow
+    next_offset until complete=true, passing body_sha256 as expected_sha256 and
+    keeping body_format and include_links unchanged.
 
     Bodies are returned inline and truncated at 20,000 characters. Set full=True to
     get the complete, untruncated message instead: it is exported to storage and the
@@ -1948,6 +1920,10 @@ async def get_gmail_message_content(
             after the message ID. Requires format='full'; body_format='raw' is only
             allowed when the raw message is exported to a file.
         include_links (bool): Append the HTML body's http(s) links missing from the text output.
+        page_offset (int): Start position in the complete rendered body. Requires
+            format="full", full=False, and body_format="text" or "html".
+        page_size (int): Maximum body characters per page, between 1 and 20,000.
+        expected_sha256 (str): Optional previous body_sha256; rejects changed content.
 
     Returns:
         str: The message details including subject, sender, date, Message-ID, recipients
@@ -1961,6 +1937,13 @@ async def get_gmail_message_content(
         f"body_format='{body_format}', full={full}"
     )
     _validate_message_format_options(format, body_format)
+    if page_offset is not None:
+        if full or format != "full" or body_format == "raw":
+            raise UserInputError(
+                "Body pagination requires full=False, format='full', and body_format='text' or 'html'."
+            )
+    elif expected_sha256 is not None or page_size != 20000:
+        raise UserInputError("expected_sha256 and page_size require page_offset.")
     if format == "metadata" and full:
         raise UserInputError("full=True requires format='full'.")
     if format == "metadata" and not include_headers:
@@ -1991,6 +1974,23 @@ async def get_gmail_message_content(
     headers = _extract_headers(
         message_metadata.get("payload", {}), GMAIL_METADATA_HEADERS
     )
+
+    if page_offset is not None:
+        page = await read_gmail_message_page(
+            service,
+            message_id,
+            message_metadata.get("sizeEstimate"),
+            body_format,
+            page_offset,
+            page_size,
+            expected_sha256,
+            partial(_format_body_content, include_links=include_links),
+            account=user_google_email,
+            include_links=include_links,
+        )
+        if include_headers:
+            page["headers"] = headers
+        return json.dumps(page, ensure_ascii=False)
 
     content_lines = _format_message_header_lines(headers) if include_headers else []
     if format == "metadata":
@@ -2230,7 +2230,7 @@ async def get_gmail_messages_content_batch(
                     msg_output = "\n".join(
                         _format_message_header_lines(headers, message_id=mid)
                     )
-                    msg_output += f"\nWeb Link: {_generate_gmail_web_url(mid)}\n"
+                    msg_output += f"\nWeb Link: {_generate_gmail_web_url(mid, user_google_email=user_google_email)}\n"
 
                     output_messages.append(msg_output)
                 else:
@@ -2265,7 +2265,7 @@ async def get_gmail_messages_content_batch(
                     msg_output = "\n".join(
                         _format_message_header_lines(headers, message_id=mid)
                     )
-                    msg_output += f"\nWeb Link: {_generate_gmail_web_url(mid)}\n"
+                    msg_output += f"\nWeb Link: {_generate_gmail_web_url(mid, user_google_email=user_google_email)}\n"
                     msg_output += f"\n--- {body_label} ---\n{body_data}\n"
 
                     if attachments:
@@ -2582,6 +2582,7 @@ async def get_gmail_attachment_content(
             f"[get_gmail_attachment_content] Failed to save attachment: {e}",
             exc_info=True,
         )
+        record_degraded_failure(e)
         # Fallback to showing base64 preview
         result_lines = [
             "Attachment downloaded successfully!",
@@ -3014,6 +3015,7 @@ async def send_gmail_message(
             _prepare_gmail_message(
                 subject=subject,
                 body=send_body_content,
+                direction=direction,
                 to=to,
                 cc=cc,
                 bcc=bcc,
@@ -3625,6 +3627,7 @@ async def draft_gmail_message(
                 subject=subject,
                 body=draft_body,
                 body_format=body_format,
+                direction=direction,
                 to=to,
                 cc=cc,
                 bcc=bcc,
