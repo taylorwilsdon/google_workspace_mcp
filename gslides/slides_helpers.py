@@ -5,9 +5,13 @@ Shared utilities for Google Slides operations.
 """
 
 import asyncio
-from typing import Any, Dict, List, Set, Tuple
+import difflib
+import json
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from core.utils import UserInputError
+from gslides.slides_digest import format_deck, format_layouts, format_page
+from gslides.slides_markup import iter_elements, project_page
 
 _PRESENTATION_PAGE_ID_FIELDS = (
     "slides(objectId,slideProperties(notesPage(objectId,"
@@ -249,7 +253,140 @@ async def validate_insert_text_targets(
             " The Slides API only allows insertText on text-capable shapes or table "
             "cells. Create a text box or shape first with createShape, set "
             "elementProperties.pageObjectId to the slide ID, then insertText into "
-            "the new shape objectId. For existing content, call get_page and use a "
+            'the new shape objectId. For existing content, call get_presentation with action="page" and use a '
             "Shape or Table element ID, not the Page ID."
         )
     raise UserInputError(message)
+
+
+# --- get_presentation actions --------------------------------------------------
+
+GET_PRESENTATION_ACTIONS = ("deck", "layouts", "page", "markup")
+
+# What the page digest needs from the deck to say what the layout and master
+# draw: their non-placeholder elements.
+_PAGE_CONTEXT_FIELDS = (
+    "layouts(objectId,pageElements(objectId,shape(placeholder))),"
+    "masters(objectId,pageElements(objectId,shape(placeholder)))"
+)
+_LAYOUTS_FIELDS = (
+    "slides(objectId,slideProperties(layoutObjectId,masterObjectId)),"
+    "layouts(objectId,layoutProperties,pageElements(objectId,shape(placeholder))),"
+    "masters(objectId,masterProperties)"
+)
+
+
+def _check_targets(page: Dict[str, Any], targets: List[str]) -> None:
+    """Refuse a target that is not on the page, naming the closest IDs."""
+    present = {
+        el.get("objectId") for el, _ in iter_elements(page.get("pageElements", []))
+    }
+    missing = [t for t in targets if t != "notes" and t not in present]
+    if not missing:
+        return
+    hints = []
+    for target in missing:
+        close = difflib.get_close_matches(target, sorted(present), n=3, cutoff=0.6)
+        hints.append(
+            f"'{target}'" + (f" (did you mean {', '.join(close)}?)" if close else "")
+        )
+    raise UserInputError(
+        f"Not on page {page.get('objectId')}: {'; '.join(hints)}. "
+        'get_presentation(action="page") lists every element ID on the page.'
+    )
+
+
+def _prune_page(page: Dict[str, Any], targets: List[str]) -> Dict[str, Any]:
+    """The raw Page resource with pageElements limited to ``targets``.
+
+    A target inside a group is returned on its own, with its transform still
+    relative to the group; a target that is a group keeps its descendants.
+    Speaker notes are kept only when "notes" is a target.
+    """
+    wanted = set(targets)
+    pruned = {k: v for k, v in page.items() if k != "pageElements"}
+    pruned["pageElements"] = [
+        el
+        for el, ancestors in iter_elements(page.get("pageElements", []))
+        if el.get("objectId") in wanted
+        and not any(group.get("objectId") in wanted for group in ancestors)
+    ]
+    if "notes" not in wanted and "slideProperties" in pruned:
+        pruned["slideProperties"] = {
+            k: v for k, v in pruned["slideProperties"].items() if k != "notesPage"
+        }
+    return pruned
+
+
+async def read_presentation(
+    service: Any,
+    presentation_id: str,
+    action: str = "deck",
+    page_id: Optional[str] = None,
+    targets: Optional[List[str]] = None,
+    raw: bool = False,
+    offset: int = 0,
+    after: Optional[str] = None,
+) -> str:
+    """Run one get_presentation action and return its text."""
+    action = (action or "deck").lower().strip()
+    if action not in GET_PRESENTATION_ACTIONS:
+        raise UserInputError(
+            f"Invalid action '{action}'. Must be one of: "
+            + ", ".join(f'"{a}"' for a in GET_PRESENTATION_ACTIONS)
+            + "."
+        )
+    presentations = service.presentations()
+
+    if action == "deck":
+        if offset < 0:
+            raise UserInputError(f"offset must be >= 0, got {offset}.")
+        pres = await asyncio.to_thread(
+            presentations.get(presentationId=presentation_id).execute
+        )
+        return format_deck(pres, offset=offset)
+
+    if action == "layouts":
+        pres = await asyncio.to_thread(
+            presentations.get(
+                presentationId=presentation_id, fields=_LAYOUTS_FIELDS
+            ).execute
+        )
+        if after not in (None, "start") and after not in {
+            s.get("objectId") for s in pres.get("slides", [])
+        }:
+            raise UserInputError(
+                f"after='{after}' is not a slide in this presentation. Pass a "
+                'slide ID from get_presentation(action="deck"), or "start".'
+            )
+        lines = format_layouts(pres, after=after)
+        return "\n".join(lines) if lines else "No layouts found."
+
+    if not page_id:
+        raise UserInputError(f"page_id is required for the '{action}' action.")
+
+    # One request at a time: a service's httplib2 connection is not
+    # thread-safe, so concurrent to_thread calls on it fail with SSL errors.
+    page = await asyncio.to_thread(
+        presentations.pages()
+        .get(presentationId=presentation_id, pageObjectId=page_id)
+        .execute
+    )
+    if action == "page":
+        context = await asyncio.to_thread(
+            presentations.get(
+                presentationId=presentation_id, fields=_PAGE_CONTEXT_FIELDS
+            ).execute
+        )
+        return format_page(page, pres=context)
+
+    if targets:
+        _check_targets(page, targets)
+    if raw:
+        body = _prune_page(page, targets) if targets else page
+        return json.dumps(body, ensure_ascii=False, separators=(",", ":"))
+    meta = await asyncio.to_thread(
+        presentations.get(presentationId=presentation_id, fields="pageSize").execute
+    )
+    projection = project_page(page, meta.get("pageSize"), targets=targets or None)
+    return json.dumps(projection, ensure_ascii=False, separators=(",", ":"))
