@@ -307,3 +307,35 @@ _Workspace MCP is an independent open-source project and is not affiliated with,
 
 Validations:
 [![MCP Badge](https://lobehub.com/badge/mcp/taylorwilsdon-google_workspace_mcp)](https://lobehub.com/mcp/taylorwilsdon-google_workspace_mcp)
+
+### Opt-in Admin Directory (read-only)
+
+Domain admins can explicitly enable `--tools admin` (or
+`WORKSPACE_MCP_TOOLS=admin`) to list/search users or read a user by email, alias
+or ID with `get_admin_users`. It returns names, aliases, suspension status and
+organizational-unit paths. List/search returns one page and a `nextPageToken`
+when more results exist; pass it back as `page_token` with the same search.
+
+```bash
+uv run main.py --tools admin --read-only
+# Combine with existing services or a tier explicitly:
+uv run main.py --tools gmail admin --tool-tier core --read-only
+```
+
+Admin tools and scopes are absent from default startup and every unfiltered
+tier. This first slice requests only
+`https://www.googleapis.com/auth/admin.directory.user.readonly`, plus the
+server's existing identity scopes. `--read-only` is supported; omitting it does
+not enable Admin writes. The `--permissions` mode does not yet support `admin`.
+
+This is for Google Workspace domain admins, not personal Gmail accounts.
+The Admin SDK API must be enabled for the Google project, and Google's account
+privileges and OAuth authorization must allow the operation. Selecting a tool
+or a scope grants no admin rights. Existing authentication is reused; no new
+impersonation or domain-wide delegation mechanism is introduced. Setup and
+consent remain the administrator's responsibility. See Google's
+[Directory scopes](https://developers.google.com/workspace/admin/directory/v1/guides/authorizing).
+
+User mutations, separate alias writes, group membership, organizational-unit
+resource enumeration, and other Admin SDK services are not included. The
+FastMCP Cloud entrypoint does not expose this opt-in service; use `main.py`.

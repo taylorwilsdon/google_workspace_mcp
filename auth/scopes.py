@@ -12,6 +12,9 @@ logger = logging.getLogger(__name__)
 # Global variable to store enabled tools (set by main.py)
 _ENABLED_TOOLS = None
 
+# Services which must never add tools or consent scopes without explicit selection.
+OPT_IN_SERVICES = frozenset({"admin"})
+
 # Individual OAuth Scope Constants
 USERINFO_EMAIL_SCOPE = "https://www.googleapis.com/auth/userinfo.email"
 USERINFO_PROFILE_SCOPE = "https://www.googleapis.com/auth/userinfo.profile"
@@ -68,6 +71,11 @@ TASKS_READONLY_SCOPE = "https://www.googleapis.com/auth/tasks.readonly"
 # Google Contacts (People API) scopes
 CONTACTS_SCOPE = "https://www.googleapis.com/auth/contacts"
 CONTACTS_READONLY_SCOPE = "https://www.googleapis.com/auth/contacts.readonly"
+
+# Google Admin SDK Directory API (read-only first slice)
+ADMIN_DIRECTORY_USER_READONLY_SCOPE = (
+    "https://www.googleapis.com/auth/admin.directory.user.readonly"
+)
 
 # Google Custom Search API scope
 CUSTOM_SEARCH_SCOPE = "https://www.googleapis.com/auth/cse"
@@ -218,10 +226,12 @@ TOOL_SCOPES_MAP = {
     "contacts": CONTACTS_SCOPES,
     "search": CUSTOM_SEARCH_SCOPES,
     "appscript": SCRIPT_SCOPES,
+    "admin": [ADMIN_DIRECTORY_USER_READONLY_SCOPE],
 }
 
 # Tool-to-read-only-scopes mapping
 TOOL_READONLY_SCOPES_MAP = {
+    "admin": [ADMIN_DIRECTORY_USER_READONLY_SCOPE],
     "gmail": [GMAIL_READONLY_SCOPE],
     "drive": [DRIVE_READONLY_SCOPE],
     "calendar": [CALENDAR_READONLY_SCOPE],
@@ -294,7 +304,7 @@ def get_all_read_only_scopes() -> list[str]:
 def get_current_scopes():
     """
     Returns scopes for currently enabled tools.
-    Uses globally set enabled tools or all tools if not set.
+    Uses globally set enabled tools or default services if not set.
 
     .. deprecated::
         This function is a thin wrapper around get_scopes_for_tools() and exists
@@ -312,7 +322,8 @@ def get_scopes_for_tools(enabled_tools=None):
     Returns scopes for enabled tools only.
 
     Args:
-        enabled_tools: List of enabled tool names. If None, returns all scopes.
+        enabled_tools: List of enabled service names. If None, returns scopes for
+            default services only (excluding opt-in services).
 
     Returns:
         List of unique scopes for the enabled tools plus base scopes.
@@ -336,8 +347,8 @@ def get_scopes_for_tools(enabled_tools=None):
         pass
 
     if enabled_tools is None:
-        # Default behavior - return all scopes
-        enabled_tools = TOOL_SCOPES_MAP.keys()
+        # Default services only; opt-in services require explicit selection.
+        enabled_tools = TOOL_SCOPES_MAP.keys() - OPT_IN_SERVICES
 
     # Start with base scopes (always required)
     scopes = BASE_SCOPES.copy()

@@ -11,6 +11,8 @@ from typing import Dict, List, Set, Literal, Optional
 
 import yaml
 
+from auth.scopes import OPT_IN_SERVICES
+
 logger = logging.getLogger(__name__)
 
 TierLevel = Literal["core", "extended", "complete"]
@@ -66,7 +68,7 @@ class ToolTierLoader:
 
         Args:
             tier: The tier level (core, extended, complete)
-            services: Optional list of services to filter by. If None, includes all services.
+            services: Optional list of services to filter by. If None, excludes opt-in services.
 
         Returns:
             List of tool names for the specified tier level
@@ -74,9 +76,13 @@ class ToolTierLoader:
         config = self._load_config()
         tools = []
 
-        # If no services specified, use all available services
+        # If no services specified, leave opt-in services disabled.
         if services is None:
-            services = self.get_available_services()
+            services = [
+                service
+                for service in self.get_available_services()
+                if service not in OPT_IN_SERVICES
+            ]
 
         for service in services:
             if service not in config:
@@ -104,7 +110,7 @@ class ToolTierLoader:
 
         Args:
             tier: The maximum tier level to include
-            services: Optional list of services to filter by. If None, includes all services.
+            services: Optional list of services to filter by. If None, excludes opt-in services.
 
         Returns:
             List of tool names up to the specified tier level

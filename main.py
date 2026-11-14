@@ -10,6 +10,7 @@ from importlib import metadata, import_module
 from typing import NoReturn
 from urllib.parse import urlparse
 from dotenv import load_dotenv
+from auth.scopes import OPT_IN_SERVICES
 from core.startup_ui import StartupDisplay, collapse_home, wordmark_lines
 
 # Prevent any stray startup output on macOS (e.g. platform identifiers) from
@@ -263,6 +264,7 @@ SERVICE_MODULES = {
     "contacts": "gcontacts.contacts_tools",
     "search": "gsearch.search_tools",
     "appscript": "gappsscript.apps_script_tools",
+    "admin": "gadmin.admin_tools",
 }
 VALID_SERVICES = frozenset(SERVICE_MODULES)
 
@@ -546,7 +548,7 @@ def main():
         "--tools",
         nargs="*",
         choices=sorted(VALID_SERVICES),
-        help="Specify which tools to register. If not provided, all tools are registered.",
+        help="Specify which tools to register. If not provided, default services are registered (admin requires explicit selection).",
     )
     parser.add_argument(
         "--tool-tier",
@@ -828,9 +830,9 @@ def main():
         # Don't filter individual tools when using explicit service list only
         set_enabled_tool_names(None)
     else:
-        # Default: import all tools
-        tools_to_import = tool_imports.keys()
-        # Don't filter individual tools when importing all
+        # Default: leave opt-in services disabled.
+        tools_to_import = [s for s in tool_imports if s not in OPT_IN_SERVICES]
+        # Don't filter individual tools within default services
         set_enabled_tool_names(None)
 
     wrap_server_tool_method(server)
