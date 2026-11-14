@@ -7,6 +7,8 @@ and Pydantic input models in contacts_tools.py.
 """
 
 import asyncio
+import base64
+import binascii
 import datetime
 import logging
 import re
@@ -14,7 +16,7 @@ from typing import Any, Dict, List, Optional
 
 from googleapiclient.errors import HttpError
 
-from core.utils import UserInputError
+from core.utils import UserInputError, local_file_access_enabled, validate_file_path
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +26,87 @@ _URL_SCHEME_HOST_RE = re.compile(
     r"([a-z][a-z0-9+.-]*:)(?!//)|((?:[a-z][a-z0-9+.-]*:)?//)?([^/?#@]*@)?([^/?#]*)",
     re.IGNORECASE,
 )
+
+_MAX_CONTACT_PHOTO_BYTES = 5 * 1024 * 1024
+
+
+def _prepare_contact_photo(
+    photo_base64: Optional[str], file_path: Optional[str]
+) -> str:
+    """Read one bounded photo input; leave image decoding to the People API."""
+    if (photo_base64 is None) == (file_path is None):
+        sources = (
+            "photo_base64 or file_path"
+            if local_file_access_enabled()
+            else "photo_base64"
+        )
+        raise UserInputError(f"set_photo takes exactly one photo input: {sources}.")
+
+    if file_path is not None:
+        try:
+            path = validate_file_path(file_path)
+            if not path.is_file():
+                raise UserInputError("Contact photo must be a regular file.")
+            with path.open("rb") as image:
+                photo = image.read(_MAX_CONTACT_PHOTO_BYTES + 1)
+        except (OSError, ValueError) as exc:
+            raise UserInputError(f"Cannot read contact photo: {exc}") from exc
+    elif photo_base64 is not None:
+        max_encoded = 4 * ((_MAX_CONTACT_PHOTO_BYTES + 2) // 3)
+        if len(photo_base64) > max_encoded:
+            raise UserInputError("Contact photo exceeds the 5 MiB tool limit.")
+        try:
+            photo = base64.b64decode(photo_base64, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise UserInputError(
+                "photo_base64 must be raw, valid Base64 (not a data URL)."
+            ) from exc
+
+    if not photo:
+        raise UserInputError("Contact photo must not be empty.")
+    if len(photo) > _MAX_CONTACT_PHOTO_BYTES:
+        raise UserInputError("Contact photo exceeds the 5 MiB tool limit.")
+    return base64.b64encode(photo).decode("ascii")
+
+
+async def _manage_contact_photo(
+    service: Any,
+    user_google_email: str,
+    resource_name: str,
+    action: str,
+    photo_base64: Optional[str],
+    file_path: Optional[str],
+) -> str:
+    """Set or remove only the contact photo; on set, return the new photo URL."""
+    contact_id = resource_name.removeprefix("people/")
+    if action == "delete_photo":
+        await asyncio.to_thread(
+            service.people().deleteContactPhoto(resourceName=resource_name).execute
+        )
+        return (
+            f"Contact photo removed for {user_google_email}:\nContact ID: {contact_id}"
+        )
+
+    encoded = await asyncio.to_thread(_prepare_contact_photo, photo_base64, file_path)
+    result = await asyncio.to_thread(
+        service.people()
+        .updateContactPhoto(
+            resourceName=resource_name,
+            body={
+                "photoBytes": encoded,
+                "personFields": "photos",
+                "sources": ["READ_SOURCE_TYPE_CONTACT"],
+            },
+        )
+        .execute
+    )
+    response = (
+        f"Contact photo updated for {user_google_email}:\nContact ID: {contact_id}"
+    )
+    for photo in result.get("person", {}).get("photos", []):
+        if photo.get("url"):
+            response += f"\nPhoto URL: {photo['url']}"
+    return response
 
 
 def _is_expired_sync_token(exc: HttpError) -> bool:

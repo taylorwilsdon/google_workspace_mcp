@@ -45,15 +45,15 @@ Get detailed information about a specific contact.
 | user_google_email | string | yes | | |
 
 ### manage_contact
-Create, update, or delete a contact. `create` and `update` need at least one field.
+Create, update, or delete a contact, or set/remove its photo. `create` and `update` need at least one field.
 
 On `update`, each list field has a `*_mode` companion that controls how the list combines with what the contact already has: `merge` (default) adds new entries and skips duplicates, `replace` overwrites the whole list, and `remove` deletes the entries that match the ones you pass. Modes are ignored on `create`.
 
 | Parameter | Type | Required | Default | Notes |
 |-----------|------|----------|---------|-------|
-| action | string | yes | | `create`, `update`, or `delete` |
+| action | string | yes | | `create`, `update`, `delete`, `set_photo`, or `delete_photo` |
 | user_google_email | string | yes | | |
-| contact_id | string | conditional | | Required for `update` and `delete`. `c123` or `people/c123` |
+| contact_id | string | conditional | | Required for all actions except `create`. `c123` or `people/c123` |
 | given_name | string | no | | First name |
 | family_name | string | no | | Last name |
 | phones | array | no | | `[{number, type?}]`. Types include `mobile`, `work`, `home`, `main`, `workMobile`, `other`; use `internal` for PBX short numbers |
@@ -77,6 +77,10 @@ On `update`, each list field has a `*_mode` companion that controls how the list
 | phone | string | no | | Deprecated, use `phones`. Ignored when `phones` is set |
 | organization | string | no | | Deprecated, use `organizations`. Ignored when `organizations` is set |
 | job_title | string | no | | Deprecated, use `organizations`. Ignored when `organizations` is set |
+| photo_base64 | string | conditional | | `set_photo` only: raw Base64 JPEG or PNG bytes, no data URL prefix. Maximum 5 MiB decoded |
+| file_path | string | conditional | | `set_photo` only: JPEG or PNG path on the MCP server, under `ALLOWED_FILE_DIRS`. Maximum 5 MiB. Local file access only |
+
+`set_photo` takes exactly one of `photo_base64` or `file_path` and returns the new photo URL. `delete_photo` removes only the photo; `delete` removes the whole contact.
 
 ### manage_contacts_batch
 Batch create, update, or delete up to 200 contacts. A batch `update` writes one field per call and replaces that field outright (no `*_mode` merging); only `names` keeps the name parts you leave out.
