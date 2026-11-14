@@ -26,6 +26,7 @@ from gcalendar.calendar_helpers import (
     _format_event_time,
     _get_meeting_link,
     _manage_calendar_acl,
+    _move_event,
     _normalize_attendees,
     _parse_reminders_json,
     _preserve_existing_fields,
@@ -951,18 +952,22 @@ async def manage_event(
     start_timezone: Optional[str] = None,
     end_timezone: Optional[str] = None,
     this_and_following: bool = False,
+    destination_calendar_id: Optional[str] = None,
 ) -> str:
     """
-    Manages calendar events. Supports creating, updating, deleting, and RSVP.
+    Manages calendar events. Supports creating, updating, deleting, moving, and RSVP.
+    Moving changes the organizer calendar. Only default events can be moved;
+    the authenticated user must have the required access to both calendars.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
-        action (str): Action to perform - "create", "update", "delete", or "rsvp".
+        action (str): Action to perform - "create", "update", "delete", "move", or "rsvp".
         summary (Optional[str]): Event title (required for create).
         start_time (Optional[str]): Start time (required for create). An RFC3339 UTC offset identifies the exact instant and is preserved. Without an offset, supply start_timezone or timezone. For a local wall-clock time, omit the offset and pass the zone so Google resolves daylight saving; a wrong offset moves the event. Date-only values create all-day events.
         end_time (Optional[str]): End time (required for create). An RFC3339 UTC offset identifies the exact instant and is preserved. Without an offset, supply end_timezone or timezone. All-day end dates are exclusive.
-        event_id (Optional[str]): Event ID (required for update and delete).
-        calendar_id (str): Calendar ID (default: 'primary').
+        event_id (Optional[str]): Event ID (required for update, delete, move, and rsvp).
+        calendar_id (str): Calendar ID (default: 'primary'). For move, this is the source.
+        destination_calendar_id (Optional[str]): New organizer calendar ID (required for move).
         description (Optional[str]): Event description.
         location (Optional[str]): Event location.
         attendees (Optional[List[Union[str, Dict[str, Any]]]]): Attendee email addresses, attendee objects (e.g. {"email": ..., "responseStatus": "accepted"}), or a mix of both.
@@ -1005,7 +1010,8 @@ async def manage_event(
         guests_can_see_other_guests (Optional[bool]): Whether attendees can see other guests.
         response (Optional[str]): RSVP response — "accepted", "declined", "tentative", or "needsAction" (rsvp action only).
         rsvp_comment (Optional[str]): Optional message to include with the RSVP response (rsvp action only).
-        send_updates (Optional[str]): Notification behavior for create, update, delete, and rsvp — "all" (default), "externalOnly", or "none".
+        send_updates (Optional[str]): Notification behavior: "all", "externalOnly", or "none".
+            Defaults to "none" for move and "all" for other actions.
         this_and_following (bool): Update only. With event_id set to a recurring instance ID,
             applies the change to that instance and every later one by ending the original
             series before it and starting a new series there; earlier instances are kept.
@@ -1013,7 +1019,7 @@ async def manage_event(
             recurrence drops past instances that no longer match. Defaults to False.
 
     Returns:
-        str: Confirmation message with event details.
+        str: Confirmation message with event details, or the moved event as JSON.
     """
     action_lower = action.lower().strip()
 
@@ -1117,6 +1123,18 @@ async def manage_event(
             calendar_id=calendar_id,
             send_updates=send_updates or "all",
         )
+    elif action_lower == "move":
+        if not event_id or not destination_calendar_id:
+            raise UserInputError(
+                "event_id and destination_calendar_id are required for move action"
+            )
+        return await _move_event(
+            service=service,
+            calendar_id=calendar_id,
+            event_id=event_id,
+            destination_calendar_id=destination_calendar_id,
+            send_updates=send_updates or "none",
+        )
     elif action_lower == "rsvp":
         if not event_id:
             raise UserInputError("event_id is required for rsvp action")
@@ -1133,7 +1151,7 @@ async def manage_event(
         )
     else:
         raise UserInputError(
-            f"Invalid action '{action_lower}'. Must be 'create', 'update', 'delete', or 'rsvp'."
+            f"Invalid action '{action_lower}'. Must be 'create', 'update', 'delete', 'move', or 'rsvp'."
         )
 
 
