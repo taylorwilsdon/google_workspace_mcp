@@ -142,7 +142,7 @@ class BatchOperationManager:
             if not requests:
                 return False, "No valid requests could be built from operations", {}
 
-            revision_before = await self._get_revision_id(document_id)
+            revision_before = await self.get_revision_id(document_id)
 
             # Execute the batch
             result = await self._execute_batch_requests(document_id, requests)
@@ -157,49 +157,7 @@ class BatchOperationManager:
 
             metadata["revision_before"] = revision_before
 
-            # One post-batch read serves both the document length (for chaining)
-            # and the affected-range snapshot (so the caller can see what the
-            # write actually produced without a second verification call).
-            try:
-                doc = await asyncio.to_thread(
-                    self.service.documents()
-                    .get(
-                        documentId=document_id,
-                        includeTabsContent=True,
-                        fields="revisionId,tabs",
-                    )
-                    .execute
-                )
-                metadata["revision_after"] = doc.get("revisionId")
-                targets = {}
-                for op in operations:
-                    key = (op.get("tab_id"), op.get("segment_id"))
-                    targets.setdefault(key, []).append(op)
-                target_ranges = []
-                for (tab_id, segment_id), target_ops in targets.items():
-                    segment = self._target_segment(doc, tab_id, segment_id)
-                    content = segment.get("content", []) if segment is not None else []
-                    target = {
-                        "tab_id": tab_id,
-                        "segment_id": segment_id,
-                        "document_length": (
-                            (content[-1].get("endIndex", 0) if content else 1)
-                            if segment is not None
-                            else None
-                        ),
-                    }
-                    affected = self._affected_range(target_ops)
-                    if affected and segment is not None:
-                        target["affected_range"] = self._snapshot_range(
-                            content, *affected
-                        )
-                    target_ranges.append(target)
-                metadata["target_ranges"] = target_ranges
-                # Preserve the existing fields only when there is one coordinate space.
-                if len(target_ranges) == 1:
-                    metadata.update(target_ranges[0])
-            except Exception:
-                metadata["document_length"] = None
+            metadata.update(await self.get_write_metadata(document_id, operations))
 
             # Extract new tab IDs from insert_doc_tab replies
             created_tabs = self._extract_created_tabs(result)
@@ -226,6 +184,55 @@ class BatchOperationManager:
             error_msg = self._rewrite_execution_error(str(e), operations)
             logger.error(f"Failed to execute batch operations: {error_msg}")
             return False, error_msg, {}
+
+    async def get_write_metadata(
+        self, document_id: str, operations: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Best-effort post-write readback, shared by batch and standalone writes."""
+        metadata: dict[str, Any] = {}
+        # One post-batch read serves both the document length (for chaining)
+        # and the affected-range snapshot (so the caller can see what the
+        # write actually produced without a second verification call).
+        try:
+            doc = await asyncio.to_thread(
+                self.service.documents()
+                .get(
+                    documentId=document_id,
+                    includeTabsContent=True,
+                    fields="revisionId,tabs",
+                )
+                .execute
+            )
+            metadata["revision_after"] = doc.get("revisionId")
+            targets = {}
+            for op in operations:
+                key = (op.get("tab_id"), op.get("segment_id"))
+                targets.setdefault(key, []).append(op)
+            target_ranges = []
+            for (tab_id, segment_id), target_ops in targets.items():
+                segment = self._target_segment(doc, tab_id, segment_id)
+                content = segment.get("content", []) if segment is not None else []
+                target = {
+                    "tab_id": tab_id,
+                    "segment_id": segment_id,
+                    "document_length": (
+                        (content[-1].get("endIndex", 0) if content else 1)
+                        if segment is not None
+                        else None
+                    ),
+                }
+                affected = self._affected_range(target_ops)
+                if affected and segment is not None:
+                    target["affected_range"] = self._snapshot_range(content, *affected)
+                target_ranges.append(target)
+            metadata["target_ranges"] = target_ranges
+            # Preserve the existing fields only when there is one coordinate space.
+            if len(target_ranges) == 1:
+                metadata.update(target_ranges[0])
+        except Exception:
+            metadata["document_length"] = None
+
+        return metadata
 
     ANCHOR_FIELDS = ("after_heading", "before_heading", "anchor_text")
 
@@ -330,7 +337,7 @@ class BatchOperationManager:
                 return tab[kind][segment_id]
         return None
 
-    async def _get_revision_id(self, document_id: str) -> str | None:
+    async def get_revision_id(self, document_id: str) -> str | None:
         """Document revision before the batch, for correlating with version history."""
         try:
             doc = await asyncio.to_thread(

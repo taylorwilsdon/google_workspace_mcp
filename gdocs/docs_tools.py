@@ -54,6 +54,9 @@ from gdocs.docs_helpers import (
     create_update_paragraph_style_request,
     extract_text_from_elements,
     process_tab_hierarchy,
+    format_write_receipt,
+    format_paragraph_style_receipt,
+    get_paragraph_start_indices_and_revision,
 )
 
 # Import document structure and table utilities
@@ -1656,38 +1659,7 @@ async def batch_update_doc(
             f"API replies: {replies_count}.{length_info}",
         ]
 
-        revision_before = metadata.get("revision_before")
-        revision_after = metadata.get("revision_after")
-        if revision_before or revision_after:
-            parts.append(
-                f" Revision: {revision_before or 'unknown'} -> "
-                f"{revision_after or 'unknown'}."
-            )
-
-        # Reporting what the edited range now looks like lets the caller confirm
-        # styles and list membership landed without a second round trip.
-        for target in metadata.get("target_ranges", [metadata]):
-            if (
-                target.get("tab_id")
-                or target.get("segment_id")
-                or len(metadata.get("target_ranges", [])) > 1
-            ):
-                parts.append(
-                    f"\nTarget tab: {target.get('tab_id') or 'first'}, "
-                    f"segment: {target.get('segment_id') or 'body'}. "
-                    f"Document length: {target.get('document_length')}."
-                )
-            affected = target.get("affected_range")
-            if affected:
-                parts.append("\nAffected range after edit:")
-                for entry in affected:
-                    bullet = ", in list" if entry["in_list"] else ""
-                    preview = entry["text_preview"].replace("\n", " ").strip()
-                    parts.append(
-                        f"\n  [{entry['start_index']}-{entry['end_index']}] "
-                        f'{entry["named_style"] or "UNKNOWN"}{bullet}: "{preview}"'
-                    )
-                parts.append("\n")
+        parts.append(format_write_receipt(metadata))
 
         parts.append(
             f" To apply formatting, call inspect_doc_structure to get exact text positions. "
@@ -2447,35 +2419,6 @@ async def export_doc_to_pdf(
 # ==============================================================================
 
 
-async def _get_paragraph_start_indices_in_range(
-    service: Any, document_id: str, start_index: int, end_index: int
-) -> list[int]:
-    """
-    Fetch paragraph start indices that overlap a target range.
-    """
-    doc_data = await asyncio.to_thread(
-        service.documents()
-        .get(
-            documentId=document_id,
-            fields="body/content(startIndex,endIndex,paragraph)",
-        )
-        .execute
-    )
-
-    paragraph_starts = []
-    for element in doc_data.get("body", {}).get("content", []):
-        if "paragraph" not in element:
-            continue
-        paragraph_start = element.get("startIndex")
-        paragraph_end = element.get("endIndex")
-        if not isinstance(paragraph_start, int) or not isinstance(paragraph_end, int):
-            continue
-        if paragraph_end > start_index and paragraph_start < end_index:
-            paragraph_starts.append(paragraph_start)
-
-    return paragraph_starts or [start_index]
-
-
 @server.tool(
     title="Update Paragraph Style",
     annotations=ToolAnnotations(
@@ -2527,6 +2470,12 @@ async def update_paragraph_style(
     create bulleted or numbered lists with nested indentation, and customize paragraph
     properties like alignment, spacing, and indentation. All operations can be applied
     in a single call.
+
+    After the write, returns observed revision IDs and a bounded readback of
+    top-level paragraphs at the requested indices (20 paragraphs, 80 characters
+    each). This adds document reads before and after the write; nested-list
+    creation reuses its existing pre-read. Readback failure does not undo the
+    write. Table-cell paragraphs and index shifts from list edits are not tracked.
 
     Args:
         user_google_email: User's Google email address
@@ -2691,6 +2640,8 @@ async def update_paragraph_style(
     if paragraph_style_request:
         requests.append(paragraph_style_request)
 
+    revision_before = None
+
     # Add list creation or removal if requested
     if list_type_value == "NONE":
         # Docs continues list membership into text inserted after a list, and a
@@ -2706,7 +2657,10 @@ async def update_paragraph_style(
         try:
             paragraph_start_indices = None
             if nesting_level > 0:
-                paragraph_start_indices = await _get_paragraph_start_indices_in_range(
+                (
+                    paragraph_start_indices,
+                    revision_before,
+                ) = await get_paragraph_start_indices_and_revision(
                     service, document_id, start_index, end_index
                 )
             list_requests = create_bullet_list_request(
@@ -2726,6 +2680,10 @@ async def update_paragraph_style(
     # Validate we have at least one operation
     if not requests:
         return f"No paragraph style changes or list creation specified for document {document_id}"
+
+    batch_manager = BatchOperationManager(service)
+    if not list_nesting_level:
+        revision_before = await batch_manager.get_revision_id(document_id)
 
     await asyncio.to_thread(
         service.documents()
@@ -2757,7 +2715,20 @@ async def update_paragraph_style(
         summary_parts.append(list_desc)
 
     link = f"https://docs.google.com/document/d/{document_id}/edit"
-    return f"Applied paragraph formatting ({', '.join(summary_parts)}) to range {start_index}-{end_index} in document {document_id}. Link: {link}"
+    confirmation = f"Applied paragraph formatting ({', '.join(summary_parts)}) to range {start_index}-{end_index} in document {document_id}. Link: {link}"
+    metadata = await batch_manager.get_write_metadata(
+        document_id,
+        [
+            {
+                "start_index": start_index,
+                "end_index": end_index,
+                "tab_id": tab_id,
+                "segment_id": segment_id,
+            }
+        ],
+    )
+    metadata["revision_before"] = revision_before
+    return confirmation + format_paragraph_style_receipt(metadata)
 
 
 @server.tool(
