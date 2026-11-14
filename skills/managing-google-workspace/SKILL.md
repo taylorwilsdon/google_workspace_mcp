@@ -184,12 +184,13 @@ For parameters: [references/sheets.md](references/sheets.md)
 
 | Task | Tool |
 |------|------|
-| Get presentation | `get_presentation` |
-| Get specific slide | `get_page` |
+| List slides and layouts | `get_presentation` (`action="deck"`) |
+| Read a slide's elements and text | `get_presentation` (`action="page"`) |
+| A slide's geometry and styles as JSON | `get_presentation` (`action="markup"`) |
 | Look at a slide (render to image) | `render_page_to_image` |
 | Create presentation | `create_presentation` |
 | Batch update | `batch_update_presentation` |
-| Speaker notes | `get_presentation` (`include_speaker_notes`) + `batch_update_presentation` |
+| Speaker notes | `get_presentation` (`action="page"`) + `batch_update_presentation` |
 | Comments | `manage_presentation_comment` / `list_presentation_comments` |
 
 For parameters: [references/slides.md](references/slides.md)
