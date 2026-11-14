@@ -53,6 +53,7 @@ from auth.scopes import (
     CALENDAR_SCOPE,
     CALENDAR_READONLY_SCOPE,
     CALENDAR_EVENTS_SCOPE,
+    CALENDAR_LIST_READONLY_SCOPE,
     SHEETS_READONLY_SCOPE,
     SHEETS_WRITE_SCOPE,
     CHAT_READONLY_SCOPE,
@@ -641,6 +642,7 @@ SCOPE_GROUPS = {
     "calendar": CALENDAR_SCOPE,
     "calendar_read": CALENDAR_READONLY_SCOPE,
     "calendar_events": CALENDAR_EVENTS_SCOPE,
+    "calendar_list_read": CALENDAR_LIST_READONLY_SCOPE,
     # Sheets scopes
     "sheets_read": SHEETS_READONLY_SCOPE,
     "sheets_write": SHEETS_WRITE_SCOPE,
