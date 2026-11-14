@@ -60,17 +60,21 @@ range instead of letting the default current time move between pages. With
 `single_events=false` and no initial `time_min`, continue leaving `time_min` unset.
 
 ### manage_event
-Create, update, delete, or RSVP to a calendar event.
+Create, update, delete, move, or RSVP to a calendar event. Moving changes the
+organizer calendar and returns the moved event. Google Calendar must authorize
+access to both calendars, and only default events can be moved. Google may
+still send some emails when `send_updates="none"`.
 
 | Parameter | Type | Required | Default | Notes |
 |-----------|------|----------|---------|-------|
 | user_google_email | string | yes | | |
-| action | string | yes | | `create`, `update`, `delete`, or `rsvp` |
+| action | string | yes | | `create`, `update`, `delete`, `move`, or `rsvp` |
 | summary | string | for create | | Event title |
 | start_time | string | for create | | RFC 3339. An explicit offset fixes the instant; without one, pass `start_timezone` or `timezone`. Date-only creates an all-day event |
 | end_time | string | for create | | RFC 3339, same rules as `start_time`. All-day end dates are exclusive |
-| event_id | string | for update/delete/rsvp | | Event ID |
-| calendar_id | string | no | primary | |
+| event_id | string | for update/delete/move/rsvp | | Event ID |
+| calendar_id | string | no | primary | Source calendar for move |
+| destination_calendar_id | string | for move | | New organizer calendar ID |
 | description | string | no | | Event description |
 | location | string | no | | Event location |
 | attendees | array | no | | Email strings or attendee objects |
@@ -95,7 +99,7 @@ Create, update, delete, or RSVP to a calendar event.
 | guests_can_see_other_guests | boolean | no | | Attendees can see other attendees |
 | response | string | for rsvp | | `accepted`, `declined`, `tentative`, or `needsAction` |
 | rsvp_comment | string | no | | Message sent with the RSVP (rsvp only) |
-| send_updates | string | no | all | `all`, `externalOnly`, or `none`. Applies to every action |
+| send_updates | string | no | none for move; all otherwise | `all`, `externalOnly`, or `none`. Applies to every action |
 | this_and_following | boolean | no | false | Update only. With a recurring instance `event_id`, splits the series there so the change applies to that instance and all later ones while earlier instances keep the original schedule. Updating the series ID moves every instance and can drop past ones |
 
 **Reminder format** (each item is a dict):
