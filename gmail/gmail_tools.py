@@ -3932,6 +3932,81 @@ async def get_gmail_thread_content(
 
 
 @server.tool(
+    title="List Gmail Thread Messages",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+@require_google_service("gmail", "gmail_read")
+@handle_http_errors(
+    "list_gmail_thread_messages", is_read_only=True, service_type="gmail"
+)
+async def list_gmail_thread_messages(
+    service,
+    thread_id: str,
+    user_google_email: str,
+    headers: Annotated[
+        Optional[StringList],
+        Field(
+            description=(
+                "Header names to include for each message. "
+                "Defaults to From, To, Date and Subject."
+            ),
+        ),
+    ] = None,
+) -> Dict[str, Any]:
+    """
+    Lists the messages in a Gmail thread as IDs plus headers, without bodies or attachments.
+
+    Args:
+        thread_id (str): The unique ID of the Gmail thread.
+        user_google_email (str): The user's Google email address. Required.
+        headers (Optional[List[str]]): Header names to include per message.
+            Defaults to From, To, Date and Subject.
+
+    Returns:
+        Dict[str, Any]: thread_id, message_count and messages in thread order. Each
+        message has id, label_ids, internal_date, snippet and the requested headers.
+    """
+    header_names = headers or ["From", "To", "Date", "Subject"]
+    logger.info(
+        f"[list_gmail_thread_messages] Invoked. Thread ID: '{thread_id}', "
+        f"Email: '{user_google_email}'"
+    )
+
+    thread = await asyncio.to_thread(
+        service.users()
+        .threads()
+        .get(
+            userId="me",
+            id=thread_id,
+            format="metadata",
+            metadataHeaders=header_names,
+        )
+        .execute
+    )
+
+    messages = [
+        {
+            "id": message.get("id"),
+            "label_ids": message.get("labelIds", []),
+            "internal_date": message.get("internalDate"),
+            "snippet": message.get("snippet", ""),
+            "headers": _extract_headers(message.get("payload", {}), header_names),
+        }
+        for message in thread.get("messages", [])
+    ]
+    return {
+        "thread_id": thread_id,
+        "message_count": len(messages),
+        "messages": messages,
+    }
+
+
+@server.tool(
     title="Get Gmail Threads Content Batch",
     annotations=ToolAnnotations(
         readOnlyHint=True,
