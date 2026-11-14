@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 from contextlib import nullcontext
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -88,9 +89,10 @@ async def test_invalid_requests_do_not_call_directory(arguments):
 @pytest.mark.parametrize("readonly", [False, True])
 def test_admin_scope_requires_explicit_selection(monkeypatch, readonly):
     monkeypatch.setattr(scopes, "_READ_ONLY_MODE", readonly)
-    assert (
-        scopes.ADMIN_DIRECTORY_USER_READONLY_SCOPE not in scopes.get_scopes_for_tools()
-    )
+    assert not {
+        scopes.ADMIN_DIRECTORY_USER_SCOPE,
+        scopes.ADMIN_DIRECTORY_USER_READONLY_SCOPE,
+    }.intersection(scopes.get_scopes_for_tools())
     assert set(scopes.get_scopes_for_tools(["admin"])) == {
         *scopes.BASE_SCOPES,
         scopes.ADMIN_DIRECTORY_USER_READONLY_SCOPE,
@@ -144,6 +146,7 @@ main.main()
     )
     actual = json.loads(result.stdout)
     assert actual["enabled"] is enabled
+    assert scopes.ADMIN_DIRECTORY_USER_SCOPE not in actual["scopes"]
     assert (scopes.ADMIN_DIRECTORY_USER_READONLY_SCOPE in actual["scopes"]) is enabled
     if enabled:
         assert actual["read_only"] is True
@@ -182,3 +185,181 @@ async def test_tool_uses_existing_authorization_and_readonly_scope(monkeypatch):
     read.assert_awaited_once_with(
         service, "user@example.invalid", None, "my_customer", 100, None
     )
+
+
+@pytest.mark.parametrize(
+    "available,required,expected",
+    [
+        (
+            [scopes.ADMIN_DIRECTORY_USER_SCOPE],
+            [scopes.ADMIN_DIRECTORY_USER_READONLY_SCOPE],
+            True,
+        ),
+        (
+            [scopes.ADMIN_DIRECTORY_USER_READONLY_SCOPE],
+            [scopes.ADMIN_DIRECTORY_USER_READONLY_SCOPE],
+            True,
+        ),
+        (
+            [scopes.ADMIN_DIRECTORY_USER_READONLY_SCOPE],
+            [scopes.ADMIN_DIRECTORY_USER_SCOPE],
+            False,
+        ),
+        ([], [scopes.ADMIN_DIRECTORY_USER_READONLY_SCOPE], False),
+        (
+            ["https://www.googleapis.com/auth/admin.directory.user.alias"],
+            [scopes.ADMIN_DIRECTORY_USER_READONLY_SCOPE],
+            False,
+        ),
+        (
+            ["https://www.googleapis.com/auth/admin.directory.group"],
+            [scopes.ADMIN_DIRECTORY_USER_READONLY_SCOPE],
+            False,
+        ),
+        (
+            ["https://www.googleapis.com/auth/cloud-platform"],
+            [scopes.ADMIN_DIRECTORY_USER_READONLY_SCOPE],
+            False,
+        ),
+    ],
+)
+def test_admin_scope_compatibility_is_one_way(available, required, expected):
+    original_available, original_required = available.copy(), required.copy()
+    assert scopes.has_required_scopes(available, required) is expected
+    assert available == original_available
+    assert required == original_required
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("flow", ["token", "session"])
+@pytest.mark.parametrize(
+    "granted,accepted",
+    [(scopes.ADMIN_DIRECTORY_USER_SCOPE, True), (scopes.GMAIL_READONLY_SCOPE, False)],
+)
+async def test_admin_oauth21_uses_existing_identity_grants(
+    monkeypatch, flow, granted, accepted
+):
+    email = "admin@example.invalid"
+    credentials = SimpleNamespace(scopes=[granted])
+    token = SimpleNamespace(claims={"email": email}, scopes=[granted])
+    ensure = AsyncMock(return_value=credentials)
+    store = Mock()
+    store.get_credentials_with_validation.return_value = credentials
+    build = Mock(return_value=object())
+    monkeypatch.setattr(
+        decorators, "get_auth_provider", lambda: object() if flow == "token" else None
+    )
+    monkeypatch.setattr(
+        decorators, "get_access_token", lambda: token if flow == "token" else None
+    )
+    monkeypatch.setattr(decorators, "ensure_session_from_access_token", ensure)
+    monkeypatch.setattr(decorators, "get_oauth21_session_store", lambda: store)
+    monkeypatch.setattr(decorators, "build_google_service", build)
+    call = decorators.get_authenticated_google_service_oauth21(
+        "admin",
+        "directory_v1",
+        "get_admin_users",
+        email,
+        [scopes.ADMIN_DIRECTORY_USER_READONLY_SCOPE],
+        session_id="synthetic-session",
+        auth_token_email=email,
+    )
+    if accepted:
+        assert await call == (build.return_value, email)
+        build.assert_called_once_with("admin", "directory_v1", credentials)
+    else:
+        with pytest.raises(decorators.GoogleScopeError):
+            await call
+        build.assert_not_called()
+    if flow == "token":
+        ensure.assert_awaited_once_with(token, email, "synthetic-session")
+        store.get_credentials_with_validation.assert_not_called()
+    else:
+        ensure.assert_not_awaited()
+        store.get_credentials_with_validation.assert_called_once_with(
+            requested_user_email=email,
+            session_id="synthetic-session",
+            auth_token_email=email,
+            allow_recent_auth=False,
+        )
+    assert credentials.scopes == [granted]
+
+
+@pytest.mark.asyncio
+async def test_admin_full_grant_does_not_bypass_token_identity(monkeypatch):
+    token = SimpleNamespace(
+        claims={"email": "other@example.invalid"},
+        scopes=[scopes.ADMIN_DIRECTORY_USER_SCOPE],
+    )
+    ensure, build = AsyncMock(), Mock()
+    monkeypatch.setattr(decorators, "get_auth_provider", lambda: object())
+    monkeypatch.setattr(decorators, "get_access_token", lambda: token)
+    monkeypatch.setattr(decorators, "ensure_session_from_access_token", ensure)
+    monkeypatch.setattr(decorators, "build_google_service", build)
+    with pytest.raises(decorators.GoogleAuthenticationError, match="does not match"):
+        await decorators.get_authenticated_google_service_oauth21(
+            "admin",
+            "directory_v1",
+            "get_admin_users",
+            "admin@example.invalid",
+            [scopes.ADMIN_DIRECTORY_USER_READONLY_SCOPE],
+        )
+    ensure.assert_not_awaited()
+    build.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_admin_service_account_still_requests_only_readonly(monkeypatch):
+    email = "admin@example.invalid"
+    get_credentials = Mock(return_value=object())
+    build = Mock(return_value=object())
+    monkeypatch.setattr(decorators, "is_service_account_enabled", lambda: True)
+    monkeypatch.setattr(decorators, "_get_configured_user_google_email", lambda: email)
+    monkeypatch.setattr(
+        decorators, "get_oauth_config", lambda: SimpleNamespace(dwd_allowed_domains=[])
+    )
+    monkeypatch.setattr(decorators, "_get_service_account_credentials", get_credentials)
+    monkeypatch.setattr(decorators, "build_google_service", build)
+    monkeypatch.setattr(decorators, "record_google_principal", Mock())
+    result = await decorators._authenticate_service(
+        False,
+        "admin",
+        "directory_v1",
+        "get_admin_users",
+        email,
+        [scopes.ADMIN_DIRECTORY_USER_READONLY_SCOPE],
+        None,
+        None,
+    )
+    assert result == (build.return_value, email)
+    get_credentials.assert_called_once_with(
+        [scopes.ADMIN_DIRECTORY_USER_READONLY_SCOPE], email
+    )
+
+
+@pytest.mark.asyncio
+async def test_admin_scope_compatibility_does_not_bypass_session_denial(monkeypatch):
+    store = Mock()
+    store.get_credentials_with_validation.return_value = None
+    build = Mock()
+    monkeypatch.setattr(decorators, "get_auth_provider", lambda: None)
+    monkeypatch.setattr(decorators, "get_access_token", lambda: None)
+    monkeypatch.setattr(decorators, "get_oauth21_session_store", lambda: store)
+    monkeypatch.setattr(decorators, "build_google_service", build)
+    with pytest.raises(decorators.GoogleAuthenticationError, match="Access denied"):
+        await decorators.get_authenticated_google_service_oauth21(
+            "admin",
+            "directory_v1",
+            "get_admin_users",
+            "other@example.invalid",
+            [scopes.ADMIN_DIRECTORY_USER_READONLY_SCOPE],
+            session_id="synthetic-session",
+            auth_token_email="admin@example.invalid",
+        )
+    store.get_credentials_with_validation.assert_called_once_with(
+        requested_user_email="other@example.invalid",
+        session_id="synthetic-session",
+        auth_token_email="admin@example.invalid",
+        allow_recent_auth=False,
+    )
+    build.assert_not_called()

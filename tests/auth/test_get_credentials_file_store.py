@@ -1,7 +1,10 @@
 import logging
 from types import SimpleNamespace
 
+import pytest
+
 from auth.google_auth import get_credentials
+from auth.scopes import ADMIN_DIRECTORY_USER_SCOPE, ADMIN_DIRECTORY_USER_READONLY_SCOPE
 
 EMAIL = "user@example.com"
 SESSION_ID = "session-1"
@@ -21,14 +24,22 @@ class _SessionStore:
         return None
 
 
+@pytest.mark.parametrize(
+    "available,required,accepted",
+    [
+        (["scope.a"], ["scope.a"], True),
+        ([ADMIN_DIRECTORY_USER_SCOPE], [ADMIN_DIRECTORY_USER_READONLY_SCOPE], True),
+        (["scope.a"], [ADMIN_DIRECTORY_USER_READONLY_SCOPE], False),
+    ],
+)
 def test_file_store_credentials_are_returned_without_a_session_write(
-    monkeypatch, caplog
+    monkeypatch, caplog, available, required, accepted
 ) -> None:
     session_store = _SessionStore()
     file_credentials = SimpleNamespace(
         valid=True,
         expired=False,
-        scopes=["scope.a"],
+        scopes=available,
         refresh_token="refresh-token",
         id_token=None,
     )
@@ -45,10 +56,10 @@ def test_file_store_credentials_are_returned_without_a_session_write(
     with caplog.at_level(logging.WARNING):
         result = get_credentials(
             user_google_email=EMAIL,
-            required_scopes=["scope.a"],
+            required_scopes=required,
             session_id=SESSION_ID,
         )
 
-    assert result is file_credentials
+    assert result is (file_credentials if accepted else None)
     assert session_store.store_calls == []
     assert "no user email found" not in caplog.text

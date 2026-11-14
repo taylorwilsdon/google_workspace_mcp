@@ -1,8 +1,9 @@
 # Admin Directory (opt-in)
 
 Requires explicit `--tools admin` and Google-authorized domain-admin access.
-Uses only `admin.directory.user.readonly`; selecting the service does not grant
-privileges. No writes or delegation setup are performed.
+Requests only `admin.directory.user.readonly`. An existing `admin.directory.user`
+grant also satisfies these read operations; no full scope is requested. Selecting
+the service grants no privileges. No writes or delegation setup are performed.
 
 ### get_admin_users
 

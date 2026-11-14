@@ -73,6 +73,8 @@ CONTACTS_SCOPE = "https://www.googleapis.com/auth/contacts"
 CONTACTS_READONLY_SCOPE = "https://www.googleapis.com/auth/contacts.readonly"
 
 # Google Admin SDK Directory API (read-only first slice)
+# Recognize existing full grants; never include this in requested consent scopes.
+ADMIN_DIRECTORY_USER_SCOPE = "https://www.googleapis.com/auth/admin.directory.user"
 ADMIN_DIRECTORY_USER_READONLY_SCOPE = (
     "https://www.googleapis.com/auth/admin.directory.user.readonly"
 )
@@ -100,6 +102,7 @@ SCRIPT_SCRIPTAPP_SCOPE = "https://www.googleapis.com/auth/script.scriptapp"
 # See https://developers.google.com/gmail/api/auth/scopes,
 # https://developers.google.com/drive/api/guides/api-specific-auth, etc.
 SCOPE_HIERARCHY = {
+    ADMIN_DIRECTORY_USER_SCOPE: {ADMIN_DIRECTORY_USER_READONLY_SCOPE},
     GMAIL_MODIFY_SCOPE: {
         GMAIL_READONLY_SCOPE,
         GMAIL_SEND_SCOPE,

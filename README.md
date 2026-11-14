@@ -325,7 +325,9 @@ uv run main.py --tools gmail admin --tool-tier core --read-only
 Admin tools and scopes are absent from default startup and every unfiltered
 tier. This first slice requests only
 `https://www.googleapis.com/auth/admin.directory.user.readonly`, plus the
-server's existing identity scopes. `--read-only` is supported; omitting it does
+server's existing identity scopes. An existing `admin.directory.user` grant
+also satisfies these read operations; the full scope is never requested by this
+service. `--read-only` is supported; omitting it does
 not enable Admin writes. The `--permissions` mode does not yet support `admin`.
 
 This is for Google Workspace domain admins, not personal Gmail accounts.
