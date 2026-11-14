@@ -126,7 +126,6 @@ slides:
     - get_presentation
   extended:
     - batch_update_presentation
-    - get_page
     - render_page_to_image
   complete:
     - list_presentation_comments
