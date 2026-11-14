@@ -281,7 +281,7 @@ For parameters: [references/search.md](references/search.md)
 
 | Task | Tool |
 |------|------|
-| Start OAuth flow | `start_google_auth` |
+| Start OAuth flow or list accounts | `start_google_auth` |
 
 Legacy OAuth 2.0 only -- disabled when OAuth 2.1 is enabled. In most cases, just call the tool you need and auth happens automatically. For parameters: [references/server-options.md](references/server-options.md#start_google_auth)
 

@@ -17,6 +17,10 @@ from core.warning_filters import install_startup_warning_filters
 install_startup_warning_filters()
 
 from auth.auth_info_middleware import AuthInfoMiddleware
+from auth.credential_store import (
+    CredentialStoreUnavailableError,
+    get_legacy_authenticated_users,
+)
 from core.camel_case_middleware import CamelCaseArgumentsMiddleware
 from core.portable_schema_middleware import PortableSchemaMiddleware
 from core.tool_descriptions import docstring_description
@@ -1107,17 +1111,20 @@ async def legacy_oauth2_callback(request: Request) -> HTMLResponse:
     ),
 )
 async def start_google_auth(
-    service_name: str, user_google_email: str = USER_GOOGLE_EMAIL
+    service_name: Optional[str] = None,
+    user_google_email: str = USER_GOOGLE_EMAIL,
+    list_accounts: bool = False,
 ) -> str:
     """
-    Manually initiate Google OAuth authentication flow.
+    Manually initiate Google OAuth authentication flow or list authenticated accounts.
 
     NOTE: This is a legacy OAuth 2.0 tool and is disabled when OAuth 2.1 is enabled.
     The authentication system automatically handles credential checks and prompts for
     authentication when needed. Only use this tool if:
-    1. You need to re-authenticate with different credentials
-    2. You want to proactively authenticate before using other tools
-    3. The automatic authentication flow failed and you need to retry
+    1. You want to see which Google accounts already have stored credentials (list_accounts=True)
+    2. You need to re-authenticate with different credentials
+    3. You want to proactively authenticate before using other tools
+    4. The automatic authentication flow failed and you need to retry
 
     In most cases, simply try calling the Google Workspace tool you need - it will
     automatically handle authentication if required.
@@ -1135,11 +1142,35 @@ async def start_google_auth(
             "original tool."
         )
 
+    # Only an omitted service_name asks for the account list; an explicit value
+    # (even blank) keeps the authentication behaviour.
+    wants_account_list = list_accounts or service_name is None
+
     if is_trust_gateway_identity():
+        if wants_account_list:
+            return "Listing accounts is disabled when gateway identity verification is enabled."
         user_google_email = await get_verified_gateway_principal()
 
+    if wants_account_list:
+        try:
+            accounts = get_legacy_authenticated_users()
+        except CredentialStoreUnavailableError as e:
+            return f"Could not list authenticated accounts: {e}"
+        if not accounts:
+            return "No accounts are currently authenticated."
+        return f"Authenticated accounts: {', '.join(accounts)}"
+
     if not user_google_email:
-        raise ValueError("user_google_email must be provided.")
+        try:
+            accounts = get_legacy_authenticated_users()
+            accounts_msg = (
+                f" Authenticated accounts: {', '.join(accounts)}."
+                if accounts
+                else " No accounts are currently authenticated."
+            )
+        except CredentialStoreUnavailableError:
+            accounts_msg = ""
+        raise ValueError(f"user_google_email must be provided.{accounts_msg}")
 
     error_message = check_client_secrets()
     if error_message:
@@ -1159,7 +1190,8 @@ async def start_google_auth(
 
         auth_message = await start_auth_flow(
             user_google_email=user_google_email,
-            service_name=service_name,
+            # service_name is only a display label here; keep messages readable when blank.
+            service_name=(service_name or "").strip() or "Google Workspace",
             redirect_uri=get_oauth_redirect_uri_for_current_mode(),
             principal_source=(
                 "gateway_assertion" if is_trust_gateway_identity() else None
