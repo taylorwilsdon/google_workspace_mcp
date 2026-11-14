@@ -24,6 +24,30 @@ from core.utils import UserInputError
 
 logger = logging.getLogger(__name__)
 
+
+async def _move_event(
+    service,
+    calendar_id: str,
+    event_id: str,
+    destination_calendar_id: str,
+    send_updates: str,
+) -> str:
+    """Move a default event using the authenticated Calendar service."""
+    moved_event = await asyncio.to_thread(
+        lambda: (
+            service.events()
+            .move(
+                calendarId=calendar_id,
+                eventId=event_id,
+                destination=destination_calendar_id,
+                sendUpdates=send_updates,
+            )
+            .execute()
+        )
+    )
+    return json.dumps(moved_event)
+
+
 _WEEKDAYS = (
     "Monday",
     "Tuesday",
