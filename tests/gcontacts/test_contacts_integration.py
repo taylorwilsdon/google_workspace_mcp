@@ -713,7 +713,24 @@ class TestBatchUpdateWithFieldParam:
         assert "names" not in person
         assert "emailAddresses" not in person
 
-    def test_reports_skipped_contacts(self):
+    def test_no_skipped_section_when_all_updated(self) -> None:
+        svc = self._make_batch_service(
+            {"updateResult": {"people/c1": {"person": {"resourceName": "people/c1"}}}}
+        )
+
+        result = run(
+            manage_contacts_batch(
+                service=svc,
+                user_google_email="test@example.com",
+                action="update",
+                updates=[{"contact_id": "c1", "phones": [{"number": "+15550100"}]}],
+                field="phoneNumbers",
+            )
+        )
+
+        assert "Skipped" not in result
+
+    def test_reports_skipped_contacts(self) -> None:
         svc = self._make_batch_service(
             {"updateResult": {"people/c1": {"person": {"resourceName": "people/c1"}}}}
         )
@@ -724,6 +741,10 @@ class TestBatchUpdateWithFieldParam:
                 {
                     "requestedResourceName": "people/c3",
                     "status": {"code": 5, "message": "Requested entity was not found."},
+                },
+                {
+                    "requestedResourceName": "people/c4",
+                    "person": {"resourceName": "people/c9", "etag": "E9"},
                 },
             ]
         }
@@ -737,17 +758,19 @@ class TestBatchUpdateWithFieldParam:
                     {"contact_id": "c1", "phones": [{"number": "+15550100"}]},
                     {"contact_id": "c2", "emails": [{"address": "a@example.com"}]},
                     {"contact_id": "c3", "phones": [{"number": "+15550101"}]},
+                    {"contact_id": "c4", "phones": [{"number": "+15550102"}]},
                 ],
                 field="phoneNumbers",
             )
         )
 
         assert "Updated 1 contacts" in result
-        assert "Skipped 2 contacts:" in result
+        assert "Skipped 3 contacts:" in result
         assert "people/c2: no phoneNumbers in the update" in result
         assert "people/c3: not found" in result
+        assert "people/c4: resolves to people/c9" in result
 
-    def test_error_lists_skipped_when_nothing_to_update(self):
+    def test_error_lists_skipped_when_nothing_to_update(self) -> None:
         svc = self._make_batch_service({"updateResult": {}})
         svc.people.return_value.getBatchGet.return_value.execute.return_value = {
             "responses": [
