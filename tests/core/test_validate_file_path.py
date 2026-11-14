@@ -135,3 +135,23 @@ def test_validate_file_path_blocks_dot_env_variant_anywhere(monkeypatch, tmp_pat
 
     with pytest.raises(ValueError, match="\\.env files may contain secrets"):
         validate_file_path(str(secret_file))
+
+
+def test_validate_file_path_blocks_docker_config_json(monkeypatch, tmp_path):
+    storage_dir = tmp_path / "attachments"
+    storage_dir.mkdir()
+    monkeypatch.setattr(attachment_storage, "STORAGE_DIR", storage_dir)
+
+    allowed_dir = tmp_path / "allowed"
+    docker_dir = allowed_dir / ".docker"
+    docker_dir.mkdir(parents=True)
+    secret_file = docker_dir / "config.json"
+    secret_file.write_text('{"auths": {}}', encoding="utf-8")
+    other_config = allowed_dir / "config.json"
+    other_config.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setenv("ALLOWED_FILE_DIRS", str(allowed_dir))
+
+    with pytest.raises(ValueError, match="commonly contains secrets or credentials"):
+        validate_file_path(str(secret_file))
+    assert validate_file_path(str(other_config)) == other_config.resolve()

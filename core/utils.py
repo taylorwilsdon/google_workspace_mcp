@@ -363,9 +363,11 @@ def validate_file_path(file_path: str) -> Path:
         ".pypirc",
         ".netrc",
         ".git-credentials",
-        ".docker/config.json",
     }
-    if file_name in sensitive_names:
+    # Matched on the last two path parts, since file_name holds only the base
+    # name and could never equal a name that contains a slash.
+    sensitive_dir_files = {(".docker", "config.json")}
+    if file_name in sensitive_names or tuple(path_parts[-2:]) in sensitive_dir_files:
         raise ValueError(
             f"Access to '{resolved_str}' is not allowed: "
             "this file commonly contains secrets or credentials."
