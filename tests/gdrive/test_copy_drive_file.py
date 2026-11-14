@@ -1,3 +1,4 @@
+from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -13,7 +14,7 @@ def _unwrap(tool):
     return fn
 
 
-async def _copy(resolved_folder="root", **kwargs):
+async def _copy(**kwargs: Any) -> dict[str, Any]:
     service = Mock()
     service.files().copy().execute = Mock(
         return_value={
@@ -30,7 +31,7 @@ async def _copy(resolved_folder="root", **kwargs):
         ),
         patch(
             "gdrive.drive_tools.resolve_folder_id",
-            new=AsyncMock(return_value=resolved_folder),
+            new=AsyncMock(side_effect=lambda _service, folder_id: folder_id),
         ),
     ):
         await _unwrap(copy_drive_file)(
@@ -54,7 +55,11 @@ def test_drive_discovery_accepts_copy_comments():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("dest_folder", ["root", "folder-123"])
-async def test_copy_always_sends_resolved_parent_folder(dest_folder):
-    call_kwargs = await _copy(resolved_folder=dest_folder, parent_folder_id=dest_folder)
-    assert call_kwargs["body"]["parents"] == [dest_folder]
+@pytest.mark.parametrize(
+    "kwargs, expected",
+    [({}, "root"), ({"parent_folder_id": "folder-123"}, "folder-123")],
+)
+async def test_copy_always_sends_resolved_parent_folder(
+    kwargs: dict[str, Any], expected: str
+) -> None:
+    assert (await _copy(**kwargs))["body"]["parents"] == [expected]
