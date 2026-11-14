@@ -73,6 +73,7 @@ from gmail.gmail_helpers import (
     _derive_reply_all_recipients,
     _derive_reply_headers,
     _derive_web_bodies,
+    _extract_headers,
     _fetch_with_retry,
     _format_id_list,
     _generate_gmail_web_url,
@@ -99,6 +100,7 @@ from gmail.gmail_helpers import (
     html_to_text_preserving_breaks,
     modify_gmail_thread_labels,
     read_gmail_message_page,
+    search_gmail_threads_impl,
     send_message_once,
     update_gmail_filter,
 )
@@ -961,34 +963,6 @@ def _find_attachment_metadata(payload: dict, attachment_id: str) -> Optional[dic
     return None
 
 
-def _extract_headers(payload: dict, header_names: List[str]) -> Dict[str, str]:
-    """
-    Extract specified headers from a Gmail message payload.
-
-    Args:
-        payload: The message payload from Gmail API
-        header_names: List of header names to extract
-
-    Returns:
-        Dict mapping header names to their values
-    """
-    headers = {}
-    target_headers = {name.lower(): name for name in header_names}
-    for header in payload.get("headers", []):
-        header_name_lower = header["name"].lower()
-        if header_name_lower in target_headers:
-            # Store using the original requested casing
-            target_name = target_headers[header_name_lower]
-            value = header["value"]
-            if header_name_lower in {"to", "cc"} and target_name in headers:
-                headers[target_name] = ", ".join(
-                    part for part in (headers[target_name], value) if part
-                )
-            else:
-                headers[target_name] = value
-    return headers
-
-
 async def _fetch_thread_reply_context(
     service,
     thread_id: str,
@@ -1823,6 +1797,43 @@ async def search_gmail_messages(
             "[search_gmail_messages] More results available (next_page_token present)"
         )
     return formatted_output
+
+
+@server.tool(
+    title="Search Gmail Threads",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("search_gmail_threads", is_read_only=True, service_type="gmail")
+@require_google_service("gmail", "gmail_read")
+async def search_gmail_threads(
+    service: Any,
+    query: str,
+    user_google_email: str,
+    page_size: int = 10,
+    page_token: Optional[str] = None,
+) -> str:
+    """Search one page of Gmail threads with snippets, counts and latest-message headers, without bodies.
+
+    Args:
+        query (str): Standard Gmail search query. A matching message selects its whole thread.
+        user_google_email (str): The user's Google email address. Required.
+        page_size (int): Maximum threads per page, 1 to 100. Defaults to 10.
+            Costs one list plus one metadata read per thread, with bounded transient retries.
+        page_token (Optional[str]): Previous next_page_token. Keep query unchanged when paging.
+
+    Returns:
+        str: Thread IDs, web links, snippets, message counts and latest Subject/From/Date.
+            Counts and latest headers cover the entire thread, including drafts, not just matches.
+            Failed metadata reads are marked unavailable without dropping the thread or next_page_token.
+    """
+    return await search_gmail_threads_impl(
+        service, query, user_google_email, page_size, page_token
+    )
 
 
 @server.tool(
