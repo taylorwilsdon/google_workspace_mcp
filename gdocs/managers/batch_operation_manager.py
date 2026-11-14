@@ -214,7 +214,6 @@ class BatchOperationManager:
                 )
                 msg += f". Created tabs: {tab_info}"
 
-            # Docs omits occurrencesChanged when nothing matched.
             for request, reply in zip(requests, result.get("replies", [])):
                 if "replaceAllText" in request:
                     count = reply.get("replaceAllText", {}).get("occurrencesChanged", 0)

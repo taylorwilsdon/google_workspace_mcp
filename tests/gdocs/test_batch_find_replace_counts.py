@@ -14,18 +14,19 @@ async def test_batch_find_replace_reports_occurrence_counts() -> None:
         "revisionId": "rev1",
         "tabs": [],
     }
-    # Docs omits occurrencesChanged when nothing matched.
     service.documents.return_value.batchUpdate.return_value.execute.return_value = {
         "replies": [
             {"replaceAllText": {"occurrencesChanged": 3}},
             {},
             {"replaceAllText": {}},
+            {},
         ]
     }
     operations = [
         {"type": "find_replace", "find_text": "{{name}}", "replace_text": "Ada"},
         {"type": "insert_text", "index": 1, "text": "Hi "},
         {"type": "find_replace", "find_text": "{{missing}}", "replace_text": "x"},
+        {"type": "find_replace", "find_text": "{{bare}}", "replace_text": "y"},
     ]
 
     success, message, _ = await BatchOperationManager(service).execute_batch_operations(
@@ -35,3 +36,4 @@ async def test_batch_find_replace_reports_occurrence_counts() -> None:
     assert success
     assert "Replaced 3 occurrence(s) of '{{name}}'" in message
     assert "Replaced 0 occurrence(s) of '{{missing}}'" in message
+    assert "Replaced 0 occurrence(s) of '{{bare}}'" in message
