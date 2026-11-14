@@ -249,6 +249,7 @@ INSERTIONS = [
     {"type": "insert_section_break"},
     {"type": "insert_image", "image_uri": "https://example.com/image.png"},
     {"type": "insert_person", "email": "dustin.smith@example.com"},
+    {"type": "insert_date", "date": "2026-11-03"},
 ]
 
 
