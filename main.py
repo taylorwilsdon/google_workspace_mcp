@@ -469,6 +469,20 @@ def describe_credential_config() -> list[tuple[str, str, str]]:
     ]
 
 
+def pin_user_email_needs_single_user() -> bool:
+    """True when WORKSPACE_MCP_PIN_USER_EMAIL applies but single-user mode is off.
+
+    Pinning replaces the user_google_email a client sends, but only single-user
+    credential lookup is limited to the requested account; elsewhere a session
+    can still act on whichever account it authorized. Uses the server's own
+    check, so OAuth 2.1 and trusted-gateway deployments (where the flag is
+    ignored) still start.
+    """
+    from core.server import _user_email_pin_requested
+
+    return _user_email_pin_requested() and os.getenv("MCP_SINGLE_USER_MODE") != "1"
+
+
 def describe_mode_config(
     disabled_tools: set[str] = frozenset(), *, single_user: bool = False
 ) -> list[tuple[str, str, str]]:
@@ -910,6 +924,14 @@ def main():
 
         os.environ["MCP_SINGLE_USER_MODE"] = "1"
         ui.step("Single-user mode enabled")
+
+    if pin_user_email_needs_single_user():
+        fatal(
+            ui,
+            "WORKSPACE_MCP_PIN_USER_EMAIL requires single-user mode",
+            "Only single-user credential lookup is limited to the pinned account",
+            "Run with --single-user or unset WORKSPACE_MCP_PIN_USER_EMAIL",
+        )
 
     # Service account mode startup validation
     if is_service_account_enabled():
