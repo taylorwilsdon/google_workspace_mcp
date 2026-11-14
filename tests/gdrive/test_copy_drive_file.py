@@ -31,7 +31,9 @@ async def _copy(**kwargs: Any) -> dict[str, Any]:
         ),
         patch(
             "gdrive.drive_tools.resolve_folder_id",
-            new=AsyncMock(side_effect=lambda _service, folder_id: folder_id),
+            new=AsyncMock(
+                side_effect=lambda _service, folder_id: f"resolved-{folder_id}"
+            ),
         ),
     ):
         await _unwrap(copy_drive_file)(
@@ -57,7 +59,10 @@ def test_drive_discovery_accepts_copy_comments():
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "kwargs, expected",
-    [({}, "root"), ({"parent_folder_id": "folder-123"}, "folder-123")],
+    [
+        ({}, "resolved-root"),
+        ({"parent_folder_id": "folder-123"}, "resolved-folder-123"),
+    ],
 )
 async def test_copy_always_sends_resolved_parent_folder(
     kwargs: dict[str, Any], expected: str
