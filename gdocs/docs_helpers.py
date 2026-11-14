@@ -6,7 +6,9 @@ to simplify the implementation of document editing tools.
 """
 
 import logging
+from datetime import datetime, timezone as dt_timezone
 from typing import Dict, Any, Optional, List
+from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 
@@ -1304,6 +1306,45 @@ def create_insert_person_request(
     }
 
 
+def create_insert_date_request(
+    index: Optional[int],
+    date: str,
+    date_format: Optional[str] = None,
+    time_format: Optional[str] = None,
+    timezone: Optional[str] = None,
+    tab_id: Optional[str] = None,
+    segment_id: Optional[str] = None,
+    end_of_segment: bool = False,
+) -> Dict[str, Any]:
+    """Create an insertDate request; a date-only value is sent as noon in ``timezone`` or UTC."""
+    moment = datetime.fromisoformat(date.replace("Z", "+00:00"))
+    if "T" not in date:
+        moment = moment.replace(
+            hour=12, tzinfo=ZoneInfo(timezone) if timezone else dt_timezone.utc
+        )
+    props: Dict[str, Any] = {
+        "timestamp": moment.astimezone(dt_timezone.utc)
+        .isoformat()
+        .replace("+00:00", "Z"),
+        "dateFormat": date_format or "DATE_FORMAT_MONTH_DAY_YEAR_ABBREVIATED",
+    }
+    if time_format:
+        props["timeFormat"] = time_format
+    if timezone:
+        props["timeZoneId"] = timezone
+    return {
+        "insertDate": {
+            "dateElementProperties": props,
+            **_build_location(
+                index=index,
+                tab_id=tab_id,
+                segment_id=segment_id,
+                end_of_segment=end_of_segment,
+            ),
+        }
+    }
+
+
 def create_bullet_list_request(
     start_index: int,
     end_index: int,
@@ -1912,6 +1953,7 @@ def validate_operation(operation: Dict[str, Any]) -> tuple[bool, str]:
         "create_header_footer": ["section_type"],
         "insert_image": ["image_uri"],
         "insert_person": ["email"],
+        "insert_date": ["date"],
         "insert_doc_tab": ["title", "index"],
         "delete_doc_tab": ["tab_id"],
         "update_doc_tab": ["tab_id", "title"],
@@ -1952,6 +1994,7 @@ def validate_operation(operation: Dict[str, Any]) -> tuple[bool, str]:
         "insert_section_break",
         "insert_image",
         "insert_person",
+        "insert_date",
     }:
         provided = sum(
             [operation.get("index") is not None, bool(operation.get("end_of_segment"))]
