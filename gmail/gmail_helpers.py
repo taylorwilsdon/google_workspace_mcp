@@ -1089,10 +1089,8 @@ def _decode_base64url(data: str) -> bytes:
 def decode_part_body(part: Mapping[str, Any]) -> str:
     """Decode a Gmail payload part's body.
 
-    Inline ``body.data`` from ``format="full"`` is UTF-8 whatever charset the
-    part declares: Gmail converts the body and keeps the original header.
-    ``attachments.get`` returns the sender's bytes, so a body fetched that way
-    is decoded with its declared charset first.
+    Gmail converts inline ``format="full"`` data to UTF-8 but serves
+    attachment-backed bodies in their declared charset.
     """
     raw = _decode_base64url(part["body"]["data"])
     headers = Message()
@@ -1106,8 +1104,7 @@ def decode_part_body(part: Mapping[str, Any]) -> str:
             # WHATWG reads these labels as windows-1252, and they often mislabel UTF-8.
             attempts = [("utf-8", "strict"), ("cp1252", "strict"), ("cp1252", "ignore")]
         elif not part["body"].get("attachmentId") and not name.startswith("iso2022"):
-            # ISO-2022 keeps its order: UTF-8 text either fails that 7-bit codec
-            # or decodes the same, while raw ISO-2022 bytes pass as UTF-8 too.
+            # Raw ISO-2022 bytes are also valid UTF-8, so that codec stays first.
             attempts = [("utf-8", "strict"), (charset, "strict"), (charset, "ignore")]
     for codec, errors in attempts:
         try:

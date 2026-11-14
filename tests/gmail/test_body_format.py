@@ -582,7 +582,6 @@ class TestExtractMessageBodies:
             ("text/plain; charset=us-ascii", "“Café”".encode("cp1252"), "“Café”"),
             ("text/plain; charset=x-unknown", "Café".encode(), "Café"),
             ("text/plain; charset=x-unknown", b"caf\xe9", "caf"),
-            # Inline format="full" data is UTF-8 whatever the label says.
             ("text/plain; charset=gbk", "一".encode(), "一"),
             ("text/plain; charset=ISO-2022-JP", "日本語".encode(), "日本語"),
             ("text/plain; charset=utf-7", "Re: +review".encode(), "Re: +review"),
@@ -592,7 +591,6 @@ class TestExtractMessageBodies:
             ("text/plain; charset=koi8-r", "Спасибо".encode(), "Спасибо"),
             ("text/plain; charset=iso-8859-7", "Ευχαριστώ".encode(), "Ευχαριστώ"),
             ("text/plain; charset=utf-16", "Szia ő!".encode(), "Szia ő!"),
-            # Bytes that are not UTF-8 still decode with the declared charset.
             ("text/plain; charset=gbk", "中文".encode("gbk"), "中文"),
             (
                 "text/plain; charset=iso-8859-2",
@@ -1644,7 +1642,6 @@ async def test_attachment_backed_html_only_body_is_converted_to_text():
 @pytest.mark.parametrize(
     ("charset", "raw", "expected"),
     [
-        # attachments.get returns the sender's bytes, not UTF-8.
         ("gbk", "一".encode("gbk"), "一"),
         ("iso-8859-2", "árvíztűrő".encode("iso-8859-2"), "árvíztűrő"),
         ("utf-16-le", "Szia ő".encode("utf-16-le"), "Szia ő"),
