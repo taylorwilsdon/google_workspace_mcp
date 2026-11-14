@@ -123,6 +123,30 @@ def get_google_api_timeout() -> int:
     return value
 
 
+_PSE_BASE_URL_ENV = "GOOGLE_PSE_BASE_URL"
+
+
+def get_pse_base_url() -> Optional[str]:
+    """Parse GOOGLE_PSE_BASE_URL, returning None when unset.
+
+    Unset keeps the address from the Custom Search discovery document. Invalid
+    values raise instead of falling back, like the timeout above.
+    """
+    raw = os.getenv(_PSE_BASE_URL_ENV, "").strip()
+    if not raw:
+        return None
+    parsed = urlparse(raw)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise ValueError(
+            f"{_PSE_BASE_URL_ENV} must be an http:// or https:// URL, got {raw!r}"
+        )
+    if parsed.query or parsed.fragment:
+        raise ValueError(
+            f"{_PSE_BASE_URL_ENV} must not have a query string or fragment, got {raw!r}"
+        )
+    return raw.rstrip("/") + "/"
+
+
 # httplib2 does not retry a request whose send fails on a connection the server
 # already dropped, so only reuse connections that were active recently.
 _HTTP_MAX_IDLE_SECONDS = 60
@@ -158,6 +182,19 @@ def build_google_service(
     service_name: str, version: str, credentials: google.auth.credentials.Credentials
 ) -> Resource:
     """Build a discovery client on a pooled, timeout-bounded connection."""
+    if service_name == "customsearch":
+        base_url = get_pse_base_url()
+        if base_url:
+            # Custom Search is authorized by the API key in the query, so the
+            # user's Google token is not sent to a host set in the environment.
+            return build(
+                service_name,
+                version,
+                http=_build_authorized_http(
+                    google.auth.credentials.AnonymousCredentials()
+                ),
+                client_options={"api_endpoint": base_url},
+            )
     return build(service_name, version, http=_build_authorized_http(credentials))
 
 

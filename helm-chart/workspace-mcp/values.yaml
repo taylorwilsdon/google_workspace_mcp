@@ -113,6 +113,7 @@ env:
   # Optional: Google Custom Search
   # GOOGLE_PSE_API_KEY: ""
   # GOOGLE_PSE_ENGINE_ID: ""
+  # GOOGLE_PSE_BASE_URL: ""
 
 # Secret configuration for sensitive data
 secrets:
