@@ -6,6 +6,7 @@ gmail:
     - send_gmail_message
 
   extended:
+    - search_gmail_threads
     - get_gmail_attachment_content
     - get_gmail_thread_content
     - modify_gmail_message_labels

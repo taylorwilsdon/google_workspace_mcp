@@ -2035,3 +2035,108 @@ def format_filter_apply_result(result: Mapping[str, Any], dry_run: bool) -> str:
             "Stopped at max_messages; raise it to process the remaining matches."
         )
     return "\n".join(lines)
+
+
+def _extract_headers(payload: dict, header_names: List[str]) -> Dict[str, str]:
+    """
+    Extract specified headers from a Gmail message payload.
+
+    Args:
+        payload: The message payload from Gmail API
+        header_names: List of header names to extract
+
+    Returns:
+        Dict mapping header names to their values
+    """
+    headers = {}
+    target_headers = {name.lower(): name for name in header_names}
+    for header in payload.get("headers", []):
+        header_name_lower = header["name"].lower()
+        if header_name_lower in target_headers:
+            # Store using the original requested casing
+            target_name = target_headers[header_name_lower]
+            value = header["value"]
+            if header_name_lower in {"to", "cc"} and target_name in headers:
+                headers[target_name] = ", ".join(
+                    part for part in (headers[target_name], value) if part
+                )
+            else:
+                headers[target_name] = value
+    return headers
+
+
+async def search_gmail_threads_impl(
+    service: Any,
+    query: str,
+    user_google_email: str,
+    page_size: int,
+    page_token: Optional[str],
+) -> str:
+    """Read one provider page of threads and enrich it without fetching bodies."""
+    if not 1 <= page_size <= 100:
+        raise UserInputError("page_size must be between 1 and 100 threads.")
+
+    params = {"userId": "me", "q": query, "maxResults": page_size}
+    if page_token:
+        params["pageToken"] = page_token
+    response = await asyncio.to_thread(service.users().threads().list(**params).execute)
+    threads = response.get("threads") or []
+    lines = [f"Found {len(threads)} threads matching '{query}':", ""]
+    header_names = ["Subject", "From", "Date"]
+    for index, thread in enumerate(threads, 1):
+        thread_id = thread["id"]
+        # The injected httplib2 transport is not thread-safe. Await each read
+        # before starting the next; no background fanout or extra list pages.
+        _, metadata, error = await _fetch_with_retry(
+            lambda: (
+                service.users()
+                .threads()
+                .get(
+                    userId="me",
+                    id=thread_id,
+                    format="metadata",
+                    metadataHeaders=header_names,
+                    fields="messages(internalDate,payload/headers)",
+                )
+            ),
+            item_id=thread_id,
+            item_label="thread",
+            log_prefix="search_gmail_threads",
+        )
+        lines.extend(
+            [
+                f"  {index}. Thread ID: {thread_id}",
+                f"     Thread Link: {_generate_gmail_web_url(thread_id, user_google_email=user_google_email)}",
+                f"     Snippet: {thread.get('snippet', '')}",
+            ]
+        )
+        if error is not None or metadata is None:
+            lines.append(
+                "     Message count and latest headers: unavailable (metadata fetch failed)"
+            )
+        else:
+            messages = metadata.get("messages") or []
+            lines.append(f"     Message count: {len(messages)}")
+            if messages:
+                latest = max(
+                    reversed(messages),
+                    key=lambda message: int(message.get("internalDate") or 0),
+                )
+                headers = _extract_headers(latest.get("payload") or {}, header_names)
+                lines.extend(
+                    [
+                        f"     Latest Subject: {headers.get('Subject', '(no subject)')}",
+                        f"     Latest From: {headers.get('From', '(unknown sender)')}",
+                        f"     Latest Date: {headers.get('Date', '(unknown date)')}",
+                    ]
+                )
+        lines.append("")
+
+    next_page_token = response.get("nextPageToken")
+    if next_page_token:
+        lines.append(
+            f"next_page_token: {next_page_token}\n"
+            "To get the next page, call search_gmail_threads with the same query "
+            "and this page_token."
+        )
+    return "\n".join(lines)
