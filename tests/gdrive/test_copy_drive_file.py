@@ -13,7 +13,7 @@ def _unwrap(tool):
     return fn
 
 
-async def _copy(**kwargs):
+async def _copy(resolved_folder="root", **kwargs):
     service = Mock()
     service.files().copy().execute = Mock(
         return_value={
@@ -30,7 +30,7 @@ async def _copy(**kwargs):
         ),
         patch(
             "gdrive.drive_tools.resolve_folder_id",
-            new=AsyncMock(return_value="root"),
+            new=AsyncMock(return_value=resolved_folder),
         ),
     ):
         await _unwrap(copy_drive_file)(
@@ -51,3 +51,10 @@ def test_drive_discovery_accepts_copy_comments():
     service = build("drive", "v3", developerKey="test", static_discovery=True)
     request = service.files().copy(fileId="file-1", body={}, copyComments=True)
     assert "copyComments=true" in request.uri
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("dest_folder", ["root", "folder-123"])
+async def test_copy_always_sends_resolved_parent_folder(dest_folder):
+    call_kwargs = await _copy(resolved_folder=dest_folder, parent_folder_id=dest_folder)
+    assert call_kwargs["body"]["parents"] == [dest_folder]
