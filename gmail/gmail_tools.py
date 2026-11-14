@@ -65,6 +65,7 @@ from auth.scopes import (
 from gmail.gmail_helpers import (
     FILTER_APPLY_DEFAULT_MAX_MESSAGES,
     GMAIL_METADATA_HEADERS,
+    MAX_BINARY_CHUNK_BYTES,
     RAW_BODY_TRUNCATE_LIMIT,
     THREAD_REPLY_CONTEXT_FIELDS,
     _analyze_thread_ownership_impl,
@@ -89,9 +90,11 @@ from gmail.gmail_helpers import (
     _signature_html_to_text,
     _wrap_signature_html,
     apply_gmail_filter_to_existing,
+    attachment_binary_range,
     build_label_color,
     decode_part_body,
     fetch_attachment_backed_bodies,
+    format_binary_range,
     format_filter_apply_result,
     format_html_links,
     format_thread_label_outcomes,
@@ -101,6 +104,7 @@ from gmail.gmail_helpers import (
     read_gmail_message_page,
     send_message_once,
     update_gmail_filter,
+    validate_binary_range,
 )
 from gmail.gmail_web_mime import TextDirection
 
@@ -398,6 +402,9 @@ async def _export_full_message(
     declared_size: Optional[int] = None,
     include_headers: bool = True,
     include_links: bool = False,
+    return_base64: bool = False,
+    offset: Optional[int] = None,
+    length: Optional[int] = None,
 ) -> str:
     """
     Return a message's complete, untruncated content: saved to storage and
@@ -514,6 +521,9 @@ async def _export_full_message(
         )
     except FileTooLargeError as exc:
         return str(exc)
+
+    if return_base64:
+        return json.dumps(format_binary_range(content_bytes, offset, length))
 
     # Stateless deployments have no persistent storage to hand a file reference off
     # from, but the guarantee callers actually want is "complete and untruncated".
@@ -1880,6 +1890,11 @@ async def get_gmail_message_content(
     ] = None,
     page_size: Annotated[int, Field(ge=1, le=20000)] = 20000,
     expected_sha256: Optional[str] = None,
+    return_base64: bool = False,
+    offset: Annotated[Optional[int], Field(ge=0, strict=True)] = None,
+    length: Annotated[
+        Optional[int], Field(ge=1, le=MAX_BINARY_CHUNK_BYTES, strict=True)
+    ] = None,
 ) -> str:
     """
     Retrieves the full content (subject, sender, recipients, body) of a specific Gmail message.
@@ -1896,6 +1911,9 @@ async def get_gmail_message_content(
     context. Stateless deployments without GCS staging have no storage, so there
     full=True returns the untruncated body inline; with GCS staging configured it
     returns a signed download URL like any other HTTP deployment.
+
+    For byte-exact inline .eml chunks, set full=True, body_format='raw', and
+    return_base64=True. Follow next_offset; verify sha256 after reassembly.
 
     Args:
         message_id (str): The unique ID of the Gmail message to retrieve.
@@ -1924,6 +1942,12 @@ async def get_gmail_message_content(
             format="full", full=False, and body_format="text" or "html".
         page_size (int): Maximum body characters per page, between 1 and 20,000.
         expected_sha256 (str): Optional previous body_sha256; rejects changed content.
+        return_base64 (bool): Return a bounded JSON base64 range instead of saving
+            the raw export. Requires full=True, body_format='raw', and
+            include_headers=True (the raw MIME includes its original headers).
+        offset (int): Zero-based byte offset for return_base64; defaults to 0.
+        length (int): Requested bytes, default 4 MiB, maximum 8 MiB. Gmail still
+            downloads and decodes the entire message on each call.
 
     Returns:
         str: The message details including subject, sender, date, Message-ID, recipients
@@ -1937,6 +1961,11 @@ async def get_gmail_message_content(
         f"body_format='{body_format}', full={full}"
     )
     _validate_message_format_options(format, body_format)
+    validate_binary_range(offset, length)
+    if return_base64 and (not full or body_format != "raw"):
+        raise UserInputError("return_base64 requires full=True and body_format='raw'.")
+    if not return_base64 and (offset is not None or length is not None):
+        raise UserInputError("offset and length require return_base64=True.")
     if page_offset is not None:
         if full or format != "full" or body_format == "raw":
             raise UserInputError(
@@ -1951,7 +1980,11 @@ async def get_gmail_message_content(
     if (
         not include_headers
         and body_format == "raw"
-        and (not full or (is_stateless_mode() and not gcs_files_enabled()))
+        and (
+            return_base64
+            or not full
+            or (is_stateless_mode() and not gcs_files_enabled())
+        )
     ):
         raise UserInputError(
             "include_headers=False cannot hide the headers in inline raw MIME; "
@@ -2006,6 +2039,9 @@ async def get_gmail_message_content(
             declared_size=message_metadata.get("sizeEstimate"),
             include_headers=include_headers,
             include_links=include_links,
+            return_base64=return_base64,
+            offset=offset,
+            length=length,
         )
 
     # Handle raw format separately - fetch with format="raw" and return decoded MIME
@@ -2319,6 +2355,10 @@ async def get_gmail_attachment_content(
     user_google_email: str,
     return_base64: bool = False,
     attachment_index: Optional[int] = None,
+    offset: Annotated[Optional[int], Field(ge=0, strict=True)] = None,
+    length: Annotated[
+        Optional[int], Field(ge=1, le=MAX_BINARY_CHUNK_BYTES, strict=True)
+    ] = None,
 ) -> str:
     """
     Downloads an email attachment and saves it to local disk.
@@ -2327,11 +2367,15 @@ async def get_gmail_attachment_content(
     In HTTP mode, returns a temporary download URL (valid for 1 hour).
     May re-fetch message metadata to resolve filename and MIME type.
 
+    With return_base64=True, set offset=0 (or length) for bounded JSON byte
+    ranges instead of saving a file. Follow next_offset and verify sha256 after
+    reassembly. Omitting both range controls preserves the full-base64 response.
+
     Args:
         message_id (str): The ID of the Gmail message containing the attachment.
         attachment_id (str): The ID of the attachment to download.
         user_google_email (str): The user's Google email address. Required.
-        return_base64 (bool): When True, includes the full attachment as a
+        return_base64 (bool): When True without offset or length, includes the full attachment as a
             standard base64 string in the response (in addition to any file
             path or download URL). Useful for sandboxed clients that cannot
             reach localhost download URLs or the MCP server's local file
@@ -2339,20 +2383,29 @@ async def get_gmail_attachment_content(
             returned base64 uses the standard alphabet, so it can be passed
             directly to tools like ``draft_gmail_message`` that expect
             standard (not URL-safe) base64. Default False preserves the
-            existing behavior and response size.
+            existing behavior and response size. With offset or length, returns
+            only a bounded JSON chunk instead of a file path or URL.
         attachment_index (Optional[int]): Zero-based attachment position from
             the message-content response. Lets the server resolve Gmail's
             refreshed attachment IDs against current metadata before every
             download, selecting the current attachment ID, filename and MIME type.
+        offset (int): Zero-based byte offset; requires return_base64=True.
+        length (int): Requested bytes, default 4 MiB, maximum 8 MiB; requires
+            return_base64=True. Each call still downloads the whole attachment.
 
     Returns:
         str: Attachment metadata with either a local file path or download URL,
             optionally followed by a base64 content block when
-            ``return_base64=True``.
+            ``return_base64=True``; with range controls, JSON containing the
+            base64 chunk, total_size, offset, length, sha256 and next_offset.
     """
     logger.info(
         f"[get_gmail_attachment_content] Invoked. Message ID: '{message_id}', Email: '{user_google_email}'"
     )
+    validate_binary_range(offset, length)
+    ranged = offset is not None or length is not None
+    if ranged and not return_base64:
+        raise UserInputError("offset and length require return_base64=True.")
 
     # Resolve attachment size/filename from message metadata before downloading
     # the binary payload so we can reject oversized attachments before the API
@@ -2465,6 +2518,12 @@ async def get_gmail_attachment_content(
             attachment.pop("data", None)
         base64_data = ""
         return str(e)
+
+    if ranged:
+        try:
+            return json.dumps(attachment_binary_range(base64_data, offset, length))
+        except FileTooLargeError as exc:
+            return str(exc)
 
     # Stateless mode has no file storage unless GCS staging is configured.
     from auth.oauth_config import is_stateless_mode
