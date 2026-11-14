@@ -1381,11 +1381,15 @@ async def manage_contacts_batch(
         )
 
         current_people = {}
+        lookup_misses: Dict[str, str] = {}
         for resp in batch_get_result.get("responses", []):
             person = resp.get("person", {})
             rname = person.get("resourceName")
+            requested = resp.get("requestedResourceName", rname)
             if rname and person.get("etag"):
                 current_people[rname] = person
+                if requested != rname:
+                    lookup_misses[requested] = f"resolves to {rname}"
 
         # Map field name to body key produced by _build_person_body
         field_to_body_key = {
@@ -1405,7 +1409,7 @@ async def manage_contacts_batch(
 
         # Build contacts map (Dict[resourceName, Person]) — required by batchUpdateContacts API
         contacts_map: Dict[str, Any] = {}
-        skipped = []
+        skipped: List[str] = []
 
         for update in updates:
             cid = update.contact_id
@@ -1415,7 +1419,7 @@ async def manage_contacts_batch(
             current = current_people.get(cid)
             if not current:
                 logger.warning(f"No etag found for {cid}, skipping")
-                skipped.append(f"{cid}: not found")
+                skipped.append(f"{cid}: {lookup_misses.get(cid, 'not found')}")
                 continue
 
             body = _build_person_body(
@@ -1454,12 +1458,11 @@ async def manage_contacts_batch(
             }
             contacts_map[cid] = person_body
 
+        skipped_report = f"Skipped {len(skipped)} contacts:\n" + "".join(
+            f"  {line}\n" for line in skipped
+        )
         if not contacts_map:
-            raise UserInputError(
-                "No valid update data provided.\n"
-                f"Skipped {len(skipped)} contacts:\n"
-                + "".join(f"  {line}\n" for line in skipped)
-            )
+            raise UserInputError(f"No valid update data provided.\n{skipped_report}")
 
         batch_body = {
             "contacts": contacts_map,
@@ -1481,8 +1484,7 @@ async def manage_contacts_batch(
             response += _format_contact(person) + "\n\n"
 
         if skipped:
-            response += f"Skipped {len(skipped)} contacts:\n"
-            response += "".join(f"  {line}\n" for line in skipped)
+            response += skipped_report
 
         logger.info(
             f"Batch updated {len(update_results)} contacts for {user_google_email}"
