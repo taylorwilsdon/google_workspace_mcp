@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 from contextlib import nullcontext
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -20,7 +21,7 @@ from core.utils import UserInputError
 
 
 @pytest.mark.asyncio
-async def test_directory_requests_and_pagination():
+async def test_directory_requests_and_pagination() -> None:
     users = Mock(spec=["get", "list"])
     service = Mock(spec=["users"])
     service.users.return_value = users
@@ -79,7 +80,9 @@ async def test_directory_requests_and_pagination():
         ("id", None, "my_customer", 100, "page"),
     ],
 )
-async def test_invalid_requests_do_not_call_directory(arguments):
+async def test_invalid_requests_do_not_call_directory(
+    arguments: tuple[str | None, str | None, str, int, str | None],
+) -> None:
     service = Mock()
     with pytest.raises(UserInputError):
         await get_users(service, *arguments)
@@ -87,7 +90,9 @@ async def test_invalid_requests_do_not_call_directory(arguments):
 
 
 @pytest.mark.parametrize("readonly", [False, True])
-def test_admin_scope_requires_explicit_selection(monkeypatch, readonly):
+def test_admin_scope_requires_explicit_selection(
+    monkeypatch: pytest.MonkeyPatch, readonly: bool
+) -> None:
     monkeypatch.setattr(scopes, "_READ_ONLY_MODE", readonly)
     assert not {
         scopes.ADMIN_DIRECTORY_USER_SCOPE,
@@ -112,7 +117,7 @@ def test_admin_scope_requires_explicit_selection(monkeypatch, readonly):
         (["--tools", "admin", "--tool-tier", "core", "--read-only"], True),
     ],
 )
-def test_startup_admin_exposure(args, enabled, tmp_path):
+def test_startup_admin_exposure(args: list[str], enabled: bool, tmp_path: Path) -> None:
     # Stop immediately after real tool filtering, before credentials or server I/O.
     script = """
 import asyncio, json, main
@@ -153,7 +158,9 @@ main.main()
 
 
 @pytest.mark.asyncio
-async def test_tool_uses_existing_authorization_and_readonly_scope(monkeypatch):
+async def test_tool_uses_existing_authorization_and_readonly_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     email = "admin@example.invalid"
     service = Mock()
     authenticate = AsyncMock(return_value=(service, email))
@@ -223,7 +230,9 @@ async def test_tool_uses_existing_authorization_and_readonly_scope(monkeypatch):
         ),
     ],
 )
-def test_admin_scope_compatibility_is_one_way(available, required, expected):
+def test_admin_scope_compatibility_is_one_way(
+    available: list[str], required: list[str], expected: bool
+) -> None:
     original_available, original_required = available.copy(), required.copy()
     assert scopes.has_required_scopes(available, required) is expected
     assert available == original_available
@@ -237,8 +246,8 @@ def test_admin_scope_compatibility_is_one_way(available, required, expected):
     [(scopes.ADMIN_DIRECTORY_USER_SCOPE, True), (scopes.GMAIL_READONLY_SCOPE, False)],
 )
 async def test_admin_oauth21_uses_existing_identity_grants(
-    monkeypatch, flow, granted, accepted
-):
+    monkeypatch: pytest.MonkeyPatch, flow: str, granted: str, accepted: bool
+) -> None:
     email = "admin@example.invalid"
     credentials = SimpleNamespace(scopes=[granted])
     token = SimpleNamespace(claims={"email": email}, scopes=[granted])
@@ -286,7 +295,9 @@ async def test_admin_oauth21_uses_existing_identity_grants(
 
 
 @pytest.mark.asyncio
-async def test_admin_full_grant_does_not_bypass_token_identity(monkeypatch):
+async def test_admin_full_grant_does_not_bypass_token_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     token = SimpleNamespace(
         claims={"email": "other@example.invalid"},
         scopes=[scopes.ADMIN_DIRECTORY_USER_SCOPE],
@@ -309,7 +320,9 @@ async def test_admin_full_grant_does_not_bypass_token_identity(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_admin_service_account_still_requests_only_readonly(monkeypatch):
+async def test_admin_service_account_still_requests_only_readonly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     email = "admin@example.invalid"
     get_credentials = Mock(return_value=object())
     build = Mock(return_value=object())
@@ -338,7 +351,9 @@ async def test_admin_service_account_still_requests_only_readonly(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_admin_scope_compatibility_does_not_bypass_session_denial(monkeypatch):
+async def test_admin_scope_compatibility_does_not_bypass_session_denial(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     store = Mock()
     store.get_credentials_with_validation.return_value = None
     build = Mock()

@@ -1,5 +1,6 @@
 """Opt-in read-only Google Admin SDK Directory tools."""
 
+from googleapiclient.discovery import Resource
 from mcp.types import ToolAnnotations
 
 from auth.scopes import ADMIN_DIRECTORY_USER_READONLY_SCOPE
@@ -21,7 +22,7 @@ from gadmin.admin_helpers import get_users
 @handle_http_errors("get_admin_users", is_read_only=True, service_type="admin")
 @require_google_service("admin", ADMIN_DIRECTORY_USER_READONLY_SCOPE)
 async def get_admin_users(
-    service,
+    service: Resource,
     user_google_email: str,
     user_key: str | None = None,
     query: str | None = None,

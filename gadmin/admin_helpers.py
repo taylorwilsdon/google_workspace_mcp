@@ -3,13 +3,22 @@
 import asyncio
 import json
 
+from googleapiclient.discovery import Resource
+
 from core.utils import UserInputError
 
 
 USER_FIELDS = "id,primaryEmail,name,aliases,nonEditableAliases,orgUnitPath,suspended"
 
 
-async def get_users(service, user_key, query, customer, max_results, page_token):
+async def get_users(
+    service: Resource,
+    user_key: str | None,
+    query: str | None,
+    customer: str,
+    max_results: int,
+    page_token: str | None,
+) -> str:
     """Read one user or one page without fetching sensitive extended user fields."""
     if not 1 <= max_results <= 500:
         raise UserInputError("max_results must be between 1 and 500.")

@@ -33,7 +33,11 @@ class _SessionStore:
     ],
 )
 def test_file_store_credentials_are_returned_without_a_session_write(
-    monkeypatch, caplog, available, required, accepted
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    available: list[str],
+    required: list[str],
+    accepted: bool,
 ) -> None:
     session_store = _SessionStore()
     file_credentials = SimpleNamespace(
