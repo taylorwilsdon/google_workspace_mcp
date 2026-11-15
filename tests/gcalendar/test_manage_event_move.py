@@ -2,6 +2,7 @@
 
 import json
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import Mock, call
 
 import pytest
@@ -16,11 +17,11 @@ from core.utils import UserInputError
 from gcalendar.calendar_tools import manage_event
 
 
-async def _move(service, **kwargs):
+async def _move(service: Mock, **kwargs: Any) -> str:
     tool = manage_event.fn if hasattr(manage_event, "fn") else manage_event
     while hasattr(tool, "__wrapped__"):
         tool = tool.__wrapped__
-    return await tool(service, "user@example.com", action="move", **kwargs)
+    return cast(str, await tool(service, "user@example.com", action="move", **kwargs))
 
 
 @pytest.mark.asyncio
@@ -33,8 +34,8 @@ async def _move(service, **kwargs):
     ],
 )
 async def test_move_returns_native_resource_and_preserves_notification_policy(
-    args, notification
-):
+    args: dict[str, str], notification: str
+) -> None:
     service = Mock()
     event = {
         "id": "original",
@@ -87,7 +88,9 @@ async def test_move_returns_native_resource_and_preserves_notification_policy(
         ),
     ],
 )
-async def test_invalid_move_makes_no_google_call(kwargs, message):
+async def test_invalid_move_makes_no_google_call(
+    kwargs: dict[str, Any], message: str
+) -> None:
     service = Mock()
     with pytest.raises(UserInputError, match=message):
         await _move(service, **kwargs)
@@ -95,7 +98,7 @@ async def test_invalid_move_makes_no_google_call(kwargs, message):
 
 
 @pytest.mark.asyncio
-async def test_denied_move_never_recreates_event():
+async def test_denied_move_never_recreates_event() -> None:
     service = Mock()
     error = HttpError(SimpleNamespace(status=403, reason="Move rejected"), b"{}")
     service.events.return_value.move.return_value.execute.side_effect = error
@@ -127,8 +130,11 @@ async def test_denied_move_never_recreates_event():
     ],
 )
 async def test_move_preserves_scope_and_write_policy(
-    monkeypatch, permissions, read_only, removed
-):
+    monkeypatch: pytest.MonkeyPatch,
+    permissions: dict[str, str] | None,
+    read_only: bool,
+    removed: bool,
+) -> None:
     tool = await server.get_tool("manage_event")
     assert tool.fn._required_google_scopes == [CALENDAR_EVENTS_SCOPE]
     assert tool.annotations.read_only_hint is False
