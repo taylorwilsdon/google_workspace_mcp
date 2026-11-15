@@ -4,6 +4,8 @@ import base64
 import hashlib
 import inspect
 import json
+from collections.abc import Awaitable, Callable
+from typing import Any, cast
 from unittest.mock import Mock
 
 import pytest
@@ -14,13 +16,13 @@ from core.utils import UserInputError
 from gmail.gmail_helpers import DEFAULT_BINARY_CHUNK_BYTES, MAX_BINARY_CHUNK_BYTES
 
 
-def _unwrap(tool):
+def _unwrap(tool: Any) -> Callable[..., Awaitable[str]]:
     fn = tool.fn if hasattr(tool, "fn") else tool
-    return inspect.unwrap(fn)
+    return cast(Callable[..., Awaitable[str]], inspect.unwrap(fn))
 
 
 @pytest.fixture(autouse=True)
-def _no_storage(monkeypatch):
+def _no_storage(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("WORKSPACE_MCP_MAX_FILE_BYTES", raising=False)
     monkeypatch.delenv("WORKSPACE_MCP_FILES_GCS_BUCKET", raising=False)
     monkeypatch.setattr(tools, "is_stateless_mode", lambda: False)
@@ -28,7 +30,7 @@ def _no_storage(monkeypatch):
     monkeypatch.setattr("core.attachment_storage.get_attachment_storage", storage)
 
 
-def _service(content):
+def _service(content: bytes) -> Mock:
     service = Mock()
     encoded = base64.urlsafe_b64encode(content).decode().rstrip("=")
     service.users().messages().attachments().get().execute.return_value = {
@@ -50,8 +52,8 @@ def _service(content):
     return service
 
 
-async def _read(kind, service, **kwargs):
-    options = dict(
+async def _read(kind: str, service: Mock, **kwargs: Any) -> str:
+    options: dict[str, Any] = dict(
         service=service, message_id="msg-1", user_google_email="user@example.com"
     )
     options.update(kwargs)
@@ -66,7 +68,7 @@ async def _read(kind, service, **kwargs):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["attachment", "raw"])
-async def test_binary_range_reassembly_and_boundaries(kind):
+async def test_binary_range_reassembly_and_boundaries(kind: str) -> None:
     payload = b"From: synthetic@example.com\r\n\r\n" + bytes(range(256)) * 3
     service = _service(payload)
     pieces = []
@@ -113,7 +115,7 @@ async def test_binary_range_reassembly_and_boundaries(kind):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["attachment", "raw"])
-async def test_default_and_maximum_chunk_sizes(kind):
+async def test_default_and_maximum_chunk_sizes(kind: str) -> None:
     payload = b"x" * (MAX_BINARY_CHUNK_BYTES + 1)
     service = _service(payload)
     for options, expected in [
@@ -148,7 +150,9 @@ async def test_default_and_maximum_chunk_sizes(kind):
         {"length": MAX_BINARY_CHUNK_BYTES + 1},
     ],
 )
-async def test_invalid_ranges_rejected_before_fetch(kind, options):
+async def test_invalid_ranges_rejected_before_fetch(
+    kind: str, options: dict[str, Any]
+) -> None:
     service = Mock()
     with pytest.raises(UserInputError):
         await _read(kind, service, return_base64=True, **options)
@@ -157,7 +161,7 @@ async def test_invalid_ranges_rejected_before_fetch(kind, options):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["attachment", "raw"])
-async def test_range_requires_base64(kind):
+async def test_range_requires_base64(kind: str) -> None:
     service = Mock()
     for options in ({"offset": 0}, {"length": 10}):
         with pytest.raises(UserInputError, match="require return_base64"):
@@ -166,7 +170,7 @@ async def test_range_requires_base64(kind):
 
 
 @pytest.mark.asyncio
-async def test_raw_inline_combinations_rejected_before_fetch():
+async def test_raw_inline_combinations_rejected_before_fetch() -> None:
     service = Mock()
     base = dict(
         service=service,
@@ -191,7 +195,9 @@ async def test_raw_inline_combinations_rejected_before_fetch():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["attachment", "raw"])
-async def test_request_uses_current_service_without_cross_account_cache(kind):
+async def test_request_uses_current_service_without_cross_account_cache(
+    kind: str,
+) -> None:
     for email, payload in [
         ("a@example.com", b"account-a"),
         ("b@example.com", b"account-b"),
@@ -208,7 +214,9 @@ async def test_request_uses_current_service_without_cross_account_cache(kind):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["attachment", "raw"])
-async def test_whole_file_limit_still_applies(kind, monkeypatch):
+async def test_whole_file_limit_still_applies(
+    kind: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("WORKSPACE_MCP_MAX_FILE_BYTES", "8")
     service = _service(b"x" * 9)
     result = await _read(kind, service, return_base64=True, offset=0, length=1)
@@ -223,7 +231,9 @@ async def test_whole_file_limit_still_applies(kind, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_attachment_empty_invalid_and_inaccurate_size(monkeypatch):
+async def test_attachment_empty_invalid_and_inaccurate_size(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     page = json.loads(
         await _read("attachment", _service(b""), return_base64=True, offset=0)
     )
@@ -246,7 +256,7 @@ async def test_attachment_empty_invalid_and_inaccurate_size(monkeypatch):
 @pytest.mark.parametrize(
     "tool", [tools.get_gmail_attachment_content, tools.get_gmail_message_content]
 )
-def test_binary_range_schema_rejects_coerced_values(tool):
+def test_binary_range_schema_rejects_coerced_values(tool: Any) -> None:
     annotations = inspect.get_annotations(_unwrap(tool))
     for name, invalids in [
         ("offset", [-1, True, 1.5, "1"]),
