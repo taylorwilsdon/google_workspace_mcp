@@ -2037,7 +2037,9 @@ def format_filter_apply_result(result: Mapping[str, Any], dry_run: bool) -> str:
     return "\n".join(lines)
 
 
-def _extract_headers(payload: dict, header_names: List[str]) -> Dict[str, str]:
+def _extract_headers(
+    payload: dict[str, Any], header_names: List[str]
+) -> Dict[str, str]:
     """
     Extract specified headers from a Gmail message payload.
 
