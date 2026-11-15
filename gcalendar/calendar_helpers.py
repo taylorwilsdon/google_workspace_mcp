@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional, Union
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import pytz
-from googleapiclient.discovery import build
+from googleapiclient.discovery import Resource, build
 from googleapiclient.errors import HttpError
 
 from core.utils import UserInputError
@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 async def _move_event(
-    service,
+    service: Resource,
     calendar_id: str,
     event_id: str,
     destination_calendar_id: str,
