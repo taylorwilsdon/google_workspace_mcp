@@ -1,5 +1,7 @@
 """Standalone paragraph formatting reports bounded, best-effort write readbacks."""
 
+from collections.abc import Awaitable, Callable
+from typing import Any, cast
 from unittest.mock import Mock
 
 import pytest
@@ -7,15 +9,17 @@ import pytest
 from gdocs import docs_tools
 
 
-def _unwrap(tool):
+def _unwrap(tool: Any) -> Callable[..., Awaitable[str]]:
     fn = tool.fn if hasattr(tool, "fn") else tool
     while hasattr(fn, "__wrapped__"):
         fn = fn.__wrapped__
-    return fn
+    return cast(Callable[..., Awaitable[str]], fn)
 
 
-def _paragraph(index, text, style="HEADING_1", bullet=False):
-    paragraph = {
+def _paragraph(
+    index: int, text: str, style: str = "HEADING_1", bullet: bool = False
+) -> dict[str, Any]:
+    paragraph: dict[str, Any] = {
         "paragraphStyle": {"namedStyleType": style},
         "elements": [{"textRun": {"content": text}}],
     }
@@ -24,18 +28,22 @@ def _paragraph(index, text, style="HEADING_1", bullet=False):
     return {"startIndex": index, "endIndex": index + len(text), "paragraph": paragraph}
 
 
-def _service(after, before=None, write_error=None):
+def _service(
+    after: dict[str, Any] | Exception,
+    before: dict[str, Any] | Exception | None = None,
+    write_error: Exception | None = None,
+) -> tuple[Mock, list[tuple[str, dict[str, Any]]]]:
     service = Mock()
-    events = []
+    events: list[tuple[str, dict[str, Any]]] = []
 
-    def get(**kwargs):
+    def get(**kwargs: Any) -> Mock:
         events.append(("get", kwargs))
         value = after if kwargs.get("includeTabsContent") else before
         if isinstance(value, Exception):
             return Mock(execute=Mock(side_effect=value))
         return Mock(execute=Mock(return_value=value or {"revisionId": "before"}))
 
-    def write(**kwargs):
+    def write(**kwargs: Any) -> Mock:
         events.append(("write", kwargs))
         return Mock(
             execute=Mock(side_effect=write_error, return_value={"replies": [{}]})
@@ -46,7 +54,7 @@ def _service(after, before=None, write_error=None):
     return service, events
 
 
-async def _update(service, **kwargs):
+async def _update(service: Mock, **kwargs: Any) -> str:
     return await _unwrap(docs_tools.update_paragraph_style)(
         service=service,
         user_google_email="test@example.test",
@@ -68,7 +76,9 @@ async def _update(service, **kwargs):
         ("child", "note"),
     ],
 )
-async def test_receipt_reads_only_selected_coordinate_space(tab_id, segment_id):
+async def test_receipt_reads_only_selected_coordinate_space(
+    tab_id: str | None, segment_id: str | None
+) -> None:
     selected = {"content": [_paragraph(1, "Stored heading\n", bullet=True)]}
     other = {"content": [_paragraph(1, "Wrong target\n")]}
     child = {
@@ -107,7 +117,7 @@ async def test_receipt_reads_only_selected_coordinate_space(tab_id, segment_id):
         "includeTabsContent": True,
         "fields": "revisionId,tabs",
     }
-    expected_range = {"startIndex": 1, "endIndex": 10}
+    expected_range: dict[str, int | str] = {"startIndex": 1, "endIndex": 10}
     if tab_id:
         expected_range["tabId"] = tab_id
     if segment_id:
@@ -126,7 +136,7 @@ async def test_receipt_reads_only_selected_coordinate_space(tab_id, segment_id):
 
 
 @pytest.mark.asyncio
-async def test_receipt_is_bounded_and_nested_list_reuses_pre_read():
+async def test_receipt_is_bounded_and_nested_list_reuses_pre_read() -> None:
     paragraphs = [_paragraph(1 + i * 101, "x" * 100 + "\n") for i in range(21)]
     before = {"revisionId": "before", "body": {"content": paragraphs}}
     after = {
@@ -154,8 +164,8 @@ async def test_receipt_is_bounded_and_nested_list_reuses_pre_read():
 @pytest.mark.parametrize(
     "failed_read", ["before", "after", "both", "missing_target", "no_paragraphs"]
 )
-async def test_receipt_failure_never_hides_successful_write(failed_read):
-    after = {
+async def test_receipt_failure_never_hides_successful_write(failed_read: str) -> None:
+    after: dict[str, Any] | Exception = {
         "revisionId": "after",
         "tabs": [{"documentTab": {"body": {"content": [_paragraph(1, "Stored\n")]}}}],
     }
@@ -188,7 +198,7 @@ async def test_receipt_failure_never_hides_successful_write(failed_read):
 
 
 @pytest.mark.asyncio
-async def test_write_failure_does_not_fetch_or_report_a_receipt():
+async def test_write_failure_does_not_fetch_or_report_a_receipt() -> None:
     service, events = _service({}, write_error=RuntimeError("write failed"))
     with pytest.raises(RuntimeError, match="write failed"):
         await _update(service, heading_level=1)
@@ -197,7 +207,7 @@ async def test_write_failure_does_not_fetch_or_report_a_receipt():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kwargs", [{}, {"heading_level": 8}])
-async def test_invalid_or_noop_does_not_fetch_receipts(kwargs):
+async def test_invalid_or_noop_does_not_fetch_receipts(kwargs: dict[str, int]) -> None:
     service, events = _service({})
     result = await _update(service, **kwargs)
     assert result.startswith(("Error:", "No paragraph style"))
