@@ -36,6 +36,7 @@ from gsheets.sheets_helpers import (
     _fetch_cell_formulas,
     _fetch_detailed_sheet_errors,
     _fetch_grid_metadata,
+    _fetch_validation_section,
     _fetch_sheets_with_rules,
     _find_named_range,
     _format_conditional_rules_section,
@@ -291,12 +292,7 @@ async def read_sheet_values(
     values = result.get("values", [])
     resolved_range = result.get("range", range_name)
 
-    (
-        hyperlink_section,
-        notes_section,
-        smart_chips_section,
-        validation_section,
-    ) = await _fetch_grid_metadata(
+    hyperlink_section, notes_section, smart_chips_section = await _fetch_grid_metadata(
         service,
         spreadsheet_id,
         resolved_range,
@@ -304,8 +300,13 @@ async def read_sheet_values(
         include_hyperlinks=include_hyperlinks,
         include_notes=include_notes,
         include_smart_chips=include_smart_chips,
-        include_validation=include_validation,
     )
+
+    validation_section = ""
+    if include_validation:
+        validation_section = await _fetch_validation_section(
+            service, spreadsheet_id, resolved_range, values
+        )
 
     formula_section = ""
     formula_values = []
@@ -315,8 +316,10 @@ async def read_sheet_values(
         )
 
     if not values and not formula_values:
-        return f"No data found in range '{range_name}' for {user_google_email}." + (
-            clamp_note or ""
+        return (
+            f"No data found in range '{range_name}' for {user_google_email}."
+            + (clamp_note or "")
+            + validation_section
         )
 
     if not values:
@@ -329,6 +332,7 @@ async def read_sheet_values(
             f"for {user_google_email}. The range contains formula cells."
             + formula_section
             + (clamp_note or "")
+            + validation_section
         )
 
     detailed_range = _a1_range_for_values(resolved_range, values) or resolved_range
