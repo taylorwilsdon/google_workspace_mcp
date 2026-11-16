@@ -68,6 +68,7 @@ Google Sheets can resolve them as named ranges.
 | include_notes | boolean | no | false | Fetch cell notes (slower) |
 | include_formulas | boolean | no | false | Fetch raw formula strings |
 | include_smart_chips | boolean | no | false | Fetch smart chips metadata (Drive files/folders & People) |
+| include_validation | boolean | no | false | Fetch data validation rules (dropdowns, checkboxes, ranges, formulas) |
 
 ### modify_sheet_values
 Write, update, or clear values in a range, insert Smart Chips (Drive files/folders or People), or copy another range into it. Chip writes are chunked into batches of <=8 chips to respect Google Sheets API limits.

@@ -1456,6 +1456,95 @@ def _format_sheet_notes_section(
     return f"\n\nCell notes in range '{range_label}':\n" + "\n".join(lines) + suffix
 
 
+def _describe_data_validation(rule: dict) -> str:
+    """Describe a DataValidationRule as e.g. 'ONE_OF_LIST: Yes, No (strict)'."""
+    condition = rule.get("condition") or {}
+    text = condition.get("type") or "UNKNOWN"
+    values = [
+        value.get("userEnteredValue") or value.get("relativeDate") or ""
+        for value in condition.get("values") or []
+    ]
+    values = [str(value) for value in values if value]
+    if values:
+        text += ": " + ", ".join(values)
+    if rule.get("strict"):
+        text += " (strict)"
+    if rule.get("inputMessage"):
+        text += f' (help: "{rule["inputMessage"]}")'
+    return text
+
+
+def _extract_cell_validation_from_grid(spreadsheet: dict) -> list[dict[str, str]]:
+    """
+    Extract data validation rules from spreadsheet grid data.
+
+    Cells in the same column with the same rule in consecutive rows are merged
+    into one range, since a rule usually covers a whole column.
+
+    Returns a list of dictionaries with:
+        - "range": A1 cell or range reference
+        - "rule": the rule description
+    """
+    runs: list[dict] = []
+    open_runs: dict[tuple, dict] = {}
+    for sheet in spreadsheet.get("sheets", []) or []:
+        sheet_title = sheet.get("properties", {}).get("title") or "Unknown"
+        for grid in sheet.get("data", []) or []:
+            start_row = _coerce_int(grid.get("startRow"), default=0)
+            start_col = _coerce_int(grid.get("startColumn"), default=0)
+            for row_offset, row_data in enumerate(grid.get("rowData", []) or []):
+                for col_offset, cell_data in enumerate(
+                    (row_data or {}).get("values", []) or []
+                ):
+                    rule = (cell_data or {}).get("dataValidation")
+                    if not rule:
+                        continue
+                    row = start_row + row_offset
+                    col = start_col + col_offset
+                    key = (sheet_title, col, _describe_data_validation(rule))
+                    run = open_runs.get(key)
+                    if run and run["end_row"] == row - 1:
+                        run["end_row"] = row
+                        continue
+                    run = {
+                        "sheet": sheet_title,
+                        "col": col,
+                        "rule": key[2],
+                        "start_row": row,
+                        "end_row": row,
+                    }
+                    open_runs[key] = run
+                    runs.append(run)
+
+    rules: list[dict[str, str]] = []
+    for run in runs:
+        cell_range = _format_a1_cell(run["sheet"], run["start_row"], run["col"])
+        if run["end_row"] != run["start_row"]:
+            cell_range += f":{_index_to_column(run['col'])}{run['end_row'] + 1}"
+        rules.append({"range": cell_range, "rule": run["rule"]})
+    return rules
+
+
+def _format_sheet_validation_section(
+    *, rules: list[dict[str, str]], range_label: str, max_details: int = 25
+) -> str:
+    """
+    Format data validation rules into a human-readable section.
+    """
+    if not rules:
+        return ""
+
+    lines = [f"- {item['range']}: {item['rule']}" for item in rules[:max_details]]
+    suffix = (
+        f"\n... and {len(rules) - max_details} more validation ranges"
+        if len(rules) > max_details
+        else ""
+    )
+    return (
+        f"\n\nData validation in range '{range_label}':\n" + "\n".join(lines) + suffix
+    )
+
+
 async def _fetch_cell_formulas(
     service,
     spreadsheet_id: str,
@@ -1542,19 +1631,22 @@ async def _fetch_grid_metadata(
     include_hyperlinks: bool = False,
     include_notes: bool = False,
     include_smart_chips: bool = False,
-) -> tuple[str, str, str]:
-    """Fetch hyperlinks, notes, and/or smart chips for a range via a single spreadsheets.get call.
+    include_validation: bool = False,
+) -> tuple[str, str, str, str]:
+    """Fetch hyperlinks, notes, smart chips and/or data validation for a range via a single spreadsheets.get call.
 
     Computes tight range bounds, enforces the cell-count cap, builds a combined
     ``fields`` selector so only one API round-trip is needed when multiple flags are
     ``True``, then parses the response into formatted output sections.
 
     Returns:
-        (hyperlink_section, notes_section, smart_chips_section) — each is an empty string when the
-        corresponding flag is ``False`` or no data was found.
+        (hyperlink_section, notes_section, smart_chips_section, validation_section) — each is
+        an empty string when the corresponding flag is ``False`` or no data was found.
     """
-    if not include_hyperlinks and not include_notes and not include_smart_chips:
-        return "", "", ""
+    if not (
+        include_hyperlinks or include_notes or include_smart_chips or include_validation
+    ):
+        return "", "", "", ""
 
     tight_range = _a1_range_for_values(resolved_range, values)
     if not tight_range:
@@ -1563,7 +1655,7 @@ async def _fetch_grid_metadata(
             "unable to determine tight bounds",
             resolved_range,
         )
-        return "", "", ""
+        return "", "", "", ""
 
     cell_count = _a1_range_cell_count(tight_range) or sum(len(row) for row in values)
     if cell_count > MAX_GRID_METADATA_CELLS:
@@ -1574,7 +1666,7 @@ async def _fetch_grid_metadata(
             cell_count,
             MAX_GRID_METADATA_CELLS,
         )
-        return "", "", ""
+        return "", "", "", ""
 
     # Build a combined fields selector so we hit the API at most once.
     value_fields: list[str] = []
@@ -1584,6 +1676,8 @@ async def _fetch_grid_metadata(
         value_fields.append("note")
     if include_smart_chips:
         value_fields.append("chipRuns")
+    if include_validation:
+        value_fields.append("dataValidation")
 
     fields = (
         "sheets(properties(title),data(startRow,startColumn,"
@@ -1607,7 +1701,7 @@ async def _fetch_grid_metadata(
             tight_range,
             exc,
         )
-        return "", "", ""
+        return "", "", "", ""
 
     hyperlink_section = ""
     if include_hyperlinks:
@@ -1630,7 +1724,13 @@ async def _fetch_grid_metadata(
             smart_chips=smart_chips, range_label=tight_range
         )
 
-    return hyperlink_section, notes_section, smart_chips_section
+    validation_section = ""
+    if include_validation:
+        validation_section = _format_sheet_validation_section(
+            rules=_extract_cell_validation_from_grid(response), range_label=tight_range
+        )
+
+    return hyperlink_section, notes_section, smart_chips_section, validation_section
 
 
 def _extract_cell_smart_chips_from_grid(spreadsheet: dict) -> list[dict[str, str]]:

@@ -240,6 +240,7 @@ async def read_sheet_values(
     include_notes: bool = False,
     include_formulas: bool = False,
     include_smart_chips: bool = False,
+    include_validation: bool = False,
 ) -> str:
     """
     Reads values from a specific range in a Google Sheet, one line per row:
@@ -260,6 +261,9 @@ async def read_sheet_values(
             back to a range. Defaults to False to avoid an extra API request.
         include_smart_chips (bool): If True, also fetch smart chips metadata (Drive files/folders
             and People chips) for the range. Defaults to False to avoid expensive includeGridData requests.
+        include_validation (bool): If True, also fetch data validation rules (dropdowns,
+            checkboxes, ranges, custom formulas) for the range. Defaults to False to avoid
+            expensive includeGridData requests.
 
     Returns:
         str: The formatted values, with trailing empty cells dropped.
@@ -287,7 +291,12 @@ async def read_sheet_values(
     values = result.get("values", [])
     resolved_range = result.get("range", range_name)
 
-    hyperlink_section, notes_section, smart_chips_section = await _fetch_grid_metadata(
+    (
+        hyperlink_section,
+        notes_section,
+        smart_chips_section,
+        validation_section,
+    ) = await _fetch_grid_metadata(
         service,
         spreadsheet_id,
         resolved_range,
@@ -295,6 +304,7 @@ async def read_sheet_values(
         include_hyperlinks=include_hyperlinks,
         include_notes=include_notes,
         include_smart_chips=include_smart_chips,
+        include_validation=include_validation,
     )
 
     formula_section = ""
@@ -354,6 +364,7 @@ async def read_sheet_values(
         + formula_section
         + detailed_errors_section
         + smart_chips_section
+        + validation_section
     )
 
 
