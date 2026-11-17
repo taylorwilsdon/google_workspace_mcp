@@ -222,3 +222,17 @@ async def test_validation_is_kept_when_only_formulas_are_found():
 
     assert "The range contains formula cells." in result
     assert '- Sheet1!A1: ONE_OF_LIST: "Yes", "No" (strict)' in result
+
+
+@pytest.mark.asyncio
+async def test_a_failed_validation_read_is_reported_with_the_values():
+    service = Mock()
+    service.spreadsheets().values().get().execute = Mock(
+        return_value={"range": "Sheet1!A1:B2", "values": [["Task", "Done"]]}
+    )
+    service.spreadsheets().get().execute = Mock(side_effect=OSError("ssl reset"))
+
+    result = await _read(service, range_name="Sheet1!A1:B2", include_validation=True)
+
+    assert "Task" in result
+    assert "Data validation could not be read for range 'Sheet1!A1:B2'" in result
