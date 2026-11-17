@@ -427,7 +427,7 @@ class DropdownOption(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    display_value: str = Field(min_length=1)
+    display_value: str = Field(min_length=1, max_length=200)
     option_id: Optional[DropdownOptionId] = None
     text_color: Optional[DropdownColor] = None
     background_color: Optional[DropdownColor] = None
@@ -435,7 +435,7 @@ class DropdownOption(BaseModel):
 
 class CreateDropdownDefinitionOperation(StrictDocOperation):
     type: Literal["create_dropdown_definition"]
-    title: str = Field(min_length=1)
+    title: str = Field(min_length=1, max_length=200)
     options: list[DropdownOption] = Field(min_length=2, max_length=50)
     dropdown_definition_id: Optional[DropdownDefinitionId] = Field(
         default=None,

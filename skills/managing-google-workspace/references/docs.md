@@ -383,6 +383,9 @@ Execute multiple operations atomically in a single API call. Each operation is a
 
 ### Native status dropdowns
 
+Definition titles and each option's `display_value` must contain 1–200 characters.
+Values exceeding 200 characters are rejected before any batch write.
+
 Create a definition once per document tab, then reuse it for every status chip in
 that tab. Omitted `tab_id` targets the first tab. Definitions are not shared across
 documents or tabs: repeat the same title, labels and colours in each target tab.

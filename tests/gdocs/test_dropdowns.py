@@ -489,3 +489,48 @@ def test_pinned_client_serializes_new_requests_even_with_older_bundled_discovery
     )
     assert json.loads(request.body) == {"requests": requests}
     assert request.execute() == {"replies": [{}, {}]}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["title", "display_value"])
+@pytest.mark.parametrize("length", [200, 201])
+async def test_dropdown_text_length_boundaries_before_writes(field, length):
+    operation = deepcopy(CREATE)
+    value = "x" * length
+    if field == "title":
+        operation["title"] = value
+    else:
+        operation["options"][1]["display_value"] = value
+
+    adapter = TypeAdapter(BatchDocOperation)
+    if length == 200:
+        adapter.validate_python(operation)
+        assert validate_operation(operation) == (True, "")
+    else:
+        with pytest.raises(ValidationError, match="at most 200 characters"):
+            adapter.validate_python(operation)
+        assert validate_operation(operation)[0] is False
+
+    service = service_with_replies()
+    # Direct manager callers must also reject an invalid later operation without
+    # sending any earlier writes from the same batch.
+    success, message, _ = await BatchOperationManager(service).execute_batch_operations(
+        "doc", [{"type": "insert_text", "text": "Status: ", "index": 1}, operation]
+    )
+    if length == 200:
+        assert success, message
+        definition = requests_from(service)[1]["createDropdownDefinition"][
+            "dropdownDefinition"
+        ]["dropdownDefinitionProperties"]
+        actual = (
+            definition["title"]
+            if field == "title"
+            else definition["options"][1]["displayValue"]
+        )
+        assert actual == value
+        service.documents.return_value.batchUpdate.assert_called_once()
+    else:
+        assert not success
+        assert "Operation 2" in message
+        assert "at most 200 characters" in message
+        service.documents.return_value.batchUpdate.assert_not_called()

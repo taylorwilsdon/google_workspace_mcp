@@ -375,6 +375,7 @@
             "type": "string"
           },
           "title": {
+            "maxLength": 200,
             "minLength": 1,
             "type": "string"
           },
@@ -692,6 +693,7 @@
         "description": "A native dropdown choice; only foreground/background colours are supported.",
         "properties": {
           "display_value": {
+            "maxLength": 200,
             "minLength": 1,
             "type": "string"
           },
