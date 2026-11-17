@@ -1596,7 +1596,7 @@ async def _fetch_validation_section(
             target,
             exc,
         )
-        return ""
+        return f"\n\nData validation could not be read for range '{target}'."
 
     return _format_sheet_validation_section(
         rules=_extract_cell_validation_from_grid(response), range_label=target
