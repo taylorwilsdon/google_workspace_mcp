@@ -1532,6 +1532,14 @@ async def batch_update_doc(
       insert_person    - required: email (str)
                          optional: index (int), end_of_segment, tab_id, segment_id
                          Inserts an @mention person smart chip.
+      create_dropdown_definition - required: title, options (2-50 choices)
+                        optional: dropdown_definition_id, tab_id
+                        Each choice: display_value; optional option_id, text_color,
+                        background_color (six-digit hex). IDs may be server-generated.
+      insert_dropdown  - required: dropdown_definition_id and one insertion location
+                        optional: selected_option_id (defaults to first option),
+                        tab_id, segment_id; supports semantic anchors.
+                        Definition and chip must be in the same tab.
       insert_date      - required: date (str, YYYY-MM-DD or ISO 8601 with a time zone)
                          optional: index (int), end_of_segment, tab_id, segment_id,
                          date_format, time_format, timezone
@@ -1655,6 +1663,11 @@ async def batch_update_doc(
             f"{message} on document {document_id}. ",
             f"API replies: {replies_count}.{length_info}",
         ]
+
+        if metadata.get("dropdown_results"):
+            parts.append(
+                "\nDropdown results: " + json.dumps(metadata["dropdown_results"])
+            )
 
         revision_before = metadata.get("revision_before")
         revision_after = metadata.get("revision_after")

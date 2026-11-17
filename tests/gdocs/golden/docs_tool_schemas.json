@@ -355,6 +355,58 @@
         ],
         "type": "object"
       },
+      "CreateDropdownDefinitionOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "tab_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional document tab ID to target."
+          },
+          "type": {
+            "const": "create_dropdown_definition",
+            "type": "string"
+          },
+          "title": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/$defs/DropdownOption"
+            },
+            "maxItems": 50,
+            "minItems": 2,
+            "type": "array"
+          },
+          "dropdown_definition_id": {
+            "anyOf": [
+              {
+                "pattern": "^kix\\.[a-zA-Z0-9_-]{2,14}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Unique within the tab. Omit for a server-generated ID returned in the result."
+          }
+        },
+        "required": [
+          "type",
+          "title",
+          "options"
+        ],
+        "type": "object"
+      },
       "CreateHeaderFooterOperation": {
         "additionalProperties": false,
         "properties": {
@@ -632,6 +684,56 @@
           "type",
           "start_index",
           "end_index"
+        ],
+        "type": "object"
+      },
+      "DropdownOption": {
+        "additionalProperties": false,
+        "description": "A native dropdown choice; only foreground/background colours are supported.",
+        "properties": {
+          "display_value": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "option_id": {
+            "anyOf": [
+              {
+                "pattern": "^dropdownItem\\.[a-zA-Z0-9_-]{2,14}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "text_color": {
+            "anyOf": [
+              {
+                "pattern": "^#[0-9a-fA-F]{6}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "background_color": {
+            "anyOf": [
+              {
+                "pattern": "^#[0-9a-fA-F]{6}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "display_value"
         ],
         "type": "object"
       },
@@ -1041,6 +1143,123 @@
           "type",
           "title",
           "index"
+        ],
+        "type": "object"
+      },
+      "InsertDropdownOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "tab_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional document tab ID to target."
+          },
+          "segment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional header/footer/footnote segment ID. Use a real ID returned by inspect_doc_structure; do not guess values like 'kix.header'."
+          },
+          "index": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "end_of_segment": {
+            "default": false,
+            "description": "Append to the end of the targeted body/segment instead of using index.",
+            "type": "boolean"
+          },
+          "after_heading": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Insert immediately after the heading paragraph with this exact text, resolved to an index at execution time. Errors when it matches zero or more than one heading."
+          },
+          "before_heading": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Insert immediately before the heading paragraph with this exact text. Errors when it matches zero or more than one heading."
+          },
+          "anchor_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Insert relative to this literal text, which must occur exactly once within a single paragraph. Use anchor_position to pick which side."
+          },
+          "anchor_position": {
+            "default": "after",
+            "description": "Which side of anchor_text to insert on. Defaults to 'after'.",
+            "enum": [
+              "before",
+              "after"
+            ],
+            "type": "string"
+          },
+          "type": {
+            "const": "insert_dropdown",
+            "type": "string"
+          },
+          "dropdown_definition_id": {
+            "pattern": "^kix\\.[a-zA-Z0-9_-]{2,14}$",
+            "type": "string"
+          },
+          "selected_option_id": {
+            "anyOf": [
+              {
+                "pattern": "^dropdownItem\\.[a-zA-Z0-9_-]{2,14}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Omit to select the first option in the definition."
+          }
+        },
+        "required": [
+          "type",
+          "dropdown_definition_id"
         ],
         "type": "object"
       },
@@ -2950,6 +3169,7 @@
           "discriminator": {
             "mapping": {
               "create_bullet_list": "#/$defs/CreateBulletListOperation",
+              "create_dropdown_definition": "#/$defs/CreateDropdownDefinitionOperation",
               "create_header_footer": "#/$defs/CreateHeaderFooterOperation",
               "create_named_range": "#/$defs/CreateNamedRangeOperation",
               "delete_doc_tab": "#/$defs/DeleteDocTabOperation",
@@ -2961,6 +3181,7 @@
               "format_text": "#/$defs/FormatTextOperation",
               "insert_date": "#/$defs/InsertDateOperation",
               "insert_doc_tab": "#/$defs/InsertDocTabOperation",
+              "insert_dropdown": "#/$defs/InsertDropdownOperation",
               "insert_image": "#/$defs/InsertImageOperation",
               "insert_page_break": "#/$defs/InsertPageBreakOperation",
               "insert_person": "#/$defs/InsertPersonOperation",
@@ -3071,6 +3292,12 @@
             },
             {
               "$ref": "#/$defs/InsertDateOperation"
+            },
+            {
+              "$ref": "#/$defs/CreateDropdownDefinitionOperation"
+            },
+            {
+              "$ref": "#/$defs/InsertDropdownOperation"
             },
             {
               "$ref": "#/$defs/InsertDocTabOperation"
