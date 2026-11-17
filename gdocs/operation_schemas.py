@@ -454,6 +454,11 @@ class CreateDropdownDefinitionOperation(StrictDocOperation):
 
 class InsertDropdownOperation(InsertionLocationOperation, SegmentTargetDocOperation):
     type: Literal["insert_dropdown"]
+    end_of_segment: bool = Field(
+        default=False,
+        strict=True,
+        description="Append to the end of the targeted body/segment instead of using index.",
+    )
     dropdown_definition_id: DropdownDefinitionId
     selected_option_id: Optional[DropdownOptionId] = Field(
         default=None, description="Omit to select the first option in the definition."

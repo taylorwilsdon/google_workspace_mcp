@@ -385,6 +385,8 @@ Execute multiple operations atomically in a single API call. Each operation is a
 
 Definition titles and each option's `display_value` must contain 1–200 characters.
 Values exceeding 200 characters are rejected before any batch write.
+For `insert_dropdown`, `end_of_segment` must be a JSON boolean (`true`/`false`),
+not a string or number; invalid types are rejected before any batch write.
 
 Create a definition once per document tab, then reuse it for every status chip in
 that tab. Omitted `tab_id` targets the first tab. Definitions are not shared across

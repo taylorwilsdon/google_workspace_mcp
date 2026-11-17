@@ -534,3 +534,41 @@ async def test_dropdown_text_length_boundaries_before_writes(field, length):
         assert "Operation 2" in message
         assert "at most 200 characters" in message
         service.documents.return_value.batchUpdate.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", ["false", "true", "0", "1", 0, 1])
+async def test_dropdown_rejects_non_boolean_append_flags_before_writes(value):
+    operation = {**INSERT, "end_of_segment": value}
+    with pytest.raises(ValidationError, match="valid boolean"):
+        TypeAdapter(BatchDocOperation).validate_python(operation)
+    assert validate_operation(operation)[0] is False
+    service = service_with_replies()
+    success, message, _ = await BatchOperationManager(service).execute_batch_operations(
+        "doc", [CREATE, operation]
+    )
+    assert not success
+    assert "valid boolean" in message
+    service.documents.return_value.batchUpdate.assert_not_called()
+    assert operation["end_of_segment"] == value
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("append", [False, True])
+async def test_direct_manager_dropdown_preserves_boolean_location_choice(append):
+    operation = {
+        "type": "insert_dropdown",
+        "dropdown_definition_id": "kix.status",
+        "end_of_segment": append,
+    }
+    if not append:
+        operation["index"] = 5
+    service = service_with_replies()
+    success, message, _ = await BatchOperationManager(service).execute_batch_operations(
+        "doc", [operation]
+    )
+    assert success, message
+    location = {"endOfSegmentLocation": {}} if append else {"location": {"index": 5}}
+    assert requests_from(service) == [
+        {"insertDropdown": {"dropdownDefinitionId": "kix.status", **location}}
+    ]
