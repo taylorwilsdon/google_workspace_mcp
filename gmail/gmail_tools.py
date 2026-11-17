@@ -3945,7 +3945,7 @@ async def get_gmail_thread_content(
     "list_gmail_thread_messages", is_read_only=True, service_type="gmail"
 )
 async def list_gmail_thread_messages(
-    service,
+    service: Any,
     thread_id: str,
     user_google_email: str,
     headers: Annotated[

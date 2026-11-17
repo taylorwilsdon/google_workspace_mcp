@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any, Callable, Dict, List, Tuple
 from unittest.mock import MagicMock
 
 import pytest
@@ -6,14 +7,14 @@ import pytest
 from gmail.gmail_tools import list_gmail_thread_messages
 
 
-def _unwrap(tool):
+def _unwrap(tool: Any) -> Callable[..., Any]:
     fn = tool.fn if hasattr(tool, "fn") else tool
     while hasattr(fn, "__wrapped__"):
         fn = fn.__wrapped__
     return fn
 
 
-def _msg(mid, **headers):
+def _msg(mid: str, **headers: str) -> Dict[str, Any]:
     return {
         "id": mid,
         "threadId": "t1",
@@ -24,21 +25,23 @@ def _msg(mid, **headers):
     }
 
 
-def _service(messages):
+def _service(messages: List[Dict[str, Any]]) -> Tuple[MagicMock, MagicMock]:
     service = MagicMock()
     get = service.users.return_value.threads.return_value.get
     get.return_value.execute.return_value = {"id": "t1", "messages": messages}
     return service, get
 
 
-async def _call(service, **kwargs):
+async def _call(service: MagicMock, **kwargs: Any) -> Dict[str, Any]:
     return await _unwrap(list_gmail_thread_messages)(
         service=service, thread_id="t1", user_google_email="u@example.com", **kwargs
     )
 
 
 @pytest.mark.asyncio
-async def test_multi_message_thread_returns_ids_labels_snippet_and_default_headers():
+async def test_multi_message_thread_returns_ids_labels_snippet_and_default_headers() -> (
+    None
+):
     service, get = _service(
         [
             _msg("m1", From="a@x.com", To="b@x.com", Date="d1", Subject="Hi", Cc="c"),
@@ -64,7 +67,7 @@ async def test_multi_message_thread_returns_ids_labels_snippet_and_default_heade
 
 
 @pytest.mark.asyncio
-async def test_requests_metadata_format_with_only_requested_headers():
+async def test_requests_metadata_format_with_only_requested_headers() -> None:
     service, get = _service([_msg("m1", **{"Message-ID": "<1@x>"})])
 
     await _call(service)
@@ -78,7 +81,7 @@ async def test_requests_metadata_format_with_only_requested_headers():
 
 
 @pytest.mark.asyncio
-async def test_custom_headers_are_requested_and_returned():
+async def test_custom_headers_are_requested_and_returned() -> None:
     service, get = _service(
         [
             _msg(
@@ -108,7 +111,7 @@ async def test_custom_headers_are_requested_and_returned():
 
 
 @pytest.mark.asyncio
-async def test_single_message_thread():
+async def test_single_message_thread() -> None:
     service, _ = _service([_msg("only", From="a@x.com")])
 
     result = await _call(service)
@@ -118,7 +121,7 @@ async def test_single_message_thread():
 
 
 @pytest.mark.asyncio
-async def test_empty_thread_and_no_bodies_in_output():
+async def test_empty_thread_and_no_bodies_in_output() -> None:
     service, _ = _service([])
 
     result = await _call(service)
@@ -127,7 +130,7 @@ async def test_empty_thread_and_no_bodies_in_output():
 
 
 @pytest.mark.asyncio
-async def test_missing_optional_fields_default_cleanly():
+async def test_missing_optional_fields_default_cleanly() -> None:
     service, _ = _service([{"id": "m1", "payload": {}}])
 
     result = await _call(service)
@@ -141,7 +144,7 @@ async def test_missing_optional_fields_default_cleanly():
     }
 
 
-def test_registered_in_extended_tier():
+def test_registered_in_extended_tier() -> None:
     import yaml
 
     tiers_path = Path(__file__).resolve().parents[2] / "core" / "tool_tiers.yaml"
