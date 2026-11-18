@@ -125,8 +125,8 @@ def test_validate_file_path_blocks_dot_aws_anywhere(monkeypatch, tmp_path):
     [".kube", ".gnupg", ".config/gcloud", ".google_workspace_mcp/credentials"],
 )
 def test_validate_file_path_blocks_files_inside_sensitive_home_dirs(
-    monkeypatch, tmp_path, rel_dir
-):
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, rel_dir: str
+) -> None:
     storage_dir = tmp_path / "attachments"
     storage_dir.mkdir()
     monkeypatch.setattr(attachment_storage, "STORAGE_DIR", storage_dir)
@@ -149,7 +149,9 @@ def test_validate_file_path_blocks_files_inside_sensitive_home_dirs(
         validate_file_path(str(secret_file))
 
 
-def test_validate_file_path_blocks_custom_credentials_dir(monkeypatch, tmp_path):
+def test_validate_file_path_blocks_custom_credentials_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     storage_dir = tmp_path / "attachments"
     storage_dir.mkdir()
     monkeypatch.setattr(attachment_storage, "STORAGE_DIR", storage_dir)
@@ -165,6 +167,27 @@ def test_validate_file_path_blocks_custom_credentials_dir(monkeypatch, tmp_path)
 
     with pytest.raises(ValueError, match="commonly contains secrets or credentials"):
         validate_file_path(str(token_file))
+
+
+def test_validate_file_path_blocks_differently_cased_sensitive_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    storage_dir = tmp_path / "attachments"
+    storage_dir.mkdir()
+    monkeypatch.setattr(attachment_storage, "STORAGE_DIR", storage_dir)
+
+    home_dir = tmp_path / "home"
+    secret_dir = home_dir / ".kube"
+    secret_dir.mkdir(parents=True)
+    (secret_dir / "config").write_text("dummy", encoding="utf-8")
+    if not (home_dir / ".KUBE").exists():
+        pytest.skip("filesystem is case-sensitive")
+
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home_dir))
+    monkeypatch.setenv("ALLOWED_FILE_DIRS", str(home_dir))
+
+    with pytest.raises(ValueError, match="commonly contains secrets or credentials"):
+        validate_file_path(str(home_dir / ".KUBE" / "config"))
 
 
 def test_validate_file_path_blocks_dot_env_variant_anywhere(monkeypatch, tmp_path):

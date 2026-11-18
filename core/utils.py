@@ -336,19 +336,26 @@ def validate_file_path(file_path: str) -> Path:
             "path is in a directory that commonly contains secrets or credentials."
         )
 
-    home = Path.home().resolve()
-    sensitive_dirs = (
-        home / ".kube",
-        home / ".gnupg",
-        home / ".config" / "gcloud",
-        Path(get_default_credentials_dir()).resolve(),
-    )
-    for blocked in sensitive_dirs:
-        if resolved.is_relative_to(blocked):
-            raise ValueError(
-                f"Access to '{resolved_str}' is not allowed: "
-                "path is in a directory that commonly contains secrets or credentials."
-            )
+    home = Path.home()
+    sensitive_dirs = [
+        blocked
+        for blocked in (
+            home / ".kube",
+            home / ".gnupg",
+            home / ".config" / "gcloud",
+            Path(get_default_credentials_dir()),
+        )
+        if blocked.is_dir()
+    ]
+    if any(
+        ancestor.samefile(blocked)
+        for ancestor in (resolved, *resolved.parents)
+        for blocked in sensitive_dirs
+    ):
+        raise ValueError(
+            f"Access to '{resolved_str}' is not allowed: "
+            "path is in a directory that commonly contains secrets or credentials."
+        )
 
     # Block other credential/secret file patterns
     sensitive_names = {
