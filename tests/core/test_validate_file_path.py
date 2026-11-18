@@ -183,6 +183,8 @@ def test_validate_file_path_blocks_differently_cased_sensitive_dir(
     if not (home_dir / ".KUBE").exists():
         pytest.skip("filesystem is case-sensitive")
 
+    monkeypatch.delenv("WORKSPACE_MCP_CREDENTIALS_DIR", raising=False)
+    monkeypatch.delenv("GOOGLE_MCP_CREDENTIALS_DIR", raising=False)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: home_dir))
     monkeypatch.setenv("ALLOWED_FILE_DIRS", str(home_dir))
 
