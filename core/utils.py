@@ -26,7 +26,7 @@ from fastmcp.exceptions import ToolError
 from googleapiclient.errors import HttpError
 from mcp.types import ImageContent
 from .api_enablement import get_api_enablement_message
-from auth.google_auth import GoogleAuthenticationError
+from auth.google_auth import GoogleAuthenticationError, get_default_credentials_dir
 from auth.oauth_config import (
     get_transport_mode,
     is_external_oauth21_provider,
@@ -336,15 +336,15 @@ def validate_file_path(file_path: str) -> Path:
             "path is in a directory that commonly contains secrets or credentials."
         )
 
-    home = Path.home()
-    sensitive_home_dirs = (
-        ".kube",
-        ".gnupg",
-        ".config/gcloud",
+    home = Path.home().resolve()
+    sensitive_dirs = (
+        home / ".kube",
+        home / ".gnupg",
+        home / ".config" / "gcloud",
+        Path(get_default_credentials_dir()).resolve(),
     )
-    for sensitive_dir in sensitive_home_dirs:
-        blocked = home / sensitive_dir
-        if resolved == blocked or str(resolved).startswith(str(blocked) + "/"):
+    for blocked in sensitive_dirs:
+        if resolved.is_relative_to(blocked):
             raise ValueError(
                 f"Access to '{resolved_str}' is not allowed: "
                 "path is in a directory that commonly contains secrets or credentials."

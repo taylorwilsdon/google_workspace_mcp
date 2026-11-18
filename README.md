@@ -75,7 +75,7 @@ By default, this server sends no data anywhere except Google's APIs, on behalf o
 - **Your OAuth client, your GCP project** — credentials never leave your environment & you control scopes
 - **You control the network** — deploy behind your reverse proxy, in your VPC, on your own terms
 - **Stateless mode** — zero disk writes for locked-down container environments
-- **Sensitive path blocking** — local file reads default to the managed attachment directory, and `validate_file_path()` still blocks `.env*` files plus common home-directory credential stores such as `~/.ssh/` and `~/.aws/` even if `ALLOWED_FILE_DIRS` is broadened
+- **Sensitive path blocking** — local file reads default to the managed attachment directory, and `validate_file_path()` also blocks `.env*` files, the server's own credentials directory, and common credential stores such as `~/.ssh/` and `~/.aws/` as a best-effort backstop if `ALLOWED_FILE_DIRS` is broadened
 
 Full dependency tree in `pyproject.toml`, pinned in `uv.lock`.
 
@@ -284,7 +284,7 @@ A few things worth internalizing before you connect an LLM to your email:
 
 - **Prompt injection is real.** Emails, docs, and events can contain hidden instructions. Only connect trusted data to an LLM, and be deliberate about which write tools you enable.
 - **Never commit** `.env`, `client_secret.json`, or `.credentials/` to source control.
-- **Local file reads are sandboxed** to the managed attachment directory. Broaden with `ALLOWED_FILE_DIRS` only if you trust the client and its data sources; `.env*`, `~/.ssh/`, `~/.aws/`, and similar paths are always blocked.
+- **Local file reads are sandboxed** to the managed attachment directory. Broaden with `ALLOWED_FILE_DIRS` only if you trust the client and its data sources, and keep it as narrow as possible. `.env*`, `~/.ssh/`, `~/.aws/`, the server's credentials directory, and similar paths are blocked as a backstop, but no blocklist can cover every secret on every machine: configure the server for your environment, set `WORKSPACE_MCP_DISABLE_LOCAL_FILES=true` if you don't need local reads, and ideally run it in a sandbox (a container or dedicated user) with nothing sensitive on disk.
 - **Production** deployments should use HTTPS and OAuth 2.1.
 
 ## Development
