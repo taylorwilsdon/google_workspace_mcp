@@ -258,6 +258,15 @@ def _get_allowed_file_dirs() -> list[Path]:
     return unique_dirs
 
 
+def _file_identity(path: Path) -> Optional[tuple[int, int]]:
+    """Return ``(st_dev, st_ino)`` for ``path``, or None if it cannot be stat'ed."""
+    try:
+        stat_result = path.stat()
+    except OSError:
+        return None
+    return stat_result.st_dev, stat_result.st_ino
+
+
 def validate_file_path(file_path: str) -> Path:
     """
     Validate that a file path is safe to read from the server filesystem.
@@ -337,20 +346,18 @@ def validate_file_path(file_path: str) -> Path:
         )
 
     home = Path.home()
-    sensitive_dirs = [
-        blocked
+    blocked_ids = {
+        _file_identity(blocked)
         for blocked in (
             home / ".kube",
             home / ".gnupg",
             home / ".config" / "gcloud",
             Path(get_default_credentials_dir()),
         )
-        if blocked.is_dir()
-    ]
+    } - {None}
     if any(
-        ancestor.samefile(blocked)
+        _file_identity(ancestor) in blocked_ids
         for ancestor in (resolved, *resolved.parents)
-        for blocked in sensitive_dirs
     ):
         raise ValueError(
             f"Access to '{resolved_str}' is not allowed: "
