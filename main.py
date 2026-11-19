@@ -10,6 +10,7 @@ from importlib import metadata, import_module
 from typing import NoReturn
 from urllib.parse import urlparse
 from dotenv import load_dotenv
+from core.plugin_env import drop_unexpanded_plugin_options, load_user_env_file
 from core.startup_ui import StartupDisplay, collapse_home, wordmark_lines
 
 # Prevent any stray startup output on macOS (e.g. platform identifiers) from
@@ -68,8 +69,11 @@ def _load_startup_dependencies():
     )
 
 
+# Runs before any .env is loaded, so the files can supply what the placeholders blocked.
+_dropped_plugin_options = drop_unexpanded_plugin_options()
 dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
 load_dotenv(dotenv_path=dotenv_path)
+_user_env_file = load_user_env_file()
 
 (
     get_selected_backend,
@@ -529,6 +533,14 @@ def main():
 
     # Configure safe logging for Windows Unicode handling
     configure_safe_logging()
+
+    if _dropped_plugin_options:
+        logger.info(
+            "Ignoring unexpanded plugin options (the host does not fill them in): %s",
+            ", ".join(_dropped_plugin_options),
+        )
+    if _user_env_file:
+        logger.info("Loaded settings from %s", collapse_home(str(_user_env_file)))
 
     # Enable OpenTelemetry tracing when an OTLP endpoint is configured.
     from core.telemetry import configure_telemetry
