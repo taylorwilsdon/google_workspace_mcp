@@ -1,11 +1,6 @@
-"""Resource IDs that end up in reserved-expansion API paths are refused before any request.
+"""Tools refuse IDs bound for reserved-expansion ({+name}) API paths before any request."""
 
-People resource names, Chat space and message names and the Slides presentation ID are
-expanded into the URL path without escaping ({+name} in the discovery document). An ID
-carrying ':', '?' or '#' could change the method or the query actually sent, so every tool
-that takes such an ID must refuse it without touching the Google client.
-"""
-
+from typing import Any, Callable, Dict
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -40,7 +35,7 @@ BAD_SEGMENTS = [
 
 
 @pytest.fixture
-def service(monkeypatch):
+def service(monkeypatch: pytest.MonkeyPatch) -> Mock:
     """A fake Google client behind the real auth and HTTP error decorators."""
     fake = Mock()
     monkeypatch.setattr(service_decorator, "_user_email_is_managed", lambda: False)
@@ -58,11 +53,11 @@ def service(monkeypatch):
     return fake
 
 
-def _tool(tool):
+def _tool(tool: Any) -> Callable[..., Any]:
     return getattr(tool, "fn", tool)
 
 
-def _assert_client_untouched(fake):
+def _assert_client_untouched(fake: Mock) -> None:
     """Only the decorator's cleanup may have run: no API resource was built or called."""
     calls = [name for name, _args, _kwargs in fake.mock_calls]
     assert all(name == "close" for name in calls), calls
@@ -85,12 +80,12 @@ def _assert_client_untouched(fake):
         "a..b",
     ],
 )
-def test_check_path_segment_accepts_real_ids(value):
+def test_check_path_segment_accepts_real_ids(value: str) -> None:
     assert check_path_segment(value, "id") == value
 
 
 @pytest.mark.parametrize("value", BAD_SEGMENTS + ["...", None, 123])
-def test_check_path_segment_refuses_unsafe_ids(value):
+def test_check_path_segment_refuses_unsafe_ids(value: Any) -> None:
     with pytest.raises(UserInputError, match="Invalid id"):
         check_path_segment(value, "id")
 
@@ -98,7 +93,7 @@ def test_check_path_segment_refuses_unsafe_ids(value):
 @pytest.mark.parametrize(
     "space_id", ["S:x", "spaces/..", "..", "spaces/S:completeImport"]
 )
-def test_space_normalizer_refuses_unsafe_ids(space_id):
+def test_space_normalizer_refuses_unsafe_ids(space_id: str) -> None:
     with pytest.raises(UserInputError, match="space_id"):
         _normalize_space_resource_name(space_id)
 
@@ -109,7 +104,7 @@ def test_space_normalizer_refuses_unsafe_ids(space_id):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("bad", BAD_SEGMENTS)
 @pytest.mark.parametrize("prefix", ["", "people/"])
-async def test_get_contact_refuses_bad_id(service, bad, prefix):
+async def test_get_contact_refuses_bad_id(service: Mock, bad: str, prefix: str) -> None:
     with pytest.raises(UserInputError, match="contact_id"):
         await _tool(get_contact)(user_google_email=EMAIL, contact_id=prefix + bad)
     _assert_client_untouched(service)
@@ -120,7 +115,9 @@ async def test_get_contact_refuses_bad_id(service, bad, prefix):
 @pytest.mark.parametrize(
     "bad", ["c1:deleteContactPhoto#", "people/c1:deleteContactPhoto#", ".."]
 )
-async def test_manage_contact_refuses_bad_id(service, action, bad):
+async def test_manage_contact_refuses_bad_id(
+    service: Mock, action: str, bad: str
+) -> None:
     with pytest.raises(UserInputError, match="contact_id"):
         await _tool(manage_contact)(
             user_google_email=EMAIL, action=action, contact_id=bad, given_name="x"
@@ -130,7 +127,9 @@ async def test_manage_contact_refuses_bad_id(service, action, bad):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("contact_id", ["c123", "people/c123"])
-async def test_manage_contact_delete_sends_the_normalised_name(service, contact_id):
+async def test_manage_contact_delete_sends_the_normalised_name(
+    service: Mock, contact_id: str
+) -> None:
     await _tool(manage_contact)(
         user_google_email=EMAIL, action="delete", contact_id=contact_id
     )
@@ -141,7 +140,7 @@ async def test_manage_contact_delete_sends_the_normalised_name(service, contact_
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("bad", ["g1?deleteContacts=true#", "contactGroups/g1:x", ".."])
-async def test_get_contact_group_refuses_bad_id(service, bad):
+async def test_get_contact_group_refuses_bad_id(service: Mock, bad: str) -> None:
     with pytest.raises(UserInputError, match="group_id"):
         await _tool(get_contact_group)(user_google_email=EMAIL, group_id=bad)
     _assert_client_untouched(service)
@@ -157,14 +156,18 @@ async def test_get_contact_group_refuses_bad_id(service, bad):
         {"action": "modify_members", "group_id": "..", "add_contact_ids": ["c1"]},
     ],
 )
-async def test_manage_contact_group_refuses_bad_group_id(service, kwargs):
+async def test_manage_contact_group_refuses_bad_group_id(
+    service: Mock, kwargs: Dict[str, Any]
+) -> None:
     with pytest.raises(UserInputError, match="group_id"):
         await _tool(manage_contact_group)(user_google_email=EMAIL, **kwargs)
     _assert_client_untouched(service)
 
 
 @pytest.mark.asyncio
-async def test_manage_contact_group_delete_keeps_the_callers_delete_contacts(service):
+async def test_manage_contact_group_delete_keeps_the_callers_delete_contacts(
+    service: Mock,
+) -> None:
     await _tool(manage_contact_group)(
         user_google_email=EMAIL, action="delete", group_id="g1", delete_contacts=False
     )
@@ -175,7 +178,9 @@ async def test_manage_contact_group_delete_keeps_the_callers_delete_contacts(ser
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("field", ["add_contact_ids", "remove_contact_ids"])
-async def test_manage_contact_group_refuses_bad_member_ids(service, field):
+async def test_manage_contact_group_refuses_bad_member_ids(
+    service: Mock, field: str
+) -> None:
     with pytest.raises(UserInputError, match="contact_id"):
         await _tool(manage_contact_group)(
             user_google_email=EMAIL,
@@ -187,7 +192,7 @@ async def test_manage_contact_group_refuses_bad_member_ids(service, field):
 
 
 @pytest.mark.asyncio
-async def test_batch_delete_refuses_bad_ids(service):
+async def test_batch_delete_refuses_bad_ids(service: Mock) -> None:
     with pytest.raises(UserInputError, match="contact_id"):
         await _tool(manage_contacts_batch)(
             user_google_email=EMAIL, action="delete", contact_ids=["c1", "c2?x=1"]
@@ -196,7 +201,7 @@ async def test_batch_delete_refuses_bad_ids(service):
 
 
 @pytest.mark.asyncio
-async def test_batch_update_refuses_bad_ids(service):
+async def test_batch_update_refuses_bad_ids(service: Mock) -> None:
     with pytest.raises(UserInputError, match="contact_id"):
         await _tool(manage_contacts_batch)(
             user_google_email=EMAIL,
@@ -215,7 +220,7 @@ async def test_batch_update_refuses_bad_ids(service):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("bad", ["spaces/S:completeImport", "S?x=1#", "spaces/.."])
-async def test_send_message_refuses_bad_space_id(service, bad):
+async def test_send_message_refuses_bad_space_id(service: Mock, bad: str) -> None:
     with pytest.raises(UserInputError, match="space_id"):
         await _tool(send_message)(
             user_google_email=EMAIL, space_id=bad, message_text="t"
@@ -235,7 +240,9 @@ BAD_MESSAGES = [
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("bad", BAD_MESSAGES)
-async def test_send_message_edit_refuses_bad_message_name(service, bad):
+async def test_send_message_edit_refuses_bad_message_name(
+    service: Mock, bad: str
+) -> None:
     with pytest.raises(UserInputError, match="message_name"):
         await _tool(send_message)(
             user_google_email=EMAIL,
@@ -248,7 +255,7 @@ async def test_send_message_edit_refuses_bad_message_name(service, bad):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("bad", BAD_MESSAGES)
-async def test_create_reaction_refuses_bad_message_id(service, bad):
+async def test_create_reaction_refuses_bad_message_id(service: Mock, bad: str) -> None:
     with pytest.raises(UserInputError, match="message_id"):
         await _tool(create_reaction)(
             user_google_email=EMAIL, message_id=bad, emoji_unicode="+1"
@@ -258,7 +265,9 @@ async def test_create_reaction_refuses_bad_message_id(service, bad):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("bad", BAD_MESSAGES)
-async def test_download_attachment_refuses_bad_message_id(service, bad):
+async def test_download_attachment_refuses_bad_message_id(
+    service: Mock, bad: str
+) -> None:
     with pytest.raises(UserInputError, match="message_id"):
         await _tool(download_chat_attachment)(user_google_email=EMAIL, message_id=bad)
     _assert_client_untouched(service)
@@ -272,7 +281,9 @@ async def test_download_attachment_refuses_bad_message_id(service, bad):
         "spaces/S/messages/client-custom-name",
     ],
 )
-async def test_create_reaction_accepts_dotted_and_client_ids(service, message_id):
+async def test_create_reaction_accepts_dotted_and_client_ids(
+    service: Mock, message_id: str
+) -> None:
     reactions = service.spaces.return_value.messages.return_value.reactions.return_value
     reactions.create.return_value.execute.return_value = {
         "name": f"{message_id}/reactions/R"
@@ -292,14 +303,14 @@ async def test_create_reaction_accepts_dotted_and_client_ids(service, message_id
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("bad", ["P1?fields=x#", "P1:x", "..", "a/b"])
-async def test_get_presentation_refuses_bad_id(service, bad):
+async def test_get_presentation_refuses_bad_id(service: Mock, bad: str) -> None:
     with pytest.raises(UserInputError, match="presentation_id"):
         await _tool(get_presentation)(user_google_email=EMAIL, presentation_id=bad)
     _assert_client_untouched(service)
 
 
 @pytest.mark.asyncio
-async def test_batch_update_presentation_refuses_bad_id(service):
+async def test_batch_update_presentation_refuses_bad_id(service: Mock) -> None:
     with pytest.raises(UserInputError, match="presentation_id"):
         await _tool(batch_update_presentation)(
             user_google_email=EMAIL,

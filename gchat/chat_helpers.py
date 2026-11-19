@@ -14,7 +14,7 @@ from typing import Dict, List, Optional, Tuple
 from fastmcp.exceptions import ToolError
 from googleapiclient.errors import HttpError
 
-from core.utils import UserInputError, check_path_segment
+from core.utils import UserInputError, is_path_segment
 
 logger = logging.getLogger(__name__)
 
@@ -334,38 +334,24 @@ def _none_if_blank(value: Optional[str]) -> Optional[str]:
 
 def _normalize_space_resource_name(space_id: str) -> str:
     """Return spaces/<id> for a space resource name or a bare space ID."""
-    value = space_id.strip()
-    if value.startswith("spaces/"):
-        value = value[len("spaces/") :]
-    try:
-        check_path_segment(value, "space_id")
-    except UserInputError:
+    value = space_id.strip().removeprefix("spaces/")
+    if not is_path_segment(value):
         raise UserInputError(
             f"Invalid space_id '{space_id}'. Expected spaces/X or a bare space ID X."
-        ) from None
+        )
     return f"spaces/{value}"
 
 
 def _normalize_message_resource_name(
     message_name: str, label: str = "message_id"
 ) -> str:
-    """Return a spaces/X/messages/Y resource name, refusing unsafe IDs in either part."""
-    error = UserInputError(
-        f"Invalid {label} '{message_name}'. "
-        "Expected the full resource name, e.g. spaces/X/messages/Y."
-    )
-    match = (
-        _MESSAGE_NAME_PATTERN.fullmatch(message_name)
-        if isinstance(message_name, str)
-        else None
-    )
-    if match is None:
-        raise error
-    try:
-        for part in match.groups():
-            check_path_segment(part, label)
-    except UserInputError:
-        raise error from None
+    """Return message_name if it is spaces/X/messages/Y with safe X and Y."""
+    match = _MESSAGE_NAME_PATTERN.fullmatch(message_name)
+    if match is None or not all(map(is_path_segment, match.groups())):
+        raise UserInputError(
+            f"Invalid {label} '{message_name}'. "
+            "Expected the full resource name, e.g. spaces/X/messages/Y."
+        )
     return message_name
 
 
