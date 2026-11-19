@@ -120,18 +120,24 @@ Send an email. Supports new messages, replies, forwards, HTML, attachments, CC/B
 | quote_original | boolean | no | false | Include the message being replied to as a quoted original (requires thread_id) |
 | include_signature | boolean | no | true | Append Gmail signature if available |
 | attachments | array | no | | See attachment format below |
+| draft_id | string | no | | Send an existing draft as-is; pass no other content arguments. Needs the gmail.compose scope |
 
 **Attachment format** (each item is an object):
 - **File path**: `{"path": "path/to/file.pdf"}` -- optionally add `"filename"` and `"mime_type"`. Use forward slashes on all platforms
 - **Base64 content**: `{"content": "base64data", "filename": "doc.pdf"}` -- optionally add `"mime_type"` (must be standard base64, not urlsafe)
 
 ### draft_gmail_message
-Create a draft. Same capabilities as send (including forwards and reply_all).
+Create, update, delete, or list drafts. Creating has the same capabilities as send (including forwards and reply_all).
 
 | Parameter | Type | Required | Default | Notes |
 |-----------|------|----------|---------|-------|
-| subject | string | conditional | | Required for a new draft. Optional when replying with thread_id (inherited) or forwarding (defaults to "Fwd: <original subject>") |
-| body | string | conditional | | Required unless forwarding, where it is an optional note prepended above the original |
+| action | string | no | "create" | "create", "update", "delete", or "list" |
+| draft_id | string | for update/delete | | Stable across updates; find it with action="list" |
+| clear_fields | array | no | | update only: any of "to", "cc", "bcc", "subject", "attachments" to empty |
+| page_size | integer | no | 25 | list only, max 100 |
+| page_token | string | no | | list only |
+| subject | string | conditional | | Required for a new draft. Optional when replying with thread_id (inherited) or forwarding (defaults to "Fwd: <original subject>"). Omit on update to keep the stored value |
+| body | string | conditional | | Required for a new draft unless forwarding, where it is an optional note prepended above the original. On update, passing a body rebuilds the message with the new body |
 | body_format | string | no | "plain" | "plain" or "html" |
 | direction | string | no | "auto" | Base text direction: "auto" (from the first strong character), "ltr" or "rtl". On a forward it orients the note |
 | forward_message_id | string | no | | Gmail message ID to save a forward of as a draft; reply and signature options do not apply |
@@ -149,6 +155,8 @@ Create a draft. Same capabilities as send (including forwards and reply_all).
 | include_signature | boolean | no | true | Append Gmail signature if available |
 | reply_all | boolean | no | false | Derive recipients from the thread: To = sender being replied to, Cc = other participants (minus you and from_email). Requires thread_id; explicit to/cc win |
 | quote_original | boolean | no | false | Include original message as quoted reply (requires thread_id) |
+
+On `action="update"`, omitted or blank to/cc/bcc/subject/From/attachments are kept; passing `attachments` replaces the stored ones. An update that changes only to/cc/bcc/subject patches the stored message in place; any other update needs `body` and rebuilds the message. `forward_message_id` and `reply_all` apply to create only. `action="delete"` is permanent (no Trash).
 
 Operational Gmail settings errors such as rate limits abort draft creation instead of silently falling back to a potentially unintended sender.
 
@@ -269,7 +277,8 @@ Create, delete, update, or apply a filter. Update recreates the filter (Gmail ha
 
 ### Drafts vs Send
 - Use `draft_gmail_message` when you want the user to review before sending. It supports `include_signature` (auto-appends Gmail signature) and `quote_original` (includes quoted reply text).
-- Use `send_gmail_message` for immediate delivery.
+- Use `send_gmail_message` for immediate delivery, or `send_gmail_message(draft_id=...)` to send a reviewed draft exactly as it stands.
+- To revise a draft, use `draft_gmail_message(action="update", draft_id=...)` instead of creating a second draft. Trashing a draft's message with the label tools does not remove the draft; use `action="delete"`.
 - To forward, pass `forward_message_id` to either tool; the original subject, quoted body and (by default) attachments are carried over, and `body` becomes an optional note.
 
 ### Attachments
