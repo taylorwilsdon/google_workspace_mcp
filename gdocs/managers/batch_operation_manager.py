@@ -26,6 +26,7 @@ from gdocs.docs_helpers import (
     create_insert_section_break_request,
     create_insert_image_request,
     create_insert_person_request,
+    create_insert_date_request,
     create_bullet_list_request,
     create_delete_bullet_list_request,
     create_named_range_request,
@@ -213,6 +214,12 @@ class BatchOperationManager:
                 )
                 msg += f". Created tabs: {tab_info}"
 
+            for request, reply in zip(requests, result.get("replies", [])):
+                if "replaceAllText" in request:
+                    count = reply.get("replaceAllText", {}).get("occurrencesChanged", 0)
+                    find_text = request["replaceAllText"]["containsText"]["text"]
+                    msg += f". Replaced {count} occurrence(s) of '{find_text}'"
+
             return True, msg, metadata
 
         except Exception as e:
@@ -248,6 +255,7 @@ class BatchOperationManager:
                 "insert_section_break",
                 "insert_image",
                 "insert_person",
+                "insert_date",
             }:
                 return "Semantic anchors are supported only for insertion operations."
             valid, error = validate_operation(op)
@@ -985,6 +993,23 @@ class BatchOperationManager:
                 else f"mention {op['email']} at {op.get('index')}"
             )
 
+        elif op_type == "insert_date":
+            request = create_insert_date_request(
+                op.get("index"),
+                op["date"],
+                op.get("date_format"),
+                op.get("time_format"),
+                op.get("timezone"),
+                tab_id,
+                segment_id=segment_id,
+                end_of_segment=end_of_segment,
+            )
+            description = (
+                f"date chip {op['date']} at end of segment '{segment_id or 'body'}'"
+                if end_of_segment
+                else f"date chip {op['date']} at {op.get('index')}"
+            )
+
         elif op_type == "insert_doc_tab":
             request = create_insert_doc_tab_request(
                 op["title"], op["index"], op.get("parent_tab_id")
@@ -1137,6 +1162,7 @@ class BatchOperationManager:
                 "create_header_footer",
                 "insert_image",
                 "insert_person",
+                "insert_date",
                 "insert_doc_tab",
                 "delete_doc_tab",
                 "update_doc_tab",
@@ -1443,6 +1469,19 @@ class BatchOperationManager:
                     "required": ["email"],
                     "optional": ["index", "end_of_segment", "segment_id", "tab_id"],
                     "description": "Insert a person @mention smart chip",
+                },
+                "insert_date": {
+                    "required": ["date"],
+                    "optional": [
+                        "index",
+                        "end_of_segment",
+                        "segment_id",
+                        "tab_id",
+                        "date_format",
+                        "time_format",
+                        "timezone",
+                    ],
+                    "description": "Insert a date smart chip",
                 },
                 "insert_doc_tab": {
                     "required": ["title", "index"],
