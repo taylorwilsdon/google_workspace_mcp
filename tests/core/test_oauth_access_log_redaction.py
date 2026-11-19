@@ -108,9 +108,9 @@ class _Capture(logging.Handler):
 @pytest.mark.asyncio
 async def test_real_uvicorn_access_log_never_contains_the_code() -> None:
     install_noisy_log_filters()
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
     config = uvicorn.Config(
         server.http_app(),
         host="127.0.0.1",
@@ -123,7 +123,7 @@ async def test_real_uvicorn_access_log_never_contains_the_code() -> None:
     # Config() has just applied uvicorn's logging setup; attach after it.
     logging.getLogger("uvicorn.access").addHandler(capture)
     srv = uvicorn.Server(config)
-    task = asyncio.create_task(srv.serve())
+    task = asyncio.create_task(srv.serve(sockets=[sock]))
     try:
         for _ in range(100):
             if srv.started:
@@ -135,6 +135,7 @@ async def test_real_uvicorn_access_log_never_contains_the_code() -> None:
     finally:
         srv.should_exit = True
         await task
+        sock.close()
         logging.getLogger("uvicorn.access").removeHandler(capture)
 
     text = "\n".join(capture.lines)
