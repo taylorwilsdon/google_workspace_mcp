@@ -1304,7 +1304,7 @@ def _prepare_gmail_message(
     from_name: Optional[str] = None,
     attachments: Optional[List[Dict[str, str]]] = None,
     plain_body: Optional[str] = None,
-    priority: Optional[MessagePriority] = None,
+    priority: MessagePriority = "normal",
     direction: TextDirection = "auto",
 ) -> tuple[str, Optional[str], int, List[str]]:
     """
@@ -1324,7 +1324,7 @@ def _prepare_gmail_message(
         from_name: Optional sender display name (e.g., "Peter Hartree")
         attachments: Optional list of attachments. Each can have 'path' (file path) OR 'content' (base64) + 'filename'
         plain_body: Explicit text alternative for HTML, preserving a forwarded original.
-        priority: Optional message priority ('high', 'normal' or 'low').
+        priority: Message priority ('high', 'normal' or 'low').
         direction: Base text direction of the HTML part derived from a plain body.
 
     Returns:
@@ -2788,9 +2788,7 @@ async def send_gmail_message(
             values; when cc is omitted, the sender being replied to is added to the derived Cc
             unless they are already in To (so an explicit 'to' that redirects the reply still
             keeps them on it).
-        priority (str): 'high' or 'low' adds the Importance, X-Priority and Priority
-            headers that clients such as Outlook display; Gmail does not show them.
-            Defaults to 'normal' (no headers).
+        priority (str): 'high' or 'low' adds priority headers. Defaults to 'normal'.
 
     Returns:
         str: Confirmation message with the sent email's message ID.
@@ -3108,7 +3106,7 @@ async def _forward_gmail_message_impl(
     direction: TextDirection = "auto",
     as_draft: bool = False,
     attachments: Optional[List[Dict[str, Any]]] = None,
-    priority: Optional[MessagePriority] = None,
+    priority: MessagePriority = "normal",
 ) -> str:
     """Build a forward of an existing Gmail message and send it or save it as a draft.
 
@@ -3461,9 +3459,7 @@ async def draft_gmail_message(
             account and from_email. Requires thread_id. Explicit to/cc win over the derived
             values; when cc is omitted, the sender being replied to is added to the derived Cc
             unless they are already in To.
-        priority (str): 'high' or 'low' adds the Importance, X-Priority and Priority
-            headers that clients such as Outlook display; Gmail does not show them.
-            Defaults to 'normal' (no headers).
+        priority (str): 'high' or 'low' adds priority headers. Defaults to 'normal'.
 
     Returns:
         str: Confirmation message with the created draft's ID.
