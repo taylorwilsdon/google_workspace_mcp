@@ -195,6 +195,20 @@ def resolve_callback_port_for_transport(transport: str) -> None:
         os.environ.pop("WORKSPACE_MCP_RESOLVED_PORT", None)
 
 
+def serve_stdio_in_handshake_era() -> None:
+    """Keep stdio connections on the `initialize` handshake protocol era.
+
+    Clients such as the Copilot runtime open with a 2026-07-28 `server/discover`
+    probe and, when they cannot use its answer, retry `initialize` on the same
+    connection. The MCP SDK locks a stdio connection to the era of its first
+    request and then rejects that `initialize`. Not treating the probe as a
+    2026 envelope makes it fail fast, so the client's `initialize` fallback works.
+    """
+    from mcp.server import runner
+
+    runner._has_modern_envelope = lambda params: False
+
+
 # Advisories raised while resolving configuration. They are queued rather than
 # logged so the startup screen can present them as one block instead of letting
 # them race ahead of the banner on stderr.
@@ -1069,6 +1083,7 @@ def main():
                 show_banner=False,
             )
         else:
+            serve_stdio_in_handshake_era()
             if http_port is not None:
                 # Dual transport: stdio for MCP client + HTTP for workspace-cli
                 import asyncio
