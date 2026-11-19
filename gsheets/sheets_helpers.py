@@ -1456,6 +1456,138 @@ def _format_sheet_notes_section(
     return f"\n\nCell notes in range '{range_label}':\n" + "\n".join(lines) + suffix
 
 
+def _describe_data_validation(rule: dict[str, Any]) -> str:
+    """Describe a DataValidationRule as e.g. 'ONE_OF_LIST: "Yes", "No" (strict)'."""
+    condition = rule.get("condition") or {}
+    text = condition.get("type") or "UNKNOWN"
+    values = [
+        json.dumps(
+            str(value.get("userEnteredValue") or value.get("relativeDate") or ""),
+            ensure_ascii=False,
+        )
+        for value in condition.get("values") or []
+    ]
+    if values:
+        text += ": " + ", ".join(values)
+    if rule.get("strict"):
+        text += " (strict)"
+    if rule.get("inputMessage"):
+        text += f" (help: {json.dumps(rule['inputMessage'], ensure_ascii=False)})"
+    return text
+
+
+def _extract_cell_validation_from_grid(
+    spreadsheet: dict[str, Any],
+) -> list[dict[str, str]]:
+    """Return {"range", "rule"} entries, merging a rule's consecutive rows in a column."""
+    runs: list[dict[str, Any]] = []
+    open_runs: dict[tuple[str, int, str], dict[str, Any]] = {}
+    for sheet in spreadsheet.get("sheets", []) or []:
+        sheet_title = sheet.get("properties", {}).get("title") or "Unknown"
+        for grid in sheet.get("data", []) or []:
+            start_row = _coerce_int(grid.get("startRow"), default=0)
+            start_col = _coerce_int(grid.get("startColumn"), default=0)
+            for row_offset, row_data in enumerate(grid.get("rowData", []) or []):
+                for col_offset, cell_data in enumerate(
+                    (row_data or {}).get("values", []) or []
+                ):
+                    rule = (cell_data or {}).get("dataValidation")
+                    if not rule:
+                        continue
+                    row = start_row + row_offset
+                    col = start_col + col_offset
+                    key = (sheet_title, col, json.dumps(rule, sort_keys=True))
+                    run = open_runs.get(key)
+                    if run and run["end_row"] == row - 1:
+                        run["end_row"] = row
+                        continue
+                    run = {
+                        "sheet": sheet_title,
+                        "col": col,
+                        "rule": _describe_data_validation(rule),
+                        "start_row": row,
+                        "end_row": row,
+                    }
+                    open_runs[key] = run
+                    runs.append(run)
+
+    rules: list[dict[str, str]] = []
+    for run in runs:
+        cell_range = _format_a1_cell(run["sheet"], run["start_row"], run["col"])
+        if run["end_row"] != run["start_row"]:
+            cell_range += f":{_index_to_column(run['col'])}{run['end_row'] + 1}"
+        rules.append({"range": cell_range, "rule": run["rule"]})
+    return rules
+
+
+def _format_sheet_validation_section(
+    *, rules: list[dict[str, str]], range_label: str, max_details: int = 25
+) -> str:
+    """Format data validation rules into a human-readable section."""
+    if not rules:
+        return ""
+
+    lines = [f"- {item['range']}: {item['rule']}" for item in rules[:max_details]]
+    suffix = (
+        f"\n... and {len(rules) - max_details} more validation ranges"
+        if len(rules) > max_details
+        else ""
+    )
+    return (
+        f"\n\nData validation in range '{range_label}':\n" + "\n".join(lines) + suffix
+    )
+
+
+async def _fetch_validation_section(
+    service: Any,
+    spreadsheet_id: str,
+    requested_range: str,
+    values: List[List[object]],
+) -> str:
+    """Fetch data validation rules as a formatted section.
+
+    Reads the requested range, since validation often sits on blank cells that
+    ``values.get`` leaves out, and falls back to the populated range when the
+    requested one is open-ended or over the cell cap.
+    """
+    target = requested_range
+    cell_count = _a1_range_cell_count(target)
+    if cell_count is None or cell_count > MAX_GRID_METADATA_CELLS:
+        target = _a1_range_for_values(requested_range, values)
+        cell_count = _a1_range_cell_count(target) if target else None
+    if cell_count is None or cell_count > MAX_GRID_METADATA_CELLS:
+        return (
+            f"\n\nData validation was not read for range '{requested_range}': "
+            f"pass a range of at most {MAX_GRID_METADATA_CELLS} cells."
+        )
+
+    try:
+        response = await asyncio.to_thread(
+            service.spreadsheets()
+            .get(
+                spreadsheetId=spreadsheet_id,
+                ranges=[target],
+                includeGridData=True,
+                fields=(
+                    "sheets(properties(title),data(startRow,startColumn,"
+                    "rowData(values(dataValidation))))"
+                ),
+            )
+            .execute
+        )
+    except Exception as exc:
+        logger.warning(
+            "[read_sheet_values] Failed fetching data validation for range '%s': %s",
+            target,
+            exc,
+        )
+        return f"\n\nData validation could not be read for range '{target}'."
+
+    return _format_sheet_validation_section(
+        rules=_extract_cell_validation_from_grid(response), range_label=target
+    )
+
+
 async def _fetch_cell_formulas(
     service,
     spreadsheet_id: str,
