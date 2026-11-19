@@ -1456,37 +1456,30 @@ def _format_sheet_notes_section(
     return f"\n\nCell notes in range '{range_label}':\n" + "\n".join(lines) + suffix
 
 
-def _describe_data_validation(rule: dict) -> str:
-    """Describe a DataValidationRule as e.g. 'ONE_OF_LIST: Yes, No (strict)'."""
+def _describe_data_validation(rule: dict[str, Any]) -> str:
+    """Describe a DataValidationRule as e.g. 'ONE_OF_LIST: "Yes", "No" (strict)'."""
     condition = rule.get("condition") or {}
     text = condition.get("type") or "UNKNOWN"
     values = [
         value.get("userEnteredValue") or value.get("relativeDate") or ""
         for value in condition.get("values") or []
     ]
-    values = [json.dumps(str(value)) for value in values if value]
+    values = [json.dumps(str(value), ensure_ascii=False) for value in values if value]
     if values:
         text += ": " + ", ".join(values)
     if rule.get("strict"):
         text += " (strict)"
     if rule.get("inputMessage"):
-        text += f' (help: "{rule["inputMessage"]}")'
+        text += f" (help: {json.dumps(rule['inputMessage'], ensure_ascii=False)})"
     return text
 
 
-def _extract_cell_validation_from_grid(spreadsheet: dict) -> list[dict[str, str]]:
-    """
-    Extract data validation rules from spreadsheet grid data.
-
-    Cells in the same column with the same rule in consecutive rows are merged
-    into one range, since a rule usually covers a whole column.
-
-    Returns a list of dictionaries with:
-        - "range": A1 cell or range reference
-        - "rule": the rule description
-    """
-    runs: list[dict] = []
-    open_runs: dict[tuple, dict] = {}
+def _extract_cell_validation_from_grid(
+    spreadsheet: dict[str, Any],
+) -> list[dict[str, str]]:
+    """Return {"range", "rule"} entries, merging a rule's consecutive rows in a column."""
+    runs: list[dict[str, Any]] = []
+    open_runs: dict[tuple[str, int, str], dict[str, Any]] = {}
     for sheet in spreadsheet.get("sheets", []) or []:
         sheet_title = sheet.get("properties", {}).get("title") or "Unknown"
         for grid in sheet.get("data", []) or []:
@@ -1528,9 +1521,7 @@ def _extract_cell_validation_from_grid(spreadsheet: dict) -> list[dict[str, str]
 def _format_sheet_validation_section(
     *, rules: list[dict[str, str]], range_label: str, max_details: int = 25
 ) -> str:
-    """
-    Format data validation rules into a human-readable section.
-    """
+    """Format data validation rules into a human-readable section."""
     if not rules:
         return ""
 
@@ -1546,35 +1537,27 @@ def _format_sheet_validation_section(
 
 
 async def _fetch_validation_section(
-    service,
+    service: Any,
     spreadsheet_id: str,
     requested_range: str,
     values: List[List[object]],
 ) -> str:
-    """Fetch data validation rules for the requested range.
+    """Fetch data validation rules as a formatted section.
 
-    Validation often sits on blank cells, which ``values.get`` leaves out, so
-    the requested range is read rather than the populated one. When the
-    requested range is open-ended or over the cell cap, the populated range
-    is used instead. Returns an empty string when nothing is found or the
-    request fails.
+    Reads the requested range, since validation often sits on blank cells that
+    ``values.get`` leaves out, and falls back to the populated range when the
+    requested one is open-ended or over the cell cap.
     """
     target = requested_range
     cell_count = _a1_range_cell_count(target)
     if cell_count is None or cell_count > MAX_GRID_METADATA_CELLS:
         target = _a1_range_for_values(requested_range, values)
-        if not target:
-            return ""
-        cell_count = _a1_range_cell_count(target) or sum(len(row) for row in values)
-        if cell_count > MAX_GRID_METADATA_CELLS:
-            logger.info(
-                "[read_sheet_values] Skipping validation fetch for large range "
-                "'%s' (%d cells > %d limit)",
-                target,
-                cell_count,
-                MAX_GRID_METADATA_CELLS,
-            )
-            return ""
+        cell_count = _a1_range_cell_count(target) if target else None
+    if cell_count is None or cell_count > MAX_GRID_METADATA_CELLS:
+        return (
+            f"\n\nData validation was not read for range '{requested_range}': "
+            f"pass a range of at most {MAX_GRID_METADATA_CELLS} cells."
+        )
 
     try:
         response = await asyncio.to_thread(
