@@ -299,3 +299,14 @@ def test_validation_section_is_capped() -> None:
     assert "- Sheet1!A25: BOOLEAN" in section
     assert "Sheet1!A26" not in section
     assert section.endswith("... and 2 more validation ranges")
+
+
+def test_boolean_values_keep_their_positions() -> None:
+    rule = {
+        "condition": {
+            "type": "BOOLEAN",
+            "values": [{"userEnteredValue": ""}, {"userEnteredValue": "No"}],
+        }
+    }
+
+    assert _describe_data_validation(rule) == 'BOOLEAN: "", "No"'
