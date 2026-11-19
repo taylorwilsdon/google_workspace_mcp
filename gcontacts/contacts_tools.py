@@ -17,11 +17,17 @@ from mcp.types import ToolAnnotations
 
 from auth.service_decorator import require_google_service
 from core.server import server
-from core.utils import UserInputError, handle_http_errors, StringList
+from core.utils import (
+    StringList,
+    UserInputError,
+    handle_http_errors,
+    hide_local_file_args,
+)
 from gcontacts.contacts_helpers import (
     DEFAULT_PERSON_FIELDS,
     _format_contact,
     _list_contacts,
+    _manage_contact_photo,
     _merge_emails,
     _merge_names,
     _merge_nicknames,
@@ -730,12 +736,13 @@ async def search_contacts(
         openWorldHint=True,
     ),
 )
+@hide_local_file_args("file_path")
 @require_google_service("people", "contacts")
 @handle_http_errors("manage_contact", service_type="people")
 async def manage_contact(
     service: Resource,
     user_google_email: str,
-    action: Literal["create", "update", "delete"],
+    action: Literal["create", "update", "delete", "set_photo", "delete_photo"],
     contact_id: Optional[str] = None,
     given_name: Optional[str] = None,
     family_name: Optional[str] = None,
@@ -763,15 +770,17 @@ async def manage_contact(
     email: Optional[str] = None,
     organization: Optional[str] = None,
     job_title: Optional[str] = None,
+    photo_base64: Optional[str] = None,
+    file_path: Optional[str] = None,
 ) -> str:
     """
-    Create, update, or delete a contact. Consolidated tool replacing create_contact,
-    update_contact, and delete_contact.
+    Create, update, or delete a contact, or set/remove its photo.
+    Photo actions modify only the photo, not the contact's other fields.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
-        action (str): The action to perform: "create", "update", or "delete".
-        contact_id (Optional[str]): The contact ID. Required for "update" and "delete" actions.
+        action (str): The action to perform: "create", "update", "delete", "set_photo", or "delete_photo".
+        contact_id (Optional[str]): The contact ID. Required for all actions except "create".
         given_name (Optional[str]): First name (for create/update).
         family_name (Optional[str]): Last name (for create/update).
         phones (Optional[List[Dict]]): List of phone dicts {number, type?}.
@@ -809,15 +818,20 @@ async def manage_contact(
         email (Optional[str]): [DEPRECATED] Email address. Use emails=[{"address":..., "type":"other"}].
         organization (Optional[str]): [DEPRECATED] Company name. Use organizations=[{"name":...}].
         job_title (Optional[str]): [DEPRECATED] Job title. Use organizations=[{"title":...}].
+        photo_base64 (Optional[str]): Raw Base64 JPEG or PNG bytes for "set_photo", without a data URL prefix. Maximum 5 MiB decoded.
+        file_path (Optional[str]): Server-side JPEG or PNG path for "set_photo", instead of photo_base64. Must be under ALLOWED_FILE_DIRS. Maximum 5 MiB.
 
     Returns:
         str: Result of the action performed.
     """
     action = action.lower().strip()
-    if action not in ("create", "update", "delete"):
+    if action not in ("create", "update", "delete", "set_photo", "delete_photo"):
         raise UserInputError(
-            f"Invalid action '{action}'. Must be 'create', 'update', or 'delete'."
+            f"Invalid action '{action}'. Must be 'create', 'update', 'delete', 'set_photo', or 'delete_photo'."
         )
+
+    if action != "set_photo" and (photo_base64 is not None or file_path is not None):
+        raise UserInputError("Photo inputs are only supported with action='set_photo'.")
 
     for mode_name, mode_val in [
         ("phones_mode", phones_mode),
@@ -875,7 +889,6 @@ async def manage_contact(
         logger.info(f"Created contact {created_id} for {user_google_email}")
         return response
 
-    # update and delete both require contact_id
     if not contact_id:
         raise UserInputError(f"contact_id is required for '{action}' action.")
 
@@ -884,6 +897,11 @@ async def manage_contact(
         resource_name = f"people/{contact_id}"
     else:
         resource_name = contact_id
+
+    if action in ("set_photo", "delete_photo"):
+        return await _manage_contact_photo(
+            service, user_google_email, resource_name, action, photo_base64, file_path
+        )
 
     if action == "update":
         # Retry loop for etag conflicts (412 Precondition Failed)
