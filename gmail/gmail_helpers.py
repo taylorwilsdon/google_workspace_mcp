@@ -25,6 +25,7 @@ from html.parser import HTMLParser
 from threading import Lock
 from time import monotonic
 from typing import Any, Callable, Dict, Iterable, List, Literal, Mapping, Optional
+from urllib.parse import quote
 
 import httplib2
 from fastmcp.exceptions import ToolError as ToolExecutionError
@@ -467,6 +468,19 @@ def _normalize_email(address: str) -> str:
 def _new_attachment_id() -> str:
     """Return a random attachment id in the shape Gmail web uses (``f_...``)."""
     return f"f_{secrets.token_hex(5)}"
+
+
+def _generate_gmail_web_url(
+    item_id: str, account_index: int = 0, user_google_email: Optional[str] = None
+) -> str:
+    """Return the Gmail web URL for a message or thread ID in any label (#all).
+
+    The account is addressed by email when known, else by browser account index.
+    """
+    account = (
+        quote(user_google_email, safe="@") if user_google_email else str(account_index)
+    )
+    return f"https://mail.google.com/mail/u/{account}/#all/{item_id}"
 
 
 def _http_error_status(error: HttpError) -> Optional[int]:
@@ -1073,17 +1087,25 @@ def _decode_base64url(data: str) -> bytes:
 
 
 def decode_part_body(part: Mapping[str, Any]) -> str:
-    """Decode a Gmail payload part's inline body using its declared charset."""
+    """Decode a Gmail payload part's body.
+
+    Gmail converts inline ``format="full"`` data to UTF-8 but serves
+    attachment-backed bodies in their declared charset.
+    """
     raw = _decode_base64url(part["body"]["data"])
     headers = Message()
     for header in part.get("headers", []):
         headers[header["name"]] = header["value"]
     charset = headers.get_content_charset() or "utf-8"
     attempts = [(charset, "strict"), ("utf-8", "strict"), (charset, "ignore")]
-    # WHATWG reads these labels as windows-1252, and they often mislabel UTF-8.
     with contextlib.suppress(LookupError):
-        if codecs.lookup(charset).name in {"ascii", "cp1252", "iso8859-1"}:
+        name = codecs.lookup(charset).name
+        if name in {"ascii", "cp1252", "iso8859-1"}:
+            # WHATWG reads these labels as windows-1252, and they often mislabel UTF-8.
             attempts = [("utf-8", "strict"), ("cp1252", "strict"), ("cp1252", "ignore")]
+        elif not part["body"].get("attachmentId") and not name.startswith("iso2022"):
+            # Raw ISO-2022 bytes are also valid UTF-8, so that codec stays first.
+            attempts = [("utf-8", "strict"), (charset, "strict"), (charset, "ignore")]
     for codec, errors in attempts:
         try:
             return raw.decode(codec, errors)

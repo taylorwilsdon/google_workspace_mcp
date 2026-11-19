@@ -25,9 +25,12 @@ from core.utils import TransientNetworkError, UserInputError, handle_http_errors
 from gchat.chat_helpers import (
     _execute_chat_request,
     _extract_rich_links,
+    _format_search_message_ids,
+    _format_space_members,
     _name_spaces,
     _none_if_blank,
     _none_if_null_sentinel,
+    _normalize_space_resource_name,
     _resolve_sender,
 )
 
@@ -68,13 +71,28 @@ async def list_spaces(
     user_google_email: str,
     page_size: int = 100,
     space_type: str = "all",  # "all", "room", "dm"
+    space_id: Optional[str] = None,
 ) -> str:
     """
-    Lists Google Chat spaces (rooms and direct messages) accessible to the user.
+    Lists Google Chat spaces (rooms and direct messages) accessible to the user,
+    or the members of one space.
+
+    Args:
+        space_id: Space (spaces/X or a bare ID X) whose members to list instead
+            of spaces, up to page_size: people, apps and groups with role and
+            invite state.
 
     Returns:
-        str: A formatted list of Google Chat spaces accessible to the user.
+        str: A formatted list of Google Chat spaces, or of the members of space_id.
     """
+    space_id = _none_if_blank(space_id)
+    if space_id is not None:
+        space_id = _normalize_space_resource_name(space_id)
+        logger.info(f"[list_spaces] Members of {space_id}")
+        return await _format_space_members(
+            chat_service, people_service, space_id, max(page_size, 1)
+        )
+
     logger.info(f"[list_spaces] Email={user_google_email}, Type={space_type}")
 
     # Build filter based on space_type
@@ -155,6 +173,7 @@ async def get_messages(
         str: Formatted messages from the specified space. When more messages
             remain, a "Next page token" line is appended.
     """
+    space_id = _normalize_space_resource_name(space_id)
     logger.info(f"[get_messages] Space ID: '{space_id}' for user '{user_google_email}'")
 
     # Get space info first
@@ -290,6 +309,7 @@ async def send_message(
     Returns:
         str: Confirmation message with the sent or updated message details.
     """
+    space_id = _normalize_space_resource_name(space_id)
     logger.info(f"[send_message] Email: '{user_google_email}', Space: '{space_id}'")
 
     thread_key = _none_if_blank(thread_key)
@@ -431,6 +451,7 @@ async def search_messages(
 
     # If specific space provided, search within that space
     if space_id:
+        space_id = _normalize_space_resource_name(space_id)
         list_params = {
             "parent": space_id,
             "pageSize": page_size,
@@ -578,8 +599,9 @@ async def search_messages(
             f" [attachment: {a.get('contentName', 'unnamed')} ({a.get('contentType', 'unknown type')})]"
             for a in attachments
         )
+        summary = f"[{create_time}] {sender} in '{space_name}': {text_content}{links_suffix}{att_suffix}"
         output.append(
-            f"- [{create_time}] {sender} in '{space_name}': {text_content}{links_suffix}{att_suffix}"
+            f"- {' '.join(summary.split())}\n  {_format_search_message_ids(msg)}"
         )
 
     return "\n".join(output)

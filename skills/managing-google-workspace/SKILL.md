@@ -163,6 +163,7 @@ For parameters: [references/docs.md](references/docs.md)
 | Read cell values | `read_sheet_values` |
 | Write/append/clear values | `modify_sheet_values` |
 | Insert smart chips | `modify_sheet_values` (`chips`) |
+| Copy/paste a range with formulas and formatting | `modify_sheet_values` (`source_range`) |
 | Format cells | `format_sheet_range` |
 | Conditional formatting | `manage_conditional_formatting` |
 | Get spreadsheet info | `get_spreadsheet_info` |
@@ -183,12 +184,13 @@ For parameters: [references/sheets.md](references/sheets.md)
 
 | Task | Tool |
 |------|------|
-| Get presentation | `get_presentation` |
-| Get specific slide | `get_page` |
+| List slides and layouts | `get_presentation` (`action="deck"`) |
+| Read a slide's elements and text | `get_presentation` (`action="page"`) |
+| A slide's geometry and styles as JSON | `get_presentation` (`action="markup"`) |
 | Look at a slide (render to image) | `render_page_to_image` |
 | Create presentation | `create_presentation` |
 | Batch update | `batch_update_presentation` |
-| Speaker notes | `get_presentation` (`include_speaker_notes`) + `batch_update_presentation` |
+| Speaker notes | `get_presentation` (`action="page"`) + `batch_update_presentation` |
 | Comments | `manage_presentation_comment` / `list_presentation_comments` |
 
 For parameters: [references/slides.md](references/slides.md)
@@ -239,6 +241,7 @@ For parameters: [references/contacts.md](references/contacts.md)
 | Task | Tool |
 |------|------|
 | List spaces | `list_spaces` |
+| List a space's members | `list_spaces` (`space_id`) |
 | Get messages | `get_messages` |
 | Search messages | `search_messages` |
 | Send message | `send_message` |
