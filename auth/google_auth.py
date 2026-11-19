@@ -68,20 +68,12 @@ def get_default_credentials_dir():
     # Check WORKSPACE_MCP_CREDENTIALS_DIR first (preferred)
     workspace_creds_dir = os.getenv("WORKSPACE_MCP_CREDENTIALS_DIR")
     if workspace_creds_dir:
-        expanded = os.path.expanduser(workspace_creds_dir)
-        logger.info(
-            f"Using credentials directory from WORKSPACE_MCP_CREDENTIALS_DIR: {expanded}"
-        )
-        return expanded
+        return os.path.expanduser(workspace_creds_dir)
 
     # Fall back to GOOGLE_MCP_CREDENTIALS_DIR for backward compatibility
     google_creds_dir = os.getenv("GOOGLE_MCP_CREDENTIALS_DIR")
     if google_creds_dir:
-        expanded = os.path.expanduser(google_creds_dir)
-        logger.info(
-            f"Using credentials directory from GOOGLE_MCP_CREDENTIALS_DIR: {expanded}"
-        )
-        return expanded
+        return os.path.expanduser(google_creds_dir)
 
     # Use user home directory for credentials storage
     home_dir = os.path.expanduser("~")

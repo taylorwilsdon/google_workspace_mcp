@@ -3,10 +3,12 @@
 import asyncio
 import gc
 import hashlib
+import inspect
 import logging
 import os
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from typing import List, Optional
+from typing import Any, List, Optional, TypeVar, overload
 from importlib import metadata
 from urllib.parse import urlparse, ParseResult
 
@@ -17,6 +19,7 @@ install_startup_warning_filters()
 from auth.auth_info_middleware import AuthInfoMiddleware
 from core.camel_case_middleware import CamelCaseArgumentsMiddleware
 from core.portable_schema_middleware import PortableSchemaMiddleware
+from core.tool_descriptions import docstring_description
 from core.toolset_header_middleware import ToolsetHeaderMiddleware
 from auth.google_auth import (
     check_client_secrets,
@@ -55,6 +58,7 @@ import fastmcp
 from fastmcp import FastMCP
 from auth.google_oauth_provider import GoogleProvider
 from fastmcp.server.lifespan import lifespan
+from fastmcp.utilities.types import AnyFunction
 from mcp.types import ToolAnnotations, Icon
 from starlette.applications import Starlette
 from starlette.datastructures import MutableHeaders
@@ -414,8 +418,44 @@ async def _google_api_executor(server: FastMCP):
     yield None
 
 
+F = TypeVar("F", bound=AnyFunction)
+
+
 # Custom FastMCP that adds secure middleware stack for OAuth 2.1
 class SecureFastMCP(FastMCP):
+    @overload
+    def tool(self, name_or_fn: F, **kwargs: Any) -> F: ...
+
+    @overload
+    def tool(
+        self, name_or_fn: str | None = None, **kwargs: Any
+    ) -> Callable[[F], F]: ...
+
+    def tool(
+        self, name_or_fn: str | AnyFunction | None = None, **kwargs: Any
+    ) -> AnyFunction | Callable[[F], F]:
+        """Register a tool described by its docstring above ``Args:``, or ``description``."""
+        register = super().tool
+        if kwargs.get("description") is not None:
+            return register(name_or_fn, **kwargs)
+        kwargs.pop("description", None)
+        if inspect.isroutine(name_or_fn):
+            return register(
+                name_or_fn, description=docstring_description(name_or_fn), **kwargs
+            )
+        if name_or_fn is None or (
+            isinstance(name_or_fn, str) and kwargs.get("name") is None
+        ):
+            if name_or_fn is not None:
+                kwargs["name"] = name_or_fn
+
+            def register_with_description(fn: F) -> F:
+                return register(fn, description=docstring_description(fn), **kwargs)
+
+            return register_with_description
+        # Let FastMCP raise its usual error for unsupported arguments.
+        return register(name_or_fn, **kwargs)
+
     def http_app(self, **kwargs) -> "Starlette":
         """Override to add secure middleware stack for OAuth 2.1."""
         # Bound memory retained by abandoned stateful sessions. Resolve an omitted

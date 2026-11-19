@@ -1532,6 +1532,10 @@ async def batch_update_doc(
       insert_person    - required: email (str)
                          optional: index (int), end_of_segment, tab_id, segment_id
                          Inserts an @mention person smart chip.
+      insert_date      - required: date (str, YYYY-MM-DD or ISO 8601 with a time zone)
+                         optional: index (int), end_of_segment, tab_id, segment_id,
+                         date_format, time_format, timezone
+                         Inserts a date smart chip.
       insert_section_break
                        - optional: index (int), end_of_segment, section_type
                                    ('CONTINUOUS'|'NEXT_PAGE')

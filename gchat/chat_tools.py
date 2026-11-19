@@ -26,6 +26,7 @@ from gchat.chat_helpers import (
     _execute_chat_request,
     _extract_rich_links,
     _format_search_message_ids,
+    _format_space_members,
     _name_spaces,
     _none_if_blank,
     _none_if_null_sentinel,
@@ -70,13 +71,28 @@ async def list_spaces(
     user_google_email: str,
     page_size: int = 100,
     space_type: str = "all",  # "all", "room", "dm"
+    space_id: Optional[str] = None,
 ) -> str:
     """
-    Lists Google Chat spaces (rooms and direct messages) accessible to the user.
+    Lists Google Chat spaces (rooms and direct messages) accessible to the user,
+    or the members of one space.
+
+    Args:
+        space_id: Space (spaces/X or a bare ID X) whose members to list instead
+            of spaces, up to page_size: people, apps and groups with role and
+            invite state.
 
     Returns:
-        str: A formatted list of Google Chat spaces accessible to the user.
+        str: A formatted list of Google Chat spaces, or of the members of space_id.
     """
+    space_id = _none_if_blank(space_id)
+    if space_id is not None:
+        space_id = _normalize_space_resource_name(space_id)
+        logger.info(f"[list_spaces] Members of {space_id}")
+        return await _format_space_members(
+            chat_service, people_service, space_id, max(page_size, 1)
+        )
+
     logger.info(f"[list_spaces] Email={user_google_email}, Type={space_type}")
 
     # Build filter based on space_type
