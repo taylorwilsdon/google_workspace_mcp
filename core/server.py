@@ -119,6 +119,7 @@ _SESSION_IDLE_TIMEOUT_ENV = "WORKSPACE_MCP_SESSION_IDLE_TIMEOUT"
 _DEFAULT_SESSION_IDLE_TIMEOUT_SECONDS = 60 * 60 + 60
 _GOOGLE_API_WORKERS_ENV = "WORKSPACE_MCP_GOOGLE_API_WORKERS"
 _ALLOWED_HOSTS_ENV = "WORKSPACE_MCP_ALLOWED_HOSTS"
+_STATELESS_HTTP_ENV = "WORKSPACE_MCP_STATELESS_HTTP"
 
 
 def _parse_bool_env(value: str) -> bool:
@@ -314,17 +315,12 @@ class WellKnownCacheControlMiddleware:
 well_known_cache_control_middleware = Middleware(WellKnownCacheControlMiddleware)
 
 
-_STATELESS_HTTP_ENV = "WORKSPACE_MCP_STATELESS_HTTP"
-
-
-def stateless_http_flag_set() -> bool:
-    """``WORKSPACE_MCP_STATELESS_HTTP=true``: serve streamable HTTP without MCP sessions.
-
-    So any instance behind a load balancer can answer any request, while keeping
-    the deployment's persistence. ``WORKSPACE_MCP_STATELESS_MODE`` implies it too
-    (that mode also requires OAuth 2.1 and turns off local persistence).
-    """
-    return os.getenv(_STATELESS_HTTP_ENV, "false").strip().lower() == "true"
+def get_stateless_http() -> bool:
+    """Parse WORKSPACE_MCP_STATELESS_HTTP; ValueError unless unset, true or false."""
+    raw = os.getenv(_STATELESS_HTTP_ENV, "").strip().lower()
+    if raw not in ("", "true", "false"):
+        raise ValueError(f"{_STATELESS_HTTP_ENV} must be true or false, got {raw!r}")
+    return raw == "true"
 
 
 def get_session_idle_timeout() -> Optional[int]:
