@@ -34,6 +34,7 @@ from auth.oauth_config import (
     get_oauth_config,
     is_external_oauth21_provider,
     is_service_account_enabled,
+    is_service_account_no_delegation,
     is_trust_gateway_identity,
 )
 from core.context import set_fastmcp_session_id
@@ -145,8 +146,13 @@ def _user_email_is_managed() -> bool:
     """True when the server determines user_google_email from a verified identity
     (an OAuth 2.1 access token OR a trusted-gateway assertion) instead of the caller
     passing it. Drives hiding + auto-filling the user_google_email tool parameter so
-    the client never has to ask for it."""
-    return is_oauth21_enabled() or is_trust_gateway_identity()
+    the client never has to ask for it. Service accounts without delegation act as
+    themselves, so there is no user email for the caller to supply either."""
+    return (
+        is_oauth21_enabled()
+        or is_trust_gateway_identity()
+        or is_service_account_no_delegation()
+    )
 
 
 def _detect_oauth_version(
@@ -245,15 +251,52 @@ def _override_oauth21_user_email(
     return authenticated_user, args
 
 
+def _load_service_account_info() -> Dict[str, Any]:
+    """Load the configured service account key as a dict."""
+    config = get_oauth_config()
+    try:
+        if config.service_account_key_file:
+            with open(config.service_account_key_file) as f:
+                return json.load(f)
+        return json.loads(config.service_account_key_json or "")
+    except (OSError, json.JSONDecodeError) as e:
+        raise GoogleAuthenticationError(
+            f"Failed to read service account key: {e}"
+        ) from e
+
+
+def _get_service_account_email() -> str:
+    """Return the service account's own email (``client_email`` in the key)."""
+    client_email = _load_service_account_info().get("client_email")
+    if not client_email:
+        raise GoogleAuthenticationError(
+            "Service account key is missing 'client_email'."
+        )
+    return client_email
+
+
+# Services that need a real user (mailbox, contacts) or a Chat app identity, so
+# they cannot work when a service account acts as itself.
+_NO_DELEGATION_UNSUPPORTED_SERVICES = {
+    "gmail": "Gmail needs a user mailbox; enable domain-wide delegation to use it.",
+    "people": "Contacts belong to a user; enable domain-wide delegation to use them.",
+    "chat": (
+        "Google Chat is not yet supported for service accounts without "
+        "domain-wide delegation."
+    ),
+}
+
+
 def _get_service_account_credentials(
-    scopes: List[str], subject: str
+    scopes: List[str], subject: Optional[str] = None
 ) -> google_service_account.Credentials:
     """
-    Build service account credentials for domain-wide delegation.
+    Build service account credentials.
 
     Args:
         scopes: OAuth scopes to request
-        subject: Email of the domain user to impersonate
+        subject: Email of the domain user to impersonate (domain-wide delegation).
+            When None the service account authenticates as itself.
 
     Returns:
         google.oauth2.service_account.Credentials instance
@@ -344,6 +387,23 @@ async def _authenticate_service(
     Returns:
         Tuple of (service, actual_user_email)
     """
+    if is_service_account_no_delegation():
+        if service_name in _NO_DELEGATION_UNSUPPORTED_SERVICES:
+            raise GoogleAuthenticationError(
+                f"[{tool_name}] " + _NO_DELEGATION_UNSUPPORTED_SERVICES[service_name]
+            )
+        sa_email = _get_service_account_email()
+        credentials = _get_service_account_credentials(
+            _widen_drive_scope_for_dwd(resolved_scopes, tool_name)
+        )
+        service = build_google_service(service_name, service_version, credentials)
+        logger.info(
+            f"[{tool_name}] Authenticated {service_name} as {sa_email} "
+            "via service-account (no delegation)"
+        )
+        record_google_principal("service-account", sa_email)
+        return service, sa_email
+
     if is_service_account_enabled():
         canonical_email = _get_configured_user_google_email()
         if not canonical_email:
@@ -531,6 +591,8 @@ def _extract_managed_user_email(
     func_name: str,
 ) -> str:
     """Resolve an email from the configured authoritative identity source."""
+    if is_service_account_no_delegation():
+        return _get_service_account_email()
     if is_trust_gateway_identity():
         return require_gateway_principal(authenticated_user, auth_method)
     return _extract_oauth21_user_email(authenticated_user, func_name)

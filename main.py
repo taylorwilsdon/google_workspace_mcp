@@ -913,8 +913,11 @@ def main():
 
     # Service account mode startup validation
     if is_service_account_enabled():
+        no_delegation = not getattr(
+            get_oauth_config(), "service_account_delegation", True
+        )
         user_email = os.getenv("USER_GOOGLE_EMAIL")
-        if not user_email:
+        if not user_email and not no_delegation:
             fatal(
                 ui,
                 "Service account mode requires USER_GOOGLE_EMAIL",
@@ -948,8 +951,12 @@ def main():
             fatal(ui, "Service account key contains invalid JSON", str(e))
         except (IOError, OSError) as e:
             fatal(ui, "Failed to read service account key", str(e))
-        ui.step("Service account mode enabled", "domain-wide delegation")
-        ui.detail(f"impersonating {user_email}")
+        if no_delegation:
+            ui.step("Service account mode enabled", "no delegation")
+            ui.detail(f"acting as {key_data.get('client_email')}")
+        else:
+            ui.step("Service account mode enabled", "domain-wide delegation")
+            ui.detail(f"impersonating {user_email}")
 
     backend = get_selected_backend()
 

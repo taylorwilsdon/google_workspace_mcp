@@ -246,8 +246,25 @@ class OAuthConfig:
                 "but not MCP_ENABLE_OAUTH21=true."
             )
 
+        # Domain-wide delegation toggle. Defaults to on (impersonate USER_GOOGLE_EMAIL).
+        # When false, the service account authenticates as itself (no `subject`),
+        # which needs no Admin console delegation and suits single-tenant bots.
+        self.service_account_delegation = os.getenv(
+            "GOOGLE_SERVICE_ACCOUNT_DELEGATION", "true"
+        ).strip().lower() not in ("0", "false", "no", "off")
+
         # Optional per-request impersonation domain allowlist for service accounts.
         _raw_domains = os.getenv("DWD_ALLOWED_DOMAINS", "")
+        if (
+            _raw_domains
+            and self.service_account_enabled
+            and not self.service_account_delegation
+        ):
+            logger.warning(
+                "DWD_ALLOWED_DOMAINS is ignored when "
+                "GOOGLE_SERVICE_ACCOUNT_DELEGATION is disabled."
+            )
+            _raw_domains = ""
         self.dwd_allowed_domains: List[str] = (
             [d.strip().lower() for d in _raw_domains.split(",") if d.strip()]
             if self.service_account_enabled and _raw_domains
@@ -450,6 +467,7 @@ class OAuthConfig:
             "external_oauth21_provider": self.external_oauth21_provider,
             "pkce_required": self.pkce_required,
             "service_account_enabled": self.service_account_enabled,
+            "service_account_delegation": self.service_account_delegation,
             "transport_mode": self._transport_mode,
             "total_redirect_uris": len(self.get_redirect_uris()),
             "total_allowed_origins": len(self.get_allowed_origins()),
@@ -502,6 +520,17 @@ class OAuthConfig:
             True if service account mode is enabled
         """
         return self.service_account_enabled
+
+    def is_service_account_delegation_enabled(self) -> bool:
+        """
+        True when a service account key is configured and impersonates a user
+        (domain-wide delegation). False for no-delegation (bot) mode.
+        """
+        return self.service_account_enabled and self.service_account_delegation
+
+    def is_service_account_no_delegation(self) -> bool:
+        """True when a service account acts as itself, without impersonation."""
+        return self.service_account_enabled and not self.service_account_delegation
 
     def detect_oauth_version(self, request_params: Dict[str, Any]) -> str:
         """
@@ -691,3 +720,8 @@ def is_trust_gateway_identity() -> bool:
 def is_service_account_enabled() -> bool:
     """Check if service account (domain-wide delegation) mode is enabled."""
     return get_oauth_config().is_service_account_enabled()
+
+
+def is_service_account_no_delegation() -> bool:
+    """Check if service account mode runs without domain-wide delegation."""
+    return get_oauth_config().is_service_account_no_delegation()
