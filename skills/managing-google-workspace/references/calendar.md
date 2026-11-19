@@ -61,7 +61,7 @@ range instead of letting the default current time move between pages. With
 
 ### manage_event
 Create, update, delete, move, or RSVP to a calendar event. Moving changes the
-organizer calendar and returns the moved event. Google Calendar must authorize
+organizer calendar and returns a confirmation. Google Calendar must authorize
 access to both calendars, and only default events can be moved. Google may
 still send some emails when `send_updates="none"`.
 

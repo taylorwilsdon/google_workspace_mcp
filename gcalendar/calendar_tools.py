@@ -956,8 +956,6 @@ async def manage_event(
 ) -> str:
     """
     Manages calendar events. Supports creating, updating, deleting, moving, and RSVP.
-    Moving changes the organizer calendar. Only default events can be moved;
-    the authenticated user must have the required access to both calendars.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
@@ -967,7 +965,7 @@ async def manage_event(
         end_time (Optional[str]): End time (required for create). An RFC3339 UTC offset identifies the exact instant and is preserved. Without an offset, supply end_timezone or timezone. All-day end dates are exclusive.
         event_id (Optional[str]): Event ID (required for update, delete, move, and rsvp).
         calendar_id (str): Calendar ID (default: 'primary'). For move, this is the source.
-        destination_calendar_id (Optional[str]): New organizer calendar ID (required for move).
+        destination_calendar_id (Optional[str]): Calendar to move the event to, which becomes its organizer (required for move). Only default events can be moved, and the user needs access to both calendars.
         description (Optional[str]): Event description.
         location (Optional[str]): Event location.
         attendees (Optional[List[Union[str, Dict[str, Any]]]]): Attendee email addresses, attendee objects (e.g. {"email": ..., "responseStatus": "accepted"}), or a mix of both.
@@ -1019,7 +1017,7 @@ async def manage_event(
             recurrence drops past instances that no longer match. Defaults to False.
 
     Returns:
-        str: Confirmation message with event details, or the moved event as JSON.
+        str: Confirmation message with event details.
     """
     action_lower = action.lower().strip()
 
