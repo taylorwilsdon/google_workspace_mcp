@@ -1,87 +1,62 @@
-"""OAuth redirect ``code``/``state`` values must not reach the uvicorn access log."""
+"""Request query strings, such as OAuth ``code``/``state``, never reach the uvicorn access log."""
 
 import asyncio
 import logging
 import socket
+from typing import Any
 
 import httpx
 import pytest
 import uvicorn
 
 from core.log_formatter import (
-    RedactOAuthQueryParamsFilter,
+    RedactAccessLogQueryFilter,
     SuppressStatelessTransportTerminationFilter,
     install_noisy_log_filters,
-    redact_oauth_query_params,
 )
 from core.server import server
 
 
-@pytest.mark.parametrize(
-    "target, expected",
-    [
-        (
-            "/oauth2callback?state=s1&iss=https://accounts.google.com&code=4/0Ab&scope=email",
-            "/oauth2callback?state=<redacted>&iss=https://accounts.google.com&code=<redacted>&scope=email",
-        ),
-        (
-            "/oauth2callback?error=access_denied&state=s1",
-            "/oauth2callback?error=access_denied&state=<redacted>",
-        ),
-        (
-            "/auth/callback?code=abc&state=xyz",
-            "/auth/callback?code=<redacted>&state=<redacted>",
-        ),
-        (
-            "/oauth2callback?%63ode=c1&st%61te=s1&x=%63ode",
-            "/oauth2callback?%63ode=<redacted>&st%61te=<redacted>&x=%63ode",
-        ),
-        ("/oauth2callback?xcode=1&codes=2", "/oauth2callback?xcode=1&codes=2"),
-        ("/oauth2callback?code", "/oauth2callback?code"),
-        ("/mcp", "/mcp"),
-    ],
-)
-def test_redact_oauth_query_params(target: str, expected: str) -> None:
-    assert redact_oauth_query_params(target) == expected
-
-
-def test_filter_keeps_other_args() -> None:
-    record = logging.LogRecord(
+def _access_record(args: Any) -> logging.LogRecord:
+    return logging.LogRecord(
         "uvicorn.access",
         logging.INFO,
         __file__,
         1,
         '%s - "%s %s HTTP/%s" %d',
-        ("127.0.0.1:1", "GET", "/oauth2callback?code=secret", "1.1", 200),
+        args,
         None,
     )
-    assert RedactOAuthQueryParamsFilter().filter(record) is True
-    assert record.args == (
-        "127.0.0.1:1",
-        "GET",
-        "/oauth2callback?code=<redacted>",
-        "1.1",
-        200,
-    )
+
+
+@pytest.mark.parametrize(
+    "target, expected",
+    [
+        ("/oauth2callback?state=s1&code=4/0Ab", "/oauth2callback?<query-redacted>"),
+        ("/mcp", "/mcp"),
+    ],
+)
+def test_filter_scrubs_only_the_query(target: str, expected: str) -> None:
+    record = _access_record(("127.0.0.1:1", "GET", target, "1.1", 200))
+    assert RedactAccessLogQueryFilter().filter(record) is True
+    assert record.args == ("127.0.0.1:1", "GET", expected, "1.1", 200)
 
 
 @pytest.mark.parametrize(
     "args",
     [None, ({"code": "x"},), ("127.0.0.1:1", "GET"), ("a", "GET", b"/cb?code=x")],
 )
-def test_filter_ignores_other_record_shapes(args: tuple | None) -> None:
-    record = logging.LogRecord(
-        "uvicorn.access", logging.INFO, __file__, 1, "msg", args, None
-    )
+def test_filter_ignores_other_record_shapes(args: Any) -> None:
+    record = _access_record(args)
     before = record.args
-    assert RedactOAuthQueryParamsFilter().filter(record) is True
+    assert RedactAccessLogQueryFilter().filter(record) is True
     assert record.args == before
 
 
 @pytest.mark.parametrize(
     "logger_name, filter_type",
     [
-        ("uvicorn.access", RedactOAuthQueryParamsFilter),
+        ("uvicorn.access", RedactAccessLogQueryFilter),
         ("mcp.server.streamable_http", SuppressStatelessTransportTerminationFilter),
     ],
 )
@@ -140,4 +115,4 @@ async def test_real_uvicorn_access_log_never_contains_the_code() -> None:
 
     text = "\n".join(capture.lines)
     assert "CODESECRET" not in text and "STATESECRET" not in text
-    assert "/oauth2callback?state=<redacted>&code=<redacted>" in text
+    assert "/oauth2callback?<query-redacted>" in text
