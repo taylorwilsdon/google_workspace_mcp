@@ -21,7 +21,6 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from core.log_formatter import scrub_url_queries  # noqa: E402
 from gdocs.docs_tools import find_and_replace_doc, search_docs  # noqa: E402
 
 
@@ -90,12 +89,14 @@ def test_scrub_url_queries_strips_embedded_request_uris():
     """HttpError messages embed the request URI; its query string carries the
     user's search terms, so the ERROR-level log must shed it while keeping
     the endpoint path that identifies what failed."""
+    from core.utils import _scrub_url_queries
+
     msg = (
         "<HttpError 400 when requesting "
         f"https://gmail.googleapis.com/gmail/v1/users/me/messages?q={SECRET}"
         "&maxResults=25 returned bad request>"
     )
-    scrubbed = scrub_url_queries(msg)
+    scrubbed = _scrub_url_queries(msg)
     assert SECRET not in scrubbed
     assert "ExampleCorp" not in scrubbed
     assert "gmail/v1/users/me/messages" in scrubbed

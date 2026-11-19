@@ -33,6 +33,7 @@ def _access_record(args: Any) -> logging.LogRecord:
     "target, expected",
     [
         ("/oauth2callback?state=s1&code=4/0Ab", "/oauth2callback?<query-redacted>"),
+        ("/oauth2callback?x='&code=c1", "/oauth2callback?<query-redacted>"),
         ("/mcp", "/mcp"),
     ],
 )

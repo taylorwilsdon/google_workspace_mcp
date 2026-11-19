@@ -22,21 +22,15 @@ class SuppressStatelessTransportTerminationFilter(logging.Filter):
         )
 
 
-_URL_QUERY_RE = re.compile(r"\?.*?(?=\s+returned(?:\s|$)|[>\"']|$)")
-
-
-def scrub_url_queries(text: str) -> str:
-    """Replace the query string of every URL in ``text`` with ``?<query-redacted>``."""
-    return _URL_QUERY_RE.sub("?<query-redacted>", text)
-
-
 class RedactAccessLogQueryFilter(logging.Filter):
-    """Scrub the query from uvicorn access lines, whose third arg is the request target."""
+    """Replace the query in uvicorn access lines, whose third arg is the request target."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         args = record.args
         if isinstance(args, tuple) and len(args) >= 3 and isinstance(args[2], str):
-            record.args = (*args[:2], scrub_url_queries(args[2]), *args[3:])
+            path, sep, _query = args[2].partition("?")
+            if sep:
+                record.args = (*args[:2], f"{path}?<query-redacted>", *args[3:])
         return True
 
 
