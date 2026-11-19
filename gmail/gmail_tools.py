@@ -100,6 +100,7 @@ from gmail.gmail_helpers import (
     modify_gmail_thread_labels,
     read_gmail_message_page,
     send_message_once,
+    thread_message_status,
     update_gmail_filter,
 )
 from gmail.gmail_web_mime import TextDirection
@@ -3769,7 +3770,7 @@ def _format_thread_content(
         # Add message to content
         content_lines.extend(
             [
-                f"=== Message {i} ===",
+                f"=== Message {i}{thread_message_status(message)} ===",
                 f"From: {sender}",
                 f"Date: {date}",
             ]
