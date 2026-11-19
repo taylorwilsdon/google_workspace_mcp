@@ -26,7 +26,7 @@ workspace-cli list
 workspace-cli call <tool_name> key=value ...
 ```
 
-- Pass `user_google_email=USER_EMAIL` only when the tool schema requires it (legacy OAuth 2.0 without `USER_GOOGLE_EMAIL` set). Omit it for OAuth 2.1 and trusted-gateway servers, which take it from the verified identity.
+- Pass `user_google_email=USER_EMAIL` only when the tool schema requires it (legacy OAuth 2.0 without `USER_GOOGLE_EMAIL` set). Omit it for OAuth 2.1 and trusted-gateway servers, which take it from the verified identity, and for servers with a pinned email, whose tools do not have the parameter.
 - Arguments are `key=value` pairs; values are parsed as JSON when possible, so pass lists and objects as JSON (e.g. `label_ids='["INBOX"]'`).
 - The server must be reachable over HTTP. The default URL is `http://localhost:8000/mcp` (a server started with `--transport streamable-http`); override it with `--url` before the subcommand (`workspace-cli --url <url> call ...`) or `WORKSPACE_MCP_URL`. Plugin users on stdio can set `WORKSPACE_MCP_HTTP_PORT` to expose a loopback sidecar at `http://127.0.0.1:<port>/mcp`.
 - If `workspace-cli` is not on PATH, run `uv run workspace-cli` from a checkout of this repo. Installing it permanently (`uv tool install .` in that checkout) is a manual setup step for the user. Never use `uvx workspace-cli`: an unrelated, abandoned PyPI package squats that name.
