@@ -68,20 +68,12 @@ def get_default_credentials_dir():
     # Check WORKSPACE_MCP_CREDENTIALS_DIR first (preferred)
     workspace_creds_dir = os.getenv("WORKSPACE_MCP_CREDENTIALS_DIR")
     if workspace_creds_dir:
-        expanded = os.path.expanduser(workspace_creds_dir)
-        logger.info(
-            f"Using credentials directory from WORKSPACE_MCP_CREDENTIALS_DIR: {expanded}"
-        )
-        return expanded
+        return os.path.expanduser(workspace_creds_dir)
 
     # Fall back to GOOGLE_MCP_CREDENTIALS_DIR for backward compatibility
     google_creds_dir = os.getenv("GOOGLE_MCP_CREDENTIALS_DIR")
     if google_creds_dir:
-        expanded = os.path.expanduser(google_creds_dir)
-        logger.info(
-            f"Using credentials directory from GOOGLE_MCP_CREDENTIALS_DIR: {expanded}"
-        )
-        return expanded
+        return os.path.expanduser(google_creds_dir)
 
     # Use user home directory for credentials storage
     home_dir = os.path.expanduser("~")
@@ -1041,7 +1033,6 @@ def get_credentials(
 ) -> Optional[Credentials]:
     """
     Retrieves stored credentials, prioritizing OAuth 2.1 store, then session, then file. Refreshes if necessary.
-    If credentials are loaded from file and a session_id is present, they are cached in the session.
     In single-user mode, bypasses session mapping. If user_google_email is provided, only credentials
     for that email are used and the function returns None instead of falling back to any available
     credentials. If user_google_email is not provided, any available credentials may be used.
@@ -1216,15 +1207,6 @@ def get_credentials(
                 logger.debug(
                     f"[get_credentials] No session credentials, skipping file store in stateless mode for user_google_email '{user_google_email}'."
                 )
-
-            if credentials and session_id:
-                logger.debug(
-                    f"[get_credentials] Loaded from file for user '{user_google_email}', caching to session '{session_id}'."
-                )
-                if not skip_session_cache:
-                    save_credentials_to_session(
-                        session_id, credentials
-                    )  # Cache for current session
 
         if not credentials:
             logger.info(

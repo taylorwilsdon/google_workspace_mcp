@@ -133,8 +133,7 @@ def test_get_credentials_skips_session_update_when_refresh_persist_fails(monkeyp
     assert result is None
     assert credential_store.store_calls == [("user@example.com", "fresh-token")]
     assert oauth_store.store_calls == []
-    assert len(session_cache_writes) == 1
-    assert session_cache_writes[0][0] == "session-1"
+    assert session_cache_writes == []
 
 
 @pytest.mark.parametrize(

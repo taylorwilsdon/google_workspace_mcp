@@ -21,11 +21,12 @@ from typing import Annotated, Any, List, NamedTuple, Optional, Union
 from pydantic import BeforeValidator
 from defusedxml import DefusedXmlException, ElementTree as ET
 
+import fastmcp
 from fastmcp.exceptions import ToolError
 from googleapiclient.errors import HttpError
 from mcp.types import ImageContent
 from .api_enablement import get_api_enablement_message
-from auth.google_auth import GoogleAuthenticationError
+from auth.google_auth import GoogleAuthenticationError, get_default_credentials_dir
 from auth.oauth_config import (
     get_transport_mode,
     is_external_oauth21_provider,
@@ -257,6 +258,15 @@ def _get_allowed_file_dirs() -> list[Path]:
     return unique_dirs
 
 
+def _file_identity(path: Path) -> Optional[tuple[int, int]]:
+    """Return ``(st_dev, st_ino)`` for ``path``, or None if it cannot be stat'ed."""
+    try:
+        stat_result = path.stat()
+    except OSError:
+        return None
+    return stat_result.st_dev, stat_result.st_ino
+
+
 def validate_file_path(file_path: str) -> Path:
     """
     Validate that a file path is safe to read from the server filesystem.
@@ -336,18 +346,23 @@ def validate_file_path(file_path: str) -> Path:
         )
 
     home = Path.home()
-    sensitive_home_dirs = (
-        ".kube",
-        ".gnupg",
-        ".config/gcloud",
-    )
-    for sensitive_dir in sensitive_home_dirs:
-        blocked = home / sensitive_dir
-        if resolved == blocked or str(resolved).startswith(str(blocked) + "/"):
-            raise ValueError(
-                f"Access to '{resolved_str}' is not allowed: "
-                "path is in a directory that commonly contains secrets or credentials."
-            )
+    blocked_ids = {
+        _file_identity(blocked)
+        for blocked in (
+            home / ".kube",
+            home / ".gnupg",
+            home / ".config" / "gcloud",
+            Path(get_default_credentials_dir()),
+        )
+    } - {None}
+    if any(
+        _file_identity(ancestor) in blocked_ids
+        for ancestor in (resolved, *resolved.parents)
+    ):
+        raise ValueError(
+            f"Access to '{resolved_str}' is not allowed: "
+            "path is in a directory that commonly contains secrets or credentials."
+        )
 
     # Block other credential/secret file patterns
     sensitive_names = {
@@ -1246,7 +1261,7 @@ def handle_http_errors(
     A decorator to handle Google API HttpErrors and transient SSL errors in a standardized way.
 
     It wraps a tool function, catches HttpError, logs a detailed error message,
-    and raises a generic Exception with a user-friendly message.
+    and raises a ToolError with a user-friendly message.
 
     If is_read_only is True, it will also catch ssl.SSLError and retry with
     exponential backoff. After exhausting retries, it raises a TransientNetworkError.
@@ -1289,6 +1304,11 @@ def handle_http_errors(
                 except HttpError as error:
                     user_google_email = kwargs.get("user_google_email", "N/A")
                     error_details = str(error)
+                    error_summary = (
+                        f"HTTP {error.resp.status}"
+                        if fastmcp.settings.mask_error_details
+                        else error_details
+                    )
 
                     # Check if this is an API not enabled error
                     if (
@@ -1306,7 +1326,7 @@ def handle_http_errors(
                             )
                         else:
                             message = (
-                                f"API error in {tool_name}: {error}. "
+                                f"API error in {tool_name}: {error_summary}. "
                                 f"The required API is not enabled for your project. "
                                 f"Please check the Google Cloud Console to enable it."
                             )
@@ -1339,13 +1359,13 @@ def handle_http_errors(
                                 "and the appropriate service_name."
                             )
                         message = (
-                            f"API error in {tool_name}: {error}. "
+                            f"API error in {tool_name}: {error_summary}. "
                             f"You might need to re-authenticate for user '{user_google_email}'. "
                             f"{auth_hint}"
                         )
                     else:
                         # Other HTTP errors (400 Bad Request, etc.) - don't suggest re-auth
-                        message = f"API error in {tool_name}: {error}"
+                        message = f"API error in {tool_name}: {error_summary}"
 
                     # ERROR gets the scrubbed form (HttpError embeds the request
                     # URI and may echo user content in its response details);
@@ -1354,7 +1374,7 @@ def handle_http_errors(
                         f"API error in {tool_name}: {_format_http_error_for_log(error)}"
                     )
                     logger.debug(f"API error detail in {tool_name}", exc_info=True)
-                    raise Exception(message) from error
+                    raise ToolError(message) from error
                 except TransientNetworkError:
                     # Re-raise without wrapping to preserve the specific error type
                     raise
