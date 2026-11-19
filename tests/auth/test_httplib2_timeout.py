@@ -142,6 +142,7 @@ async def test_get_authenticated_google_service_builds_service_with_authorized_h
         tool_name="test_tool",
         user_google_email="user@example.com",
         required_scopes=["scope.a"],
+        allow_auth_flow=True,
     )
 
     assert result is service

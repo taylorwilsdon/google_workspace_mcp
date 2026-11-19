@@ -14,6 +14,7 @@ from google.oauth2 import service_account as google_service_account
 from fastmcp.server.dependencies import get_access_token, get_context
 from auth.google_auth import (
     GoogleAuthenticationError,
+    GoogleServiceBuildError,
     build_google_service,
     get_authenticated_google_service,
     recycling,
@@ -337,9 +338,15 @@ async def _authenticate_service(
     resolved_scopes: List[str],
     mcp_session_id: Optional[str],
     authenticated_user: Optional[str],
+    *,
+    allow_auth_flow: bool,
 ) -> Tuple[Any, str]:
     """
     Authenticate and get Google service using appropriate OAuth version.
+
+    ``allow_auth_flow`` controls whether legacy OAuth may start a new consent
+    flow when credentials are missing or lack scopes (False for optional
+    services, which degrade to None instead).
 
     Returns:
         Tuple of (service, actual_user_email)
@@ -401,6 +408,7 @@ async def _authenticate_service(
             user_google_email=user_google_email,
             required_scopes=resolved_scopes,
             session_id=mcp_session_id,
+            allow_auth_flow=allow_auth_flow,
         )
     record_google_principal(auth_mode, actual_user_email)
     return service, actual_user_email
@@ -884,6 +892,7 @@ def require_google_service(
                     resolved_scopes,
                     mcp_session_id,
                     authenticated_user,
+                    allow_auth_flow=True,
                 )
             except GoogleScopeError as e:
                 logger.info(
@@ -1041,6 +1050,9 @@ def require_multiple_services(service_configs: List[Dict[str, Any]]):
                                 resolved_scopes,
                                 mcp_session_id,
                                 authenticated_user,
+                                # An optional service must not start OAuth for
+                                # its missing scope; it degrades to None below.
+                                allow_auth_flow=not config.get("optional", False),
                             )
 
                             # Inject service with specified parameter name
@@ -1048,15 +1060,33 @@ def require_multiple_services(service_configs: List[Dict[str, Any]]):
                             stack.enter_context(recycling(service))
                             services_created = True
 
-                        except GoogleScopeError as e:
-                            logger.info(
-                                "[%s] Missing %s permissions: %s",
-                                tool_name,
-                                service_name,
-                                e,
-                            )
-                            return _missing_scope_message(service_name, e)
                         except GoogleAuthenticationError as e:
+                            # Optional services degrade gracefully on AUTH failure
+                            # only: a missing scope (or other auth error) injects None
+                            # instead of failing the whole tool, so the primary action
+                            # still runs and the tool reports the fallback. Non-auth
+                            # errors are not caught here, so real bugs surface.
+                            # A build failure (legacy OAuth wraps it as an auth
+                            # error) is a real bug, not a missing credential.
+                            if config.get("optional", False) and not isinstance(
+                                e, GoogleServiceBuildError
+                            ):
+                                logger.info(
+                                    f"[{tool_name}] Optional service '{service_type}' "
+                                    f"unavailable for {user_google_email} "
+                                    f"({service_name}/{service_version}): {e}. "
+                                    "Injecting None; tool will degrade gracefully."
+                                )
+                                kwargs[param_name] = None
+                                continue
+                            if isinstance(e, GoogleScopeError):
+                                logger.info(
+                                    "[%s] Missing %s permissions: %s",
+                                    tool_name,
+                                    service_name,
+                                    e,
+                                )
+                                return _missing_scope_message(service_name, e)
                             logger.error(
                                 f"[{tool_name}] Auth failed for {user_google_email} | "
                                 f"{service_name}/{service_version} | "
@@ -1094,9 +1124,12 @@ def require_multiple_services(service_configs: List[Dict[str, Any]]):
                 wrapper.__doc__ = _remove_user_email_arg_from_docstring(func.__doc__)
 
         # Attach all required scopes to the wrapper for tool filtering
+        # Optional services are excluded: their missing scopes degrade at call
+        # time (None injected), so they must not hide the tool when filtering.
         all_scopes = []
         for config in service_configs:
-            all_scopes.extend(_resolve_scopes(config["scopes"]))
+            if not config.get("optional", False):
+                all_scopes.extend(_resolve_scopes(config["scopes"]))
         wrapper._required_google_scopes = all_scopes
 
         return wrapper
