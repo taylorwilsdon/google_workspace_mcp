@@ -24,30 +24,6 @@ from core.utils import UserInputError
 
 logger = logging.getLogger(__name__)
 
-
-async def _move_event(
-    service: Resource,
-    calendar_id: str,
-    event_id: str,
-    destination_calendar_id: str,
-    send_updates: str,
-) -> str:
-    """Move a default event using the authenticated Calendar service."""
-    moved_event = await asyncio.to_thread(
-        lambda: (
-            service.events()
-            .move(
-                calendarId=calendar_id,
-                eventId=event_id,
-                destination=destination_calendar_id,
-                sendUpdates=send_updates,
-            )
-            .execute()
-        )
-    )
-    return json.dumps(moved_event)
-
-
 _WEEKDAYS = (
     "Monday",
     "Tuesday",
@@ -1208,6 +1184,34 @@ def _format_acl_rule(rule: Dict[str, Any]) -> str:
     scope = rule.get("scope", {})
     target = " ".join(filter(None, (scope.get("type"), scope.get("value"))))
     return f"- {rule.get('role')}: {target} (Rule ID: {rule.get('id')})"
+
+
+async def _move_event(
+    service: Resource,
+    calendar_id: str,
+    event_id: str,
+    destination_calendar_id: str,
+    send_updates: str,
+) -> str:
+    """Move an event to another calendar and summarize the result."""
+    event = await asyncio.to_thread(
+        lambda: (
+            service.events()
+            .move(
+                calendarId=calendar_id,
+                eventId=event_id,
+                destination=destination_calendar_id,
+                sendUpdates=send_updates,
+            )
+            .execute()
+        )
+    )
+    organizer = event.get("organizer", {}).get("email", destination_calendar_id)
+    return (
+        f"Moved event '{event.get('summary', 'No Title')}' (ID: {event.get('id', event_id)}) "
+        f"from calendar '{calendar_id}' to '{organizer}'. "
+        f"Link: {event.get('htmlLink', 'No link available')}"
+    )
 
 
 async def _create_calendar(

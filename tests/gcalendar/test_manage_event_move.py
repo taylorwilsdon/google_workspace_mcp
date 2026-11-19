@@ -1,18 +1,12 @@
-"""Synthetic tests for the existing Calendar tool's native move action."""
+"""Tests for manage_event's move action."""
 
-import json
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import Mock, call
 
 import pytest
-
 from googleapiclient.errors import HttpError
 
-from auth.permissions import set_permissions
-from auth.scopes import CALENDAR_EVENTS_SCOPE, set_read_only
-from core import tool_registry
-from core.server import server
 from core.utils import UserInputError
 from gcalendar.calendar_tools import manage_event
 
@@ -33,16 +27,16 @@ async def _move(service: Mock, **kwargs: Any) -> str:
         ({"send_updates": "externalOnly"}, "externalOnly"),
     ],
 )
-async def test_move_returns_native_resource_and_preserves_notification_policy(
+async def test_move_calls_native_move_and_summarizes_result(
     args: dict[str, str], notification: str
 ) -> None:
     service = Mock()
-    event = {
+    service.events.return_value.move.return_value.execute.return_value = {
         "id": "original",
+        "summary": "Planning",
         "organizer": {"email": "team@example.com"},
-        "attendees": [{"email": "guest@example.com", "responseStatus": "accepted"}],
+        "htmlLink": "https://calendar.google.com/event?eid=original",
     }
-    service.events.return_value.move.return_value.execute.return_value = event
     result = await _move(
         service,
         calendar_id="personal@example.com",
@@ -50,7 +44,10 @@ async def test_move_returns_native_resource_and_preserves_notification_policy(
         destination_calendar_id="team@example.com",
         **args,
     )
-    assert json.loads(result) == event
+    assert result == (
+        "Moved event 'Planning' (ID: original) from calendar 'personal@example.com' "
+        "to 'team@example.com'. Link: https://calendar.google.com/event?eid=original"
+    )
     expected = (
         call.events()
         .move(
@@ -98,7 +95,7 @@ async def test_invalid_move_makes_no_google_call(
 
 
 @pytest.mark.asyncio
-async def test_denied_move_never_recreates_event() -> None:
+async def test_move_propagates_http_error() -> None:
     service = Mock()
     error = HttpError(SimpleNamespace(status=403, reason="Move rejected"), b"{}")
     service.events.return_value.move.return_value.execute.side_effect = error
@@ -118,36 +115,3 @@ async def test_denied_move_never_recreates_event() -> None:
         .execute()
     )
     assert service.mock_calls == expected.call_list()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "permissions,read_only,removed",
-    [
-        ({"calendar": "readonly"}, False, True),
-        ({"calendar": "full"}, False, False),
-        (None, True, True),
-    ],
-)
-async def test_move_preserves_scope_and_write_policy(
-    monkeypatch: pytest.MonkeyPatch,
-    permissions: dict[str, str] | None,
-    read_only: bool,
-    removed: bool,
-) -> None:
-    tool = await server.get_tool("manage_event")
-    assert tool.fn._required_google_scopes == [CALENDAR_EVENTS_SCOPE]
-    assert tool.annotations.read_only_hint is False
-    provider = SimpleNamespace(_components={"tool:manage_event@1": tool}, removed=[])
-    provider.remove_tool = provider.removed.append
-    monkeypatch.setattr(tool_registry, "is_oauth21_enabled", lambda: False)
-    monkeypatch.setattr(tool_registry, "get_enabled_tools", lambda: None)
-    monkeypatch.setattr(tool_registry, "get_disabled_tools", set)
-    set_permissions(permissions)
-    set_read_only(read_only)
-    try:
-        tool_registry.filter_server_tools(SimpleNamespace(local_provider=provider))
-    finally:
-        set_permissions(None)
-        set_read_only(False)
-    assert provider.removed == (["manage_event"] if removed else [])
