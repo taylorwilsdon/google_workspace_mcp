@@ -3,10 +3,12 @@
 import asyncio
 import gc
 import hashlib
+import inspect
 import logging
 import os
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from typing import List, Optional
+from typing import Any, List, Optional, TypeVar, overload
 from importlib import metadata
 from urllib.parse import urlparse, ParseResult
 
@@ -17,6 +19,8 @@ install_startup_warning_filters()
 from auth.auth_info_middleware import AuthInfoMiddleware
 from core.camel_case_middleware import CamelCaseArgumentsMiddleware
 from core.portable_schema_middleware import PortableSchemaMiddleware
+from core.tool_descriptions import docstring_description
+from core.toolset_header_middleware import ToolsetHeaderMiddleware
 from auth.google_auth import (
     check_client_secrets,
     get_google_api_timeout,
@@ -35,6 +39,7 @@ from auth.oauth_config import (
 from auth.oauth_proxy_config import (
     get_oauth_proxy_consent_kwargs,
     get_oauth_proxy_expiry_kwargs,
+    get_oauth_proxy_google_prompt_kwargs,
 )
 from auth.oauth_responses import (
     create_error_response,
@@ -53,6 +58,7 @@ import fastmcp
 from fastmcp import FastMCP
 from auth.google_oauth_provider import GoogleProvider
 from fastmcp.server.lifespan import lifespan
+from fastmcp.utilities.types import AnyFunction
 from mcp.types import ToolAnnotations, Icon
 from starlette.applications import Starlette
 from starlette.datastructures import MutableHeaders
@@ -412,8 +418,44 @@ async def _google_api_executor(server: FastMCP):
     yield None
 
 
+F = TypeVar("F", bound=AnyFunction)
+
+
 # Custom FastMCP that adds secure middleware stack for OAuth 2.1
 class SecureFastMCP(FastMCP):
+    @overload
+    def tool(self, name_or_fn: F, **kwargs: Any) -> F: ...
+
+    @overload
+    def tool(
+        self, name_or_fn: str | None = None, **kwargs: Any
+    ) -> Callable[[F], F]: ...
+
+    def tool(
+        self, name_or_fn: str | AnyFunction | None = None, **kwargs: Any
+    ) -> AnyFunction | Callable[[F], F]:
+        """Register a tool described by its docstring above ``Args:``, or ``description``."""
+        register = super().tool
+        if kwargs.get("description") is not None:
+            return register(name_or_fn, **kwargs)
+        kwargs.pop("description", None)
+        if inspect.isroutine(name_or_fn):
+            return register(
+                name_or_fn, description=docstring_description(name_or_fn), **kwargs
+            )
+        if name_or_fn is None or (
+            isinstance(name_or_fn, str) and kwargs.get("name") is None
+        ):
+            if name_or_fn is not None:
+                kwargs["name"] = name_or_fn
+
+            def register_with_description(fn: F) -> F:
+                return register(fn, description=docstring_description(fn), **kwargs)
+
+            return register_with_description
+        # Let FastMCP raise its usual error for unsupported arguments.
+        return register(name_or_fn, **kwargs)
+
     def http_app(self, **kwargs) -> "Starlette":
         """Override to add secure middleware stack for OAuth 2.1."""
         # Bound memory retained by abandoned stateful sessions. Resolve an omitted
@@ -539,6 +581,10 @@ server = SecureFastMCP(
     icons=_brand_icons,
     lifespan=_freeze_startup_heap | _google_api_executor,
 )
+
+# Narrow tools per request with X-MCP-Toolsets / X-MCP-Tools. See
+# https://github.com/taylorwilsdon/google_workspace_mcp/issues/509
+server.add_middleware(ToolsetHeaderMiddleware())
 
 # Accept camelCase argument names (calendarId, timeMin, ...) from callers that
 # mirror the Google API field names, mapping them onto the snake_case tool
@@ -824,6 +870,20 @@ def configure_server_for_http():
                         "OAuth 2.1: restricting DCR client redirect URIs to allowlist: %s",
                         allowed_client_redirect_uris,
                     )
+                if client_storage is None:
+                    storage_fingerprint = hashlib.sha256(
+                        derive_jwt_key(
+                            high_entropy_material=jwt_signing_key.decode(),
+                            salt="fastmcp-storage-encryption-key",
+                        )
+                    ).hexdigest()[:12]
+                    logger.info(
+                        "OAuth 2.1: Using FastMCP default encrypted FileTreeStore for OAuth proxy client_storage (directory=%s). "
+                        "Set WORKSPACE_MCP_OAUTH_PROXY_STORAGE_BACKEND to memory, disk or valkey to change it.",
+                        (
+                            fastmcp.settings.home / "oauth-proxy" / storage_fingerprint
+                        ).absolute(),
+                    )
                 provider = WorkspaceGoogleProvider(
                     client_id=config.client_id,
                     client_secret=config.client_secret,
@@ -836,6 +896,7 @@ def configure_server_for_http():
                     allowed_client_redirect_uris=allowed_client_redirect_uris,
                     **expiry_kwargs,
                     **get_oauth_proxy_consent_kwargs(),
+                    **get_oauth_proxy_google_prompt_kwargs(),
                 )
                 if provider.client_registration_options is not None:
                     # Keep protocol-level auth limited to base identity scopes, but

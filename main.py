@@ -1047,11 +1047,7 @@ def main():
             # Check port availability before starting HTTP server
             conflict = _http_port_conflict(host, port)
             if conflict is not None:
-                fatal(
-                    ui,
-                    f"Port {port} is already in use. Cannot start HTTP server.",
-                    conflict,
-                )
+                fatal(ui, f"Cannot start HTTP server on {host}:{port}", conflict)
 
             server.run(
                 transport="streamable-http",
@@ -1073,10 +1069,12 @@ def main():
                 async def _run_dual() -> None:
                     """Run stdio and HTTP transports concurrently."""
                     http_available = True
-                    if _http_port_conflict(http_host, http_port) is not None:
+                    conflict = _http_port_conflict(http_host, http_port)
+                    if conflict is not None:
                         logger.warning(
-                            "Port %d in use, workspace-cli HTTP endpoint unavailable",
+                            "workspace-cli HTTP endpoint unavailable on port %d: %s",
                             http_port,
+                            conflict,
                         )
                         http_available = False
 
