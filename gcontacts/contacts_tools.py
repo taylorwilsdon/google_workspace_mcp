@@ -1399,9 +1399,7 @@ async def manage_contacts_batch(
         contacts_map: Dict[str, Any] = {}
         skipped: List[str] = []
 
-        for update in updates:
-            cid = _people_resource_name(update.contact_id)
-
+        for cid, update in zip(resource_names, updates):
             current = current_people.get(cid)
             if not current:
                 logger.warning(f"No etag found for {cid}, skipping")

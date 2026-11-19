@@ -97,23 +97,17 @@ class UserInputError(Exception):
     pass
 
 
-_PATH_SEGMENT_PATTERN = re.compile(r"[A-Za-z0-9._-]+")
+_PATH_SEGMENT_PATTERN = re.compile(r"(?!\.+\Z)[A-Za-z0-9._-]+")
+
+
+def is_path_segment(value: Any) -> bool:
+    """Return True if value is safe unescaped as one segment of a Google API resource path."""
+    return isinstance(value, str) and _PATH_SEGMENT_PATTERN.fullmatch(value) is not None
 
 
 def check_path_segment(value: Any, label: str) -> str:
-    """Return value if it is safe as one segment of a Google API resource path.
-
-    Some Google APIs put resource names into the URL path without escaping
-    (reserved expansion, ``{+name}`` in the discovery document), so ``:``,
-    ``?`` or ``#`` inside an ID would change the method or the query sent.
-    An ID is accepted only if it is made of letters, digits, ``.``, ``_`` and
-    ``-``, and is not only dots.
-    """
-    if (
-        not isinstance(value, str)
-        or _PATH_SEGMENT_PATTERN.fullmatch(value) is None
-        or not value.strip(".")
-    ):
+    """Return value, raising UserInputError unless is_path_segment accepts it."""
+    if not is_path_segment(value):
         raise UserInputError(
             f"Invalid {label} {value!r}: expected only letters, digits, '.', '_' or '-'."
         )
