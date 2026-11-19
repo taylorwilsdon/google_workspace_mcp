@@ -214,6 +214,12 @@ class BatchOperationManager:
                 )
                 msg += f". Created tabs: {tab_info}"
 
+            for request, reply in zip(requests, result.get("replies", [])):
+                if "replaceAllText" in request:
+                    count = reply.get("replaceAllText", {}).get("occurrencesChanged", 0)
+                    find_text = request["replaceAllText"]["containsText"]["text"]
+                    msg += f". Replaced {count} occurrence(s) of '{find_text}'"
+
             return True, msg, metadata
 
         except Exception as e:
