@@ -1461,10 +1461,12 @@ def _describe_data_validation(rule: dict[str, Any]) -> str:
     condition = rule.get("condition") or {}
     text = condition.get("type") or "UNKNOWN"
     values = [
-        value.get("userEnteredValue") or value.get("relativeDate") or ""
+        json.dumps(
+            str(value.get("userEnteredValue") or value.get("relativeDate") or ""),
+            ensure_ascii=False,
+        )
         for value in condition.get("values") or []
     ]
-    values = [json.dumps(str(value), ensure_ascii=False) for value in values if value]
     if values:
         text += ": " + ", ".join(values)
     if rule.get("strict"):
