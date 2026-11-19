@@ -475,12 +475,12 @@ def _generate_gmail_web_url(
 ) -> str:
     """Return the Gmail web URL for a message or thread ID in any label (#all).
 
-    The account is addressed by email when known, else by browser account index.
+    Selects the account by ``authuser`` email when known, else by index in the path.
     """
-    account = (
-        quote(user_google_email, safe="@") if user_google_email else str(account_index)
-    )
-    return f"https://mail.google.com/mail/u/{account}/#all/{item_id}"
+    if user_google_email:
+        authuser = quote(user_google_email, safe="@")
+        return f"https://mail.google.com/mail/?authuser={authuser}#all/{item_id}"
+    return f"https://mail.google.com/mail/u/{account_index}/#all/{item_id}"
 
 
 def _http_error_status(error: HttpError) -> Optional[int]:
