@@ -596,3 +596,39 @@ def set_credential_store(store: CredentialStore):
     global _credential_store
     _credential_store = store
     logger.info(f"Set credential store: {type(store).__name__}")
+
+
+class CredentialStoreUnavailableError(RuntimeError):
+    """Raised when the credential store cannot be opened or read to list accounts."""
+
+
+def get_legacy_authenticated_users() -> List[str]:
+    """List user email addresses with stored credentials in legacy OAuth 2.0 mode.
+
+    Returns an empty list in OAuth 2.1 mode, when trusted gateway identity is
+    enabled, or when the store backend does not support enumeration. Raises
+    CredentialStoreUnavailableError when the store cannot be opened or read, so
+    callers can tell a failure apart from "no accounts".
+    """
+    from auth.oauth_config import is_oauth21_enabled, is_trust_gateway_identity
+
+    if is_oauth21_enabled() or is_trust_gateway_identity():
+        return []
+
+    try:
+        store = get_credential_store()
+    except Exception as e:
+        raise CredentialStoreUnavailableError(
+            "The credential store could not be opened."
+        ) from e
+
+    try:
+        users = store.list_users()
+    except NotImplementedError:
+        return []
+    except Exception as e:
+        raise CredentialStoreUnavailableError(
+            "Stored accounts could not be listed."
+        ) from e
+
+    return [u for u in users if isinstance(u, str) and "@" in u]
