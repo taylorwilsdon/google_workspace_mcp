@@ -824,6 +824,17 @@ def _derive_reply_all_recipients(
     return derived_to or None, derived_cc
 
 
+def thread_message_status(message: Mapping[str, Any]) -> str:
+    """Return a header suffix such as " [DRAFT, NOT SENT]" for draft or trashed mail."""
+    labels = set(message.get("labelIds") or ())
+    parts = []
+    if "DRAFT" in labels:
+        parts.append("DRAFT, NOT SENT")
+    if "TRASH" in labels:
+        parts.append("IN TRASH")
+    return f" [{', '.join(parts)}]" if parts else ""
+
+
 def _analyze_thread_ownership_impl(
     thread_response: dict,
     user_google_email: str,
