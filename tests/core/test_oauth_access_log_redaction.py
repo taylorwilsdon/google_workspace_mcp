@@ -10,6 +10,7 @@ import uvicorn
 
 from core.log_formatter import (
     RedactOAuthQueryParamsFilter,
+    SuppressStatelessTransportTerminationFilter,
     install_noisy_log_filters,
     redact_oauth_query_params,
 )
@@ -31,7 +32,6 @@ from core.server import server
             "/auth/callback?code=abc&state=xyz",
             "/auth/callback?code=<redacted>&state=<redacted>",
         ),
-        # names are matched after percent-decoding, as the server parses them
         (
             "/oauth2callback?%63ode=c1&st%61te=s1&x=%63ode",
             "/oauth2callback?%63ode=<redacted>&st%61te=<redacted>&x=%63ode",
@@ -65,13 +65,33 @@ def test_filter_keeps_other_args() -> None:
     )
 
 
-def test_install_is_idempotent() -> None:
+@pytest.mark.parametrize(
+    "args",
+    [None, ({"code": "x"},), ("127.0.0.1:1", "GET"), ("a", "GET", b"/cb?code=x")],
+)
+def test_filter_ignores_other_record_shapes(args: tuple | None) -> None:
+    record = logging.LogRecord(
+        "uvicorn.access", logging.INFO, __file__, 1, "msg", args, None
+    )
+    before = record.args
+    assert RedactOAuthQueryParamsFilter().filter(record) is True
+    assert record.args == before
+
+
+@pytest.mark.parametrize(
+    "logger_name, filter_type",
+    [
+        ("uvicorn.access", RedactOAuthQueryParamsFilter),
+        ("mcp.server.streamable_http", SuppressStatelessTransportTerminationFilter),
+    ],
+)
+def test_install_is_idempotent(
+    logger_name: str, filter_type: type[logging.Filter]
+) -> None:
     install_noisy_log_filters()
     install_noisy_log_filters()
     filters = [
-        f
-        for f in logging.getLogger("uvicorn.access").filters
-        if isinstance(f, RedactOAuthQueryParamsFilter)
+        f for f in logging.getLogger(logger_name).filters if isinstance(f, filter_type)
     ]
     assert len(filters) == 1
 
