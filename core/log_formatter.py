@@ -23,9 +23,6 @@ class SuppressStatelessTransportTerminationFilter(logging.Filter):
         )
 
 
-# OAuth redirect parameters: the authorization ``code`` is a credential until it is
-# redeemed, and ``state`` binds it to the pending flow. Names are matched after
-# percent-decoding, as the server decodes them.
 _OAUTH_QUERY_NAMES = frozenset({"code", "state"})
 
 
@@ -43,36 +40,27 @@ def redact_oauth_query_params(target: str) -> str:
 
 
 class RedactOAuthQueryParamsFilter(logging.Filter):
-    """Keep OAuth ``code``/``state`` values out of the uvicorn access log.
-
-    uvicorn logs ``'%s - "%s %s HTTP/%s" %d'`` with the request target as the third
-    argument; status, size and timing are untouched.
-    """
+    """Redact OAuth ``code``/``state`` in uvicorn access lines, whose third arg is the request target."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         args = record.args
         if isinstance(args, tuple) and len(args) >= 3 and isinstance(args[2], str):
-            redacted = redact_oauth_query_params(args[2])
-            if redacted != args[2]:
-                record.args = (*args[:2], redacted, *args[3:])
+            record.args = (*args[:2], redact_oauth_query_params(args[2]), *args[3:])
         return True
 
 
+def _add_filter_once(logger_name: str, filter_type: type[logging.Filter]) -> None:
+    target_logger = logging.getLogger(logger_name)
+    if not any(isinstance(existing, filter_type) for existing in target_logger.filters):
+        target_logger.addFilter(filter_type())
+
+
 def install_noisy_log_filters() -> None:
-    """Install targeted filters for known noisy third-party log lines, and the OAuth
-    parameter redaction on the uvicorn access logger."""
-    access_logger = logging.getLogger("uvicorn.access")
-    if not any(
-        isinstance(existing, RedactOAuthQueryParamsFilter)
-        for existing in access_logger.filters
-    ):
-        access_logger.addFilter(RedactOAuthQueryParamsFilter())
-    target_logger = logging.getLogger("mcp.server.streamable_http")
-    if not any(
-        isinstance(existing, SuppressStatelessTransportTerminationFilter)
-        for existing in target_logger.filters
-    ):
-        target_logger.addFilter(SuppressStatelessTransportTerminationFilter())
+    """Install targeted filters for noisy or sensitive third-party log lines."""
+    _add_filter_once("uvicorn.access", RedactOAuthQueryParamsFilter)
+    _add_filter_once(
+        "mcp.server.streamable_http", SuppressStatelessTransportTerminationFilter
+    )
 
 
 class EnhancedLogFormatter(logging.Formatter):
