@@ -16,7 +16,7 @@ import functools
 import inspect
 
 from pathlib import Path
-from typing import Annotated, Any, List, NamedTuple, Optional, Union
+from typing import Annotated, Any, List, NamedTuple, Optional, TypeGuard, Union
 
 from pydantic import BeforeValidator
 from defusedxml import DefusedXmlException, ElementTree as ET
@@ -95,6 +95,23 @@ class UserInputError(Exception):
     """Raised for user-facing input/validation errors that shouldn't be retried."""
 
     pass
+
+
+_PATH_SEGMENT_PATTERN = re.compile(r"(?!\.+\Z)[A-Za-z0-9._-]+")
+
+
+def is_path_segment(value: Any) -> TypeGuard[str]:
+    """Return True if value is safe unescaped as one segment of a Google API resource path."""
+    return isinstance(value, str) and _PATH_SEGMENT_PATTERN.fullmatch(value) is not None
+
+
+def check_path_segment(value: Any, label: str) -> str:
+    """Return value, raising UserInputError unless is_path_segment accepts it."""
+    if not is_path_segment(value):
+        raise UserInputError(
+            f"Invalid {label} {value!r}: expected only letters, digits, '.', '_' or '-'."
+        )
+    return value
 
 
 def _coerce_json_str_to_type(v: Any, expected_type: type) -> Any:

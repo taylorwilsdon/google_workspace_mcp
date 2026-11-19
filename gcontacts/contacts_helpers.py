@@ -14,11 +14,28 @@ from typing import Any, Dict, List, Optional
 
 from googleapiclient.errors import HttpError
 
-from core.utils import UserInputError
+from core.utils import UserInputError, check_path_segment
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_PERSON_FIELDS = "names,nicknames,emailAddresses,phoneNumbers,organizations"
+
+
+def _resource_name(value: str, collection: str, label: str) -> str:
+    """Return collection/<id> for a bare ID or a full resource name, refusing unsafe IDs."""
+    prefix = f"{collection}/"
+    return prefix + check_path_segment(value.removeprefix(prefix), label)
+
+
+def _people_resource_name(contact_id: str) -> str:
+    """Return people/<id> for "c123" or "people/c123", refusing unsafe IDs."""
+    return _resource_name(contact_id, "people", "contact_id")
+
+
+def _contact_group_resource_name(group_id: str) -> str:
+    """Return contactGroups/<id> for "abc" or "contactGroups/abc", refusing unsafe IDs."""
+    return _resource_name(group_id, "contactGroups", "group_id")
+
 
 _URL_SCHEME_HOST_RE = re.compile(
     r"([a-z][a-z0-9+.-]*:)(?!//)|((?:[a-z][a-z0-9+.-]*:)?//)?([^/?#@]*@)?([^/?#]*)",
