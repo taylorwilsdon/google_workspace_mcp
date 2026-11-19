@@ -164,6 +164,7 @@ For parameters: [references/docs.md](references/docs.md)
 | Write/append/clear values | `modify_sheet_values` |
 | Insert smart chips | `modify_sheet_values` (`chips`) |
 | Copy/paste a range with formulas and formatting | `modify_sheet_values` (`source_range`) |
+| Load rows from a local CSV/TSV file into an existing sheet | `modify_sheet_values` (`file_path`) |
 | Format cells | `format_sheet_range` |
 | Conditional formatting | `manage_conditional_formatting` |
 | Get spreadsheet info | `get_spreadsheet_info` |

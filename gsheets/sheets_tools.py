@@ -16,7 +16,12 @@ from mcp.types import ToolAnnotations
 
 from auth.service_decorator import require_google_service
 from core.server import server
-from core.utils import handle_http_errors, UserInputError, StringList
+from core.utils import (
+    handle_http_errors,
+    hide_local_file_args,
+    UserInputError,
+    StringList,
+)
 from core.comments import create_comment_tools
 from gdrive.drive_helpers import flag_incomplete_search, move_new_file_to_folder
 from gsheets.sheets_helpers import (
@@ -49,6 +54,7 @@ from gsheets.sheets_helpers import (
     _parse_condition_values,
     _parse_gradient_points,
     _parse_hex_color,
+    _read_delimited_file_values,
     _select_sheet,
     _values_contain_sheets_errors,
 )
@@ -366,6 +372,7 @@ async def read_sheet_values(
         openWorldHint=True,
     ),
 )
+@hide_local_file_args("file_path")
 @handle_http_errors("modify_sheet_values", service_type="sheets")
 @require_google_service("sheets", "sheets_write")
 async def modify_sheet_values(
@@ -380,16 +387,18 @@ async def modify_sheet_values(
     chip_type: Optional[str] = None,
     source_range: Optional[str] = None,
     paste_type: str = "PASTE_NORMAL",
+    file_path: Optional[str] = None,
 ) -> str:
     """
     Modifies values in a specific range of a Google Sheet - can write, update, or clear values,
-    insert Smart Chips (Drive files/folders or People), or copy another range into it.
+    write the rows of a local CSV/TSV file, insert Smart Chips (Drive files/folders or People),
+    or copy another range into it.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
         spreadsheet_id (str): The ID of the spreadsheet. Required.
         range_name (str): The range to modify (e.g., "Sheet1!A1:D10", "A1:D10"). Required.
-        values (Optional[Union[str, List[List[str]]]]): 2D array of values to write/update. Can be a JSON string or Python list. Required unless clear_values=True or chips is provided.
+        values (Optional[Union[str, List[List[str]]]]): 2D array of values to write/update. Can be a JSON string or Python list. Required unless clear_values=True or chips, source_range, or file_path is provided.
         value_input_option (str): How to interpret input values ("RAW" or "USER_ENTERED"). Defaults to "USER_ENTERED".
         clear_values (bool): If True, clears the range instead of writing values. Defaults to False.
         chips (Optional[Union[str, dict, List[Any]]]): Smart chip(s) to insert instead of values:
@@ -408,10 +417,31 @@ async def modify_sheet_values(
         paste_type (str): What source_range pastes: "PASTE_NORMAL" (values, formulas, formatting), "PASTE_VALUES",
             "PASTE_FORMAT", "PASTE_NO_BORDERS", "PASTE_FORMULA", "PASTE_DATA_VALIDATION", or
             "PASTE_CONDITIONAL_FORMATTING". Defaults to "PASTE_NORMAL".
+        file_path (Optional[str]): Local .csv or .tsv file (UTF-8) whose rows are written instead of values,
+            so a large dataset never has to be passed inline. Each row becomes a sheet row and
+            value_input_option applies as for values. range_name may be just the top-left cell (e.g.,
+            "Sheet1!A2" to load below an existing header row). Use instead of values, chips,
+            source_range, or clear_values.
 
     Returns:
         str: Confirmation message of the successful modification operation.
     """
+    if file_path is not None:
+        if (
+            values is not None
+            or clear_values
+            or chips is not None
+            or source_range is not None
+        ):
+            raise UserInputError(
+                "Provide only one of 'values', 'file_path', 'chips', 'source_range', "
+                "or 'clear_values'."
+            )
+        values = await asyncio.to_thread(_read_delimited_file_values, file_path)
+        logger.info(
+            f"[modify_sheet_values] Read {len(values)} rows from file_path for range {range_name}"
+        )
+
     if source_range is not None:
         if values is not None or clear_values or chips is not None:
             raise UserInputError(
