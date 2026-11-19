@@ -75,13 +75,13 @@ For server options, transport, auth modes, tool filtering, and deployment: [refe
 | Task | Tool |
 |------|------|
 | Search/find emails | `search_gmail_messages` |
-| Read one email, or page a long body | `get_gmail_message_content` (`page_offset`, `page_size`, `expected_sha256`) |
+| Read one email, page a long body, or read raw .eml byte ranges | `get_gmail_message_content` (`page_offset`, `page_size`, `expected_sha256`, `return_base64`, `offset`, `length`) |
 | Read multiple emails | `get_gmail_messages_content_batch` |
 | Read a thread | `get_gmail_thread_content` |
 | Read multiple threads | `get_gmail_threads_content_batch` |
 | Send email (new or reply) | `send_gmail_message` |
 | Create draft | `draft_gmail_message` |
-| Download attachment | `get_gmail_attachment_content` |
+| Download attachment, or read inline byte ranges | `get_gmail_attachment_content` (`return_base64`, `offset`, `length`) |
 | Add/remove labels (one) | `modify_gmail_message_labels` |
 | Add/remove labels (batch) | `batch_modify_gmail_message_labels` |
 | Manage labels | `manage_gmail_label` |

@@ -39,6 +39,9 @@ Get full content of a single message (subject, sender, recipients, date, Message
 | page_offset | integer | no | null | Start at 0 to return JSON body pages; follow next_offset until complete=true. Character offsets, not bytes. Requires format="full", full=false, body_format="text" or "html" |
 | page_size | integer | no | 20000 | Body characters per page, 1 to 20,000; requires page_offset |
 | expected_sha256 | string | no | null | Previous body_sha256; rejects a changed representation. Requires page_offset |
+| return_base64 | boolean | no | false | Return byte-exact inline base64 JSON chunks instead of a file; requires full=true, body_format="raw", and include_headers=true |
+| offset | integer | no | null | Zero-based byte offset for return_base64=true; starts at 0 when omitted |
+| length | integer | no | null | Requested byte count for return_base64=true; defaults to 4194304 (4 MiB), maximum 8388608 (8 MiB) |
 
 Keep body_format and include_links unchanged while paging. The JSON includes body,
 page_offset, next_offset, total_chars, complete, and body_sha256, plus a headers object
@@ -91,6 +94,26 @@ Download an attachment to local disk (stdio mode) or get a temporary URL (HTTP m
 | user_google_email | string | yes | | |
 | attachment_index | integer | no | | Zero-based position from the message-content listing; lets the server re-resolve Gmail's refreshed attachment IDs before downloading |
 | return_base64 | boolean | no | false | Also include the attachment as standard base64 in the response, for clients that cannot reach the file path or URL |
+| offset | integer | no | null | Set to 0 to opt into bounded inline JSON chunks instead of saving; requires return_base64=true |
+| length | integer | no | null | Also opts into bounded chunks; requires return_base64=true. Defaults to 4194304 (4 MiB), maximum 8388608 (8 MiB); offset defaults to 0 |
+
+For attachments, omitting both offset and length preserves the existing whole-base64
+response. For raw .eml exports, return_base64=true always uses bounded chunks.
+Each JSON response contains standard-alphabet content_base64, encoding="base64",
+total_size, offset, actual returned length, whole-file sha256, next_offset, and complete.
+Decode each chunk separately and concatenate its bytes in offset order. Follow
+next_offset until complete=true, check total_size and sha256 stay identical on every
+response, then verify the reassembled bytes against sha256. Ranges are half-open:
+offset through offset+length, excluding the end. At EOF the chunk is empty and complete;
+an offset beyond EOF is rejected. Integers only: offset >= 0, length >= 1.
+
+These ranges bound the MCP response, not Gmail download or server memory usage:
+Gmail returns the full object, so every request fetches, decodes and hashes it again.
+A 4 MiB chunk produces about 5.34 MiB of base64; use smaller length values for tighter
+gateway limits. Existing WORKSPACE_MCP_MAX_FILE_BYTES limits still apply to the whole
+object. Ranged responses do not create files/URLs or cache content; every request uses
+the caller's current authenticated Gmail service. Keep the message and attachment
+selection unchanged while reading. Raw export includes the original MIME headers.
 
 ---
 

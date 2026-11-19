@@ -59,6 +59,65 @@ from gmail.gmail_web_mime import (
 logger = logging.getLogger(__name__)
 
 RAW_BODY_TRUNCATE_LIMIT = 20000
+DEFAULT_BINARY_CHUNK_BYTES = 4 * 1024 * 1024
+MAX_BINARY_CHUNK_BYTES = 8 * 1024 * 1024
+
+
+def validate_binary_range(offset: Optional[int], length: Optional[int]) -> None:
+    """Validate byte-range inputs before downloading any Gmail content."""
+    if offset is not None and (type(offset) is not int or offset < 0):
+        raise UserInputError("offset must be a non-negative integer byte offset.")
+    if length is not None and (
+        type(length) is not int or not 1 <= length <= MAX_BINARY_CHUNK_BYTES
+    ):
+        raise UserInputError(
+            f"length must be an integer between 1 and {MAX_BINARY_CHUNK_BYTES} bytes."
+        )
+
+
+def format_binary_range(
+    content: bytes, offset: Optional[int], length: Optional[int]
+) -> Dict[str, Any]:
+    """Encode one bounded range; the checksum covers all decoded bytes.
+
+    Gmail still buffers the complete object on every call. Nothing is cached or
+    written to storage, so subsequent chunks use the caller's current credentials.
+    """
+    start = offset if offset is not None else 0
+    size = length if length is not None else DEFAULT_BINARY_CHUNK_BYTES
+    total = len(content)
+    if start > total:
+        raise UserInputError(f"offset exceeds total_size ({total} bytes).")
+    chunk = content[start : start + size]
+    end = start + len(chunk)
+    return {
+        "content_base64": base64.b64encode(chunk).decode("ascii"),
+        "encoding": "base64",
+        "total_size": total,
+        "offset": start,
+        "length": len(chunk),
+        "sha256": hashlib.sha256(content).hexdigest(),
+        "next_offset": end if end < total else None,
+        "complete": end == total,
+    }
+
+
+def attachment_binary_range(
+    encoded: str, offset: Optional[int], length: Optional[int]
+) -> Dict[str, Any]:
+    """Decode Gmail data and retain the configured whole-file size boundary."""
+    try:
+        content = base64.b64decode(
+            encoded + "=" * (-len(encoded) % 4), altchars=b"-_", validate=True
+        )
+    except (binascii.Error, ValueError) as exc:
+        raise UserInputError(
+            "Invalid base64 attachment data returned by Gmail."
+        ) from exc
+    ensure_within_file_size_limit(len(content), kind="attachment")
+    return format_binary_range(content, offset, length)
+
+
 MAX_PAGINATED_MESSAGE_BYTES = 64 * 1024 * 1024
 _PAGE_CACHE_BYTES = 64 * 1024 * 1024
 _PAGE_CACHE_ENTRIES = 128
