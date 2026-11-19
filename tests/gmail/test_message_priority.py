@@ -51,7 +51,7 @@ def _service() -> Mock:
     return service
 
 
-def test_priority_headers_high():
+def test_priority_headers_high() -> None:
     assert _priority_headers("high") == (
         ("Importance", "High"),
         ("X-Priority", "1 (Highest)"),
@@ -59,7 +59,7 @@ def test_priority_headers_high():
     )
 
 
-def test_priority_headers_low():
+def test_priority_headers_low() -> None:
     assert _priority_headers("low") == (
         ("Importance", "Low"),
         ("X-Priority", "5 (Lowest)"),
@@ -67,16 +67,16 @@ def test_priority_headers_low():
     )
 
 
-def test_priority_headers_normal_adds_nothing():
+def test_priority_headers_normal_adds_nothing() -> None:
     assert _priority_headers("normal") == ()
 
 
-def test_priority_headers_rejects_unknown_value():
+def test_priority_headers_rejects_unknown_value() -> None:
     with pytest.raises(ValueError):
         _priority_headers("urgent")
 
 
-def test_prepare_gmail_message_high_priority_sets_headers():
+def test_prepare_gmail_message_high_priority_sets_headers() -> None:
     raw, _, _, _ = _prepare_gmail_message(
         subject="Hello",
         body="Body",
@@ -90,7 +90,7 @@ def test_prepare_gmail_message_high_priority_sets_headers():
     assert message["Priority"] == "urgent"
 
 
-def test_prepare_gmail_message_default_has_no_priority_headers():
+def test_prepare_gmail_message_default_has_no_priority_headers() -> None:
     raw, _, _, _ = _prepare_gmail_message(
         subject="Hello", body="Body", to="alex@example.com"
     )
@@ -101,7 +101,7 @@ def test_prepare_gmail_message_default_has_no_priority_headers():
     assert message["Priority"] is None
 
 
-def test_prepare_gmail_message_web_low_priority_sets_headers():
+def test_prepare_gmail_message_web_low_priority_sets_headers() -> None:
     raw = _prepare_gmail_message_web(
         subject="Hello",
         plain_body="Body",
@@ -116,7 +116,7 @@ def test_prepare_gmail_message_web_low_priority_sets_headers():
     assert message["Priority"] == "non-urgent"
 
 
-def test_prepare_gmail_message_web_default_has_no_priority_headers():
+def test_prepare_gmail_message_web_default_has_no_priority_headers() -> None:
     raw = _prepare_gmail_message_web(
         subject="Hello",
         plain_body="Body",
