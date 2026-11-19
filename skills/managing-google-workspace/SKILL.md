@@ -122,7 +122,7 @@ For parameters: [references/drive.md](references/drive.md)
 | List calendars | `list_calendars` |
 | Create secondary calendar / share calendar, list, update or remove access | `manage_calendar` |
 | Get events | `get_events` |
-| Create/update/delete event | `manage_event` |
+| Create/update/delete/move event | `manage_event` |
 | Out of office (auto-decline) | `manage_out_of_office` |
 | Focus time (auto-decline, DND) | `manage_focus_time` |
 | Check availability | `query_freebusy` |
