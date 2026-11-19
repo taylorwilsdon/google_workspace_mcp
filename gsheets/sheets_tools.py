@@ -37,6 +37,7 @@ from gsheets.sheets_helpers import (
     _fetch_detailed_sheet_errors,
     _fetch_grid_metadata,
     _fetch_sheets_with_rules,
+    _fetch_validation_section,
     _find_named_range,
     _format_conditional_rules_section,
     _format_named_ranges_list,
@@ -240,6 +241,7 @@ async def read_sheet_values(
     include_notes: bool = False,
     include_formulas: bool = False,
     include_smart_chips: bool = False,
+    include_validation: bool = False,
 ) -> str:
     """
     Reads values from a specific range in a Google Sheet, one line per row:
@@ -260,6 +262,9 @@ async def read_sheet_values(
             back to a range. Defaults to False to avoid an extra API request.
         include_smart_chips (bool): If True, also fetch smart chips metadata (Drive files/folders
             and People chips) for the range. Defaults to False to avoid expensive includeGridData requests.
+        include_validation (bool): If True, also fetch data validation rules (dropdowns,
+            checkboxes, ranges, custom formulas) for the range. Defaults to False to avoid
+            expensive includeGridData requests.
 
     Returns:
         str: The formatted values, with trailing empty cells dropped.
@@ -297,6 +302,12 @@ async def read_sheet_values(
         include_smart_chips=include_smart_chips,
     )
 
+    validation_section = ""
+    if include_validation:
+        validation_section = await _fetch_validation_section(
+            service, spreadsheet_id, resolved_range, values
+        )
+
     formula_section = ""
     formula_values = []
     if include_formulas:
@@ -305,8 +316,10 @@ async def read_sheet_values(
         )
 
     if not values and not formula_values:
-        return f"No data found in range '{range_name}' for {user_google_email}." + (
-            clamp_note or ""
+        return (
+            f"No data found in range '{range_name}' for {user_google_email}."
+            + (clamp_note or "")
+            + validation_section
         )
 
     if not values:
@@ -319,6 +332,7 @@ async def read_sheet_values(
             f"for {user_google_email}. The range contains formula cells."
             + formula_section
             + (clamp_note or "")
+            + validation_section
         )
 
     detailed_range = _a1_range_for_values(resolved_range, values) or resolved_range
@@ -354,6 +368,7 @@ async def read_sheet_values(
         + formula_section
         + detailed_errors_section
         + smart_chips_section
+        + validation_section
     )
 
 
