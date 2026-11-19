@@ -1,6 +1,6 @@
 """Tools refuse IDs bound for reserved-expansion ({+name}) API paths before any request."""
 
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, cast
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -54,7 +54,7 @@ def service(monkeypatch: pytest.MonkeyPatch) -> Mock:
 
 
 def _tool(tool: Any) -> Callable[..., Any]:
-    return getattr(tool, "fn", tool)
+    return cast(Callable[..., Any], getattr(tool, "fn", tool))
 
 
 def _assert_client_untouched(fake: Mock) -> None:
