@@ -605,6 +605,7 @@ def _remove_user_email_arg_from_docstring(docstring: str) -> str:
 
 # Service configuration mapping
 SERVICE_CONFIGS = {
+    "admin": {"service": "admin", "version": "directory_v1"},
     "gmail": {"service": "gmail", "version": "v1"},
     "drive": {"service": "drive", "version": "v3"},
     "calendar": {"service": "calendar", "version": "v3"},

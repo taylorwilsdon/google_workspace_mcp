@@ -325,3 +325,14 @@ Legacy OAuth 2.0 only -- disabled when OAuth 2.1 is enabled. In most cases, just
 ## Tips
 
 - **Check parameters**: The reference files document every parameter of every tool. In CLI mode, `workspace-cli list` shows which tools the running server exposes.
+
+### Admin Directory (opt-in, domain admins only)
+
+Absent unless the server explicitly enables `--tools admin`. Read-only user
+lookup only; no group, membership, organizational-unit or write operations.
+
+| Task | Tool |
+|------|------|
+| List/search domain users, or read one user's aliases and OU path | `get_admin_users` |
+
+See [references/admin.md](references/admin.md).

@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+import gadmin.admin_tools  # noqa: F401
 import gappsscript.apps_script_tools  # noqa: F401
 import gcalendar.calendar_tools  # noqa: F401
 import gchat.chat_tools  # noqa: F401
@@ -24,7 +25,9 @@ import gsheets.sheets_tools  # noqa: F401
 import gslides.slides_tools  # noqa: F401
 import gtasks.tasks_tools  # noqa: F401
 from core.server import server
-from core.tool_tier_loader import get_tools_for_tier
+from core.tool_tier_loader import ToolTierLoader, get_tools_for_tier
+
+ALL_SERVICES = ToolTierLoader().get_available_services()
 
 SKILL_DIR = Path(__file__).parent.parent / "skills" / "managing-google-workspace"
 
@@ -94,7 +97,7 @@ SECTIONS = documented_tools()
 
 
 def test_every_tiered_tool_is_registered():
-    unregistered = set(get_tools_for_tier("complete")) - set(TOOLS)
+    unregistered = set(get_tools_for_tier("complete", ALL_SERVICES)) - set(TOOLS)
     assert not unregistered, (
         f"tool_tiers.yaml names tools this test never registered: {sorted(unregistered)}. "
         "Import the service module that defines them above."
@@ -102,7 +105,7 @@ def test_every_tiered_tool_is_registered():
 
 
 def test_every_registered_tool_is_tiered():
-    untiered = set(TOOLS) - set(get_tools_for_tier("complete"))
+    untiered = set(TOOLS) - set(get_tools_for_tier("complete", ALL_SERVICES))
     assert not untiered, f"Add these tools to core/tool_tiers.yaml: {sorted(untiered)}"
 
 
