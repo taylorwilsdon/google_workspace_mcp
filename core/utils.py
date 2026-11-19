@@ -26,7 +26,7 @@ from fastmcp.exceptions import ToolError
 from googleapiclient.errors import HttpError
 from mcp.types import ImageContent
 from .api_enablement import get_api_enablement_message
-from auth.google_auth import GoogleAuthenticationError
+from auth.google_auth import GoogleAuthenticationError, get_default_credentials_dir
 from auth.oauth_config import (
     get_transport_mode,
     is_external_oauth21_provider,
@@ -258,6 +258,15 @@ def _get_allowed_file_dirs() -> list[Path]:
     return unique_dirs
 
 
+def _file_identity(path: Path) -> Optional[tuple[int, int]]:
+    """Return ``(st_dev, st_ino)`` for ``path``, or None if it cannot be stat'ed."""
+    try:
+        stat_result = path.stat()
+    except OSError:
+        return None
+    return stat_result.st_dev, stat_result.st_ino
+
+
 def validate_file_path(file_path: str) -> Path:
     """
     Validate that a file path is safe to read from the server filesystem.
@@ -337,18 +346,23 @@ def validate_file_path(file_path: str) -> Path:
         )
 
     home = Path.home()
-    sensitive_home_dirs = (
-        ".kube",
-        ".gnupg",
-        ".config/gcloud",
-    )
-    for sensitive_dir in sensitive_home_dirs:
-        blocked = home / sensitive_dir
-        if resolved == blocked or str(resolved).startswith(str(blocked) + "/"):
-            raise ValueError(
-                f"Access to '{resolved_str}' is not allowed: "
-                "path is in a directory that commonly contains secrets or credentials."
-            )
+    blocked_ids = {
+        _file_identity(blocked)
+        for blocked in (
+            home / ".kube",
+            home / ".gnupg",
+            home / ".config" / "gcloud",
+            Path(get_default_credentials_dir()),
+        )
+    } - {None}
+    if any(
+        _file_identity(ancestor) in blocked_ids
+        for ancestor in (resolved, *resolved.parents)
+    ):
+        raise ValueError(
+            f"Access to '{resolved_str}' is not allowed: "
+            "path is in a directory that commonly contains secrets or credentials."
+        )
 
     # Block other credential/secret file patterns
     sensitive_names = {
