@@ -9,7 +9,6 @@ import logging
 import os
 import re
 import sys
-from urllib.parse import unquote_plus
 
 
 class SuppressStatelessTransportTerminationFilter(logging.Filter):
@@ -23,29 +22,21 @@ class SuppressStatelessTransportTerminationFilter(logging.Filter):
         )
 
 
-_OAUTH_QUERY_NAMES = frozenset({"code", "state"})
+_URL_QUERY_RE = re.compile(r"\?.*?(?=\s+returned(?:\s|$)|[>\"']|$)")
 
 
-def redact_oauth_query_params(target: str) -> str:
-    """Replace OAuth ``code``/``state`` values in a logged request target with ``<redacted>``."""
-    path, sep, query = target.partition("?")
-    if not sep:
-        return target
-    parts = query.split("&")
-    for i, part in enumerate(parts):
-        name, eq, _value = part.partition("=")
-        if eq and unquote_plus(name) in _OAUTH_QUERY_NAMES:
-            parts[i] = f"{name}=<redacted>"
-    return f"{path}?{'&'.join(parts)}"
+def scrub_url_queries(text: str) -> str:
+    """Replace the query string of every URL in ``text`` with ``?<query-redacted>``."""
+    return _URL_QUERY_RE.sub("?<query-redacted>", text)
 
 
-class RedactOAuthQueryParamsFilter(logging.Filter):
-    """Redact OAuth ``code``/``state`` in uvicorn access lines, whose third arg is the request target."""
+class RedactAccessLogQueryFilter(logging.Filter):
+    """Scrub the query from uvicorn access lines, whose third arg is the request target."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         args = record.args
         if isinstance(args, tuple) and len(args) >= 3 and isinstance(args[2], str):
-            record.args = (*args[:2], redact_oauth_query_params(args[2]), *args[3:])
+            record.args = (*args[:2], scrub_url_queries(args[2]), *args[3:])
         return True
 
 
@@ -57,7 +48,7 @@ def _add_filter_once(logger_name: str, filter_type: type[logging.Filter]) -> Non
 
 def install_noisy_log_filters() -> None:
     """Install targeted filters for noisy or sensitive third-party log lines."""
-    _add_filter_once("uvicorn.access", RedactOAuthQueryParamsFilter)
+    _add_filter_once("uvicorn.access", RedactAccessLogQueryFilter)
     _add_filter_once(
         "mcp.server.streamable_http", SuppressStatelessTransportTerminationFilter
     )

@@ -34,6 +34,7 @@ from auth.oauth_config import (
     is_stateless_mode,
 )
 from .file_limits import get_max_office_xml_bytes
+from .log_formatter import scrub_url_queries
 
 logger = logging.getLogger(__name__)
 
@@ -1218,25 +1219,11 @@ def svg_content(file_bytes: bytes) -> Optional[SvgContent]:
     return SvgContent(_SVG_DATA_URI_RE.sub(_elide, markup), images)
 
 
-_URL_QUERY_RE = re.compile(r"\?.*?(?=\s+returned(?:\s|$)|[>\"']|$)")
-
-
-def _scrub_url_queries(text: str) -> str:
-    """Strip query strings from any URL embedded in ``text`` before logging.
-
-    ``HttpError.__str__`` includes the full request URI, whose query string
-    carries user content (e.g. ``.../messages?q=<the user's search terms>``)
-    and can carry signed-URL secrets. The scheme/host/path identify the
-    failing endpoint, which is all the log needs.
-    """
-    return _URL_QUERY_RE.sub("?<query-redacted>", text)
-
-
 def _format_http_error_for_log(error: HttpError) -> str:
     """Return operational HTTP failure context without response-body text."""
     status = getattr(error.resp, "status", "unknown")
     uri = getattr(error, "uri", None)
-    request = _scrub_url_queries(uri) if uri else "<unknown>"
+    request = scrub_url_queries(uri) if uri else "<unknown>"
     return f"status={status}, request={request}"
 
 
