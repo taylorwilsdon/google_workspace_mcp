@@ -5,7 +5,7 @@
 # <span style="color:#cad8d9">Google Workspace MCP Server</span> <img src="https://github.com/user-attachments/assets/b89524e4-6e6e-49e6-ba77-00d6df0c6e5c" width="80" align="right" />
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![PyPI](https://img.shields.io/pypi/v/workspace-mcp.svg)](https://pypi.org/project/workspace-mcp/)
 [![PyPI Downloads](https://static.pepy.tech/personalized-badge/workspace-mcp?period=total&units=NONE&left_color=GREY&right_color=BLUE&left_text=pypi+downloads)](https://pepy.tech/projects/workspace-mcp)
 [![MCP Toplist](https://mcptoplist.com/badge/glama%2Ftaylorwilsdon%2Fgoogle_workspace_mcp.svg)](https://mcptoplist.com/server/glama%2Ftaylorwilsdon%2Fgoogle_workspace_mcp)
@@ -75,7 +75,7 @@ By default, this server sends no data anywhere except Google's APIs, on behalf o
 - **Your OAuth client, your GCP project** — credentials never leave your environment & you control scopes
 - **You control the network** — deploy behind your reverse proxy, in your VPC, on your own terms
 - **Stateless mode** — zero disk writes for locked-down container environments
-- **Sensitive path blocking** — local file reads default to the managed attachment directory, and `validate_file_path()` still blocks `.env*` files plus common home-directory credential stores such as `~/.ssh/` and `~/.aws/` even if `ALLOWED_FILE_DIRS` is broadened
+- **Sensitive path blocking** — local file reads default to the managed attachment directory, and `validate_file_path()` also blocks `.env` and `.env.*` files, the server's own credentials directory, and common credential stores such as `~/.ssh/` and `~/.aws/` as a best-effort backstop if `ALLOWED_FILE_DIRS` is broadened
 
 Full dependency tree in `pyproject.toml`, pinned in `uv.lock`.
 
@@ -124,7 +124,7 @@ This project is [MIT licensed](LICENSE) —
 </td>
 <td align="center" width="25%">
 <h3>🖼️</h3><a href="https://workspacemcp.com/google-slides?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=services-google-slides"><b>Slides</b></a><br>
-<sub>7 tools - create, batch update,<br>slide images, comments</sub>
+<sub>6 tools - create, read, batch update,<br>slide images, comments</sub>
 </td>
 <td align="center" width="25%">
 <h3>📋</h3><a href="https://workspacemcp.com/google-forms?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=services-google-forms"><b>Forms</b></a><br>
@@ -285,7 +285,7 @@ A few things worth internalizing before you connect an LLM to your email:
 
 - **Prompt injection is real.** Emails, docs, and events can contain hidden instructions. Only connect trusted data to an LLM, and be deliberate about which write tools you enable.
 - **Never commit** `.env`, `client_secret.json`, or `.credentials/` to source control.
-- **Local file reads are sandboxed** to the managed attachment directory. Broaden with `ALLOWED_FILE_DIRS` only if you trust the client and its data sources; `.env*`, `~/.ssh/`, `~/.aws/`, and similar paths are always blocked.
+- **Local file reads are sandboxed** to the managed attachment directory. Broaden with `ALLOWED_FILE_DIRS` only if you trust the client and its data sources, and keep it as narrow as possible. `.env`, `.env.*`, `~/.ssh/`, `~/.aws/`, the server's credentials directory, and similar paths are blocked as a backstop, but no blocklist can cover every secret on every machine: configure the server for your environment, set `WORKSPACE_MCP_DISABLE_LOCAL_FILES=true` if you don't need local reads, and ideally run it in a sandbox (a container or dedicated user) with nothing sensitive on disk.
 - **Production** deployments should use HTTPS and OAuth 2.1.
 
 ## Development
