@@ -696,6 +696,15 @@ def _build_time_boundary(time_value: str, timezone: Optional[str]) -> Dict[str, 
     above becomes 17:50 Israel time, an hour off, with no error raised.
     """
     if "T" not in time_value:
+        try:
+            if _GOOGLE_ALL_DAY_DATE.fullmatch(time_value) is None:
+                raise ValueError(time_value)
+            datetime.date.fromisoformat(time_value)
+        except ValueError as exc:
+            raise UserInputError(
+                f"Invalid all-day date {time_value!r}. Use YYYY-MM-DD, for example "
+                "'2026-11-10'."
+            ) from exc
         return {"date": time_value}
     try:
         parsed = datetime.datetime.fromisoformat(re.sub(r"[zZ]$", "+00:00", time_value))
