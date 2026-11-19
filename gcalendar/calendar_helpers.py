@@ -695,8 +695,6 @@ def _build_time_boundary(time_value: str, timezone: Optional[str]) -> Dict[str, 
     Forcing a single zone on both ends silently rewrites one of them -- the arrival
     above becomes 17:50 Israel time, an hour off, with no error raised.
     """
-    # No "T" means an all-day date. A prose time or an impossible day used to
-    # be forwarded as-is, and Google answered 400 "Invalid start time."
     if "T" not in time_value:
         try:
             if _GOOGLE_ALL_DAY_DATE.fullmatch(time_value) is None:
