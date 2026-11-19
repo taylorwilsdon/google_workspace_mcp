@@ -42,6 +42,21 @@ def test_main_rejects_invalid_max_office_xml_bytes_at_startup(monkeypatch, capsy
     assert "WORKSPACE_MCP_MAX_OFFICE_XML_BYTES" in capsys.readouterr().err
 
 
+def test_main_rejects_invalid_stateless_http_at_startup(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("WORKSPACE_MCP_STATELESS_HTTP", "1")
+    monkeypatch.setattr(sys, "argv", ["main.py"])
+    monkeypatch.setattr(main, "configure_safe_logging", lambda: None)
+    monkeypatch.setattr("core.telemetry.configure_telemetry", lambda: None)
+
+    with pytest.raises(SystemExit) as exc:
+        main.main()
+
+    assert exc.value.code == 2
+    assert "WORKSPACE_MCP_STATELESS_HTTP" in capsys.readouterr().err
+
+
 def test_fastmcp_entrypoint_rejects_invalid_file_limits_at_startup():
     env = os.environ.copy()
     env["WORKSPACE_MCP_MAX_FILE_BYTES"] = "0"
@@ -352,11 +367,17 @@ def test_main_skips_gcs_store_initialization_in_service_account_mode(monkeypatch
     assert exc.value.code == 0
 
 
-@pytest.mark.parametrize("flag, expected", [("true", True), (None, False)])
+@pytest.mark.parametrize(
+    "flag, stateless_mode, expected",
+    [("true", False, True), (None, False, False), (None, True, True)],
+)
 def test_stateless_http_flag_reaches_server_run(
-    monkeypatch: pytest.MonkeyPatch, flag: str | None, expected: bool
+    monkeypatch: pytest.MonkeyPatch,
+    flag: str | None,
+    stateless_mode: bool,
+    expected: bool,
 ) -> None:
-    """WORKSPACE_MCP_STATELESS_HTTP alone makes the HTTP transport sessionless."""
+    """WORKSPACE_MCP_STATELESS_HTTP or stateless mode makes the transport sessionless."""
     seen: dict[str, object] = {}
 
     def fake_run(*args: object, **kwargs: object) -> None:  # noqa: ARG001
@@ -371,7 +392,7 @@ def test_stateless_http_flag_reaches_server_run(
     monkeypatch.setattr(main, "set_transport_mode", lambda transport: None)
     monkeypatch.setattr(main, "configure_server_for_http", lambda: None)
     monkeypatch.setattr(main, "get_selected_backend", lambda: "local_directory")
-    monkeypatch.setattr(main, "is_stateless_mode", lambda: False)
+    monkeypatch.setattr(main, "is_stateless_mode", lambda: stateless_mode)
     monkeypatch.setattr(main, "is_service_account_enabled", lambda: False)
     monkeypatch.setattr(main, "get_credential_store", lambda: object())
     monkeypatch.setattr(main, "check_credentials_directory_permissions", lambda: None)
@@ -384,7 +405,7 @@ def test_stateless_http_flag_reaches_server_run(
             service_account_key_json=None,
             client_secret="secret",
             client_secrets_file=None,
-            stateless_mode=False,
+            stateless_mode=stateless_mode,
             is_oauth21_enabled=lambda: False,
             is_configured=lambda: True,
         ),
