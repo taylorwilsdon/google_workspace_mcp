@@ -78,6 +78,7 @@ For server options, transport, auth modes, tool filtering, and deployment: [refe
 | Read one email, or page a long body | `get_gmail_message_content` (`page_offset`, `page_size`, `expected_sha256`) |
 | Read multiple emails | `get_gmail_messages_content_batch` |
 | Read a thread | `get_gmail_thread_content` |
+| List a thread's message IDs and headers | `list_gmail_thread_messages` |
 | Read multiple threads | `get_gmail_threads_content_batch` |
 | Send email (new or reply) | `send_gmail_message` |
 | Create draft | `draft_gmail_message` |

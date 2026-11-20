@@ -3,7 +3,7 @@
 MCP tools for Gmail message search, sending, drafting, labels, and filters. All tools require `user_google_email` (string, required).
 
 ## Contents
-- Search & Read: search_gmail_messages, get_gmail_message_content, get_gmail_messages_content_batch, get_gmail_thread_content, get_gmail_threads_content_batch, get_gmail_attachment_content
+- Search & Read: search_gmail_messages, get_gmail_message_content, get_gmail_messages_content_batch, get_gmail_thread_content, list_gmail_thread_messages, get_gmail_threads_content_batch, get_gmail_attachment_content
 - Send & Draft: send_gmail_message, draft_gmail_message
 - Label Management: list_gmail_labels, manage_gmail_label, modify_gmail_message_labels, batch_modify_gmail_message_labels
 - Filter Management: list_gmail_filters, manage_gmail_filter
@@ -70,6 +70,15 @@ Get all messages in a conversation thread.
 | body_format | string | no | "text" | "text" (plaintext, HTML converted as fallback), "html" (raw HTML body) or "raw" (decoded MIME) |
 | include_analysis | boolean | no | false | Return a dict with the thread content plus ownership analysis (last sender, ball-in-court verdict, per-sender counts, participants) instead of a string |
 | include_links | boolean | no | false | Append a LINKS section listing the http(s) URLs from the HTML body that the text output omits; only applies to body_format="text" |
+
+### list_gmail_thread_messages
+List a thread's messages as Gmail message IDs, label IDs, internal date, snippet and headers, without bodies or attachments.
+
+| Parameter | Type | Required | Default | Notes |
+|-----------|------|----------|---------|-------|
+| thread_id | string | yes | | |
+| user_google_email | string | yes | | |
+| headers | array of strings | no | ["From", "To", "Date", "Subject"] | Header names to include per message |
 
 ### get_gmail_threads_content_batch
 Get content of multiple threads in one request. Auto-batches in chunks of 25.
