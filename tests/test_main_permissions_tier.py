@@ -336,6 +336,7 @@ def test_main_skips_gcs_store_initialization_in_service_account_mode(monkeypatch
         lambda: SimpleNamespace(
             service_account_key_file=None,
             service_account_key_json=service_account_json,
+            service_account_delegation=True,
             client_secret=None,
             client_secrets_file=None,
             stateless_mode=False,

@@ -913,9 +913,8 @@ def main():
 
     # Service account mode startup validation
     if is_service_account_enabled():
-        no_delegation = not getattr(
-            get_oauth_config(), "service_account_delegation", True
-        )
+        sa_config = get_oauth_config()
+        no_delegation = not sa_config.service_account_delegation
         user_email = os.getenv("USER_GOOGLE_EMAIL")
         if not user_email and not no_delegation:
             fatal(
@@ -924,7 +923,6 @@ def main():
                 "Set USER_GOOGLE_EMAIL to the domain user to impersonate",
             )
         # Validate service account key material before advertising readiness
-        sa_config = get_oauth_config()
         try:
             if sa_config.service_account_key_file:
                 with open(sa_config.service_account_key_file) as f:
@@ -954,6 +952,8 @@ def main():
         if no_delegation:
             ui.step("Service account mode enabled", "no delegation")
             ui.detail(f"acting as {key_data.get('client_email')}")
+            if user_email:
+                ui.detail("USER_GOOGLE_EMAIL is ignored without delegation")
         else:
             ui.step("Service account mode enabled", "domain-wide delegation")
             ui.detail(f"impersonating {user_email}")

@@ -284,6 +284,10 @@ _NO_DELEGATION_UNSUPPORTED_SERVICES = {
         "Google Chat is not yet supported for service accounts without "
         "domain-wide delegation."
     ),
+    "script": (
+        "The Apps Script API does not support service accounts; use OAuth "
+        "authentication to use Apps Script tools."
+    ),
 }
 
 
@@ -363,10 +367,16 @@ def _widen_drive_scope_for_dwd(scopes: List[str], tool_name: str) -> List[str]:
         return scopes
 
     widened = [DRIVE_SCOPE if s == DRIVE_FILE_SCOPE else s for s in scopes]
+    hint = (
+        "Without delegation, access is still limited to what is shared with the "
+        "service account."
+        if is_service_account_no_delegation()
+        else "Authorize it in the Admin console DWD scope list."
+    )
     logger.debug(
         f"[{tool_name}] Service-account mode: requesting {DRIVE_SCOPE} in place of "
-        f"{DRIVE_FILE_SCOPE}, which cannot reach pre-existing files under "
-        "domain-wide delegation. Authorize it in the Admin console DWD scope list."
+        f"{DRIVE_FILE_SCOPE}, which cannot reach pre-existing files shared with a "
+        f"service account. {hint}"
     )
     return widened
 
@@ -983,7 +993,7 @@ def require_google_service(
         # Conditionally modify docstring to remove user_google_email parameter documentation
         if _user_email_is_managed():
             logger.debug(
-                "OAuth 2.1 mode enabled, removing user_google_email from docstring"
+                "Managed user email mode enabled, removing user_google_email from docstring"
             )
             if func.__doc__:
                 wrapper.__doc__ = _remove_user_email_arg_from_docstring(func.__doc__)
@@ -1150,7 +1160,7 @@ def require_multiple_services(service_configs: List[Dict[str, Any]]):
         # Conditionally modify docstring to remove user_google_email parameter documentation
         if _user_email_is_managed():
             logger.debug(
-                "OAuth 2.1 mode enabled, removing user_google_email from docstring"
+                "Managed user email mode enabled, removing user_google_email from docstring"
             )
             if func.__doc__:
                 wrapper.__doc__ = _remove_user_email_arg_from_docstring(func.__doc__)
