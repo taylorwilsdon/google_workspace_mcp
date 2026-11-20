@@ -36,7 +36,7 @@ Retrieves metadata about the configured Programmable Search Engine, including it
 
 ## Tips
 
-**Required configuration**: The search tools require `GOOGLE_PSE_API_KEY` and `GOOGLE_PSE_ENGINE_ID` environment variables to be set. Without them, search calls will fail.
+**Required configuration**: The search tools require `GOOGLE_PSE_API_KEY` and `GOOGLE_PSE_ENGINE_ID` environment variables to be set. Without them, search calls will fail. `GOOGLE_PSE_BASE_URL` is optional and changes the address the requests go to.
 
 **Recent results**: Use the `date_restrict` parameter to limit results by age -- for example `d7` for the past 7 days or `m1` for the past month.
 
