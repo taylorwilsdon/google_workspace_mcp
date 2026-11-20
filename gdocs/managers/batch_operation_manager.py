@@ -27,6 +27,8 @@ from gdocs.docs_helpers import (
     create_insert_image_request,
     create_insert_person_request,
     create_insert_date_request,
+    create_dropdown_definition_request,
+    create_insert_dropdown_request,
     create_bullet_list_request,
     create_delete_bullet_list_request,
     create_named_range_request,
@@ -206,6 +208,30 @@ class BatchOperationManager:
             if created_tabs:
                 metadata["created_tabs"] = created_tabs
 
+            # Replies align with API requests, not operations (some expand to multiple requests).
+            dropdown_results = []
+            for request_index, (request, reply) in enumerate(
+                zip(requests, result.get("replies", []))
+            ):
+                for kind, field in (
+                    ("createDropdownDefinition", "dropdownDefinition"),
+                    ("insertDropdown", "dropdown"),
+                ):
+                    if kind in reply:
+                        payload = request[kind]
+                        location = payload.get(
+                            "location", payload.get("endOfSegmentLocation", {})
+                        )
+                        dropdown_results.append(
+                            {
+                                "request_index": request_index,
+                                "tab_id": payload.get("tabId", location.get("tabId")),
+                                field: reply[kind][field],
+                            }
+                        )
+            if dropdown_results:
+                metadata["dropdown_results"] = dropdown_results
+
             summary = self._build_operation_summary(operation_descriptions)
             msg = f"Successfully executed {len(operations)} operations ({summary})"
             if created_tabs:
@@ -256,6 +282,7 @@ class BatchOperationManager:
                 "insert_image",
                 "insert_person",
                 "insert_date",
+                "insert_dropdown",
             }:
                 return "Semantic anchors are supported only for insertion operations."
             valid, error = validate_operation(op)
@@ -993,6 +1020,23 @@ class BatchOperationManager:
                 else f"mention {op['email']} at {op.get('index')}"
             )
 
+        elif op_type == "create_dropdown_definition":
+            request = create_dropdown_definition_request(
+                op["title"], op["options"], op.get("dropdown_definition_id"), tab_id
+            )
+            description = f"create dropdown definition '{op['title']}'"
+
+        elif op_type == "insert_dropdown":
+            request = create_insert_dropdown_request(
+                op.get("index"),
+                op["dropdown_definition_id"],
+                op.get("selected_option_id"),
+                tab_id,
+                segment_id=segment_id,
+                end_of_segment=end_of_segment,
+            )
+            description = f"insert dropdown '{op['dropdown_definition_id']}'"
+
         elif op_type == "insert_date":
             request = create_insert_date_request(
                 op.get("index"),
@@ -1143,6 +1187,7 @@ class BatchOperationManager:
 
         else:
             supported_types = [
+                "create_dropdown_definition",
                 "insert_text",
                 "delete_text",
                 "replace_text",
@@ -1163,6 +1208,7 @@ class BatchOperationManager:
                 "insert_image",
                 "insert_person",
                 "insert_date",
+                "insert_dropdown",
                 "insert_doc_tab",
                 "delete_doc_tab",
                 "update_doc_tab",
@@ -1469,6 +1515,26 @@ class BatchOperationManager:
                     "required": ["email"],
                     "optional": ["index", "end_of_segment", "segment_id", "tab_id"],
                     "description": "Insert a person @mention smart chip",
+                },
+                "create_dropdown_definition": {
+                    "required": ["title", "options"],
+                    "optional": ["dropdown_definition_id", "tab_id"],
+                    "description": "Create a reusable native dropdown definition in a tab",
+                },
+                "insert_dropdown": {
+                    "required": ["dropdown_definition_id"],
+                    "optional": [
+                        "selected_option_id",
+                        "index",
+                        "end_of_segment",
+                        "segment_id",
+                        "tab_id",
+                        "after_heading",
+                        "before_heading",
+                        "anchor_text",
+                        "anchor_position",
+                    ],
+                    "description": "Insert a native dropdown chip using an existing definition",
                 },
                 "insert_date": {
                     "required": ["date"],

@@ -417,6 +417,55 @@ class InsertPersonOperation(InsertionLocationOperation, SegmentTargetDocOperatio
     )
 
 
+DropdownDefinitionId = Annotated[str, Field(pattern=r"^kix\.[a-zA-Z0-9_-]{2,14}$")]
+DropdownOptionId = Annotated[str, Field(pattern=r"^dropdownItem\.[a-zA-Z0-9_-]{2,14}$")]
+DropdownColor = Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")]
+
+
+class DropdownOption(BaseModel):
+    """A native dropdown choice; only foreground/background colours are supported."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    display_value: str = Field(min_length=1, max_length=200)
+    option_id: Optional[DropdownOptionId] = None
+    text_color: Optional[DropdownColor] = None
+    background_color: Optional[DropdownColor] = None
+
+
+class CreateDropdownDefinitionOperation(StrictDocOperation):
+    type: Literal["create_dropdown_definition"]
+    title: str = Field(min_length=1, max_length=200)
+    options: list[DropdownOption] = Field(min_length=2, max_length=50)
+    dropdown_definition_id: Optional[DropdownDefinitionId] = Field(
+        default=None,
+        description="Unique within the tab. Omit for a server-generated ID returned in the result.",
+    )
+
+    @model_validator(mode="after")
+    def validate_option_ids(self) -> "CreateDropdownDefinitionOperation":
+        ids = [
+            option.option_id for option in self.options if option.option_id is not None
+        ]
+        if len(ids) != len(set(ids)):
+            raise ValueError("option_id must be unique within a dropdown definition.")
+        return self
+
+
+class InsertDropdownOperation(InsertionLocationOperation, SegmentTargetDocOperation):
+    type: Literal["insert_dropdown"]
+    end_of_segment: bool = Field(
+        default=False,
+        strict=True,
+        description="Append to the end of the targeted body/segment instead of using index.",
+    )
+    dropdown_definition_id: DropdownDefinitionId
+    selected_option_id: Optional[DropdownOptionId] = Field(
+        default=None, description="Omit to select the first option in the definition."
+    )
+    index: Optional[int] = Field(default=None, ge=0, strict=True)
+
+
 class InsertDateOperation(InsertionLocationOperation, SegmentTargetDocOperation):
     type: Literal["insert_date"]
     date: str = Field(
@@ -536,6 +585,8 @@ BatchDocOperation = Annotated[
         InsertImageOperation,
         InsertPersonOperation,
         InsertDateOperation,
+        CreateDropdownDefinitionOperation,
+        InsertDropdownOperation,
         InsertDocTabOperation,
         DeleteDocTabOperation,
         UpdateDocTabOperation,

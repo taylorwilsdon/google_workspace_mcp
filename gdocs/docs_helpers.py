@@ -10,6 +10,13 @@ from datetime import datetime, timezone as dt_timezone
 from typing import Dict, Any, Optional, List
 from zoneinfo import ZoneInfo
 
+from pydantic import ValidationError
+
+from gdocs.operation_schemas import (
+    CreateDropdownDefinitionOperation,
+    InsertDropdownOperation,
+)
+
 logger = logging.getLogger(__name__)
 
 VALID_NAMED_STYLE_TYPES = (
@@ -1306,6 +1313,55 @@ def create_insert_person_request(
     }
 
 
+def create_dropdown_definition_request(
+    title: str,
+    options: list[dict[str, Any]],
+    dropdown_definition_id: Optional[str] = None,
+    tab_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build a tab-scoped native dropdown definition without modifying document text."""
+    choices = []
+    for option in options:
+        choice = {"displayValue": option["display_value"]}
+        if option.get("option_id") is not None:
+            choice["optionId"] = option["option_id"]
+        style = {}
+        for source, target in (
+            ("text_color", "foregroundColor"),
+            ("background_color", "backgroundColor"),
+        ):
+            if option.get(source) is not None:
+                style[target] = _build_optional_color(option[source], source)
+        if style:
+            choice["textStyle"] = style
+        choices.append(choice)
+    definition = {"dropdownDefinitionProperties": {"title": title, "options": choices}}
+    if dropdown_definition_id is not None:
+        definition["dropdownDefinitionId"] = dropdown_definition_id
+    request = {"dropdownDefinition": definition}
+    if tab_id is not None:
+        request["tabId"] = tab_id
+    return {"createDropdownDefinition": request}
+
+
+def create_insert_dropdown_request(
+    index: Optional[int],
+    dropdown_definition_id: str,
+    selected_option_id: Optional[str] = None,
+    tab_id: Optional[str] = None,
+    segment_id: Optional[str] = None,
+    end_of_segment: bool = False,
+) -> Dict[str, Any]:
+    """Insert a native chip referencing a definition in the same tab."""
+    request = {
+        "dropdownDefinitionId": dropdown_definition_id,
+        **_build_location(index, tab_id, segment_id, end_of_segment),
+    }
+    if selected_option_id is not None:
+        request["selectedOptionId"] = selected_option_id
+    return {"insertDropdown": request}
+
+
 def create_insert_date_request(
     index: Optional[int],
     date: str,
@@ -1931,6 +1987,18 @@ def validate_operation(operation: Dict[str, Any]) -> tuple[bool, str]:
     op_type = operation.get("type")
     if not op_type:
         return False, "Missing 'type' field"
+
+    # Also validate direct manager callers, which bypass the MCP Pydantic schema.
+    dropdown_models = {
+        "create_dropdown_definition": CreateDropdownDefinitionOperation,
+        "insert_dropdown": InsertDropdownOperation,
+    }
+    if op_type in dropdown_models:
+        try:
+            dropdown_models[op_type].model_validate(operation)
+        except ValidationError as exc:
+            return False, str(exc)
+        return True, ""
 
     # Validate required fields for each operation type
     required_fields = {

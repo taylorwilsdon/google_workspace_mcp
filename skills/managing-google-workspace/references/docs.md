@@ -373,11 +373,71 @@ Execute multiple operations atomically in a single API call. Each operation is a
 | `insert_page_break` | `index` | |
 | `insert_person` | `email`, plus one of `index`, `end_of_segment=true`, `after_heading`, `before_heading` or `anchor_text` | `anchor_position`, `segment_id` (inserts an @mention smart chip) |
 | `insert_date` | `date` (`YYYY-MM-DD` or ISO 8601 with a time zone), plus one of `index`, `end_of_segment=true`, `after_heading`, `before_heading` or `anchor_text` | `anchor_position`, `segment_id`, `date_format`, `time_format`, `timezone` (needs `time_format=TIME_FORMAT_HOUR_MINUTE_TIMEZONE`; inserts a date smart chip) |
+| `create_dropdown_definition` | `title`, `options` (2–50 choices) | `dropdown_definition_id`; each choice has `display_value` and optional `option_id`, `text_color`, `background_color` (`#RRGGBB`) |
+| `insert_dropdown` | `dropdown_definition_id`, plus one of `index`, `end_of_segment=true`, `after_heading`, `before_heading`, `anchor_text` | `selected_option_id` (defaults to first choice), `segment_id`, `anchor_position` |
 | `find_replace` | `find_text`, `replace_text` | `match_case` |
 | `create_bullet_list` | `start_index`, `end_index` | `list_type` (`UNORDERED`/`ORDERED`/`NONE`), `nesting_level` (0-8), `paragraph_start_indices` |
 | `insert_doc_tab` | `title`, `index` | `parent_tab_id` |
 | `delete_doc_tab` | `tab_id` | |
 | `update_doc_tab` | `tab_id`, `title` | |
+
+### Native status dropdowns
+
+Definition titles and each option's `display_value` must contain 1–200 characters.
+Values exceeding 200 characters are rejected before any batch write.
+For `insert_dropdown`, `end_of_segment` must be a JSON boolean (`true`/`false`),
+not a string or number; invalid types are rejected before any batch write.
+
+Create a definition once per document tab, then reuse it for every status chip in
+that tab. Omitted `tab_id` targets the first tab. Definitions are not shared across
+documents or tabs: repeat the same title, labels and colours in each target tab.
+
+Pass this `operations` array to `batch_update_doc` (with `document_id` and
+`user_google_email`). Add the same `tab_id` to both operations to target another tab:
+
+```json
+[
+  {
+    "type": "create_dropdown_definition",
+    "dropdown_definition_id": "kix.meeting_status",
+    "title": "Meeting status",
+    "options": [
+      {"option_id": "dropdownItem.todo", "display_value": "To do", "background_color": "#E8EAED", "text_color": "#3C4043"},
+      {"option_id": "dropdownItem.active", "display_value": "In progress", "background_color": "#FEEFC3", "text_color": "#594300"},
+      {"option_id": "dropdownItem.done", "display_value": "Done", "background_color": "#CEEAD6", "text_color": "#0D652D"}
+    ]
+  },
+  {
+    "type": "insert_dropdown",
+    "dropdown_definition_id": "kix.meeting_status",
+    "selected_option_id": "dropdownItem.todo",
+    "end_of_segment": true
+  }
+]
+```
+
+A definition ID must match `^kix\.[a-zA-Z0-9_-]{2,14}$`; an option ID must
+match `^dropdownItem\.[a-zA-Z0-9_-]{2,14}$`. Definition IDs must be unique
+within a tab, and option IDs within their definition. Omit IDs during creation
+for server-generated IDs. The result's `Dropdown results` JSON returns the
+created definition (including option IDs) or inserted chip, with the zero-based
+API `request_index` and target `tab_id` (`null` means first tab). Use returned IDs
+in a subsequent insertion call. Explicit IDs allow creation and insertion in one
+atomic batch; do not retry successful creation with the same IDs.
+
+For an existing definition, submit only `insert_dropdown`. A selected option must
+belong to that definition; Google validates existing definitions and selections.
+Semantic anchors use the existing insertion workflow: create the definition first,
+then submit anchored insertions separately (anchors cannot mix with other operation
+types). Use `inspect_doc_structure` to find valid paragraph indices; Docs uses
+UTF-16 offsets, and insertion shifts subsequent indices. Native date chips remain
+intact because these operations insert chips without replacing existing content.
+Avoid rewriting whole paragraphs or replacing a document from Markdown to add a
+status. Updating/deleting definitions or changing an existing chip's selection is
+not exposed by these two operations.
+
+API references: [dropdown guide](https://developers.google.com/workspace/docs/api/how-tos/dropdowns)
+and [request schemas](https://developers.google.com/workspace/docs/api/reference/rest/v1/documents/request).
 
 Use `list_type='NONE'` in `create_bullet_list` to remove existing list formatting.
 

@@ -1,0 +1,324 @@
+{
+  "source": "https://docs.googleapis.com/$discovery/rest?version=v1",
+  "retrieved": "2026-11-17",
+  "revision": "20261111",
+  "schemas": {
+    "Request": {
+      "properties": {
+        "createDropdownDefinition": {
+          "$ref": "CreateDropdownDefinitionRequest"
+        },
+        "insertDropdown": {
+          "$ref": "InsertDropdownRequest"
+        }
+      },
+      "type": "object",
+      "id": "Request"
+    },
+    "CreateDropdownDefinitionRequest": {
+      "properties": {
+        "dropdownDefinition": {
+          "$ref": "DropdownDefinition"
+        },
+        "tabId": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "id": "CreateDropdownDefinitionRequest"
+    },
+    "DropdownDefinition": {
+      "type": "object",
+      "properties": {
+        "suggestedInsertionId": {
+          "type": "string"
+        },
+        "dropdownDefinitionId": {
+          "type": "string"
+        },
+        "suggestedDeletionId": {
+          "type": "string"
+        },
+        "dropdownDefinitionProperties": {
+          "$ref": "DropdownDefinitionProperties"
+        },
+        "suggestedDropdownDefinitionPropertiesChanges": {
+          "additionalProperties": {
+            "$ref": "SuggestedDropdownDefinitionProperties"
+          },
+          "type": "object"
+        }
+      },
+      "id": "DropdownDefinition"
+    },
+    "DropdownDefinitionProperties": {
+      "id": "DropdownDefinitionProperties",
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "$ref": "DropdownOption"
+          }
+        }
+      },
+      "type": "object"
+    },
+    "DropdownOption": {
+      "type": "object",
+      "id": "DropdownOption",
+      "properties": {
+        "optionId": {
+          "type": "string"
+        },
+        "textStyle": {
+          "$ref": "TextStyle"
+        },
+        "displayValue": {
+          "type": "string"
+        }
+      }
+    },
+    "TextStyle": {
+      "properties": {
+        "italic": {
+          "type": "boolean"
+        },
+        "baselineOffset": {
+          "enum": [
+            "BASELINE_OFFSET_UNSPECIFIED",
+            "NONE",
+            "SUPERSCRIPT",
+            "SUBSCRIPT"
+          ],
+          "type": "string",
+          "enumDescriptions": [
+            "The text's baseline offset is inherited from the parent.",
+            "The text is not vertically offset.",
+            "The text is vertically offset upwards (superscript).",
+            "The text is vertically offset downwards (subscript)."
+          ]
+        },
+        "backgroundColor": {
+          "$ref": "OptionalColor"
+        },
+        "smallCaps": {
+          "type": "boolean"
+        },
+        "bold": {
+          "type": "boolean"
+        },
+        "fontSize": {
+          "$ref": "Dimension"
+        },
+        "strikethrough": {
+          "type": "boolean"
+        },
+        "underline": {
+          "type": "boolean"
+        },
+        "weightedFontFamily": {
+          "$ref": "WeightedFontFamily"
+        },
+        "foregroundColor": {
+          "$ref": "OptionalColor"
+        },
+        "link": {
+          "$ref": "Link"
+        }
+      },
+      "type": "object",
+      "id": "TextStyle"
+    },
+    "OptionalColor": {
+      "properties": {
+        "color": {
+          "$ref": "Color"
+        }
+      },
+      "id": "OptionalColor",
+      "type": "object"
+    },
+    "Color": {
+      "type": "object",
+      "properties": {
+        "rgbColor": {
+          "$ref": "RgbColor"
+        }
+      },
+      "id": "Color"
+    },
+    "RgbColor": {
+      "type": "object",
+      "properties": {
+        "green": {
+          "format": "float",
+          "type": "number"
+        },
+        "blue": {
+          "type": "number",
+          "format": "float"
+        },
+        "red": {
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "id": "RgbColor"
+    },
+    "Dimension": {
+      "properties": {
+        "magnitude": {
+          "format": "double",
+          "type": "number"
+        },
+        "unit": {
+          "enum": [
+            "UNIT_UNSPECIFIED",
+            "PT"
+          ],
+          "enumDescriptions": [
+            "The units are unknown.",
+            "A point, 1/72 of an inch."
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "id": "Dimension"
+    },
+    "WeightedFontFamily": {
+      "properties": {
+        "fontFamily": {
+          "type": "string"
+        },
+        "weight": {
+          "type": "integer",
+          "format": "int32"
+        }
+      },
+      "id": "WeightedFontFamily",
+      "type": "object"
+    },
+    "Link": {
+      "properties": {
+        "heading": {
+          "$ref": "HeadingLink"
+        },
+        "tabId": {
+          "type": "string"
+        },
+        "bookmark": {
+          "$ref": "BookmarkLink"
+        },
+        "headingId": {
+          "type": "string"
+        },
+        "bookmarkId": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "id": "Link"
+    },
+    "HeadingLink": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "tabId": {
+          "type": "string"
+        }
+      },
+      "id": "HeadingLink",
+      "type": "object"
+    },
+    "BookmarkLink": {
+      "type": "object",
+      "id": "BookmarkLink",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "tabId": {
+          "type": "string"
+        }
+      }
+    },
+    "SuggestedDropdownDefinitionProperties": {
+      "type": "object",
+      "properties": {
+        "dropdownDefinitionProperties": {
+          "$ref": "DropdownDefinitionProperties"
+        },
+        "dropdownDefinitionPropertiesSuggestionState": {
+          "$ref": "DropdownDefinitionPropertiesSuggestionState"
+        }
+      },
+      "id": "SuggestedDropdownDefinitionProperties"
+    },
+    "DropdownDefinitionPropertiesSuggestionState": {
+      "properties": {
+        "optionsSuggested": {
+          "type": "boolean"
+        },
+        "titleSuggested": {
+          "type": "boolean"
+        }
+      },
+      "id": "DropdownDefinitionPropertiesSuggestionState",
+      "type": "object"
+    },
+    "InsertDropdownRequest": {
+      "type": "object",
+      "properties": {
+        "location": {
+          "$ref": "Location"
+        },
+        "dropdownDefinitionId": {
+          "type": "string"
+        },
+        "selectedOptionId": {
+          "type": "string"
+        },
+        "endOfSegmentLocation": {
+          "$ref": "EndOfSegmentLocation"
+        }
+      },
+      "id": "InsertDropdownRequest"
+    },
+    "Location": {
+      "type": "object",
+      "properties": {
+        "segmentId": {
+          "type": "string"
+        },
+        "index": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "tabId": {
+          "type": "string"
+        }
+      },
+      "id": "Location"
+    },
+    "EndOfSegmentLocation": {
+      "id": "EndOfSegmentLocation",
+      "properties": {
+        "segmentId": {
+          "type": "string"
+        },
+        "tabId": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  }
+}
