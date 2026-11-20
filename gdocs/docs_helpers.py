@@ -6,6 +6,7 @@ to simplify the implementation of document editing tools.
 """
 
 import logging
+import asyncio
 from datetime import datetime, timezone as dt_timezone
 from typing import Dict, Any, Optional, List
 from zoneinfo import ZoneInfo
@@ -2106,3 +2107,93 @@ def process_tab_hierarchy(tab: Dict[str, Any], level: int = 0) -> str:
         tab_text += process_tab_hierarchy(child_tab, level + 1)
 
     return tab_text
+
+
+async def get_paragraph_start_indices_and_revision(
+    service: Any, document_id: str, start_index: int, end_index: int
+) -> tuple[list[int], Optional[str]]:
+    """
+    Fetch nested-list paragraph starts and the same read's revision ID.
+    """
+    doc_data = await asyncio.to_thread(
+        service.documents()
+        .get(
+            documentId=document_id,
+            fields="revisionId,body/content(startIndex,endIndex,paragraph)",
+        )
+        .execute
+    )
+
+    paragraph_starts = []
+    for element in doc_data.get("body", {}).get("content", []):
+        if "paragraph" not in element:
+            continue
+        paragraph_start = element.get("startIndex")
+        paragraph_end = element.get("endIndex")
+        if not isinstance(paragraph_start, int) or not isinstance(paragraph_end, int):
+            continue
+        if paragraph_end > start_index and paragraph_start < end_index:
+            paragraph_starts.append(paragraph_start)
+
+    return paragraph_starts or [start_index], doc_data.get("revisionId")
+
+
+def format_write_receipt(
+    metadata: dict[str, Any], *, snapshot_label: str = "Affected range after edit"
+) -> str:
+    """Format bounded paragraph snapshots and revision observations after a write."""
+    parts = []
+    revision_before = metadata.get("revision_before")
+    revision_after = metadata.get("revision_after")
+    if revision_before or revision_after:
+        parts.append(
+            f" Revision: {revision_before or 'unknown'} -> "
+            f"{revision_after or 'unknown'}."
+        )
+
+    # Reporting what the edited range now looks like lets the caller confirm
+    # styles and list membership landed without a second round trip.
+    for target in metadata.get("target_ranges", [metadata]):
+        if (
+            target.get("tab_id")
+            or target.get("segment_id")
+            or len(metadata.get("target_ranges", [])) > 1
+        ):
+            parts.append(
+                f"\nTarget tab: {target.get('tab_id') or 'first'}, "
+                f"segment: {target.get('segment_id') or 'body'}. "
+                f"Document length: {target.get('document_length')}."
+            )
+        affected = target.get("affected_range")
+        if affected:
+            parts.append(f"\n{snapshot_label}:")
+            for entry in affected:
+                bullet = ", in list" if entry["in_list"] else ""
+                preview = entry["text_preview"].replace("\n", " ").strip()
+                parts.append(
+                    f"\n  [{entry['start_index']}-{entry['end_index']}] "
+                    f'{entry["named_style"] or "UNKNOWN"}{bullet}: "{preview}"'
+                )
+            parts.append("\n")
+
+    return "".join(parts)
+
+
+def format_paragraph_style_receipt(metadata: dict[str, Any]) -> str:
+    """Describe a successful style write's readback without implying verification."""
+    receipt = format_write_receipt(
+        metadata, snapshot_label="Requested range after edit"
+    )
+    if not metadata.get("revision_before") and not metadata.get("revision_after"):
+        receipt += " Revision: unknown -> unknown."
+    if "target_ranges" not in metadata or metadata.get("document_length") is None:
+        return (
+            receipt
+            + " Verification unavailable: the write succeeded, but its target could not be read back."
+        )
+    if not metadata.get("affected_range"):
+        receipt += " No top-level paragraphs were returned for the requested range."
+    return (
+        receipt
+        + " Snapshot is limited to 20 top-level paragraphs at the requested indices, 80 characters each; table-cell paragraphs and index shifts from list edits are not tracked."
+    )

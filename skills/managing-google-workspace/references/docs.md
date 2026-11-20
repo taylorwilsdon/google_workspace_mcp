@@ -138,6 +138,9 @@ Find and replace text throughout a document (or a specific tab).
 ## Paragraph & List Styling
 
 ### update_paragraph_style
+
+Successful writes keep the confirmation and append before/after revision observations and a readback at the requested indices: up to 20 top-level paragraphs with 80-character previews, named style and list membership. This adds two document reads; nested-list creation reuses its existing pre-read. Readback failure is reported without undoing the write. The snapshot does not cover table-cell paragraphs or track index shifts from list edits; use `inspect_doc_structure` for those cases. Revisions are observations around the write, not an atomic diff.
+
 Apply paragraph-level formatting: heading styles (H1-H6), lists (bulleted/numbered with nesting), alignment, spacing, and indentation. All options can be combined in a single call.
 
 | Parameter | Type | Required | Default | Notes |
