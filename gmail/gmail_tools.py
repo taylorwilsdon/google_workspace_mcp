@@ -3949,7 +3949,7 @@ async def list_gmail_thread_messages(
     thread_id: str,
     user_google_email: str,
     headers: Annotated[
-        Optional[StringList],
+        _OptionalLabelIdList,
         Field(
             description=(
                 "Header names to include for each message. "
