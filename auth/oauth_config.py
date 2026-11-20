@@ -249,9 +249,20 @@ class OAuthConfig:
         # Domain-wide delegation toggle. Defaults to on (impersonate USER_GOOGLE_EMAIL).
         # When false, the service account authenticates as itself (no `subject`),
         # which needs no Admin console delegation and suits single-tenant bots.
-        self.service_account_delegation = os.getenv(
-            "GOOGLE_SERVICE_ACCOUNT_DELEGATION", "true"
-        ).strip().lower() not in ("0", "false", "no", "off")
+        # Unrecognized values are rejected: a typo must not silently keep delegation
+        # on. An unset or empty value keeps the default.
+        _delegation_raw = (
+            os.getenv("GOOGLE_SERVICE_ACCOUNT_DELEGATION", "").strip().lower()
+        )
+        if _delegation_raw in ("", "1", "true", "yes", "on"):
+            self.service_account_delegation = True
+        elif _delegation_raw in ("0", "false", "no", "off"):
+            self.service_account_delegation = False
+        else:
+            raise ValueError(
+                "GOOGLE_SERVICE_ACCOUNT_DELEGATION must be true or false, "
+                f"got {_delegation_raw!r}."
+            )
         if self.is_service_account_no_delegation() and self.trust_gateway_identity:
             raise ValueError(
                 "TRUST_GATEWAY_IDENTITY requires per-user identity, which a service "

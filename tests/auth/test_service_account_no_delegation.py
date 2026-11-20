@@ -4,6 +4,8 @@ import json
 import logging
 import os
 import sys
+from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -26,7 +28,7 @@ SA_KEY_JSON = json.dumps(
 )
 
 
-def _base_env(monkeypatch):
+def _base_env(monkeypatch: pytest.MonkeyPatch) -> None:
     for var in (
         "MCP_ENABLE_OAUTH21",
         "EXTERNAL_OAUTH21_PROVIDER",
@@ -53,7 +55,7 @@ def _base_env(monkeypatch):
 # --- config ---
 
 
-def test_delegation_defaults_to_enabled(monkeypatch):
+def test_delegation_defaults_to_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
     _base_env(monkeypatch)
     cfg = OAuthConfig()
     assert cfg.service_account_delegation is True
@@ -61,14 +63,16 @@ def test_delegation_defaults_to_enabled(monkeypatch):
 
 
 @pytest.mark.parametrize("value", ["false", "0", "no", "OFF"])
-def test_delegation_can_be_disabled(monkeypatch, value):
+def test_delegation_can_be_disabled(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
     _base_env(monkeypatch)
     monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_DELEGATION", value)
     cfg = OAuthConfig()
     assert cfg.is_service_account_no_delegation() is True
 
 
-def test_no_delegation_requires_a_key(monkeypatch):
+def test_no_delegation_requires_a_key(monkeypatch: pytest.MonkeyPatch) -> None:
     _base_env(monkeypatch)
     monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_KEY_JSON")
     monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_DELEGATION", "false")
@@ -76,7 +80,9 @@ def test_no_delegation_requires_a_key(monkeypatch):
     assert cfg.is_service_account_no_delegation() is False
 
 
-def test_dwd_allowed_domains_ignored_without_delegation(monkeypatch, caplog):
+def test_dwd_allowed_domains_ignored_without_delegation(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
     _base_env(monkeypatch)
     monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_DELEGATION", "false")
     monkeypatch.setenv("DWD_ALLOWED_DOMAINS", "corp.com")
@@ -86,7 +92,9 @@ def test_dwd_allowed_domains_ignored_without_delegation(monkeypatch, caplog):
     assert "DWD_ALLOWED_DOMAINS is ignored" in caplog.text
 
 
-def test_dwd_allowed_domains_kept_with_delegation(monkeypatch):
+def test_dwd_allowed_domains_kept_with_delegation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _base_env(monkeypatch)
     monkeypatch.setenv("DWD_ALLOWED_DOMAINS", "Corp.com")
     assert OAuthConfig().dwd_allowed_domains == ["corp.com"]
@@ -95,7 +103,9 @@ def test_dwd_allowed_domains_kept_with_delegation(monkeypatch):
 # --- decorator ---
 
 
-def _patch_no_delegation(monkeypatch):
+def _patch_no_delegation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[dict[str, Any], object]:
     monkeypatch.setattr(
         service_decorator, "is_service_account_no_delegation", lambda: True
     )
@@ -105,7 +115,7 @@ def _patch_no_delegation(monkeypatch):
     captured = {}
     fake_service = object()
 
-    def fake_creds(scopes, subject=None):
+    def fake_creds(scopes: list[str], subject: str | None = None) -> object:
         captured["scopes"] = scopes
         captured["subject"] = subject
         return object()
@@ -120,14 +130,18 @@ def _patch_no_delegation(monkeypatch):
     return captured, fake_service
 
 
-def test_user_email_is_managed_without_delegation(monkeypatch):
+def test_user_email_is_managed_without_delegation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(
         service_decorator, "is_service_account_no_delegation", lambda: True
     )
     assert service_decorator._user_email_is_managed() is True
 
 
-def test_extract_managed_email_returns_service_account_email(monkeypatch):
+def test_extract_managed_email_returns_service_account_email(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(
         service_decorator, "is_service_account_no_delegation", lambda: True
     )
@@ -138,7 +152,9 @@ def test_extract_managed_email_returns_service_account_email(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_authenticate_without_delegation_uses_no_subject(monkeypatch):
+async def test_authenticate_without_delegation_uses_no_subject(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     captured, fake_service = _patch_no_delegation(monkeypatch)
     monkeypatch.delenv("USER_GOOGLE_EMAIL", raising=False)
     monkeypatch.setattr(service_decorator, "_ENV_USER_EMAIL", None)
@@ -160,7 +176,9 @@ async def test_authenticate_without_delegation_uses_no_subject(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_authenticate_without_delegation_widens_drive_file(monkeypatch):
+async def test_authenticate_without_delegation_widens_drive_file(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     captured, _ = _patch_no_delegation(monkeypatch)
     await service_decorator._authenticate_service(
         use_oauth21=False,
@@ -177,7 +195,9 @@ async def test_authenticate_without_delegation_widens_drive_file(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("service_name", ["gmail", "people", "chat", "script"])
-async def test_unsupported_services_fail_clearly(monkeypatch, service_name):
+async def test_unsupported_services_fail_clearly(
+    monkeypatch: pytest.MonkeyPatch, service_name: str
+) -> None:
     captured, _ = _patch_no_delegation(monkeypatch)
     with pytest.raises(service_decorator.GoogleAuthenticationError) as exc:
         await service_decorator._authenticate_service(
@@ -194,10 +214,12 @@ async def test_unsupported_services_fail_clearly(monkeypatch, service_name):
     assert captured == {}
 
 
-def test_credentials_builder_passes_no_subject(monkeypatch):
+def test_credentials_builder_passes_no_subject(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = {}
 
-    def fake_from_info(info, scopes, subject):
+    def fake_from_info(
+        info: dict[str, Any], scopes: list[str], subject: str | None
+    ) -> str:
         calls["subject"] = subject
         return "creds"
 
@@ -217,7 +239,7 @@ def test_credentials_builder_passes_no_subject(monkeypatch):
     assert calls["subject"] is None
 
 
-def test_get_service_account_email_reads_key(monkeypatch):
+def test_get_service_account_email_reads_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         service_decorator,
         "get_oauth_config",
@@ -231,7 +253,9 @@ def test_get_service_account_email_reads_key(monkeypatch):
 # --- gateway identity is incompatible with no delegation ---
 
 
-def test_trust_gateway_identity_rejected_without_delegation(monkeypatch):
+def test_trust_gateway_identity_rejected_without_delegation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _base_env(monkeypatch)
     monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_DELEGATION", "false")
     monkeypatch.setenv("TRUST_GATEWAY_IDENTITY", "true")
@@ -248,8 +272,8 @@ def test_trust_gateway_identity_rejected_without_delegation(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_decorated_tool_hides_email_and_receives_service_account_email(
-    monkeypatch,
-):
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import inspect
 
     _patch_no_delegation(monkeypatch)
@@ -261,7 +285,9 @@ async def test_decorated_tool_hides_email_and_receives_service_account_email(
     monkeypatch.setattr(service_decorator, "is_trust_gateway_identity", lambda: False)
 
     @service_decorator.require_google_service("drive", "drive_read")
-    async def sample_tool(service, user_google_email: str, query: str = "q"):
+    async def sample_tool(
+        service: Any, user_google_email: str, query: str = "q"
+    ) -> tuple[str, str]:
         return user_google_email, query
 
     assert "user_google_email" not in inspect.signature(sample_tool).parameters
@@ -271,7 +297,7 @@ async def test_decorated_tool_hides_email_and_receives_service_account_email(
 # --- server-level handling when USER_GOOGLE_EMAIL is also set ---
 
 
-def _server_with_email_free_tool(monkeypatch):
+def _server_with_email_free_tool(monkeypatch: pytest.MonkeyPatch) -> Any:
     from core import server as server_module
     from core.server import SecureFastMCP
 
@@ -290,14 +316,18 @@ def _server_with_email_free_tool(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_call_tool_does_not_inject_email_without_delegation(monkeypatch):
+async def test_call_tool_does_not_inject_email_without_delegation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     server = _server_with_email_free_tool(monkeypatch)
     result = await server.call_tool("echo", {"query": "hi"})
     assert result.content[0].text == "hi"
 
 
 @pytest.mark.asyncio
-async def test_call_tool_drops_caller_supplied_email_without_delegation(monkeypatch):
+async def test_call_tool_drops_caller_supplied_email_without_delegation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     server = _server_with_email_free_tool(monkeypatch)
     result = await server.call_tool(
         "echo", {"query": "hi", "user_google_email": "cached@example.com"}
@@ -308,7 +338,9 @@ async def test_call_tool_drops_caller_supplied_email_without_delegation(monkeypa
 # --- key loading errors ---
 
 
-def test_service_account_email_requires_client_email(monkeypatch):
+def test_service_account_email_requires_client_email(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(
         service_decorator,
         "get_oauth_config",
@@ -323,7 +355,9 @@ def test_service_account_email_requires_client_email(monkeypatch):
         service_decorator._get_service_account_email()
 
 
-def test_service_account_key_file_is_read(monkeypatch, tmp_path):
+def test_service_account_key_file_is_read(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     key = tmp_path / "key.json"
     key.write_text(SA_KEY_JSON)
     monkeypatch.setattr(
@@ -336,7 +370,9 @@ def test_service_account_key_file_is_read(monkeypatch, tmp_path):
     assert service_decorator._get_service_account_email() == SA_EMAIL
 
 
-def test_service_account_key_invalid_json_raises(monkeypatch):
+def test_service_account_key_invalid_json_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(
         service_decorator,
         "get_oauth_config",
@@ -346,3 +382,40 @@ def test_service_account_key_invalid_json_raises(monkeypatch):
     )
     with pytest.raises(service_decorator.GoogleAuthenticationError):
         service_decorator._get_service_account_email()
+
+
+# --- delegation flag validation ---
+
+
+@pytest.mark.parametrize("value", ["flase", "maybe", "2"])
+def test_unrecognized_delegation_value_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    _base_env(monkeypatch)
+    monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_DELEGATION", value)
+    with pytest.raises(ValueError, match="GOOGLE_SERVICE_ACCOUNT_DELEGATION"):
+        OAuthConfig()
+
+
+@pytest.mark.parametrize("value", ["", "  ", "true", "1", "YES", "on"])
+def test_empty_or_truthy_delegation_value_keeps_delegation(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    _base_env(monkeypatch)
+    monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_DELEGATION", value)
+    assert OAuthConfig().service_account_delegation is True
+
+
+# --- start_google_auth ---
+
+
+@pytest.mark.asyncio
+async def test_start_google_auth_is_a_noop_without_delegation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core import server as server_module
+
+    monkeypatch.setattr(server_module, "is_oauth21_enabled", lambda: False)
+    monkeypatch.setattr(server_module, "is_service_account_no_delegation", lambda: True)
+    result = await server_module.start_google_auth(service_name="drive")
+    assert "not used in service-account mode" in result

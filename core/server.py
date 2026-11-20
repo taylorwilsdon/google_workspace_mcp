@@ -1147,6 +1147,12 @@ async def start_google_auth(
             "original tool."
         )
 
+    if is_service_account_no_delegation():
+        return (
+            "start_google_auth is not used in service-account mode. The server "
+            "authenticates as its service account; no OAuth flow is required."
+        )
+
     if is_trust_gateway_identity():
         user_google_email = await get_verified_gateway_principal()
 
