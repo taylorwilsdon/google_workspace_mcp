@@ -529,7 +529,9 @@ def _build_person_body(
     return body
 
 
-async def _warmup_search_cache(service: Resource, user_google_email: str) -> None:
+async def _warmup_search_cache(
+    service: Resource, user_google_email: str, source: str = "saved"
+) -> None:
     """
     Warm up the People API search cache.
 
@@ -542,17 +544,24 @@ async def _warmup_search_cache(service: Resource, user_google_email: str) -> Non
     """
     global _search_cache_warmed_up
 
-    if _search_cache_warmed_up.get(user_google_email):
+    cache_key = (
+        user_google_email if source == "saved" else f"{source}:{user_google_email}"
+    )
+    if _search_cache_warmed_up.get(cache_key):
         return
 
     try:
         logger.debug(f"[contacts] Warming up search cache for {user_google_email}")
-        await asyncio.to_thread(
-            service.people()
-            .searchContacts(query="", readMask="names", pageSize=1)
-            .execute
-        )
-        _search_cache_warmed_up[user_google_email] = True
+        if source == "other":
+            request = service.otherContacts().search(
+                query="", readMask="names", pageSize=1
+            )
+        else:
+            request = service.people().searchContacts(
+                query="", readMask="names", pageSize=1
+            )
+        await asyncio.to_thread(request.execute)
+        _search_cache_warmed_up[cache_key] = True
         logger.debug(f"[contacts] Search cache warmed up for {user_google_email}")
     except HttpError as e:
         # Warmup failure is non-fatal, search may still work
@@ -670,6 +679,7 @@ async def search_contacts(
     user_google_email: str,
     query: str,
     page_size: int = 30,
+    source: Literal["saved", "other"] = "saved",
 ) -> str:
     """
     Search contacts by name, email, phone number, or other fields.
@@ -678,6 +688,9 @@ async def search_contacts(
         user_google_email (str): The user's Google email address. Required.
         query (str): Search query string (searches names, emails, phone numbers).
         page_size (int): Maximum number of results to return (default: 30, max: 30).
+        source (str): "saved" searches saved contacts (default). "other" searches
+            people you've emailed or interacted with but never saved (Gmail's
+            "Other contacts"), which needs the contacts.other.readonly scope.
 
     Returns:
         str: Matching contacts with their basic information.
@@ -692,22 +705,28 @@ async def search_contacts(
     page_size = min(page_size, 30)
 
     # Warm up the search cache if needed
-    await _warmup_search_cache(service, user_google_email)
+    await _warmup_search_cache(service, user_google_email, source)
 
-    result = await asyncio.to_thread(
-        service.people()
-        .searchContacts(
+    if source == "other":
+        # Other contacts only expose names, emails, phone numbers and photos.
+        request = service.otherContacts().search(
+            query=query,
+            readMask="names,emailAddresses,phoneNumbers",
+            pageSize=page_size,
+        )
+    else:
+        request = service.people().searchContacts(
             query=query,
             readMask=DEFAULT_PERSON_FIELDS,
             pageSize=page_size,
         )
-        .execute
-    )
+    result = await asyncio.to_thread(request.execute)
 
     results = result.get("results", [])
 
     if not results:
-        return f"No contacts found matching '{query}' for {user_google_email}."
+        label = "other contacts" if source == "other" else "contacts"
+        return f"No {label} found matching '{query}' for {user_google_email}."
 
     response = f"Search Results for '{query}' ({len(results)} found):\n\n"
 
