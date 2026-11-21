@@ -1257,6 +1257,71 @@ def _format_http_error_for_log(error: HttpError) -> str:
     return f"status={status}, request={request}"
 
 
+_RATE_LIMIT_ERROR_REASONS = frozenset(
+    {
+        "rateLimitExceeded",
+        "userRateLimitExceeded",
+        "quotaExceeded",
+        "dailyLimitExceeded",
+        "RATE_LIMIT_EXCEEDED",
+    }
+)
+
+
+def is_rate_limit_or_quota_error(error: HttpError) -> bool:
+    """Return True when Google rejected the request for API rate or quota limits."""
+    status = getattr(getattr(error, "resp", None), "status", None)
+    try:
+        status_code = int(status)
+    except (TypeError, ValueError):
+        return False
+
+    if status_code == 429:
+        return True
+    if status_code != 403:
+        return False
+
+    content = getattr(error, "content", None)
+    if not content:
+        return False
+
+    try:
+        text = (
+            content.decode("utf-8", errors="ignore")
+            if isinstance(content, bytes)
+            else str(content)
+        )
+        payload = json.loads(text)
+    except (ValueError, TypeError):
+        return False
+
+    entries = payload if isinstance(payload, list) else [payload]
+    for item in entries:
+        if not isinstance(item, dict):
+            continue
+        err = item.get("error")
+        if not isinstance(err, dict):
+            continue
+        if err.get("status") == "RESOURCE_EXHAUSTED":
+            return True
+        if err.get("reason") in _RATE_LIMIT_ERROR_REASONS:
+            return True
+        for detail in err.get("errors") or ():
+            if (
+                isinstance(detail, dict)
+                and detail.get("reason") in _RATE_LIMIT_ERROR_REASONS
+            ):
+                return True
+        for detail in err.get("details") or ():
+            if isinstance(detail, dict) and (
+                detail.get("reason") in _RATE_LIMIT_ERROR_REASONS
+                or str(detail.get("@type", "")).endswith("/google.rpc.QuotaFailure")
+            ):
+                return True
+
+    return False
+
+
 APPS_SCRIPT_USER_SETTINGS_URL = "https://script.google.com/home/usersettings"
 
 
@@ -1356,6 +1421,12 @@ def handle_http_errors(
                             f"settings. LLM: Ask the user to open "
                             f"{APPS_SCRIPT_USER_SETTINGS_URL}, turn on 'Google Apps "
                             f"Script API', wait a minute, and retry."
+                        )
+                    elif is_rate_limit_or_quota_error(error):
+                        message = (
+                            f"API error in {tool_name}: {error_summary}. "
+                            "Google API rate limit or quota exceeded (not an authentication failure). "
+                            "LLM: Wait briefly and retry with fewer concurrent requests."
                         )
                     elif error.resp.status in [401, 403]:
                         # Authentication/authorization errors
