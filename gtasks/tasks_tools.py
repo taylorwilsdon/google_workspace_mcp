@@ -973,8 +973,6 @@ async def manage_task(
         )
 
     if action == "update":
-        if status is not None and status not in allowed_statuses:
-            raise UserInputError("invalid status: must be 'needsAction' or 'completed'")
         if not task_id:
             raise UserInputError("'task_id' is required for the 'update' action.")
         return await _update_task_impl(

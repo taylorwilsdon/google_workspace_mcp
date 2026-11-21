@@ -20,6 +20,7 @@ from core.server import server
 from core.utils import UserInputError, handle_http_errors, StringList
 from gcontacts.contacts_helpers import (
     DEFAULT_PERSON_FIELDS,
+    _contact_group_resource_name,
     _format_contact,
     _list_contacts,
     _merge_emails,
@@ -31,6 +32,7 @@ from gcontacts.contacts_helpers import (
     _merge_urls,
     _merge_user_defined,
     _parse_birthday,
+    _people_resource_name,
 )
 
 logger = logging.getLogger(__name__)
@@ -633,11 +635,7 @@ async def get_contact(
     Returns:
         str: Detailed contact information.
     """
-    # Normalize resource name
-    if not contact_id.startswith("people/"):
-        resource_name = f"people/{contact_id}"
-    else:
-        resource_name = contact_id
+    resource_name = _people_resource_name(contact_id)
 
     logger.info(
         f"[get_contact] Invoked. Email: '{user_google_email}', Contact: {resource_name}"
@@ -801,7 +799,7 @@ async def manage_contact(
         organizations_mode (str): How to update orgs on "update": "merge" (default), "replace", or "remove".
         nicknames_mode (str): How to update nicknames on "update": "merge" (default), "replace", or "remove".
         urls_mode (str): How to update urls on "update": "merge" (default), "replace", or "remove".
-            merge dedups by normalized URL (lowercased, trailing slash stripped).
+            merge and remove match URLs case-insensitively on scheme and host only, ignoring a trailing slash.
         user_defined_mode (str): How to update custom fields on "update": "merge" (default), "replace", or "remove".
             merge overrides value on matching key; new keys appended.
         relations_mode (str): How to update relations on "update": "merge" (default), "replace", or "remove".
@@ -879,11 +877,7 @@ async def manage_contact(
     if not contact_id:
         raise UserInputError(f"contact_id is required for '{action}' action.")
 
-    # Normalize resource name
-    if not contact_id.startswith("people/"):
-        resource_name = f"people/{contact_id}"
-    else:
-        resource_name = contact_id
+    resource_name = _people_resource_name(contact_id)
 
     if action == "update":
         # Retry loop for etag conflicts (412 Precondition Failed)
@@ -1148,11 +1142,7 @@ async def get_contact_group(
     Returns:
         str: Contact group details including members.
     """
-    # Normalize resource name
-    if not group_id.startswith("contactGroups/"):
-        resource_name = f"contactGroups/{group_id}"
-    else:
-        resource_name = group_id
+    resource_name = _contact_group_resource_name(group_id)
 
     logger.info(
         f"[get_contact_group] Invoked. Email: '{user_google_email}', Group: {resource_name}"
@@ -1367,9 +1357,7 @@ async def manage_contacts_batch(
             cid = update.contact_id
             if not cid:
                 raise UserInputError("Each update must include a contact_id.")
-            if not cid.startswith("people/"):
-                cid = f"people/{cid}"
-            resource_names.append(cid)
+            resource_names.append(_people_resource_name(cid))
 
         batch_get_result = await asyncio.to_thread(
             service.people()
@@ -1381,11 +1369,15 @@ async def manage_contacts_batch(
         )
 
         current_people = {}
+        lookup_misses: Dict[str, str] = {}
         for resp in batch_get_result.get("responses", []):
             person = resp.get("person", {})
             rname = person.get("resourceName")
+            requested = resp.get("requestedResourceName", rname)
             if rname and person.get("etag"):
                 current_people[rname] = person
+                if requested != rname:
+                    lookup_misses[requested] = f"resolves to {rname}"
 
         # Map field name to body key produced by _build_person_body
         field_to_body_key = {
@@ -1405,15 +1397,13 @@ async def manage_contacts_batch(
 
         # Build contacts map (Dict[resourceName, Person]) — required by batchUpdateContacts API
         contacts_map: Dict[str, Any] = {}
+        skipped: List[str] = []
 
-        for update in updates:
-            cid = update.contact_id
-            if not cid.startswith("people/"):
-                cid = f"people/{cid}"
-
+        for cid, update in zip(resource_names, updates):
             current = current_people.get(cid)
             if not current:
                 logger.warning(f"No etag found for {cid}, skipping")
+                skipped.append(f"{cid}: {lookup_misses.get(cid, 'not found')}")
                 continue
 
             body = _build_person_body(
@@ -1440,6 +1430,7 @@ async def manage_contacts_batch(
                 logger.warning(
                     f"Field '{field}' (key '{body_key}') not present in update for {cid}, skipping"
                 )
+                skipped.append(f"{cid}: no {field} in the update")
                 continue
 
             if body_key == "names":
@@ -1451,8 +1442,11 @@ async def manage_contacts_batch(
             }
             contacts_map[cid] = person_body
 
+        skipped_report = f"Skipped {len(skipped)} contacts:\n" + "".join(
+            f"  {line}\n" for line in skipped
+        )
         if not contacts_map:
-            raise UserInputError("No valid update data provided.")
+            raise UserInputError(f"No valid update data provided.\n{skipped_report}")
 
         batch_body = {
             "contacts": contacts_map,
@@ -1473,6 +1467,9 @@ async def manage_contacts_batch(
             person = update_result.get("person", {})
             response += _format_contact(person) + "\n\n"
 
+        if skipped:
+            response += skipped_report
+
         logger.info(
             f"Batch updated {len(update_results)} contacts for {user_google_email}"
         )
@@ -1485,12 +1482,7 @@ async def manage_contacts_batch(
     if len(contact_ids) > 500:
         raise UserInputError("Maximum 500 contacts can be deleted in a batch.")
 
-    resource_names = []
-    for cid in contact_ids:
-        if not cid.startswith("people/"):
-            resource_names.append(f"people/{cid}")
-        else:
-            resource_names.append(cid)
+    resource_names = [_people_resource_name(cid) for cid in contact_ids]
 
     batch_body = {"resourceNames": resource_names}
 
@@ -1579,11 +1571,7 @@ async def manage_contact_group(
     if not group_id:
         raise UserInputError(f"group_id is required for '{action}' action.")
 
-    # Normalize resource name
-    if not group_id.startswith("contactGroups/"):
-        resource_name = f"contactGroups/{group_id}"
-    else:
-        resource_name = group_id
+    resource_name = _contact_group_resource_name(group_id)
 
     if action == "update":
         if not name:
@@ -1631,22 +1619,14 @@ async def manage_contact_group(
     modify_body: Dict[str, Any] = {}
 
     if add_contact_ids:
-        add_names = []
-        for contact_id in add_contact_ids:
-            if not contact_id.startswith("people/"):
-                add_names.append(f"people/{contact_id}")
-            else:
-                add_names.append(contact_id)
-        modify_body["resourceNamesToAdd"] = add_names
+        modify_body["resourceNamesToAdd"] = [
+            _people_resource_name(contact_id) for contact_id in add_contact_ids
+        ]
 
     if remove_contact_ids:
-        remove_names = []
-        for contact_id in remove_contact_ids:
-            if not contact_id.startswith("people/"):
-                remove_names.append(f"people/{contact_id}")
-            else:
-                remove_names.append(contact_id)
-        modify_body["resourceNamesToRemove"] = remove_names
+        modify_body["resourceNamesToRemove"] = [
+            _people_resource_name(contact_id) for contact_id in remove_contact_ids
+        ]
 
     result = await asyncio.to_thread(
         service.contactGroups()

@@ -36,6 +36,18 @@ Get full content of a single message (subject, sender, recipients, date, Message
 | full | boolean | no | false | Return the complete untruncated message as a file path (stdio) or download URL (HTTP) instead of the inline body, which is truncated at 20,000 chars. body_format picks the export type ("raw" gives a byte-exact .eml). Stateless mode without GCS staging returns it inline. Requires format="full" |
 | include_headers | boolean | no | true | false omits the Subject/From/To/Date summary (attached messages' too) and, with full=true, names the export after the message ID. Requires format="full"; body_format="raw" only when exported to a file |
 | include_links | boolean | no | false | Append a LINKS section listing the http(s) URLs from the HTML body that the text output omits; only applies to body_format="text" |
+| page_offset | integer | no | null | Start at 0 to return JSON body pages; follow next_offset until complete=true. Character offsets, not bytes. Requires format="full", full=false, body_format="text" or "html" |
+| page_size | integer | no | 20000 | Body characters per page, 1 to 20,000; requires page_offset |
+| expected_sha256 | string | no | null | Previous body_sha256; rejects a changed representation. Requires page_offset |
+
+Keep body_format and include_links unchanged while paging. The JSON includes body,
+page_offset, next_offset, total_chars, complete, and body_sha256, plus a headers object
+when include_headers=true. Attachments and attached messages are excluded; use the
+attachment tools or full=true for exports. Every page checks current Gmail access, then
+reuses a process-local body cache (five minutes, at most 128 entries and 64 MiB) keyed by
+account, message, body_format, and include_links. A cache miss re-fetches the message, and
+expected_sha256 detects a changed representation. Raw and rendered messages are capped at
+64 MiB, or WORKSPACE_MCP_MAX_FILE_BYTES when smaller.
 
 ### get_gmail_messages_content_batch
 Get content of multiple messages in one request. Auto-batches in chunks of 25.
@@ -108,6 +120,7 @@ Send an email. Supports new messages, replies, forwards, HTML, attachments, CC/B
 | quote_original | boolean | no | false | Include the message being replied to as a quoted original (requires thread_id) |
 | include_signature | boolean | no | true | Append Gmail signature if available |
 | attachments | array | no | | See attachment format below |
+| priority | string | no | normal | `high` or `low` adds Importance / X-Priority / Priority headers that Outlook, Apple Mail and Thunderbird display; Gmail does not show them |
 
 **Attachment format** (each item is an object):
 - **File path**: `{"path": "path/to/file.pdf"}` -- optionally add `"filename"` and `"mime_type"`. Use forward slashes on all platforms
@@ -137,6 +150,7 @@ Create a draft. Same capabilities as send (including forwards and reply_all).
 | include_signature | boolean | no | true | Append Gmail signature if available |
 | reply_all | boolean | no | false | Derive recipients from the thread: To = sender being replied to, Cc = other participants (minus you and from_email). Requires thread_id; explicit to/cc win |
 | quote_original | boolean | no | false | Include original message as quoted reply (requires thread_id) |
+| priority | string | no | normal | `high` or `low` adds Importance / X-Priority / Priority headers that Outlook, Apple Mail and Thunderbird display; Gmail does not show them |
 
 Operational Gmail settings errors such as rate limits abort draft creation instead of silently falling back to a potentially unintended sender.
 
