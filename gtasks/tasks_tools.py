@@ -18,7 +18,11 @@ from mcp.types import ToolAnnotations
 
 from auth.service_decorator import require_google_service
 from core.server import server
-from core.utils import UserInputError, handle_http_errors
+from core.utils import (
+    UserInputError,
+    handle_http_errors,
+    is_rate_limit_or_quota_error,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +33,13 @@ LIST_TASKS_MAX_POSITION = "99999999999999999999"
 
 def _format_reauth_message(error: Exception, user_google_email: str) -> str:
     base = f"API error: {error}"
+
+    if isinstance(error, HttpError) and is_rate_limit_or_quota_error(error):
+        return (
+            f"{base}. Google API rate limit or quota exceeded "
+            "(not an authentication failure). "
+            "LLM: Wait briefly and retry with fewer concurrent requests."
+        )
 
     # Only suggest re-authentication for auth-related errors (401, 403)
     if isinstance(error, HttpError) and error.resp.status in (401, 403):

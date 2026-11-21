@@ -111,6 +111,21 @@ class TestFormatReauthMessage:
         result = _format_reauth_message(_http_error(401), "u@e.com")
         assert "bearer token" in result
 
+    @pytest.mark.parametrize(
+        ("status", "content"),
+        [
+            (403, b'{"error":{"errors":[{"reason":"rateLimitExceeded"}]}}'),
+            (429, b'{"error":{"code":429,"message":"Too many requests"}}'),
+        ],
+    )
+    def test_rate_limit_error_has_no_reauth_hint(
+        self, status: int, content: bytes
+    ) -> None:
+        err = HttpError(Mock(status=status, reason="error"), content)
+        result = _format_reauth_message(err, "u@e.com")
+        assert "rate limit or quota exceeded" in result
+        assert "re-authenticate" not in result
+
 
 class TestGetStructuredTasks:
     def test_sorts_top_level_by_position(self) -> None:
