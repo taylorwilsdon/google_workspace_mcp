@@ -1304,20 +1304,35 @@ def is_rate_limit_or_quota_error(error: HttpError) -> bool:
             continue
         if err.get("status") == "RESOURCE_EXHAUSTED":
             return True
-        if err.get("reason") in _RATE_LIMIT_ERROR_REASONS:
+        reason = err.get("reason")
+        if isinstance(reason, str) and reason in _RATE_LIMIT_ERROR_REASONS:
             return True
-        for detail in err.get("errors") or ():
-            if (
-                isinstance(detail, dict)
-                and detail.get("reason") in _RATE_LIMIT_ERROR_REASONS
-            ):
-                return True
-        for detail in err.get("details") or ():
-            if isinstance(detail, dict) and (
-                detail.get("reason") in _RATE_LIMIT_ERROR_REASONS
-                or str(detail.get("@type", "")).endswith("/google.rpc.QuotaFailure")
-            ):
-                return True
+        errors = err.get("errors")
+        if isinstance(errors, list):
+            for detail in errors:
+                if not isinstance(detail, dict):
+                    continue
+                detail_reason = detail.get("reason")
+                if (
+                    isinstance(detail_reason, str)
+                    and detail_reason in _RATE_LIMIT_ERROR_REASONS
+                ):
+                    return True
+        details = err.get("details")
+        if isinstance(details, list):
+            for detail in details:
+                if not isinstance(detail, dict):
+                    continue
+                detail_reason = detail.get("reason")
+                detail_type = detail.get("@type")
+                if (
+                    isinstance(detail_reason, str)
+                    and detail_reason in _RATE_LIMIT_ERROR_REASONS
+                ) or (
+                    isinstance(detail_type, str)
+                    and detail_type.endswith("/google.rpc.QuotaFailure")
+                ):
+                    return True
 
     return False
 

@@ -1,8 +1,11 @@
 """Tests for rate-limit and quota 403/429 handling in handle_http_errors."""
 
+from collections.abc import Awaitable, Callable
+
 import fastmcp
 import httplib2
 import pytest
+from fastmcp.exceptions import ToolError
 from googleapiclient.errors import HttpError
 
 from core.utils import handle_http_errors
@@ -46,9 +49,11 @@ RATE_LIMIT_429 = (
 )
 
 
-def _raising_tool(status: int, content: bytes, uri: str = GMAIL_URI):
+def _raising_tool(
+    status: int, content: bytes, uri: str = GMAIL_URI
+) -> Callable[..., Awaitable[None]]:
     @handle_http_errors("get_gmail_message_content", is_read_only=True)
-    async def tool(user_google_email: str = "user@example.com"):
+    async def tool(user_google_email: str = "user@example.com") -> None:
         raise HttpError(httplib2.Response({"status": status}), content, uri=uri)
 
     return tool
@@ -76,10 +81,12 @@ def _raising_tool(status: int, content: bytes, uri: str = GMAIL_URI):
         "http-429",
     ],
 )
-async def test_rate_limit_error_does_not_suggest_reauth(status, content):
+async def test_rate_limit_error_does_not_suggest_reauth(
+    status: int, content: bytes
+) -> None:
     tool = _raising_tool(status, content)
 
-    with pytest.raises(Exception) as excinfo:
+    with pytest.raises(ToolError) as excinfo:
         await tool(user_google_email="user@example.com")
 
     message = str(excinfo.value)
@@ -90,7 +97,7 @@ async def test_rate_limit_error_does_not_suggest_reauth(status, content):
 
 
 @pytest.mark.asyncio
-async def test_permission_denied_403_still_suggests_reauth():
+async def test_permission_denied_403_still_suggests_reauth() -> None:
     content = (
         b'{"error": {"code": 403, "message": "Request had insufficient '
         b'authentication scopes.", "errors": [{"domain": "global", '
@@ -98,7 +105,7 @@ async def test_permission_denied_403_still_suggests_reauth():
     )
     tool = _raising_tool(403, content)
 
-    with pytest.raises(Exception) as excinfo:
+    with pytest.raises(ToolError) as excinfo:
         await tool(user_google_email="user@example.com")
 
     message = str(excinfo.value)
@@ -107,11 +114,34 @@ async def test_permission_denied_403_still_suggests_reauth():
 
 
 @pytest.mark.asyncio
-async def test_rate_limit_error_respects_mask_error_details(monkeypatch):
+@pytest.mark.parametrize(
+    "content",
+    [
+        b'{"error": {"message": "Forbidden", "reason": []}}',
+        b'{"error": {"message": "Forbidden", "errors": 123, "details": 456}}',
+        b'{"error": {"message": "Forbidden", "errors": [{"reason": []}], "details": [{"reason": {}, "@type": 1}]}}',
+    ],
+    ids=["unhashable-reason", "non-list-collections", "unhashable-detail-fields"],
+)
+async def test_malformed_403_fields_do_not_raise_type_error(content: bytes) -> None:
+    tool = _raising_tool(403, content)
+
+    with pytest.raises(ToolError) as excinfo:
+        await tool(user_google_email="user@example.com")
+
+    message = str(excinfo.value)
+    assert "re-authenticate" in message
+    assert "rate limit" not in message
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_error_respects_mask_error_details(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(fastmcp.settings, "mask_error_details", True)
     tool = _raising_tool(403, GMAIL_RATE_LIMIT_403)
 
-    with pytest.raises(Exception) as excinfo:
+    with pytest.raises(ToolError) as excinfo:
         await tool(user_google_email="user@example.com")
 
     message = str(excinfo.value)
