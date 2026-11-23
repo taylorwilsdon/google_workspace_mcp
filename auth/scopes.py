@@ -68,7 +68,6 @@ TASKS_READONLY_SCOPE = "https://www.googleapis.com/auth/tasks.readonly"
 # Google Contacts (People API) scopes
 CONTACTS_SCOPE = "https://www.googleapis.com/auth/contacts"
 CONTACTS_READONLY_SCOPE = "https://www.googleapis.com/auth/contacts.readonly"
-# "Other contacts": people you've interacted with but never saved
 CONTACTS_OTHER_READONLY_SCOPE = (
     "https://www.googleapis.com/auth/contacts.other.readonly"
 )
@@ -195,7 +194,7 @@ TASKS_SCOPES = [TASKS_SCOPE, TASKS_READONLY_SCOPE]
 CONTACTS_SCOPES = [
     CONTACTS_SCOPE,
     CONTACTS_READONLY_SCOPE,
-    CONTACTS_OTHER_READONLY_SCOPE,  # search_contacts(source="other")
+    CONTACTS_OTHER_READONLY_SCOPE,
 ]
 
 CUSTOM_SEARCH_SCOPES = [CUSTOM_SEARCH_SCOPE]

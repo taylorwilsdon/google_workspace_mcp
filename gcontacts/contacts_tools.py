@@ -15,11 +15,13 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from mcp.types import ToolAnnotations
 
+from auth.oauth_config import is_service_account_enabled
 from auth.service_decorator import require_google_service
 from core.server import server
 from core.utils import UserInputError, handle_http_errors, StringList
 from gcontacts.contacts_helpers import (
     DEFAULT_PERSON_FIELDS,
+    OTHER_CONTACT_FIELDS,
     _contact_group_resource_name,
     _format_contact,
     _list_contacts,
@@ -33,6 +35,7 @@ from gcontacts.contacts_helpers import (
     _merge_user_defined,
     _parse_birthday,
     _people_resource_name,
+    _search_request,
 )
 
 logger = logging.getLogger(__name__)
@@ -530,36 +533,20 @@ def _build_person_body(
 
 
 async def _warmup_search_cache(
-    service: Resource, user_google_email: str, source: str = "saved"
+    service: Resource, user_google_email: str, source: str
 ) -> None:
-    """
-    Warm up the People API search cache.
-
-    The People API requires an initial empty query to warm up the search cache
-    before searches will return results.
-
-    Args:
-        service: Authenticated People API service.
-        user_google_email: User's email for tracking.
-    """
+    """Send the empty-query search the People API needs before a source's first search."""
     global _search_cache_warmed_up
 
-    cache_key = (
-        user_google_email if source == "saved" else f"{source}:{user_google_email}"
-    )
+    cache_key = f"{source}:{user_google_email}"
     if _search_cache_warmed_up.get(cache_key):
         return
 
     try:
         logger.debug(f"[contacts] Warming up search cache for {user_google_email}")
-        if source == "other":
-            request = service.otherContacts().search(
-                query="", readMask="names", pageSize=1
-            )
-        else:
-            request = service.people().searchContacts(
-                query="", readMask="names", pageSize=1
-            )
+        request = _search_request(
+            service, source, query="", readMask="names", pageSize=1
+        )
         await asyncio.to_thread(request.execute)
         _search_cache_warmed_up[cache_key] = True
         logger.debug(f"[contacts] Search cache warmed up for {user_google_email}")
@@ -688,9 +675,7 @@ async def search_contacts(
         user_google_email (str): The user's Google email address. Required.
         query (str): Search query string (searches names, emails, phone numbers).
         page_size (int): Maximum number of results to return (default: 30, max: 30).
-        source (str): "saved" searches saved contacts (default). "other" searches
-            people you've emailed or interacted with but never saved (Gmail's
-            "Other contacts"), which needs the contacts.other.readonly scope.
+        source (str): "saved" (default) or "other" for people you've emailed but never saved (Gmail's "Other contacts").
 
     Returns:
         str: Matching contacts with their basic information.
@@ -703,23 +688,22 @@ async def search_contacts(
     if page_size < 1:
         raise UserInputError("page_size must be >= 1")
     page_size = min(page_size, 30)
+    if source == "other" and is_service_account_enabled():
+        raise UserInputError(
+            "source='other' is not available in service-account mode; "
+            "it needs user OAuth with the contacts.other.readonly scope."
+        )
 
     # Warm up the search cache if needed
     await _warmup_search_cache(service, user_google_email, source)
 
-    if source == "other":
-        # Other contacts only expose names, emails, phone numbers and photos.
-        request = service.otherContacts().search(
-            query=query,
-            readMask="names,emailAddresses,phoneNumbers",
-            pageSize=page_size,
-        )
-    else:
-        request = service.people().searchContacts(
-            query=query,
-            readMask=DEFAULT_PERSON_FIELDS,
-            pageSize=page_size,
-        )
+    request = _search_request(
+        service,
+        source,
+        query=query,
+        readMask=OTHER_CONTACT_FIELDS if source == "other" else DEFAULT_PERSON_FIELDS,
+        pageSize=page_size,
+    )
     result = await asyncio.to_thread(request.execute)
 
     results = result.get("results", [])
