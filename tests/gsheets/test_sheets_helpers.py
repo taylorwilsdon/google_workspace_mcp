@@ -117,9 +117,18 @@ def test_clamp_a1_read_rows_passes_through_named_ranges():
         ),
         ({"sheetId": 0, "endColumnIndex": 2}, "Sheet1!A:B"),
         ({"sheetId": 0, "endRowIndex": 3}, "Sheet1!1:3"),
+        (
+            {
+                "sheetId": 0,
+                "startColumnIndex": 1,
+                "endRowIndex": 1,
+                "endColumnIndex": 2,
+            },
+            "Sheet1!B1",
+        ),
     ],
 )
 def test_grid_range_to_a1_defaults_omitted_starts_to_zero_when_end_exists(
-    grid_range, expected
-):
+    grid_range: dict[str, int], expected: str
+) -> None:
     assert _grid_range_to_a1(grid_range, {0: "Sheet1"}) == expected
