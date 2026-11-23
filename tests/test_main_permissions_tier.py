@@ -42,6 +42,21 @@ def test_main_rejects_invalid_max_office_xml_bytes_at_startup(monkeypatch, capsy
     assert "WORKSPACE_MCP_MAX_OFFICE_XML_BYTES" in capsys.readouterr().err
 
 
+def test_main_rejects_invalid_stateless_http_at_startup(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("WORKSPACE_MCP_STATELESS_HTTP", "1")
+    monkeypatch.setattr(sys, "argv", ["main.py"])
+    monkeypatch.setattr(main, "configure_safe_logging", lambda: None)
+    monkeypatch.setattr("core.telemetry.configure_telemetry", lambda: None)
+
+    with pytest.raises(SystemExit) as exc:
+        main.main()
+
+    assert exc.value.code == 2
+    assert "WORKSPACE_MCP_STATELESS_HTTP" in capsys.readouterr().err
+
+
 def test_fastmcp_entrypoint_rejects_invalid_file_limits_at_startup():
     env = os.environ.copy()
     env["WORKSPACE_MCP_MAX_FILE_BYTES"] = "0"
@@ -350,3 +365,64 @@ def test_main_skips_gcs_store_initialization_in_service_account_mode(monkeypatch
         main.main()
 
     assert exc.value.code == 0
+
+
+@pytest.mark.parametrize(
+    "flag, stateless_mode, expected",
+    [("true", False, True), (None, False, False), (None, True, True)],
+)
+def test_stateless_http_flag_reaches_server_run(
+    monkeypatch: pytest.MonkeyPatch,
+    flag: str | None,
+    stateless_mode: bool,
+    expected: bool,
+) -> None:
+    """WORKSPACE_MCP_STATELESS_HTTP or stateless mode makes the transport sessionless."""
+    seen: dict[str, object] = {}
+
+    def fake_run(*args: object, **kwargs: object) -> None:  # noqa: ARG001
+        seen.update(kwargs)
+        raise SystemExit(0)
+
+    monkeypatch.setattr(main, "configure_safe_logging", lambda: None)
+    monkeypatch.setattr(main, "import_module", lambda name: object())  # noqa: ARG005
+    monkeypatch.setattr(main, "set_enabled_tool_names", lambda names: None)
+    monkeypatch.setattr(main, "wrap_server_tool_method", lambda server: None)
+    monkeypatch.setattr(main, "filter_server_tools", lambda server: None)
+    monkeypatch.setattr(main, "set_transport_mode", lambda transport: None)
+    monkeypatch.setattr(main, "configure_server_for_http", lambda: None)
+    monkeypatch.setattr(main, "get_selected_backend", lambda: "local_directory")
+    monkeypatch.setattr(main, "is_stateless_mode", lambda: stateless_mode)
+    monkeypatch.setattr(main, "is_service_account_enabled", lambda: False)
+    monkeypatch.setattr(main, "get_credential_store", lambda: object())
+    monkeypatch.setattr(main, "check_credentials_directory_permissions", lambda: None)
+    monkeypatch.setattr(main, "_http_port_conflict", lambda host, port: None)
+    monkeypatch.setattr(
+        main,
+        "get_oauth_config",
+        lambda: SimpleNamespace(
+            service_account_key_file=None,
+            service_account_key_json=None,
+            client_secret="secret",
+            client_secrets_file=None,
+            stateless_mode=stateless_mode,
+            is_oauth21_enabled=lambda: False,
+            is_configured=lambda: True,
+        ),
+    )
+    monkeypatch.setattr(main.server, "run", fake_run)
+    monkeypatch.setattr(
+        sys, "argv", ["main.py", "--tools", "gmail", "--transport", "streamable-http"]
+    )
+    monkeypatch.setenv("USER_GOOGLE_EMAIL", "user@example.com")
+    if flag is None:
+        monkeypatch.delenv("WORKSPACE_MCP_STATELESS_HTTP", raising=False)
+    else:
+        monkeypatch.setenv("WORKSPACE_MCP_STATELESS_HTTP", flag)
+
+    with pytest.raises(SystemExit) as exc:
+        main.main()
+
+    assert exc.value.code == 0
+    assert seen.get("transport") == "streamable-http"
+    assert seen.get("stateless_http") is expected
