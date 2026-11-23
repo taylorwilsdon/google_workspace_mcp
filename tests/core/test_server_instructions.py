@@ -94,8 +94,15 @@ async def test_handshake_carries_the_instructions(mode: str) -> None:
 
 def test_env_var_reaches_the_shared_server_in_multi_user_mode() -> None:
     # core.server builds the shared server at import time, so check a fresh interpreter.
+    inherited = {
+        key: value
+        for key, value in os.environ.items()
+        if key
+        not in ("GOOGLE_SERVICE_ACCOUNT_KEY_FILE", "GOOGLE_SERVICE_ACCOUNT_KEY_JSON")
+    }
     env = {
-        **os.environ,
+        **inherited,
+        "TRUST_GATEWAY_IDENTITY": "false",
         "MCP_ENABLE_OAUTH21": "true",
         "USER_GOOGLE_EMAIL": "user@example.com",
         _ENV: CUSTOM,
