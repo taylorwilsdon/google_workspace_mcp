@@ -224,7 +224,107 @@ async def test_populate_tab_rejects_missing_tab_when_appending():
     docs.batchUpdate.assert_not_called()
 
 
-def test_find_tab_end_index_treats_non_document_tab_as_not_found():
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("last_start", "first_insert_at"),
+    [(1, 7), (6, 6)],
+    ids=["after-text", "after-empty-paragraph"],
+)
+async def test_populate_tab_append_starts_a_new_paragraph(last_start, first_insert_at):
+    service = Mock()
+    docs = service.documents.return_value
+    docs.get.return_value.execute.return_value = {
+        "tabs": [
+            {
+                "tabProperties": {"tabId": "t.a"},
+                "documentTab": {
+                    "body": {
+                        "content": [
+                            {"endIndex": 1},
+                            {"startIndex": last_start, "endIndex": 7},
+                        ]
+                    }
+                },
+            }
+        ]
+    }
+    docs.batchUpdate.return_value.execute.return_value = {"replies": []}
+
+    await _unwrap(docs_tools.manage_doc_tab)(
+        service=service,
+        user_google_email="test@example.com",
+        document_id="doc-abc",
+        action="populate_from_markdown",
+        tab_id="t.a",
+        markdown_text="---",
+        replace_existing=False,
+    )
+
+    requests = docs.batchUpdate.call_args.kwargs["body"]["requests"]
+    inserts = [r["insertText"] for r in requests if "insertText" in r]
+    styled = [
+        r["updateParagraphStyle"]["range"]["startIndex"]
+        for r in requests
+        if "updateParagraphStyle" in r
+    ]
+    if first_insert_at == 7:
+        assert inserts[0] == {"text": "\n", "location": {"index": 6, "tabId": "t.a"}}
+        inserts = inserts[1:]
+    assert inserts[0]["location"]["index"] == first_insert_at
+    assert min(styled) == first_insert_at
+
+
+@pytest.mark.asyncio
+async def test_populate_tab_append_after_list_item_drops_inherited_bullet():
+    service = Mock()
+    docs = service.documents.return_value
+    docs.get.return_value.execute.return_value = {
+        "tabs": [
+            {
+                "tabProperties": {"tabId": "t.a"},
+                "documentTab": {
+                    "body": {
+                        "content": [
+                            {"endIndex": 1},
+                            {
+                                "startIndex": 1,
+                                "endIndex": 7,
+                                "paragraph": {"bullet": {"listId": "kix.list"}},
+                            },
+                        ]
+                    }
+                },
+            }
+        ]
+    }
+    docs.batchUpdate.return_value.execute.return_value = {"replies": []}
+
+    await _unwrap(docs_tools.manage_doc_tab)(
+        service=service,
+        user_google_email="test@example.com",
+        document_id="doc-abc",
+        action="populate_from_markdown",
+        tab_id="t.a",
+        markdown_text="After",
+        replace_existing=False,
+    )
+
+    requests = docs.batchUpdate.call_args.kwargs["body"]["requests"]
+    assert requests[0] == {
+        "insertText": {"text": "\n", "location": {"index": 6, "tabId": "t.a"}}
+    }
+    assert requests[1] == {
+        "deleteParagraphBullets": {
+            "range": {"startIndex": 7, "endIndex": 8, "tabId": "t.a"}
+        }
+    }
+    assert requests[2]["insertText"] == {
+        "text": "After\n",
+        "location": {"index": 7, "tabId": "t.a"},
+    }
+
+
+def test_find_tab_last_element_treats_non_document_tab_as_not_found():
     doc = {
         "tabs": [
             {"tabProperties": {"tabId": "t.container"}},
@@ -232,8 +332,8 @@ def test_find_tab_end_index_treats_non_document_tab_as_not_found():
         ]
     }
 
-    assert docs_tools._find_tab_end_index(doc, "t.container") is None
-    assert docs_tools._find_tab_end_index(doc, "t.empty") == 1
+    assert docs_tools._find_tab_last_element(doc, "t.container") is None
+    assert docs_tools._find_tab_last_element(doc, "t.empty") == {}
 
 
 class TestBatchOperationManagerExtractCreatedTabs:

@@ -1,4 +1,6 @@
 import base64
+import binascii
+import html
 import io
 import json
 import logging
@@ -14,15 +16,17 @@ import functools
 import inspect
 
 from pathlib import Path
-from typing import Annotated, Any, List, Optional, Union
+from typing import Annotated, Any, List, NamedTuple, Optional, TypeGuard, Union
 
 from pydantic import BeforeValidator
 from defusedxml import DefusedXmlException, ElementTree as ET
 
+import fastmcp
 from fastmcp.exceptions import ToolError
 from googleapiclient.errors import HttpError
+from mcp.types import ImageContent
 from .api_enablement import get_api_enablement_message
-from auth.google_auth import GoogleAuthenticationError
+from auth.google_auth import GoogleAuthenticationError, get_default_credentials_dir
 from auth.oauth_config import (
     get_transport_mode,
     is_external_oauth21_provider,
@@ -91,6 +95,23 @@ class UserInputError(Exception):
     """Raised for user-facing input/validation errors that shouldn't be retried."""
 
     pass
+
+
+_PATH_SEGMENT_PATTERN = re.compile(r"(?!\.+\Z)[A-Za-z0-9._-]+")
+
+
+def is_path_segment(value: Any) -> TypeGuard[str]:
+    """Return True if value is safe unescaped as one segment of a Google API resource path."""
+    return isinstance(value, str) and _PATH_SEGMENT_PATTERN.fullmatch(value) is not None
+
+
+def check_path_segment(value: Any, label: str) -> str:
+    """Return value, raising UserInputError unless is_path_segment accepts it."""
+    if not is_path_segment(value):
+        raise UserInputError(
+            f"Invalid {label} {value!r}: expected only letters, digits, '.', '_' or '-'."
+        )
+    return value
 
 
 def _coerce_json_str_to_type(v: Any, expected_type: type) -> Any:
@@ -254,6 +275,15 @@ def _get_allowed_file_dirs() -> list[Path]:
     return unique_dirs
 
 
+def _file_identity(path: Path) -> Optional[tuple[int, int]]:
+    """Return ``(st_dev, st_ino)`` for ``path``, or None if it cannot be stat'ed."""
+    try:
+        stat_result = path.stat()
+    except OSError:
+        return None
+    return stat_result.st_dev, stat_result.st_ino
+
+
 def validate_file_path(file_path: str) -> Path:
     """
     Validate that a file path is safe to read from the server filesystem.
@@ -333,18 +363,23 @@ def validate_file_path(file_path: str) -> Path:
         )
 
     home = Path.home()
-    sensitive_home_dirs = (
-        ".kube",
-        ".gnupg",
-        ".config/gcloud",
-    )
-    for sensitive_dir in sensitive_home_dirs:
-        blocked = home / sensitive_dir
-        if resolved == blocked or str(resolved).startswith(str(blocked) + "/"):
-            raise ValueError(
-                f"Access to '{resolved_str}' is not allowed: "
-                "path is in a directory that commonly contains secrets or credentials."
-            )
+    blocked_ids = {
+        _file_identity(blocked)
+        for blocked in (
+            home / ".kube",
+            home / ".gnupg",
+            home / ".config" / "gcloud",
+            Path(get_default_credentials_dir()),
+        )
+    } - {None}
+    if any(
+        _file_identity(ancestor) in blocked_ids
+        for ancestor in (resolved, *resolved.parents)
+    ):
+        raise ValueError(
+            f"Access to '{resolved_str}' is not allowed: "
+            "path is in a directory that commonly contains secrets or credentials."
+        )
 
     # Block other credential/secret file patterns
     sensitive_names = {
@@ -1033,6 +1068,23 @@ IMAGE_MIME_TYPES = {
     "image/svg+xml",
 }
 
+# Model APIs reject BMP, TIFF and SVG as image blocks.
+INLINE_IMAGE_MIME_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
+
+SVG_MIME_TYPE = "image/svg+xml"
+
+# Line breaks, literal or as XML character references, may precede or split a
+# payload, but it ends with a base64 character so the match never runs into
+# the text that follows.
+_SVG_DATA_URI_RE = re.compile(
+    r"data:(?P<mime>[\w.+-]+/[\w.+-]+)?(?:;[\w.+-]+=[\w.+-]+)*;base64,"
+    r"(?P<payload>(?:\s|&#x?[0-9A-Fa-f]+;)*"
+    r"[A-Za-z0-9+/]+(?:(?:\s|&#x?[0-9A-Fa-f]+;)*[A-Za-z0-9+/]+)*=*)",
+    re.IGNORECASE,
+)
+
+_SVG_MIN_ELIDED_PAYLOAD = 64
+
 
 def extract_pdf_text(file_bytes: bytes) -> Optional[str]:
     """
@@ -1079,6 +1131,110 @@ def encode_image_content(file_bytes: bytes, mime_type: str) -> str:
     return f"[base64_image:{mime_type}]{encoded}"
 
 
+def image_content_from_bytes(file_bytes: bytes, mime_type: str) -> ImageContent:
+    """
+    Wrap image bytes as an MCP ImageContent block.
+
+    Args:
+        file_bytes: The image file content as bytes.
+        mime_type: The MIME type of the image (must start with "image/").
+
+    Returns:
+        ImageContent: The image, base64-encoded, with its MIME type.
+
+    Raises:
+        ValueError: If mime_type is not an image MIME type.
+    """
+    if not mime_type.startswith("image/"):
+        raise ValueError(
+            f"Expected image/* MIME type, got '{mime_type}'. "
+            "Only image content can be returned as an image block."
+        )
+    return ImageContent(
+        type="image",
+        data=base64.b64encode(file_bytes).decode("ascii"),
+        mimeType=mime_type,
+    )
+
+
+def sniff_inline_image_mime_type(data: bytes) -> Optional[str]:
+    """
+    Identify image bytes by their magic number, for the types in
+    INLINE_IMAGE_MIME_TYPES only.
+
+    Returns:
+        Optional[str]: The MIME type, or None if the bytes are not PNG, JPEG,
+        GIF or WebP.
+    """
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+class SvgContent(NamedTuple):
+    """An SVG read for a model: its markup, and the raster images it embeds."""
+
+    markup: str
+    images: List[ImageContent]
+
+
+def svg_content(file_bytes: bytes) -> Optional[SvgContent]:
+    """
+    Read an SVG as its markup, with embedded raster images pulled out as
+    image content. Each base64 data URI payload is replaced by a short note:
+
+    - A PNG, JPEG, GIF or WebP payload (identified by its bytes, not the type
+      the URI declares) is decoded and attached as image content. Its note is
+      numbered to match its position in ``images``.
+    - Any other payload (fonts, BMP, TIFF, nested SVG, or base64 that doesn't
+      decode) is omitted, and its note gives its size.
+
+    Payloads shorter than _SVG_MIN_ELIDED_PAYLOAD characters are left in
+    place.
+
+    Args:
+        file_bytes: The SVG file content as bytes.
+
+    Returns:
+        Optional[SvgContent]: The markup and the attached images in document
+        order, or None if the bytes are not UTF-8 text (for example a
+        gzip-compressed .svgz file).
+    """
+    try:
+        markup = file_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+    images: List[ImageContent] = []
+
+    def _elide(match: re.Match) -> str:
+        payload = re.sub(r"\s", "", html.unescape(match.group("payload")))
+        if len(payload) < _SVG_MIN_ELIDED_PAYLOAD:
+            return match.group(0)
+        declared = match.group("mime") or ""
+        try:
+            data = base64.b64decode(payload, validate=True)
+        except (binascii.Error, ValueError):
+            size = len(payload) * 3 // 4 - payload.count("=")
+            return f"data:{declared};base64,[{size} bytes of invalid base64 omitted]"
+        mime_type = sniff_inline_image_mime_type(data)
+        if mime_type is None:
+            return f"data:{declared};base64,[{len(data)} bytes omitted]"
+        images.append(image_content_from_bytes(data, mime_type))
+        return (
+            f"data:{declared};base64,[embedded image {len(images)}, "
+            f"{len(data)} bytes, attached as image content]"
+        )
+
+    return SvgContent(_SVG_DATA_URI_RE.sub(_elide, markup), images)
+
+
 _URL_QUERY_RE = re.compile(r"\?.*?(?=\s+returned(?:\s|$)|[>\"']|$)")
 
 
@@ -1122,7 +1278,7 @@ def handle_http_errors(
     A decorator to handle Google API HttpErrors and transient SSL errors in a standardized way.
 
     It wraps a tool function, catches HttpError, logs a detailed error message,
-    and raises a generic Exception with a user-friendly message.
+    and raises a ToolError with a user-friendly message.
 
     If is_read_only is True, it will also catch ssl.SSLError and retry with
     exponential backoff. After exhausting retries, it raises a TransientNetworkError.
@@ -1165,6 +1321,11 @@ def handle_http_errors(
                 except HttpError as error:
                     user_google_email = kwargs.get("user_google_email", "N/A")
                     error_details = str(error)
+                    error_summary = (
+                        f"HTTP {error.resp.status}"
+                        if fastmcp.settings.mask_error_details
+                        else error_details
+                    )
 
                     # Check if this is an API not enabled error
                     if (
@@ -1182,7 +1343,7 @@ def handle_http_errors(
                             )
                         else:
                             message = (
-                                f"API error in {tool_name}: {error}. "
+                                f"API error in {tool_name}: {error_summary}. "
                                 f"The required API is not enabled for your project. "
                                 f"Please check the Google Cloud Console to enable it."
                             )
@@ -1215,13 +1376,13 @@ def handle_http_errors(
                                 "and the appropriate service_name."
                             )
                         message = (
-                            f"API error in {tool_name}: {error}. "
+                            f"API error in {tool_name}: {error_summary}. "
                             f"You might need to re-authenticate for user '{user_google_email}'. "
                             f"{auth_hint}"
                         )
                     else:
                         # Other HTTP errors (400 Bad Request, etc.) - don't suggest re-auth
-                        message = f"API error in {tool_name}: {error}"
+                        message = f"API error in {tool_name}: {error_summary}"
 
                     # ERROR gets the scrubbed form (HttpError embeds the request
                     # URI and may echo user content in its response details);
@@ -1230,7 +1391,7 @@ def handle_http_errors(
                         f"API error in {tool_name}: {_format_http_error_for_log(error)}"
                     )
                     logger.debug(f"API error detail in {tool_name}", exc_info=True)
-                    raise Exception(message) from error
+                    raise ToolError(message) from error
                 except TransientNetworkError:
                     # Re-raise without wrapping to preserve the specific error type
                     raise

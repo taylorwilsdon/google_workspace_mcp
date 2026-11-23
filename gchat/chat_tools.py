@@ -7,7 +7,6 @@ This module provides MCP tools for interacting with Google Chat API.
 import base64
 import logging
 import asyncio
-import re
 import ssl
 from typing import List, Optional
 
@@ -25,9 +24,13 @@ from core.utils import TransientNetworkError, UserInputError, handle_http_errors
 from gchat.chat_helpers import (
     _execute_chat_request,
     _extract_rich_links,
+    _format_search_message_ids,
+    _format_space_members,
     _name_spaces,
     _none_if_blank,
     _none_if_null_sentinel,
+    _normalize_message_resource_name,
+    _normalize_space_resource_name,
     _resolve_sender,
 )
 
@@ -68,13 +71,28 @@ async def list_spaces(
     user_google_email: str,
     page_size: int = 100,
     space_type: str = "all",  # "all", "room", "dm"
+    space_id: Optional[str] = None,
 ) -> str:
     """
-    Lists Google Chat spaces (rooms and direct messages) accessible to the user.
+    Lists Google Chat spaces (rooms and direct messages) accessible to the user,
+    or the members of one space.
+
+    Args:
+        space_id: Space (spaces/X or a bare ID X) whose members to list instead
+            of spaces, up to page_size: people, apps and groups with role and
+            invite state.
 
     Returns:
-        str: A formatted list of Google Chat spaces accessible to the user.
+        str: A formatted list of Google Chat spaces, or of the members of space_id.
     """
+    space_id = _none_if_blank(space_id)
+    if space_id is not None:
+        space_id = _normalize_space_resource_name(space_id)
+        logger.info(f"[list_spaces] Members of {space_id}")
+        return await _format_space_members(
+            chat_service, people_service, space_id, max(page_size, 1)
+        )
+
     logger.info(f"[list_spaces] Email={user_google_email}, Type={space_type}")
 
     # Build filter based on space_type
@@ -96,7 +114,9 @@ async def list_spaces(
     if not spaces:
         return f"No Chat spaces found for type '{space_type}'."
 
-    space_labels = await _name_spaces(chat_service, people_service, spaces)
+    space_labels = await _name_spaces(
+        chat_service, people_service, spaces, user_google_email
+    )
     output = [f"Found {len(spaces)} Chat spaces (type: {space_type}):"]
     for space in spaces:
         space_id = space.get("name", "")
@@ -135,6 +155,7 @@ async def get_messages(
     page_size: int = 50,
     order_by: str = "createTime desc",
     message_filter: Optional[str] = None,
+    page_token: Optional[str] = None,
 ) -> str:
     """
     Retrieves messages from a Google Chat space.
@@ -146,30 +167,48 @@ async def get_messages(
                           'createTime > "2026-03-18T00:00:00-03:00"'
                           'createTime > "2026-03-18T00:00:00-03:00" AND createTime < "2026-03-19T00:00:00-03:00"'
                           'thread.name = spaces/X/threads/Y'
+        page_token: Token for the next page, taken from a previous response. Keep all other arguments unchanged.
 
     Returns:
-        str: Formatted messages from the specified space.
+        str: Formatted messages from the specified space. When more messages
+            remain, a "Next page token" line is appended.
     """
+    space_id = _normalize_space_resource_name(space_id)
     logger.info(f"[get_messages] Space ID: '{space_id}' for user '{user_google_email}'")
 
     # Get space info first
     space_info = await asyncio.to_thread(
         chat_service.spaces().get(name=space_id).execute
     )
-    space_labels = await _name_spaces(chat_service, people_service, [space_info])
+    space_labels = await _name_spaces(
+        chat_service, people_service, [space_info], user_google_email
+    )
     space_name = space_labels[space_info.get("name")]
 
     # Get messages
     list_params = {"parent": space_id, "pageSize": page_size, "orderBy": order_by}
     if message_filter is not None:
         list_params["filter"] = message_filter
+    if page_token:
+        list_params["pageToken"] = page_token
     response = await asyncio.to_thread(
         chat_service.spaces().messages().list(**list_params).execute
     )
 
     messages = response.get("messages", [])
+    next_page_token = response.get("nextPageToken")
     if not messages:
-        return f"No messages found in space '{space_name}' (ID: {space_id})."
+        if next_page_token:
+            return (
+                f"No messages on this page in space '{space_name}' (ID: {space_id}), "
+                f"and more pages remain.\nNext page token: {next_page_token}"
+            )
+        matching = " matching the filter" if message_filter else ""
+        if page_token:
+            return (
+                f"No more messages{matching} in space '{space_name}' (ID: {space_id})."
+            )
+        return f"No messages{matching} found in space '{space_name}' (ID: {space_id})."
 
     # Pre-resolve unique senders sequentially. The underlying googleapiclient/httplib2
     # service objects are not safe to fan out across worker threads.
@@ -181,14 +220,16 @@ async def get_messages(
             sender_lookup[key] = s
     sender_map = {}
     for key, sender_obj in sender_lookup.items():
-        sender_map[key] = await _resolve_sender(people_service, sender_obj)
+        sender_map[key] = await _resolve_sender(
+            people_service, sender_obj, user_google_email
+        )
 
     output = [f"Messages from '{space_name}' (ID: {space_id}):\n"]
     for msg in messages:
         sender_obj = msg.get("sender", {})
         sender_key = sender_obj.get("name", "")
         sender = sender_map.get(sender_key) or await _resolve_sender(
-            people_service, sender_obj
+            people_service, sender_obj, user_google_email
         )
         create_time = msg.get("createTime", "Unknown Time")
         text_content = msg.get("text", "No text content")
@@ -229,6 +270,8 @@ async def get_messages(
             output.append(f"  [reactions: {', '.join(parts)}]")
         output.append(f"  (Message ID: {msg_name})\n")
 
+    if next_page_token:
+        output.append(f"Next page token: {next_page_token}")
     return "\n".join(output)
 
 
@@ -266,6 +309,7 @@ async def send_message(
     Returns:
         str: Confirmation message with the sent or updated message details.
     """
+    space_id = _normalize_space_resource_name(space_id)
     logger.info(f"[send_message] Email: '{user_google_email}', Space: '{space_id}'")
 
     thread_key = _none_if_blank(thread_key)
@@ -278,13 +322,8 @@ async def send_message(
                 "message_name cannot be combined with thread_name or thread_key: "
                 "editing a message cannot move it to another thread."
             )
-        message_match = re.fullmatch(r"spaces/([^/]+)/messages/[^/]+", message_name)
-        if message_match is None:
-            raise UserInputError(
-                f"Invalid message_name '{message_name}'. "
-                "Expected the full resource name, e.g. spaces/X/messages/Y."
-            )
-        if f"spaces/{message_match.group(1)}" != space_id:
+        message_name = _normalize_message_resource_name(message_name, "message_name")
+        if message_name.split("/messages/", 1)[0] != space_id:
             raise UserInputError(
                 f"message_name '{message_name}' does not belong to space '{space_id}'. "
                 "Expected the full resource name, e.g. spaces/X/messages/Y."
@@ -407,6 +446,7 @@ async def search_messages(
 
     # If specific space provided, search within that space
     if space_id:
+        space_id = _normalize_space_resource_name(space_id)
         list_params = {
             "parent": space_id,
             "pageSize": page_size,
@@ -429,13 +469,20 @@ async def search_messages(
             msg["_space"] = space
         context = f"space '{space_id}'"
     else:
-        # Search across all accessible spaces
-        spaces_response = await _execute_chat_request(
-            lambda: chat_service.spaces().list(pageSize=100),
-            request_label="listing accessible spaces",
-            retries=_SEARCH_MESSAGES_SSL_RETRIES,
-        )
-        spaces = spaces_response.get("spaces", [])
+        # Search across accessible spaces, paging until max_spaces are listed
+        spaces = []
+        list_params = {"pageSize": 100}
+        while True:
+            spaces_response = await _execute_chat_request(
+                lambda: chat_service.spaces().list(**list_params),
+                request_label="listing accessible spaces",
+                retries=_SEARCH_MESSAGES_SSL_RETRIES,
+            )
+            spaces.extend(spaces_response.get("spaces", []))
+            next_page_token = spaces_response.get("nextPageToken")
+            if len(spaces) >= max_spaces or not next_page_token:
+                break
+            list_params["pageToken"] = next_page_token
         spaces_to_search = spaces[:max_spaces]
         fetch_semaphore = asyncio.Semaphore(
             _SEARCH_MESSAGES_MAX_CONCURRENT_SPACE_FETCHES
@@ -514,12 +561,15 @@ async def search_messages(
             sender_lookup[key] = s
     sender_map = {}
     for key, sender_obj in sender_lookup.items():
-        sender_map[key] = await _resolve_sender(people_service, sender_obj)
+        sender_map[key] = await _resolve_sender(
+            people_service, sender_obj, user_google_email
+        )
 
     space_names = await _name_spaces(
         chat_service,
         people_service,
         [msg["_space"] for msg in messages if msg.get("_space")],
+        user_google_email,
     )
 
     output = [f"Found {len(messages)} messages matching '{search_desc}' in {context}:"]
@@ -527,7 +577,7 @@ async def search_messages(
         sender_obj = msg.get("sender", {})
         sender_key = sender_obj.get("name", "")
         sender = sender_map.get(sender_key) or await _resolve_sender(
-            people_service, sender_obj
+            people_service, sender_obj, user_google_email
         )
         create_time = msg.get("createTime", "Unknown Time")
         text_content = msg.get("text", "No text content")
@@ -544,8 +594,9 @@ async def search_messages(
             f" [attachment: {a.get('contentName', 'unnamed')} ({a.get('contentType', 'unknown type')})]"
             for a in attachments
         )
+        summary = f"[{create_time}] {sender} in '{space_name}': {text_content}{links_suffix}{att_suffix}"
         output.append(
-            f"- [{create_time}] {sender} in '{space_name}': {text_content}{links_suffix}{att_suffix}"
+            f"- {' '.join(summary.split())}\n  {_format_search_message_ids(msg)}"
         )
 
     return "\n".join(output)
@@ -578,6 +629,7 @@ async def create_reaction(
     Returns:
         str: Confirmation message.
     """
+    message_id = _normalize_message_resource_name(message_id)
     logger.info(f"[create_reaction] Message: '{message_id}', Emoji: '{emoji_unicode}'")
 
     reaction = await asyncio.to_thread(
@@ -625,6 +677,7 @@ async def download_chat_attachment(
     Returns:
         str: Attachment metadata with either a local file path or download URL.
     """
+    message_id = _normalize_message_resource_name(message_id)
     logger.info(
         f"[download_chat_attachment] Message: '{message_id}', Index: {attachment_index}"
     )

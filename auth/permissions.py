@@ -11,10 +11,13 @@ Usage:
 Gmail levels: readonly, organize, drafts, send, full
 Tasks levels: readonly, manage, full
 Other services: readonly, full (extensible by adding entries to SERVICE_PERMISSION_LEVELS)
+
+Joining levels with ``+`` (``gmail:readonly+send``) grants only the scopes each
+named level adds, without the levels in between.
 """
 
 import logging
-from typing import Dict, FrozenSet, List, Optional, Tuple
+from typing import Dict, FrozenSet, Iterable, List, Optional, Tuple
 
 from auth.scopes import (
     GMAIL_READONLY_SCOPE,
@@ -161,13 +164,15 @@ def is_action_denied(service: str, action: str) -> bool:
 
     Returns ``False`` when granular permissions mode is not active, when the
     service has no permission entry, or when the configured level does not
-    deny the action.
+    deny the action. A ``+`` union uses the denials of its highest level.
     """
     if _PERMISSIONS is None:
         return False
     level = _PERMISSIONS.get(service)
     if level is None:
         return False
+    if "+" in level:
+        level = max(level.split("+"), key=get_valid_levels(service).index)
     denied = SERVICE_DENIED_ACTIONS.get(service, {}).get(level, frozenset())
     return action in denied
 
@@ -198,11 +203,15 @@ def is_permissions_mode() -> bool:
 
 def get_scopes_for_permission(service: str, level: str) -> List[str]:
     """
-    Get cumulative scopes for a service at a given permission level.
+    Get scopes for a service at a given permission level.
 
-    Returns all scopes up to and including the named level.
+    Returns all scopes up to and including the named level, or only the named
+    levels' own scopes for a ``+`` union.
     Raises ValueError if service or level is unknown.
     """
+    if "+" in level:
+        return get_scopes_for_union(service, level.split("+"))
+
     levels = SERVICE_PERMISSION_LEVELS.get(service)
     if levels is None:
         raise ValueError(f"Unknown service: '{service}'")
@@ -225,6 +234,26 @@ def get_scopes_for_permission(service: str, level: str) -> List[str]:
     return sorted(set(cumulative))
 
 
+def get_scopes_for_union(service: str, levels: Iterable[str]) -> List[str]:
+    """Get only the scopes each named level adds. Raises ValueError if any is unknown."""
+    service_levels = SERVICE_PERMISSION_LEVELS.get(service)
+    if service_levels is None:
+        raise ValueError(f"Unknown service: '{service}'")
+    requested = set(levels)
+    if not requested:
+        raise ValueError(f"Empty level set for service '{service}'")
+
+    additive_scopes = dict(service_levels)
+    unknown = sorted(requested.difference(additive_scopes))
+    if unknown:
+        raise ValueError(
+            f"Unknown permission level '{unknown[0]}' for service '{service}'. "
+            f"Valid levels: {list(additive_scopes)}"
+        )
+
+    return sorted({scope for level in requested for scope in additive_scopes[level]})
+
+
 def get_all_permission_scopes() -> List[str]:
     """
     Get the combined scopes for all services at their configured permission levels.
@@ -234,13 +263,13 @@ def get_all_permission_scopes() -> List[str]:
     if _PERMISSIONS is None:
         return []
 
-    all_scopes: set = set()
+    all_scopes: set[str] = set()
     for service, level in _PERMISSIONS.items():
         all_scopes.update(get_scopes_for_permission(service, level))
     return list(all_scopes)
 
 
-def get_allowed_scopes_set() -> Optional[set]:
+def get_allowed_scopes_set() -> Optional[set[str]]:
     """
     Get the set of allowed scopes under permissions mode (for tool filtering).
 
@@ -261,7 +290,8 @@ def get_valid_levels(service: str) -> List[str]:
 
 def parse_permissions_arg(permissions_list: List[str]) -> Dict[str, str]:
     """
-    Parse --permissions arguments like ["gmail:organize", "drive:full"].
+    Parse --permissions arguments like ["gmail:organize", "drive:full"] or
+    ["gmail:readonly+send"].
 
     Returns dict mapping service -> level.
     Raises ValueError on parse errors (unknown service, invalid level, bad format).
@@ -282,10 +312,18 @@ def parse_permissions_arg(permissions_list: List[str]) -> Dict[str, str]:
                 f"Valid services: {sorted(SERVICE_PERMISSION_LEVELS.keys())}"
             )
         valid = get_valid_levels(service)
-        if level not in valid:
+        parts = level.split("+")
+        if len(parts) > 1 and not all(parts):
             raise ValueError(
-                f"Unknown level '{level}' for service '{service}'. "
-                f"Valid levels: {valid}"
+                f"Invalid union spec for service '{service}': '{level}'. "
+                f"Expected non-empty level names separated by '+' "
+                f"(e.g., 'gmail:readonly+send')"
             )
+        for part in parts:
+            if part not in valid:
+                raise ValueError(
+                    f"Unknown level '{part}' for service '{service}'. "
+                    f"Valid levels: {valid}"
+                )
         result[service] = level
     return result

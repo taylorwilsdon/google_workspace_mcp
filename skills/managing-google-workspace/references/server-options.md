@@ -20,6 +20,7 @@ These mirror the MCP server's own flags. **Default setup**: use stdio transport 
 | OAuth 2.1 | `MCP_ENABLE_OAUTH21=true` | Multi-user HTTP deployment, per-session tokens |
 | External OAuth | `EXTERNAL_OAUTH21_PROVIDER=true` | External OAuth flow with bearer tokens. Requires OAuth 2.1 |
 | Stateless | `WORKSPACE_MCP_STATELESS_MODE=true` | Multi-user + stateless, requires OAuth 2.1 |
+| Sessionless HTTP | `WORKSPACE_MCP_STATELESS_HTTP=true` | No MCP sessions over streamable HTTP, for several instances behind a load balancer; keeps the auth mode and persistence |
 
 ## Tool filtering
 
@@ -81,6 +82,16 @@ Plugin users cannot pass CLI args directly. Use `WORKSPACE_MCP_TOOLS`, `WORKSPAC
 docker build -t workspace-mcp .
 docker run -p 8000:8000 -e GOOGLE_OAUTH_CLIENT_ID=... -e GOOGLE_OAUTH_CLIENT_SECRET=... workspace-mcp --transport streamable-http
 ```
+
+## Auth tool
+
+### start_google_auth
+Manually start the legacy OAuth 2.0 browser flow, e.g. to re-authenticate with different credentials or retry a failed automatic flow. Disabled when OAuth 2.1 is enabled; normally just call the tool you need and auth happens automatically.
+
+| Parameter | Type | Required | Default | Notes |
+|-----------|------|----------|---------|-------|
+| user_google_email | string | no | `USER_GOOGLE_EMAIL` env | |
+| service_name | string | yes | | Service to authorize, e.g. `"gmail"`, `"drive"` |
 
 ## Credential loading priority
 

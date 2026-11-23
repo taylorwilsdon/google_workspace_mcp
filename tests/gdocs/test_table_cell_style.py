@@ -239,13 +239,50 @@ class TestBatchManagerIntegration:
         assert "backgroundColor" in inner["fields"]
         assert "table cell style at 42" in desc
 
+    def test_build_request_accepts_zero_border_width(self, manager):
+        request, _ = manager._build_operation_request(
+            {
+                "type": "update_table_cell_style",
+                "table_start_index": 42,
+                "border_width": 0,
+                "border_edges": ["bottom"],
+            },
+            "update_table_cell_style",
+        )
+
+        style = request["updateTableCellStyle"]["tableCellStyle"]
+        assert style["borderBottom"]["width"] == {"magnitude": 0, "unit": "PT"}
+
     def test_build_request_rejects_invalid_table_cell_style_params(self, manager):
-        with pytest.raises(ValueError, match="border_width must be positive"):
+        with pytest.raises(ValueError, match="border_width must be non-negative"):
             manager._build_operation_request(
                 {
                     "type": "update_table_cell_style",
                     "table_start_index": 42,
                     "border_width": -1,
+                },
+                "update_table_cell_style",
+            )
+
+    def test_build_request_rejects_boolean_border_width(self, manager):
+        with pytest.raises(ValueError, match="border_width must be a number"):
+            manager._build_operation_request(
+                {
+                    "type": "update_table_cell_style",
+                    "table_start_index": 42,
+                    "border_width": False,
+                },
+                "update_table_cell_style",
+            )
+
+    @pytest.mark.parametrize("width", [float("nan"), float("inf")])
+    def test_build_request_rejects_non_finite_border_width(self, manager, width):
+        with pytest.raises(ValueError, match="border_width must be finite"):
+            manager._build_operation_request(
+                {
+                    "type": "update_table_cell_style",
+                    "table_start_index": 42,
+                    "border_width": width,
                 },
                 "update_table_cell_style",
             )
@@ -291,7 +328,7 @@ class TestBatchManagerIntegration:
             ],
         )
         assert not success
-        assert "border_width must be positive" in message
+        assert "border_width must be non-negative" in message
         assert meta == {}
 
     def test_supported_operations_include_table_cell_style(self, manager):

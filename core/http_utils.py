@@ -23,6 +23,10 @@ class SSRFFetchError(RuntimeError):
     """Raised when SSRF-safe fetching fails after validation succeeds."""
 
 
+class PrivateHostError(ValueError):
+    """Raised when a URL's host is loopback or a private/internal address."""
+
+
 def redact_url(url: str) -> str:
     """Return a redacted URL safe for logs and exceptions."""
     parsed_url = urlparse(url)
@@ -50,7 +54,7 @@ async def resolve_and_validate_host(hostname: str) -> list[str]:
 
     # Block localhost variants
     if hostname.lower() in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
-        raise ValueError("URLs pointing to localhost are not allowed")
+        raise PrivateHostError("URLs pointing to localhost are not allowed")
 
     # Resolve hostname using getaddrinfo (handles both IPv4 and IPv6)
     try:
@@ -73,7 +77,7 @@ async def resolve_and_validate_host(hostname: str) -> list[str]:
         ip_str = sockaddr[0]
         ip = ipaddress.ip_address(ip_str)
         if not ip.is_global:
-            raise ValueError(
+            raise PrivateHostError(
                 f"URLs pointing to private/internal networks are not allowed: "
                 f"{hostname} resolves to {ip_str}"
             )

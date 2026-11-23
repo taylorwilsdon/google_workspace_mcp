@@ -3,12 +3,9 @@ from unittest.mock import Mock
 
 import pytest
 
-from gcalendar.calendar_tools import (
-    _build_time_boundary,
-    _create_event_impl,
-    _modify_event_impl,
-    _saved_event_times,
-)
+from core.utils import UserInputError
+from gcalendar.calendar_helpers import _build_time_boundary, _saved_event_times
+from gcalendar.calendar_tools import _create_event_impl, _modify_event_impl
 
 
 @pytest.mark.parametrize("action", ["create", "update"])
@@ -154,7 +151,7 @@ def test_malformed_saved_boundary_does_not_turn_a_successful_write_into_an_error
 
 @pytest.mark.parametrize("value", ["tomorrow at 3pmT", "2026-09-17T25:00:00Z"])
 def test_unparseable_timestamp_with_zone_names_the_value(value):
-    with pytest.raises(ValueError, match="Invalid RFC3339 timestamp"):
+    with pytest.raises(UserInputError, match="Invalid RFC3339 timestamp"):
         _build_time_boundary(value, "Europe/London")
 
 

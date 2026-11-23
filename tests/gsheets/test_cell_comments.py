@@ -121,15 +121,16 @@ class TestManageSpreadsheetCommentCell:
         assert "Comment ID: c1" in result
         sheets.spreadsheets.assert_not_called()
 
+    @pytest.mark.parametrize("action", ["reply", "resolve", "update", "delete"])
     @pytest.mark.asyncio
-    async def test_cell_rejected_for_reply(self, manage_comment):
+    async def test_cell_rejected_for_non_create(self, manage_comment, action):
         with pytest.raises(ValueError, match="only supported for the create"):
             await manage_comment(
                 Mock(),
                 Mock(),
                 "user@example.com",
                 "sheet123",
-                "reply",
+                action,
                 comment_content="hi",
                 comment_id="c1",
                 cell="A1",
