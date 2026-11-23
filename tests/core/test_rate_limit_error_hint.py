@@ -44,6 +44,22 @@ GRPC_QUOTA_FAILURE_403 = (
     b'{"@type": "type.googleapis.com/google.rpc.QuotaFailure", "violations": []}]}}'
 )
 
+ERROR_INFO_403 = (
+    b'{"error": {"code": 403, "message": "Quota exceeded.", "details": ['
+    b'{"@type": "type.googleapis.com/google.rpc.ErrorInfo", '
+    b'"reason": "RATE_LIMIT_EXCEEDED", "domain": "googleapis.com"}]}}'
+)
+
+TOP_LEVEL_REASON_403 = (
+    b'{"error": {"code": 403, "message": "Rate limit exceeded.", '
+    b'"reason": "rateLimitExceeded"}}'
+)
+
+BATCH_LIST_403 = (
+    b'[{"error": {"code": 403, "message": "User-rate limit exceeded.", '
+    b'"errors": [{"reason": "userRateLimitExceeded"}]}}]'
+)
+
 RATE_LIMIT_429 = (
     b'{"error": {"code": 429, "message": "Too many concurrent requests for user."}}'
 )
@@ -69,6 +85,9 @@ def _raising_tool(
         (403, DAILY_LIMIT_403),
         (403, RESOURCE_EXHAUSTED_403),
         (403, GRPC_QUOTA_FAILURE_403),
+        (403, ERROR_INFO_403),
+        (403, TOP_LEVEL_REASON_403),
+        (403, BATCH_LIST_403),
         (429, RATE_LIMIT_429),
     ],
     ids=[
@@ -78,6 +97,9 @@ def _raising_tool(
         "dailyLimitExceeded-403",
         "RESOURCE_EXHAUSTED-403",
         "QuotaFailure-403",
+        "ErrorInfo-RATE_LIMIT_EXCEEDED-403",
+        "top-level-reason-403",
+        "list-payload-403",
         "http-429",
     ],
 )
@@ -97,12 +119,19 @@ async def test_rate_limit_error_does_not_suggest_reauth(
 
 
 @pytest.mark.asyncio
-async def test_permission_denied_403_still_suggests_reauth() -> None:
-    content = (
+@pytest.mark.parametrize(
+    "content",
+    [
         b'{"error": {"code": 403, "message": "Request had insufficient '
         b'authentication scopes.", "errors": [{"domain": "global", '
-        b'"reason": "insufficientPermissions"}]}}'
-    )
+        b'"reason": "insufficientPermissions"}]}}',
+        b'{"error": {"code": 403, "message": "Drive storage quota exceeded.", '
+        b'"errors": [{"domain": "usageLimits", "reason": "storageQuotaExceeded"}]}}',
+        b"<html><body>403 Forbidden</body></html>",
+    ],
+    ids=["insufficientPermissions", "storageQuotaExceeded", "non-json"],
+)
+async def test_non_rate_limit_403_still_suggests_reauth(content: bytes) -> None:
     tool = _raising_tool(403, content)
 
     with pytest.raises(ToolError) as excinfo:

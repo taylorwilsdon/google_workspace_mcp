@@ -1268,72 +1268,35 @@ _RATE_LIMIT_ERROR_REASONS = frozenset(
 )
 
 
-def is_rate_limit_or_quota_error(error: HttpError) -> bool:
+def _is_rate_limit_or_quota_error(error: HttpError) -> bool:
     """Return True when Google rejected the request for API rate or quota limits."""
-    status = getattr(getattr(error, "resp", None), "status", None)
-    try:
-        status_code = int(status)
-    except (TypeError, ValueError):
-        return False
-
-    if status_code == 429:
+    if error.resp.status == 429:
         return True
-    if status_code != 403:
+    if error.resp.status != 403:
         return False
-
-    content = getattr(error, "content", None)
-    if not content:
-        return False
-
     try:
-        text = (
-            content.decode("utf-8", errors="ignore")
-            if isinstance(content, bytes)
-            else str(content)
-        )
-        payload = json.loads(text)
-    except (ValueError, TypeError):
+        payload = json.loads(error.content)
+    except ValueError:
         return False
-
-    entries = payload if isinstance(payload, list) else [payload]
-    for item in entries:
-        if not isinstance(item, dict):
-            continue
-        err = item.get("error")
+    for entry in payload if isinstance(payload, list) else [payload]:
+        err = entry.get("error") if isinstance(entry, dict) else None
         if not isinstance(err, dict):
             continue
         if err.get("status") == "RESOURCE_EXHAUSTED":
             return True
-        reason = err.get("reason")
-        if isinstance(reason, str) and reason in _RATE_LIMIT_ERROR_REASONS:
-            return True
-        errors = err.get("errors")
-        if isinstance(errors, list):
-            for detail in errors:
-                if not isinstance(detail, dict):
-                    continue
-                detail_reason = detail.get("reason")
-                if (
-                    isinstance(detail_reason, str)
-                    and detail_reason in _RATE_LIMIT_ERROR_REASONS
-                ):
-                    return True
-        details = err.get("details")
-        if isinstance(details, list):
-            for detail in details:
-                if not isinstance(detail, dict):
-                    continue
-                detail_reason = detail.get("reason")
-                detail_type = detail.get("@type")
-                if (
-                    isinstance(detail_reason, str)
-                    and detail_reason in _RATE_LIMIT_ERROR_REASONS
-                ) or (
-                    isinstance(detail_type, str)
-                    and detail_type.endswith("/google.rpc.QuotaFailure")
-                ):
-                    return True
-
+        items = [err]
+        for key in ("errors", "details"):
+            if isinstance(err.get(key), list):
+                items.extend(err[key])
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            reason, detail_type = item.get("reason"), item.get("@type")
+            if (isinstance(reason, str) and reason in _RATE_LIMIT_ERROR_REASONS) or (
+                isinstance(detail_type, str)
+                and detail_type.endswith("/google.rpc.QuotaFailure")
+            ):
+                return True
     return False
 
 
@@ -1437,11 +1400,11 @@ def handle_http_errors(
                             f"{APPS_SCRIPT_USER_SETTINGS_URL}, turn on 'Google Apps "
                             f"Script API', wait a minute, and retry."
                         )
-                    elif is_rate_limit_or_quota_error(error):
+                    elif _is_rate_limit_or_quota_error(error):
                         message = (
                             f"API error in {tool_name}: {error_summary}. "
                             "Google API rate limit or quota exceeded (not an authentication failure). "
-                            "LLM: Wait briefly and retry with fewer concurrent requests."
+                            "LLM: Retry later with fewer concurrent requests."
                         )
                     elif error.resp.status in [401, 403]:
                         # Authentication/authorization errors
