@@ -368,6 +368,7 @@ def validate_file_path(file_path: str) -> Path:
         for blocked in (
             home / ".kube",
             home / ".gnupg",
+            home / ".docker" / "config.json",
             home / ".config" / "gcloud",
             Path(get_default_credentials_dir()),
         )
@@ -395,10 +396,7 @@ def validate_file_path(file_path: str) -> Path:
         ".netrc",
         ".git-credentials",
     }
-    # Matched on the last two path parts, since file_name holds only the base
-    # name and could never equal a name that contains a slash.
-    sensitive_dir_files = {(".docker", "config.json")}
-    if file_name in sensitive_names or tuple(path_parts[-2:]) in sensitive_dir_files:
+    if file_name in sensitive_names or path_parts[-2:] == [".docker", "config.json"]:
         raise ValueError(
             f"Access to '{resolved_str}' is not allowed: "
             "this file commonly contains secrets or credentials."
