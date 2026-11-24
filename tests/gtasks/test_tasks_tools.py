@@ -1,9 +1,10 @@
 """Unit tests for gtasks/tasks_tools.py using mocked Google API services."""
 
 from typing import Any, Callable, Iterator
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import pytest
+from fastmcp.exceptions import ToolError
 from googleapiclient.errors import HttpError
 
 from auth.permissions import set_permissions
@@ -12,11 +13,13 @@ from gtasks.tasks_tools import (
     StructuredTask,
     _adjust_due_max_for_tasks_api,
     _create_task_impl,
-    _format_reauth_message,
     _move_task_impl,
     _update_task_impl,
     _validate_rfc3339_date,
     get_structured_tasks,
+    get_task,
+    get_task_list,
+    list_task_lists,
     list_tasks,
     manage_task,
     manage_task_list,
@@ -32,8 +35,9 @@ def _unwrap(tool: Any) -> Callable[..., Any]:
     return fn
 
 
-def _http_error(status: int) -> HttpError:
-    return HttpError(Mock(status=status, reason="error"), b"")
+def _without_auth(tool: Any) -> Callable[..., Any]:
+    """Strip only the auth decorator, keeping handle_http_errors in place."""
+    return (tool.fn if hasattr(tool, "fn") else tool).__wrapped__
 
 
 @pytest.fixture(autouse=True)
@@ -78,38 +82,34 @@ class TestValidateRfc3339Date:
             _validate_rfc3339_date(due)
 
 
-class TestFormatReauthMessage:
-    def test_non_auth_error_has_no_hint(self) -> None:
-        result = _format_reauth_message(_http_error(500), "u@e.com")
-        assert result.startswith("API error:")
-        assert "re-authenticate" not in result
-
-    def test_non_http_error_has_no_hint(self) -> None:
-        assert (
-            _format_reauth_message(ValueError("boom"), "u@e.com") == "API error: boom"
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool", "kwargs"),
+    [
+        (list_task_lists, {}),
+        (get_task_list, {"task_list_id": "tl1"}),
+        (list_tasks, {"task_list_id": "tl1"}),
+        (get_task, {"task_list_id": "tl1", "task_id": "t1"}),
+    ],
+    ids=["list_task_lists", "get_task_list", "list_tasks", "get_task"],
+)
+async def test_read_tools_surface_rate_limit_hint(
+    tool: Any, kwargs: dict[str, str]
+) -> None:
+    error = HttpError(
+        Mock(status=403, reason="Forbidden"),
+        b'{"error":{"errors":[{"reason":"rateLimitExceeded"}]}}',
+    )
+    service = Mock()
+    for resource in (service.tasklists(), service.tasks()):
+        resource.list().execute.side_effect = error
+        resource.get().execute.side_effect = error
+    with pytest.raises(ToolError) as excinfo:
+        await _without_auth(tool)(
+            service=service, user_google_email="u@e.com", **kwargs
         )
-
-    @patch("gtasks.tasks_tools.is_oauth21_enabled", return_value=False)
-    def test_legacy_oauth_hint(self, _mock_oauth21: Mock) -> None:
-        result = _format_reauth_message(_http_error(401), "u@e.com")
-        assert "re-authenticate" in result
-        assert "start_google_auth" in result
-        assert "u@e.com" in result
-
-    @patch("gtasks.tasks_tools.is_external_oauth21_provider", return_value=False)
-    @patch("gtasks.tasks_tools.is_oauth21_enabled", return_value=True)
-    def test_oauth21_hint(self, _mock_oauth21: Mock, _mock_external: Mock) -> None:
-        result = _format_reauth_message(_http_error(403), "u@e.com")
-        assert "MCP client's OAuth 2.1 flow" in result
-        assert "start_google_auth" not in result
-
-    @patch("gtasks.tasks_tools.is_external_oauth21_provider", return_value=True)
-    @patch("gtasks.tasks_tools.is_oauth21_enabled", return_value=True)
-    def test_external_provider_hint(
-        self, _mock_oauth21: Mock, _mock_external: Mock
-    ) -> None:
-        result = _format_reauth_message(_http_error(401), "u@e.com")
-        assert "bearer token" in result
+    assert "rate limit or quota exceeded" in str(excinfo.value)
+    assert "re-authenticate" not in str(excinfo.value)
 
 
 class TestGetStructuredTasks:
@@ -514,14 +514,6 @@ class TestListTasks:
         assert params["completedMin"] == "2026-04-01T00:00:00Z"
         assert params["completedMax"] == "2026-04-30T00:00:00Z"
         assert params["updatedMin"] == "2026-03-01T00:00:00Z"
-
-    @pytest.mark.asyncio
-    async def test_http_error_is_wrapped(self) -> None:
-        mock_service = _list_service(_http_error(500))
-        with pytest.raises(Exception, match="API error"):
-            await _unwrap(list_tasks)(
-                service=mock_service, user_google_email="u@e.com", task_list_id="tl1"
-            )
 
 
 def _manage_task_service() -> Mock:

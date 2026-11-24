@@ -941,6 +941,11 @@ def _grid_range_to_a1(grid_range: dict, sheet_titles: dict[int, str]) -> str:
     if start_row is None and end_row is None and start_col is None and end_col is None:
         return sheet_title
 
+    if end_row is not None and start_row is None:
+        start_row = 0
+    if end_col is not None and start_col is None:
+        start_col = 0
+
     def row_label(idx: Optional[int]) -> str:
         return str(idx + 1) if idx is not None else ""
 
@@ -961,14 +966,10 @@ def _grid_range_to_a1(grid_range: dict, sheet_titles: dict[int, str]) -> str:
             if start_label == end_label and is_single_cell
             else f"{start_label}:{end_label}"
         )
-    elif start_label:
-        range_ref = start_label
-    elif end_label:
-        range_ref = end_label
     else:
-        range_ref = ""
+        range_ref = start_label
 
-    return f"{sheet_title}!{range_ref}" if range_ref else sheet_title
+    return f"{sheet_title}!{range_ref}"
 
 
 def _summarize_conditional_rule(

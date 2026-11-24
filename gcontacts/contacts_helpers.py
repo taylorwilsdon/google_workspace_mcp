@@ -19,6 +19,7 @@ from core.utils import UserInputError, check_path_segment
 logger = logging.getLogger(__name__)
 
 DEFAULT_PERSON_FIELDS = "names,nicknames,emailAddresses,phoneNumbers,organizations"
+OTHER_CONTACT_FIELDS = "names,emailAddresses,phoneNumbers"
 
 
 def _resource_name(value: str, collection: str, label: str) -> str:
@@ -57,6 +58,13 @@ def _is_expired_sync_token(exc: HttpError) -> bool:
             for detail in details
         )
     )
+
+
+def _search_request(service: Any, source: str, **params: Any) -> Any:
+    """Build a saved contacts or other contacts search request."""
+    if source == "other":
+        return service.otherContacts().search(**params)
+    return service.people().searchContacts(**params)
 
 
 async def _list_contacts(

@@ -19,6 +19,7 @@ Search contacts by name, email, phone number, or other fields.
 | query | string | yes | | Searches names, emails, phone numbers |
 | user_google_email | string | yes | | |
 | page_size | integer | no | 30 | Max 30 |
+| source | string | no | saved | `saved` or `other` (people you've emailed but never saved; needs the contacts.other.readonly scope, user OAuth only, not available in service-account mode) |
 
 ### list_contacts
 List contacts for the authenticated user.
