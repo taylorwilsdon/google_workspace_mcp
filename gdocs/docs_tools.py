@@ -51,6 +51,9 @@ from gdocs.docs_helpers import (
     create_update_doc_tab_request,
     create_delete_doc_tab_request,
     validate_suggestions_view_mode,
+    validate_write_mode,
+    build_batch_update_body,
+    suggestion_save_error,
     create_update_paragraph_style_request,
     extract_text_from_elements,
     process_tab_hierarchy,
@@ -649,6 +652,7 @@ async def _modify_doc_text_by_heading(
     end_of_segment: bool,
     formatting_params: list,
     validator: ValidationManager,
+    write_mode: str,
 ) -> str:
     """Replace, append to, or format the section under ``heading`` in one guarded write."""
     has_formatting = any(p is not None for p in formatting_params)
@@ -702,12 +706,18 @@ async def _modify_doc_text_by_heading(
         verb = "Appended to" if end_of_segment or body_is_empty else "Replaced"
         operation = f"{verb} section under heading {heading!r}"
 
-    body: dict[str, Any] = {"requests": requests}
+    body = build_batch_update_body(requests, write_mode)
     if doc.get("revisionId"):
-        body["writeControl"] = {"requiredRevisionId": doc["revisionId"]}
-    await asyncio.to_thread(
+        body.setdefault("writeControl", {})["requiredRevisionId"] = doc["revisionId"]
+    result = await asyncio.to_thread(
         service.documents().batchUpdate(documentId=document_id, body=body).execute
     )
+    save_error = suggestion_save_error(result, write_mode)
+    if save_error:
+        return f"Error: {save_error}"
+
+    if write_mode == "SUGGEST":
+        operation = f"Suggested: {operation}"
     link = f"https://docs.google.com/document/d/{document_id}/edit"
     return f"{operation} in document {document_id}. Link: {link}"
 
@@ -748,6 +758,7 @@ async def modify_doc_text(
     clear_link: Optional[bool] = None,
     baseline_offset: Optional[str] = None,
     small_caps: Optional[bool] = None,
+    write_mode: str = "EDIT",
 ) -> str:
     """
     Modifies text in a Google Doc - can insert/replace text and/or apply formatting in a single operation.
@@ -793,6 +804,8 @@ async def modify_doc_text(
         clear_link: Remove hyperlink from the target range
         baseline_offset: One of NONE, SUPERSCRIPT, SUBSCRIPT
         small_caps: Whether to apply small caps
+        write_mode: "EDIT" (default) applies the change directly; "SUGGEST"
+            records it as a suggested edit that collaborators can accept or reject
 
     Returns:
         str: Confirmation message with operation details
@@ -808,6 +821,10 @@ async def modify_doc_text(
     is_valid, error_msg = validator.validate_document_id(document_id)
     if not is_valid:
         return f"Error: {error_msg}"
+
+    write_mode_error = validate_write_mode(write_mode)
+    if write_mode_error:
+        return write_mode_error
 
     # Validate that we have something to do
     formatting_params = [
@@ -842,6 +859,7 @@ async def modify_doc_text(
             end_of_segment,
             formatting_params,
             validator,
+            write_mode,
         )
     if start_index is None:
         return "Error: 'start_index' is required unless 'heading' is provided."
@@ -1010,15 +1028,24 @@ async def modify_doc_text(
         )
 
     try:
-        await asyncio.to_thread(
+        result = await asyncio.to_thread(
             service.documents()
-            .batchUpdate(documentId=document_id, body={"requests": requests})
+            .batchUpdate(
+                documentId=document_id,
+                body=build_batch_update_body(requests, write_mode),
+            )
             .execute
         )
     except HttpError as error:
         raise _rewrite_modify_doc_text_http_error(error, segment_id) from error
 
+    save_error = suggestion_save_error(result, write_mode)
+    if save_error:
+        return f"Error: {save_error}"
+
     link = f"https://docs.google.com/document/d/{document_id}/edit"
+    if write_mode == "SUGGEST":
+        operations = [f"Suggested: {operation}" for operation in operations]
     operation_summary = "; ".join(operations)
     text_info = f" Text length: {len(text)} characters." if text else ""
     return f"{operation_summary} in document {document_id}.{text_info} Link: {link}"
@@ -1043,6 +1070,7 @@ async def find_and_replace_doc(
     replace_text: str,
     match_case: bool = False,
     tab_id: Optional[str] = None,
+    write_mode: str = "EDIT",
 ) -> str:
     """
     Finds and replaces text throughout a Google Doc. No index calculation required.
@@ -1063,6 +1091,8 @@ async def find_and_replace_doc(
         replace_text: Text to replace with
         match_case: Whether to match case exactly
         tab_id: Optional ID of the tab to target
+        write_mode: "EDIT" (default) applies the replacements directly; "SUGGEST"
+            records them as suggested edits that collaborators can accept or reject
 
     Returns:
         str: Confirmation message with replacement count
@@ -1072,15 +1102,26 @@ async def find_and_replace_doc(
     )
     logger.debug(f"[find_and_replace_doc] find='{find_text}', replace='{replace_text}'")
 
+    write_mode_error = validate_write_mode(write_mode)
+    if write_mode_error:
+        return write_mode_error
+
     requests = [
         create_find_replace_request(find_text, replace_text, match_case, tab_id)
     ]
 
     result = await asyncio.to_thread(
         service.documents()
-        .batchUpdate(documentId=document_id, body={"requests": requests})
+        .batchUpdate(
+            documentId=document_id,
+            body=build_batch_update_body(requests, write_mode),
+        )
         .execute
     )
+
+    save_error = suggestion_save_error(result, write_mode)
+    if save_error:
+        return f"Error: {save_error}"
 
     # Extract number of replacements from response
     replacements = 0
@@ -1090,7 +1131,8 @@ async def find_and_replace_doc(
             replacements = reply["replaceAllText"].get("occurrencesChanged", 0)
 
     link = f"https://docs.google.com/document/d/{document_id}/edit"
-    return f"Replaced {replacements} occurrence(s) of '{find_text}' with '{replace_text}' in document {document_id}. Link: {link}"
+    verb = "Suggested replacing" if write_mode == "SUGGEST" else "Replaced"
+    return f"{verb} {replacements} occurrence(s) of '{find_text}' with '{replace_text}' in document {document_id}. Link: {link}"
 
 
 @server.tool(
@@ -1377,6 +1419,7 @@ async def batch_update_doc(
     user_google_email: str,
     document_id: str,
     operations: BatchDocOperations,
+    write_mode: str = "EDIT",
 ) -> str:
     """
     Executes multiple low-level document operations in a single atomic batch update.
@@ -1454,6 +1497,10 @@ async def batch_update_doc(
         document_id: ID of the document to update
         operations: List of operation dicts. Each operation MUST have a 'type' field.
                     All operations accept an optional 'tab_id' to target a specific tab.
+        write_mode: "EDIT" (default) applies the batch directly; "SUGGEST" records
+                    every operation as a suggested edit that collaborators can accept
+                    or reject. The Docs API rejects some operations in SUGGEST mode,
+                    such as named range and tab changes.
 
     Supported operation types and their parameters:
 
@@ -1638,11 +1685,15 @@ async def batch_update_doc(
     if not is_valid:
         return f"Error: {error_msg}"
 
+    write_mode_error = validate_write_mode(write_mode)
+    if write_mode_error:
+        return write_mode_error
+
     # Use BatchOperationManager to handle the complex logic
     batch_manager = BatchOperationManager(service)
 
     success, message, metadata = await batch_manager.execute_batch_operations(
-        document_id, normalized_operations
+        document_id, normalized_operations, write_mode
     )
 
     if success:
