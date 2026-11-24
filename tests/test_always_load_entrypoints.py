@@ -47,6 +47,18 @@ main.main()
 """
 )
 
+_SERVER_ENV_PREFIXES = (
+    "WORKSPACE_",
+    "GOOGLE_",
+    "MCP_",
+    "OAUTH",
+    "FASTMCP_",
+    "TRUST_GATEWAY_",
+    "GATEWAY_IDENTITY_",
+    "EXTERNAL_OAUTH21_",
+    "USER_GOOGLE_EMAIL",
+)
+
 
 @pytest.mark.parametrize(
     "script", [_FASTMCP_SERVER, _MAIN], ids=["fastmcp_server", "main"]
@@ -58,11 +70,11 @@ def test_listed_tool_is_marked_through_the_entrypoint(
     inherited = {
         key: value
         for key, value in os.environ.items()
-        if key
-        not in ("GOOGLE_SERVICE_ACCOUNT_KEY_FILE", "GOOGLE_SERVICE_ACCOUNT_KEY_JSON")
+        if not key.startswith(_SERVER_ENV_PREFIXES)
     }
     env = {
         **inherited,
+        "PYTHON_DOTENV_DISABLED": "1",
         "WORKSPACE_MCP_ALWAYS_LOAD_TOOLS": "Search_Gmail_Messages",
         "WORKSPACE_MCP_DISABLED_TOOLS": "",
         "TRUST_GATEWAY_IDENTITY": "false",
