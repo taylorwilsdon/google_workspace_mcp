@@ -1,5 +1,6 @@
 """Tests for write_mode (suggested edits) support in Google Docs edit tools."""
 
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
@@ -17,7 +18,7 @@ SAVED = {"commentUpdateState": "ALL_SAVED"}
 FAILED = {"commentUpdateState": "ALL_FAILED_UNKNOWN_REASON"}
 
 
-def _unwrap(tool):
+def _unwrap(tool: Any) -> Any:
     """Unwrap a FunctionTool + decorator chain to the original function."""
     fn = tool.fn if hasattr(tool, "fn") else tool
     while hasattr(fn, "__wrapped__"):
@@ -25,7 +26,7 @@ def _unwrap(tool):
     return fn
 
 
-def _docs_service(batch_reply=None):
+def _docs_service(batch_reply: dict[str, Any] | None = None) -> Mock:
     service = Mock()
     service.documents.return_value.batchUpdate.return_value.execute = Mock(
         return_value=batch_reply or {"replies": [{}]}
@@ -36,17 +37,17 @@ def _docs_service(batch_reply=None):
     return service
 
 
-def _batch_body(service):
+def _batch_body(service: Mock) -> dict[str, Any]:
     return service.documents.return_value.batchUpdate.call_args.kwargs["body"]
 
 
 class TestBuildBatchUpdateBody:
-    def test_edit_mode_keeps_api_default_body(self):
+    def test_edit_mode_keeps_api_default_body(self) -> None:
         requests = [{"insertText": {"location": {"index": 1}, "text": "Hi"}}]
         assert build_batch_update_body(requests) == {"requests": requests}
         assert build_batch_update_body(requests, "EDIT") == {"requests": requests}
 
-    def test_suggest_mode_sets_write_control(self):
+    def test_suggest_mode_sets_write_control(self) -> None:
         requests = [{"insertText": {"location": {"index": 1}, "text": "Hi"}}]
         assert build_batch_update_body(requests, "SUGGEST") == {
             "requests": requests,
@@ -56,17 +57,17 @@ class TestBuildBatchUpdateBody:
 
 class TestValidateWriteMode:
     @pytest.mark.parametrize("mode", ["EDIT", "SUGGEST"])
-    def test_accepts_supported_modes(self, mode):
+    def test_accepts_supported_modes(self, mode: str) -> None:
         assert validate_write_mode(mode) is None
 
     @pytest.mark.parametrize("mode", ["suggest", "COMMENT", ""])
-    def test_rejects_other_values(self, mode):
+    def test_rejects_other_values(self, mode: str) -> None:
         error = validate_write_mode(mode)
         assert error.startswith("Error: write_mode must be one of EDIT, SUGGEST")
 
 
 class TestSuggestionSaveError:
-    def test_reports_failed_suggestion_save(self):
+    def test_reports_failed_suggestion_save(self) -> None:
         error = suggestion_save_error(FAILED, "SUGGEST")
         assert "did not save these changes as suggestions" in error
         assert "version history" in error
@@ -80,15 +81,17 @@ class TestSuggestionSaveError:
             {},
         ],
     )
-    def test_other_or_missing_states_are_not_failures(self, result):
+    def test_other_or_missing_states_are_not_failures(
+        self, result: dict[str, Any]
+    ) -> None:
         assert suggestion_save_error(result, "SUGGEST") is None
 
-    def test_edit_mode_ignores_comment_update_state(self):
+    def test_edit_mode_ignores_comment_update_state(self) -> None:
         assert suggestion_save_error(FAILED, "EDIT") is None
 
 
 @pytest.mark.asyncio
-async def test_modify_doc_text_submits_suggestion_when_requested():
+async def test_modify_doc_text_submits_suggestion_when_requested() -> None:
     service = _docs_service({"replies": [{}, {}], **SAVED})
 
     result = await _unwrap(docs_tools.modify_doc_text)(
@@ -111,7 +114,7 @@ async def test_modify_doc_text_submits_suggestion_when_requested():
 
 
 @pytest.mark.asyncio
-async def test_modify_doc_text_edits_directly_by_default():
+async def test_modify_doc_text_edits_directly_by_default() -> None:
     service = _docs_service()
 
     result = await _unwrap(docs_tools.modify_doc_text)(
@@ -127,7 +130,7 @@ async def test_modify_doc_text_edits_directly_by_default():
 
 
 @pytest.mark.asyncio
-async def test_modify_doc_text_rejects_invalid_write_mode_without_calling_api():
+async def test_modify_doc_text_rejects_invalid_write_mode_before_api() -> None:
     service = _docs_service()
 
     result = await _unwrap(docs_tools.modify_doc_text)(
@@ -144,7 +147,7 @@ async def test_modify_doc_text_rejects_invalid_write_mode_without_calling_api():
 
 
 @pytest.mark.asyncio
-async def test_find_and_replace_doc_submits_suggestions_when_requested():
+async def test_find_and_replace_doc_submits_suggestions_when_requested() -> None:
     service = _docs_service(
         {"replies": [{"replaceAllText": {"occurrencesChanged": 2}}], **SAVED}
     )
@@ -165,7 +168,7 @@ async def test_find_and_replace_doc_submits_suggestions_when_requested():
 
 
 @pytest.mark.asyncio
-async def test_find_and_replace_doc_rejects_invalid_write_mode_without_calling_api():
+async def test_find_and_replace_doc_rejects_invalid_write_mode_before_api() -> None:
     service = _docs_service()
 
     result = await _unwrap(docs_tools.find_and_replace_doc)(
@@ -182,7 +185,7 @@ async def test_find_and_replace_doc_rejects_invalid_write_mode_without_calling_a
 
 
 @pytest.mark.asyncio
-async def test_batch_update_doc_submits_whole_batch_as_suggestions():
+async def test_batch_update_doc_submits_whole_batch_as_suggestions() -> None:
     service = _docs_service({"replies": [{}, {}], **SAVED})
 
     result = await _unwrap(docs_tools.batch_update_doc)(
@@ -203,7 +206,7 @@ async def test_batch_update_doc_submits_whole_batch_as_suggestions():
 
 
 @pytest.mark.asyncio
-async def test_batch_update_doc_rejects_invalid_write_mode_without_calling_api():
+async def test_batch_update_doc_rejects_invalid_write_mode_before_api() -> None:
     service = _docs_service()
 
     result = await _unwrap(docs_tools.batch_update_doc)(
@@ -219,7 +222,7 @@ async def test_batch_update_doc_rejects_invalid_write_mode_without_calling_api()
 
 
 @pytest.mark.asyncio
-async def test_batch_manager_defaults_to_direct_edits():
+async def test_batch_manager_defaults_to_direct_edits() -> None:
     service = _docs_service()
     manager = BatchOperationManager(service)
 
@@ -233,7 +236,7 @@ async def test_batch_manager_defaults_to_direct_edits():
 
 
 @pytest.mark.asyncio
-async def test_modify_doc_text_reports_unsaved_suggestions():
+async def test_modify_doc_text_reports_unsaved_suggestions() -> None:
     service = _docs_service({"replies": [{}], **FAILED})
 
     result = await _unwrap(docs_tools.modify_doc_text)(
@@ -250,7 +253,7 @@ async def test_modify_doc_text_reports_unsaved_suggestions():
 
 
 @pytest.mark.asyncio
-async def test_find_and_replace_doc_reports_unsaved_suggestions():
+async def test_find_and_replace_doc_reports_unsaved_suggestions() -> None:
     service = _docs_service(
         {"replies": [{"replaceAllText": {"occurrencesChanged": 1}}], **FAILED}
     )
@@ -268,7 +271,7 @@ async def test_find_and_replace_doc_reports_unsaved_suggestions():
 
 
 @pytest.mark.asyncio
-async def test_batch_update_doc_reports_unsaved_suggestions():
+async def test_batch_update_doc_reports_unsaved_suggestions() -> None:
     service = _docs_service({"replies": [{}], **FAILED})
 
     result = await _unwrap(docs_tools.batch_update_doc)(
@@ -281,3 +284,21 @@ async def test_batch_update_doc_reports_unsaved_suggestions():
 
     assert result.startswith("Error: Google Docs did not save these changes")
     assert "as suggested edits" not in result
+
+
+@pytest.mark.asyncio
+async def test_batch_find_replace_reports_suggested_replacements() -> None:
+    service = _docs_service(
+        {"replies": [{"replaceAllText": {"occurrencesChanged": 2}}], **SAVED}
+    )
+
+    result = await _unwrap(docs_tools.batch_update_doc)(
+        service=service,
+        user_google_email="user@example.com",
+        document_id=DOC_ID,
+        operations=[{"type": "find_replace", "find_text": "a", "replace_text": "b"}],
+        write_mode="SUGGEST",
+    )
+
+    assert "Suggested replacing 2 occurrence(s) of 'a'" in result
+    assert "Replaced" not in result

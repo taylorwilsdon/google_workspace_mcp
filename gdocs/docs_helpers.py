@@ -139,13 +139,7 @@ def validate_write_mode(write_mode: str) -> Optional[str]:
 def build_batch_update_body(
     requests: List[Dict[str, Any]], write_mode: str = "EDIT"
 ) -> Dict[str, Any]:
-    """
-    Build a documents.batchUpdate body for the requested write mode.
-
-    SUGGEST sets WriteControl.writeMode so the Docs API records every request in
-    the batch as a suggested edit instead of applying it. EDIT keeps the body
-    unchanged, which is the API default.
-    """
+    """Build a documents.batchUpdate body; SUGGEST records requests as suggestions."""
     body: Dict[str, Any] = {"requests": requests}
     if write_mode == "SUGGEST":
         body["writeControl"] = {"writeMode": "SUGGEST"}
@@ -153,13 +147,7 @@ def build_batch_update_body(
 
 
 def suggestion_save_error(result: Dict[str, Any], write_mode: str) -> Optional[str]:
-    """
-    Return a failure description when a SUGGEST batch did not save its suggestions.
-
-    The Docs API reports ALL_FAILED_UNKNOWN_REASON in commentUpdateState when
-    suggestions fail to save, even though the document changes themselves may
-    have been committed. Any other or missing state is not treated as a failure.
-    """
+    """Return an error when Docs reports a SUGGEST batch failed to save."""
     if write_mode != "SUGGEST":
         return None
     if result.get("commentUpdateState") != "ALL_FAILED_UNKNOWN_REASON":

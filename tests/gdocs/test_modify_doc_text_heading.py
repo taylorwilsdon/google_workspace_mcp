@@ -1,5 +1,6 @@
 """Tests for the heading-addressed mode of modify_doc_text."""
 
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
@@ -230,8 +231,12 @@ class TestModifyDocTextHeading:
         ],
     )
     async def test_suggestion_mode_preserves_heading_operation_and_revision_guard(
-        self, revision, kwargs, request_type, operation
-    ):
+        self,
+        revision: str | None,
+        kwargs: dict[str, Any],
+        request_type: str,
+        operation: str,
+    ) -> None:
         service = _service(_doc(revision=revision))
 
         result = await _call(service, heading="Status", write_mode="SUGGEST", **kwargs)
@@ -249,7 +254,9 @@ class TestModifyDocTextHeading:
         "kwargs",
         [{"text": "New"}, {"text": "More", "end_of_segment": True}, {"bold": True}],
     )
-    async def test_failed_heading_suggestion_save_reports_error(self, kwargs):
+    async def test_failed_heading_suggestion_save_reports_error(
+        self, kwargs: dict[str, Any]
+    ) -> None:
         service = _service(_doc())
         service.documents.return_value.batchUpdate.return_value.execute.return_value = {
             "commentUpdateState": "ALL_FAILED_UNKNOWN_REASON"
