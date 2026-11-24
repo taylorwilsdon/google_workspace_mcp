@@ -22,14 +22,30 @@ class SuppressStatelessTransportTerminationFilter(logging.Filter):
         )
 
 
+class RedactAccessLogQueryFilter(logging.Filter):
+    """Replace the query in uvicorn access lines, whose third arg is the request target."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if isinstance(args, tuple) and len(args) >= 3 and isinstance(args[2], str):
+            path, sep, _query = args[2].partition("?")
+            if sep:
+                record.args = (*args[:2], f"{path}?<query-redacted>", *args[3:])
+        return True
+
+
+def _add_filter_once(logger_name: str, filter_type: type[logging.Filter]) -> None:
+    target_logger = logging.getLogger(logger_name)
+    if not any(isinstance(existing, filter_type) for existing in target_logger.filters):
+        target_logger.addFilter(filter_type())
+
+
 def install_noisy_log_filters() -> None:
-    """Install targeted filters for known noisy third-party log lines."""
-    target_logger = logging.getLogger("mcp.server.streamable_http")
-    if not any(
-        isinstance(existing, SuppressStatelessTransportTerminationFilter)
-        for existing in target_logger.filters
-    ):
-        target_logger.addFilter(SuppressStatelessTransportTerminationFilter())
+    """Install targeted filters for noisy or sensitive third-party log lines."""
+    _add_filter_once("uvicorn.access", RedactAccessLogQueryFilter)
+    _add_filter_once(
+        "mcp.server.streamable_http", SuppressStatelessTransportTerminationFilter
+    )
 
 
 class EnhancedLogFormatter(logging.Formatter):

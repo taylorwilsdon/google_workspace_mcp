@@ -93,6 +93,18 @@ def test_boundary_handles_all_day_dates():
     assert _build_time_boundary("2026-08-21", "Europe/Amsterdam") == {
         "date": "2026-08-21"
     }
+    assert _build_time_boundary("2024-02-29", None) == {"date": "2024-02-29"}
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["Nov 10, 2026 23:00", "2026-11-10 23:00", "2026-02-30", "20261110"],
+)
+def test_all_day_boundary_rejects_values_that_are_not_calendar_dates(
+    value: str,
+) -> None:
+    with pytest.raises(UserInputError, match="YYYY-MM-DD"):
+        _build_time_boundary(value, "America/New_York")
 
 
 # --- create ------------------------------------------------------------------

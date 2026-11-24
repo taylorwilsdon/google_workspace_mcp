@@ -122,7 +122,7 @@ For parameters: [references/drive.md](references/drive.md)
 | List calendars | `list_calendars` |
 | Create secondary calendar / share calendar, list, update or remove access | `manage_calendar` |
 | Get events | `get_events` |
-| Create/update/delete event | `manage_event` |
+| Create/update/delete/move event | `manage_event` |
 | Out of office (auto-decline) | `manage_out_of_office` |
 | Focus time (auto-decline, DND) | `manage_focus_time` |
 | Check availability | `query_freebusy` |
@@ -185,12 +185,13 @@ For parameters: [references/sheets.md](references/sheets.md)
 
 | Task | Tool |
 |------|------|
-| Get presentation | `get_presentation` |
-| Get specific slide | `get_page` |
+| List slides and layouts | `get_presentation` (`action="deck"`) |
+| Read a slide's elements and text | `get_presentation` (`action="page"`) |
+| A slide's geometry and styles as JSON | `get_presentation` (`action="markup"`) |
 | Look at a slide (render to image) | `render_page_to_image` |
 | Create presentation | `create_presentation` |
 | Batch update | `batch_update_presentation` |
-| Speaker notes | `get_presentation` (`include_speaker_notes`) + `batch_update_presentation` |
+| Speaker notes | `get_presentation` (`action="page"`) + `batch_update_presentation` |
 | Comments | `manage_presentation_comment` / `list_presentation_comments` |
 
 For parameters: [references/slides.md](references/slides.md)
