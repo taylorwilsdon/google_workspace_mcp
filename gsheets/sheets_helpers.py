@@ -1166,16 +1166,11 @@ async def _copy_paste_range(
     return normalized
 
 
-# Delimiter for each local file type modify_sheet_values can load values from.
 DELIMITED_FILE_DELIMITERS = {".csv": ",", ".tsv": "\t"}
 
 
 def _read_delimited_file_values(file_path: str) -> List[List[str]]:
-    """Read a local CSV or TSV file into rows of cell strings.
-
-    The delimiter comes from the file extension. A UTF-8 byte order mark, as
-    written by Excel's "CSV UTF-8" export, is dropped.
-    """
+    """Read a local .csv or .tsv file into rows of cell strings."""
     path_obj = validate_file_path(file_path)
     if not path_obj.is_file():
         raise UserInputError(f"file_path is not a file: {file_path}")
@@ -1187,7 +1182,7 @@ def _read_delimited_file_values(file_path: str) -> List[List[str]]:
         )
     try:
         with open(path_obj, encoding="utf-8-sig", newline="") as handle:
-            rows = list(csv.reader(handle, delimiter=delimiter))
+            rows = list(csv.reader(handle, delimiter=delimiter, strict=True))
     except UnicodeDecodeError as exc:
         raise UserInputError(f"file_path must be UTF-8 text: {exc}") from exc
     except csv.Error as exc:

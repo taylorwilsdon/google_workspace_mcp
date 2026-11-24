@@ -1,5 +1,7 @@
 """Tests for writing a local CSV/TSV file with modify_sheet_values(file_path=...)."""
 
+from pathlib import Path
+from typing import Any, Callable
 from unittest.mock import Mock
 
 import pytest
@@ -8,7 +10,7 @@ from core.utils import UserInputError
 from gsheets.sheets_tools import modify_sheet_values
 
 
-def _unwrap(tool):
+def _unwrap(tool: Any) -> Callable[..., Any]:
     """Peel FastMCP/auth wrappers so unit tests can pass a mock service."""
     fn = tool.fn if hasattr(tool, "fn") else tool
     while hasattr(fn, "__wrapped__"):
@@ -17,14 +19,14 @@ def _unwrap(tool):
 
 
 @pytest.fixture
-def allowed_dir(tmp_path, monkeypatch):
+def allowed_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.delenv("WORKSPACE_MCP_DISABLE_LOCAL_FILES", raising=False)
     monkeypatch.setattr("core.utils.is_stateless_mode", lambda: False)
     monkeypatch.setenv("ALLOWED_FILE_DIRS", str(tmp_path))
     return tmp_path
 
 
-def _service():
+def _service() -> Mock:
     service = Mock()
     values_api = service.spreadsheets.return_value.values.return_value
     values_api.update.return_value.execute.return_value = {
@@ -35,7 +37,7 @@ def _service():
     return service
 
 
-async def _write(service, **kwargs):
+async def _write(service: Mock, **kwargs: Any) -> str:
     return await _unwrap(modify_sheet_values)(
         service=service,
         user_google_email="user@example.com",
@@ -44,18 +46,19 @@ async def _write(service, **kwargs):
     )
 
 
-def _sent_update(service):
+def _sent_update(service: Mock) -> dict[str, Any]:
     update = service.spreadsheets.return_value.values.return_value.update
     update.assert_called_once()
     return update.call_args.kwargs
 
 
 @pytest.mark.asyncio
-async def test_writes_csv_rows_from_file(allowed_dir):
+async def test_writes_csv_rows_from_file(allowed_dir: Path) -> None:
     src = allowed_dir / "rows.csv"
-    # BOM from Excel's "CSV UTF-8" export, a quoted delimiter, an embedded newline.
     src.write_bytes(
-        '﻿name,notes\r\nAda,"likes, commas"\r\nBob,"two\nlines"\r\n'.encode("utf-8")
+        '\ufeffname,notes\r\nAda,"likes, commas"\r\nBob,"two\r\nlines"\r\n'.encode(
+            "utf-8"
+        )
     )
     service = _service()
 
@@ -69,14 +72,14 @@ async def test_writes_csv_rows_from_file(allowed_dir):
         "values": [
             ["name", "notes"],
             ["Ada", "likes, commas"],
-            ["Bob", "two\nlines"],
+            ["Bob", "two\r\nlines"],
         ]
     }
     assert "Updated: 6 cells, 3 rows, 2 columns" in result
 
 
 @pytest.mark.asyncio
-async def test_tsv_uses_tab_delimiter_and_value_input_option(allowed_dir):
+async def test_tsv_uses_tab_delimiter_and_value_input_option(allowed_dir: Path) -> None:
     src = allowed_dir / "rows.TSV"
     src.write_text("a,1\t=SUM(1,2)\nb\t2\n", encoding="utf-8")
     service = _service()
@@ -103,12 +106,14 @@ async def test_tsv_uses_tab_delimiter_and_value_input_option(allowed_dir):
         {"source_range": "Sheet1!A1"},
     ],
 )
-async def test_rejects_file_path_with_other_sources(allowed_dir, extra):
+async def test_rejects_file_path_with_other_sources(
+    allowed_dir: Path, extra: dict[str, Any]
+) -> None:
     src = allowed_dir / "rows.csv"
     src.write_text("a,b\n", encoding="utf-8")
     service = _service()
 
-    with pytest.raises(UserInputError, match="only one of"):
+    with pytest.raises(UserInputError, match="only one of 'values', 'file_path'"):
         await _write(service, range_name="A1", file_path=str(src), **extra)
 
     service.spreadsheets.assert_not_called()
@@ -124,9 +129,12 @@ async def test_rejects_file_path_with_other_sources(allowed_dir, extra):
         ("latin1.csv", "café,1\n".encode("latin-1"), "must be UTF-8"),
         # One field past the csv module's default 128 KiB field limit.
         ("huge.csv", b"x" * (256 * 1024), "Could not parse"),
+        ("unterminated.csv", b'a,b\n1,"open\n2,next\n', "Could not parse"),
     ],
 )
-async def test_rejects_unusable_files(allowed_dir, file_name, data, message):
+async def test_rejects_unusable_files(
+    allowed_dir: Path, file_name: str, data: bytes, message: str
+) -> None:
     src = allowed_dir / file_name
     src.write_bytes(data)
     service = _service()
@@ -138,7 +146,7 @@ async def test_rejects_unusable_files(allowed_dir, file_name, data, message):
 
 
 @pytest.mark.asyncio
-async def test_rejects_directory(allowed_dir):
+async def test_rejects_directory(allowed_dir: Path) -> None:
     folder = allowed_dir / "export.csv"
     folder.mkdir()
 
@@ -147,7 +155,9 @@ async def test_rejects_directory(allowed_dir):
 
 
 @pytest.mark.asyncio
-async def test_rejects_path_outside_allowed_dirs(allowed_dir, tmp_path_factory):
+async def test_rejects_path_outside_allowed_dirs(
+    allowed_dir: Path, tmp_path_factory: pytest.TempPathFactory
+) -> None:
     outside = tmp_path_factory.mktemp("outside") / "rows.csv"
     outside.write_text("a,b\n", encoding="utf-8")
     service = _service()
@@ -159,7 +169,9 @@ async def test_rejects_path_outside_allowed_dirs(allowed_dir, tmp_path_factory):
 
 
 @pytest.mark.asyncio
-async def test_rejects_file_path_when_local_files_disabled(allowed_dir, monkeypatch):
+async def test_rejects_file_path_when_local_files_disabled(
+    allowed_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     src = allowed_dir / "rows.csv"
     src.write_text("a,b\n", encoding="utf-8")
     monkeypatch.setenv("WORKSPACE_MCP_DISABLE_LOCAL_FILES", "true")

@@ -406,14 +406,13 @@ async def modify_sheet_values(
 ) -> str:
     """
     Modifies values in a specific range of a Google Sheet - can write, update, or clear values,
-    write the rows of a local CSV/TSV file, insert Smart Chips (Drive files/folders or People),
-    or copy another range into it.
+    insert Smart Chips (Drive files/folders or People), or copy another range into it.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
         spreadsheet_id (str): The ID of the spreadsheet. Required.
         range_name (str): The range to modify (e.g., "Sheet1!A1:D10", "A1:D10"). Required.
-        values (Optional[Union[str, List[List[str]]]]): 2D array of values to write/update. Can be a JSON string or Python list. Required unless clear_values=True or chips, source_range, or file_path is provided.
+        values (Optional[Union[str, List[List[str]]]]): 2D array of values to write/update. Can be a JSON string or Python list. Required unless clear_values=True or chips or source_range is provided.
         value_input_option (str): How to interpret input values ("RAW" or "USER_ENTERED"). Defaults to "USER_ENTERED".
         clear_values (bool): If True, clears the range instead of writing values. Defaults to False.
         chips (Optional[Union[str, dict, List[Any]]]): Smart chip(s) to insert instead of values:
@@ -433,10 +432,8 @@ async def modify_sheet_values(
             "PASTE_FORMAT", "PASTE_NO_BORDERS", "PASTE_FORMULA", "PASTE_DATA_VALIDATION", or
             "PASTE_CONDITIONAL_FORMATTING". Defaults to "PASTE_NORMAL".
         file_path (Optional[str]): Local .csv or .tsv file (UTF-8) whose rows are written instead of values,
-            so a large dataset never has to be passed inline. Each row becomes a sheet row and
-            value_input_option applies as for values. range_name may be just the top-left cell (e.g.,
-            "Sheet1!A2" to load below an existing header row). Use instead of values, chips,
-            source_range, or clear_values.
+            with value_input_option applied. range_name may be just the top-left cell (e.g., "Sheet1!A2"
+            to load below a header row). Use instead of values, chips, source_range, or clear_values.
 
     Returns:
         str: Confirmation message of the successful modification operation.
