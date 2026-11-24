@@ -7,7 +7,9 @@ based on tier configuration, replacing direct @server.tool() decorators.
 
 import logging
 import os
-from typing import Set, Optional, Callable
+from typing import Callable, Iterable, Optional, Set
+
+from fastmcp import FastMCP
 
 from auth.oauth_config import is_oauth21_enabled
 from auth.permissions import is_permissions_mode, get_allowed_scopes_set
@@ -21,8 +23,7 @@ _enabled_tools: Optional[Set[str]] = None
 # Tools explicitly blocked regardless of tier or permission selection
 _disabled_tools: Set[str] = set()
 
-# Tool _meta key asking clients that defer tool definitions behind a search step to
-# load the tool upfront instead. Claude Code reads it; other clients ignore it.
+_ALWAYS_LOAD_TOOLS_ENV = "WORKSPACE_MCP_ALWAYS_LOAD_TOOLS"
 ALWAYS_LOAD_META_KEY = "anthropic/alwaysLoad"
 
 
@@ -48,6 +49,11 @@ def get_disabled_tools() -> Set[str]:
     return _disabled_tools
 
 
+def _normalize_tool_names(names: Iterable[str]) -> Set[str]:
+    """Return the non-blank names stripped and lowercased."""
+    return {name.strip().lower() for name in names if name.strip()}
+
+
 def resolve_disabled_tools(cli_names: Optional[list[str]] = None) -> Set[str]:
     """Resolve the per-tool block list from CLI names, falling back to the env var.
 
@@ -65,19 +71,12 @@ def resolve_disabled_tools(cli_names: Optional[list[str]] = None) -> Set[str]:
         if cli_names
         else os.getenv("WORKSPACE_MCP_DISABLED_TOOLS", "").split(",")
     )
-    return {name.strip().lower() for name in raw if name.strip()}
+    return _normalize_tool_names(raw)
 
 
-def resolve_always_load_tools() -> Set[str]:
-    """Resolve the tools to mark for upfront loading from the env var.
-
-    Names are normalized to lowercase because tool names are lowercase snake_case.
-
-    Returns:
-        The tool names listed in WORKSPACE_MCP_ALWAYS_LOAD_TOOLS, empty when unset.
-    """
-    raw = os.getenv("WORKSPACE_MCP_ALWAYS_LOAD_TOOLS", "").split(",")
-    return {name.strip().lower() for name in raw if name.strip()}
+def get_always_load_tools() -> Set[str]:
+    """Return the lowercased tool names listed in WORKSPACE_MCP_ALWAYS_LOAD_TOOLS."""
+    return _normalize_tool_names(os.getenv(_ALWAYS_LOAD_TOOLS_ENV, "").split(","))
 
 
 def is_tool_enabled(tool_name: str) -> bool:
@@ -284,18 +283,11 @@ def filter_server_tools(server) -> int:
     return tools_removed
 
 
-def mark_always_load_tools(server, tool_names: Set[str]) -> int:
-    """Set ``_meta["anthropic/alwaysLoad"] = true`` on the named registered tools.
-
-    Run after filter_server_tools so a name whose tool was filtered out warns
-    instead of marking a tool the server no longer exposes.
-
-    Returns:
-        The number of tools marked.
-    """
+def mark_always_load_tools(server: FastMCP) -> int:
+    """Mark the WORKSPACE_MCP_ALWAYS_LOAD_TOOLS tools still registered; return the count."""
     tool_components = get_tool_components(server)
     marked = 0
-    for tool_name in sorted(tool_names):
+    for tool_name in sorted(get_always_load_tools()):
         tool = tool_components.get(tool_name)
         if tool is None:
             logger.warning(

@@ -1,14 +1,10 @@
-"""WORKSPACE_MCP_ALWAYS_LOAD_TOOLS reaches tools/list through both entrypoints.
-
-Each case runs in a fresh interpreter because the shared server is built and its
-tools registered at import time. Listing through a Client exercises the full
-SecureFastMCP stack, including the middleware that rewrites tool schemas.
-"""
+"""WORKSPACE_MCP_ALWAYS_LOAD_TOOLS reaches tools/list through both entrypoints."""
 
 import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -55,12 +51,21 @@ main.main()
 @pytest.mark.parametrize(
     "script", [_FASTMCP_SERVER, _MAIN], ids=["fastmcp_server", "main"]
 )
-def test_listed_tool_is_marked_through_the_entrypoint(tmp_path, script):
+def test_listed_tool_is_marked_through_the_entrypoint(
+    tmp_path: Path, script: str
+) -> None:
+    # The shared server registers its tools at import time, so use a fresh interpreter.
+    inherited = {
+        key: value
+        for key, value in os.environ.items()
+        if key
+        not in ("GOOGLE_SERVICE_ACCOUNT_KEY_FILE", "GOOGLE_SERVICE_ACCOUNT_KEY_JSON")
+    }
     env = {
-        **os.environ,
+        **inherited,
         "WORKSPACE_MCP_ALWAYS_LOAD_TOOLS": "Search_Gmail_Messages",
-        # An inherited block list would filter the listed tool out.
         "WORKSPACE_MCP_DISABLED_TOOLS": "",
+        "TRUST_GATEWAY_IDENTITY": "false",
         "GOOGLE_OAUTH_CLIENT_ID": "test-client-id",
         "GOOGLE_OAUTH_CLIENT_SECRET": "test-client-secret",
         "MCP_ENABLE_OAUTH21": "false",
