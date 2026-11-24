@@ -13,6 +13,7 @@ from core.utils import UserInputError
 from gsheets.sheets_helpers import (
     _clamp_a1_read_rows,
     _column_to_index,
+    _grid_range_to_a1,
     _parse_a1_part,
     _quote_sheet_title_for_a1,
 )
@@ -105,3 +106,29 @@ def test_clamp_a1_read_rows_passes_through_named_ranges():
         clamped, note = _clamp_a1_read_rows(range_name)
         assert clamped == range_name
         assert note is None
+
+
+@pytest.mark.parametrize(
+    ("grid_range", "expected"),
+    [
+        (
+            {"sheetId": 0, "endRowIndex": 3, "endColumnIndex": 2},
+            "Sheet1!A1:B3",
+        ),
+        ({"sheetId": 0, "endColumnIndex": 2}, "Sheet1!A:B"),
+        ({"sheetId": 0, "endRowIndex": 3}, "Sheet1!1:3"),
+        (
+            {
+                "sheetId": 0,
+                "startColumnIndex": 1,
+                "endRowIndex": 1,
+                "endColumnIndex": 2,
+            },
+            "Sheet1!B1",
+        ),
+    ],
+)
+def test_grid_range_to_a1_defaults_omitted_starts_to_zero_when_end_exists(
+    grid_range: dict[str, int], expected: str
+) -> None:
+    assert _grid_range_to_a1(grid_range, {0: "Sheet1"}) == expected
