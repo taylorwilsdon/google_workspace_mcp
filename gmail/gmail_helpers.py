@@ -475,12 +475,12 @@ def _generate_gmail_web_url(
 ) -> str:
     """Return the Gmail web URL for a message or thread ID in any label (#all).
 
-    The account is addressed by email when known, else by browser account index.
+    Selects the account by ``authuser`` email when known, else by index in the path.
     """
-    account = (
-        quote(user_google_email, safe="@") if user_google_email else str(account_index)
-    )
-    return f"https://mail.google.com/mail/u/{account}/#all/{item_id}"
+    if user_google_email:
+        authuser = quote(user_google_email, safe="@")
+        return f"https://mail.google.com/mail/?authuser={authuser}#all/{item_id}"
+    return f"https://mail.google.com/mail/u/{account_index}/#all/{item_id}"
 
 
 def _http_error_status(error: HttpError) -> Optional[int]:
@@ -824,6 +824,17 @@ def _derive_reply_all_recipients(
     return derived_to or None, derived_cc
 
 
+def thread_message_status(message: Mapping[str, Any]) -> str:
+    """Return a header suffix such as " [DRAFT, NOT SENT]" for draft or trashed mail."""
+    labels = set(message.get("labelIds") or ())
+    parts = []
+    if "DRAFT" in labels:
+        parts.append("DRAFT, NOT SENT")
+    if "TRASH" in labels:
+        parts.append("IN TRASH")
+    return f" [{', '.join(parts)}]" if parts else ""
+
+
 def _analyze_thread_ownership_impl(
     thread_response: dict,
     user_google_email: str,
@@ -1087,17 +1098,25 @@ def _decode_base64url(data: str) -> bytes:
 
 
 def decode_part_body(part: Mapping[str, Any]) -> str:
-    """Decode a Gmail payload part's inline body using its declared charset."""
+    """Decode a Gmail payload part's body.
+
+    Gmail converts inline ``format="full"`` data to UTF-8 but serves
+    attachment-backed bodies in their declared charset.
+    """
     raw = _decode_base64url(part["body"]["data"])
     headers = Message()
     for header in part.get("headers", []):
         headers[header["name"]] = header["value"]
     charset = headers.get_content_charset() or "utf-8"
     attempts = [(charset, "strict"), ("utf-8", "strict"), (charset, "ignore")]
-    # WHATWG reads these labels as windows-1252, and they often mislabel UTF-8.
     with contextlib.suppress(LookupError):
-        if codecs.lookup(charset).name in {"ascii", "cp1252", "iso8859-1"}:
+        name = codecs.lookup(charset).name
+        if name in {"ascii", "cp1252", "iso8859-1"}:
+            # WHATWG reads these labels as windows-1252, and they often mislabel UTF-8.
             attempts = [("utf-8", "strict"), ("cp1252", "strict"), ("cp1252", "ignore")]
+        elif not part["body"].get("attachmentId") and not name.startswith("iso2022"):
+            # Raw ISO-2022 bytes are also valid UTF-8, so that codec stays first.
+            attempts = [("utf-8", "strict"), (charset, "strict"), (charset, "ignore")]
     for codec, errors in attempts:
         try:
             return raw.decode(codec, errors)
@@ -1536,6 +1555,35 @@ def _checked_header(field: str, value: str) -> str:
     return value
 
 
+MessagePriority = Literal["high", "normal", "low"]
+
+PRIORITY_DESCRIPTION = (
+    "'high' or 'low' sets the Importance/X-Priority headers that Outlook, Apple Mail "
+    "and Thunderbird flag; Gmail ignores them. 'normal' adds none."
+)
+
+_PRIORITY_HEADERS: Dict[str, tuple[tuple[str, str], ...]] = {
+    "high": (
+        ("Importance", "High"),
+        ("X-Priority", "1 (Highest)"),
+        ("Priority", "urgent"),
+    ),
+    "normal": (),
+    "low": (
+        ("Importance", "Low"),
+        ("X-Priority", "5 (Lowest)"),
+        ("Priority", "non-urgent"),
+    ),
+}
+
+
+def _priority_headers(priority: str) -> tuple[tuple[str, str], ...]:
+    """Return the headers that mark a message with ``priority``."""
+    if priority not in _PRIORITY_HEADERS:
+        raise ValueError("priority must be one of 'high', 'normal' or 'low'.")
+    return _PRIORITY_HEADERS[priority]
+
+
 def _prepare_gmail_message_web(
     subject: str,
     plain_body: str,
@@ -1547,6 +1595,7 @@ def _prepare_gmail_message_web(
     references: Optional[str] = None,
     from_email: Optional[str] = None,
     from_name: Optional[str] = None,
+    priority: MessagePriority = "normal",
 ) -> str:
     """Assemble a Gmail-web faithful ``multipart/alternative`` raw message.
 
@@ -1579,6 +1628,8 @@ def _prepare_gmail_message_web(
     if cc:
         headers.append(("Cc", format_address_list(_checked_header("Cc", cc))))
 
+    headers.extend(_priority_headers(priority))
+
     message = assemble_alternative(
         headers=headers,
         plain_text=plain_body,
@@ -1602,6 +1653,7 @@ def _build_web_compose_raw(
     references: Optional[str],
     direction: TextDirection,
     reply_target: Optional[Mapping[str, Any]],
+    priority: MessagePriority,
 ) -> str:
     """Build a Gmail-web raw message for the attachment-free send/draft paths.
 
@@ -1625,6 +1677,7 @@ def _build_web_compose_raw(
         references=references,
         from_email=from_email,
         from_name=from_name,
+        priority=priority,
     )
 
 
