@@ -23,13 +23,15 @@ def _unwrap(tool):
 def test_web_url_uses_the_account_email():
     url = _generate_gmail_web_url("msg-1", user_google_email="second@example.com")
 
-    assert url == "https://mail.google.com/mail/u/second@example.com/#all/msg-1"
+    assert url == "https://mail.google.com/mail/?authuser=second@example.com#all/msg-1"
 
 
 def test_web_url_encodes_special_characters_in_the_email():
     url = _generate_gmail_web_url("msg-1", user_google_email="jorge+work@example.com")
 
-    assert url == "https://mail.google.com/mail/u/jorge%2Bwork@example.com/#all/msg-1"
+    assert url == (
+        "https://mail.google.com/mail/?authuser=jorge%2Bwork@example.com#all/msg-1"
+    )
 
 
 @pytest.mark.parametrize("email", [None, ""])
@@ -60,11 +62,11 @@ async def test_search_results_link_to_the_searched_account():
     )
 
     assert (
-        "     Web Link: https://mail.google.com/mail/u/second@example.com/#all/msg-1"
+        "     Web Link: https://mail.google.com/mail/?authuser=second@example.com#all/msg-1"
         in result
     )
     assert (
-        "     Thread Link: https://mail.google.com/mail/u/second@example.com/#all/thread-1"
+        "     Thread Link: https://mail.google.com/mail/?authuser=second@example.com#all/thread-1"
         in result
     )
 
@@ -88,7 +90,7 @@ async def test_message_metadata_links_to_the_account_that_was_read(monkeypatch):
     )
 
     assert (
-        "Web Link: https://mail.google.com/mail/u/second@example.com/#all/msg-1"
+        "Web Link: https://mail.google.com/mail/?authuser=second@example.com#all/msg-1"
         in result
     )
 
@@ -116,7 +118,7 @@ async def test_message_content_links_to_the_account_that_was_read(monkeypatch):
     )
 
     assert (
-        "Web Link: https://mail.google.com/mail/u/second@example.com/#all/msg-1"
+        "Web Link: https://mail.google.com/mail/?authuser=second@example.com#all/msg-1"
         in result
     )
     assert "Body text" in result

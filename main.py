@@ -35,7 +35,12 @@ def _load_startup_dependencies():
         install_noisy_log_filters,
     )
     from core.utils import check_credentials_directory_permissions
-    from core.server import server, set_transport_mode, configure_server_for_http
+    from core.server import (
+        server,
+        set_transport_mode,
+        configure_server_for_http,
+        get_stateless_http,
+    )
     from core.tool_tier_loader import resolve_tools_from_tier
     from core.tool_registry import (
         set_enabled_tools as set_enabled_tool_names,
@@ -59,6 +64,7 @@ def _load_startup_dependencies():
         server,
         set_transport_mode,
         configure_server_for_http,
+        get_stateless_http,
         resolve_tools_from_tier,
         set_enabled_tool_names,
         resolve_disabled_tools,
@@ -85,6 +91,7 @@ load_dotenv(dotenv_path=dotenv_path)
     server,
     set_transport_mode,
     configure_server_for_http,
+    get_stateless_http,
     resolve_tools_from_tier,
     set_enabled_tool_names,
     resolve_disabled_tools,
@@ -482,6 +489,11 @@ def describe_mode_config(
         _mode_field("OAuth 2.1", "MCP_ENABLE_OAUTH21", config.is_oauth21_enabled()),
         _mode_field("Stateless", "WORKSPACE_MCP_STATELESS_MODE", config.stateless_mode),
         _mode_field(
+            "Sessionless HTTP",
+            "WORKSPACE_MCP_STATELESS_HTTP",
+            config.stateless_mode or get_stateless_http(),
+        ),
+        _mode_field(
             "Single-user",
             "MCP_SINGLE_USER_MODE",
             single_user or os.getenv("MCP_SINGLE_USER_MODE") == "1",
@@ -597,6 +609,11 @@ def main():
 
     try:
         validate_file_limit_settings()
+    except ValueError as exc:
+        parser.error(str(exc))
+
+    try:
+        stateless_http = get_stateless_http()
     except ValueError as exc:
         parser.error(str(exc))
 
@@ -1053,7 +1070,7 @@ def main():
                 transport="streamable-http",
                 host=host,
                 port=port,
-                stateless_http=is_stateless_mode(),
+                stateless_http=is_stateless_mode() or stateless_http,
                 show_banner=False,
             )
         else:

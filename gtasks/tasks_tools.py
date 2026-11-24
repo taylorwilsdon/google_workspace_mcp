@@ -9,10 +9,8 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from googleapiclient.errors import HttpError  # type: ignore
 from mcp import Resource
 
-from auth.oauth_config import is_oauth21_enabled, is_external_oauth21_provider
 from auth.permissions import is_action_denied
 from mcp.types import ToolAnnotations
 
@@ -25,33 +23,6 @@ logger = logging.getLogger(__name__)
 LIST_TASKS_MAX_RESULTS_DEFAULT = 20
 LIST_TASKS_MAX_RESULTS_MAX = 10_000
 LIST_TASKS_MAX_POSITION = "99999999999999999999"
-
-
-def _format_reauth_message(error: Exception, user_google_email: str) -> str:
-    base = f"API error: {error}"
-
-    # Only suggest re-authentication for auth-related errors (401, 403)
-    if isinstance(error, HttpError) and error.resp.status in (401, 403):
-        base += ". You might need to re-authenticate."
-        if is_oauth21_enabled():
-            if is_external_oauth21_provider():
-                hint = (
-                    "LLM: Ask the user to provide a valid OAuth 2.1 bearer token in the "
-                    "Authorization header and retry."
-                )
-            else:
-                hint = (
-                    "LLM: Ask the user to authenticate via their MCP client's OAuth 2.1 "
-                    "flow and retry."
-                )
-        else:
-            hint = (
-                "LLM: Try 'start_google_auth' with the user's email "
-                f"({user_google_email}) and service_name='Google Tasks'."
-            )
-        return f"{base} {hint}"
-
-    return base
 
 
 class StructuredTask:
@@ -143,40 +114,30 @@ async def list_task_lists(
     """
     logger.info(f"[list_task_lists] Invoked. Email: '{user_google_email}'")
 
-    try:
-        params: Dict[str, Any] = {}
-        if max_results is not None:
-            params["maxResults"] = max_results
-        if page_token:
-            params["pageToken"] = page_token
+    params: Dict[str, Any] = {}
+    if max_results is not None:
+        params["maxResults"] = max_results
+    if page_token:
+        params["pageToken"] = page_token
 
-        result = await asyncio.to_thread(service.tasklists().list(**params).execute)
+    result = await asyncio.to_thread(service.tasklists().list(**params).execute)
 
-        task_lists = result.get("items", [])
-        next_page_token = result.get("nextPageToken")
+    task_lists = result.get("items", [])
+    next_page_token = result.get("nextPageToken")
 
-        if not task_lists:
-            return f"No task lists found for {user_google_email}."
+    if not task_lists:
+        return f"No task lists found for {user_google_email}."
 
-        response = f"Task Lists for {user_google_email}:\n"
-        for task_list in task_lists:
-            response += f"- {task_list['title']} (ID: {task_list['id']})\n"
-            response += f"  Updated: {task_list.get('updated', 'N/A')}\n"
+    response = f"Task Lists for {user_google_email}:\n"
+    for task_list in task_lists:
+        response += f"- {task_list['title']} (ID: {task_list['id']})\n"
+        response += f"  Updated: {task_list.get('updated', 'N/A')}\n"
 
-        if next_page_token:
-            response += f"\nNext page token: {next_page_token}"
+    if next_page_token:
+        response += f"\nNext page token: {next_page_token}"
 
-        logger.info(f"Found {len(task_lists)} task lists for {user_google_email}")
-        return response
-
-    except HttpError as error:
-        message = _format_reauth_message(error, user_google_email)
-        logger.error(message, exc_info=True)
-        raise Exception(message)
-    except Exception as e:
-        message = f"Unexpected error: {e}."
-        logger.exception(message)
-        raise Exception(message)
+    logger.info(f"Found {len(task_lists)} task lists for {user_google_email}")
+    return response
 
 
 @server.tool(
@@ -207,28 +168,18 @@ async def get_task_list(
         f"[get_task_list] Invoked. Email: '{user_google_email}', Task List ID: {task_list_id}"
     )
 
-    try:
-        task_list = await asyncio.to_thread(
-            service.tasklists().get(tasklist=task_list_id).execute
-        )
+    task_list = await asyncio.to_thread(
+        service.tasklists().get(tasklist=task_list_id).execute
+    )
 
-        response = f"""Task List Details for {user_google_email}:
+    response = f"""Task List Details for {user_google_email}:
 - Title: {task_list["title"]}
 - ID: {task_list["id"]}
 - Updated: {task_list.get("updated", "N/A")}
 - Self Link: {task_list.get("selfLink", "N/A")}"""
 
-        logger.info(f"Retrieved task list {task_list_id} for {user_google_email}")
-        return response
-
-    except HttpError as error:
-        message = _format_reauth_message(error, user_google_email)
-        logger.error(message, exc_info=True)
-        raise Exception(message)
-    except Exception as e:
-        message = f"Unexpected error: {e}."
-        logger.exception(message)
-        raise Exception(message)
+    logger.info(f"Retrieved task list {task_list_id} for {user_google_email}")
+    return response
 
 
 # --- Task list _impl functions ---
@@ -443,89 +394,77 @@ async def list_tasks(
         f"[list_tasks] Invoked. Email: '{user_google_email}', Task List ID: {task_list_id}"
     )
 
-    try:
-        params: Dict[str, Any] = {"tasklist": task_list_id}
-        if max_results is not None:
-            params["maxResults"] = max_results
-        if page_token:
-            params["pageToken"] = page_token
-        if show_completed is not None:
-            params["showCompleted"] = show_completed
-        if show_deleted is not None:
-            params["showDeleted"] = show_deleted
-        if show_hidden is not None:
-            params["showHidden"] = show_hidden
-        if show_assigned is not None:
-            params["showAssigned"] = show_assigned
-        if completed_max:
-            params["completedMax"] = completed_max
-        if completed_min:
-            params["completedMin"] = completed_min
-        if due_max:
-            adjusted_due_max = _adjust_due_max_for_tasks_api(due_max)
-            if adjusted_due_max != due_max:
-                logger.info(
-                    "[list_tasks] Adjusted due_max from '%s' to '%s' to include due date boundary",
-                    due_max,
-                    adjusted_due_max,
-                )
-            params["dueMax"] = adjusted_due_max
-        if due_min:
-            params["dueMin"] = due_min
-        if updated_min:
-            params["updatedMin"] = updated_min
-
-        result = await asyncio.to_thread(service.tasks().list(**params).execute)
-
-        tasks = result.get("items", [])
-        next_page_token = result.get("nextPageToken")
-
-        # In order to return a sorted and organized list of tasks all at once, we support retrieving more than a single
-        # page from the Google tasks API.
-        results_remaining = (
-            min(max_results, LIST_TASKS_MAX_RESULTS_MAX)
-            if max_results
-            else LIST_TASKS_MAX_RESULTS_DEFAULT
-        )
-        results_remaining -= len(tasks)
-        while results_remaining > 0 and next_page_token:
-            params["pageToken"] = next_page_token
-            params["maxResults"] = str(results_remaining)
-            result = await asyncio.to_thread(service.tasks().list(**params).execute)
-            more_tasks = result.get("items", [])
-            next_page_token = result.get("nextPageToken")
-            if len(more_tasks) == 0:
-                # For some unexpected reason, no more tasks were returned. Break to avoid an infinite loop.
-                break
-            tasks.extend(more_tasks)
-            results_remaining -= len(more_tasks)
-
-        if not tasks:
-            return (
-                f"No tasks found in task list {task_list_id} for {user_google_email}."
+    params: Dict[str, Any] = {"tasklist": task_list_id}
+    if max_results is not None:
+        params["maxResults"] = max_results
+    if page_token:
+        params["pageToken"] = page_token
+    if show_completed is not None:
+        params["showCompleted"] = show_completed
+    if show_deleted is not None:
+        params["showDeleted"] = show_deleted
+    if show_hidden is not None:
+        params["showHidden"] = show_hidden
+    if show_assigned is not None:
+        params["showAssigned"] = show_assigned
+    if completed_max:
+        params["completedMax"] = completed_max
+    if completed_min:
+        params["completedMin"] = completed_min
+    if due_max:
+        adjusted_due_max = _adjust_due_max_for_tasks_api(due_max)
+        if adjusted_due_max != due_max:
+            logger.info(
+                "[list_tasks] Adjusted due_max from '%s' to '%s' to include due date boundary",
+                due_max,
+                adjusted_due_max,
             )
+        params["dueMax"] = adjusted_due_max
+    if due_min:
+        params["dueMin"] = due_min
+    if updated_min:
+        params["updatedMin"] = updated_min
 
-        structured_tasks = get_structured_tasks(tasks)
+    result = await asyncio.to_thread(service.tasks().list(**params).execute)
 
-        response = f"Tasks in list {task_list_id} for {user_google_email}:\n"
-        response += serialize_tasks(structured_tasks, 0)
+    tasks = result.get("items", [])
+    next_page_token = result.get("nextPageToken")
 
-        if next_page_token:
-            response += f"Next page token: {next_page_token}\n"
+    # In order to return a sorted and organized list of tasks all at once, we support retrieving more than a single
+    # page from the Google tasks API.
+    results_remaining = (
+        min(max_results, LIST_TASKS_MAX_RESULTS_MAX)
+        if max_results
+        else LIST_TASKS_MAX_RESULTS_DEFAULT
+    )
+    results_remaining -= len(tasks)
+    while results_remaining > 0 and next_page_token:
+        params["pageToken"] = next_page_token
+        params["maxResults"] = str(results_remaining)
+        result = await asyncio.to_thread(service.tasks().list(**params).execute)
+        more_tasks = result.get("items", [])
+        next_page_token = result.get("nextPageToken")
+        if len(more_tasks) == 0:
+            # For some unexpected reason, no more tasks were returned. Break to avoid an infinite loop.
+            break
+        tasks.extend(more_tasks)
+        results_remaining -= len(more_tasks)
 
-        logger.info(
-            f"Found {len(tasks)} tasks in list {task_list_id} for {user_google_email}"
-        )
-        return response
+    if not tasks:
+        return f"No tasks found in task list {task_list_id} for {user_google_email}."
 
-    except HttpError as error:
-        message = _format_reauth_message(error, user_google_email)
-        logger.error(message, exc_info=True)
-        raise Exception(message)
-    except Exception as e:
-        message = f"Unexpected error: {e}."
-        logger.exception(message)
-        raise Exception(message)
+    structured_tasks = get_structured_tasks(tasks)
+
+    response = f"Tasks in list {task_list_id} for {user_google_email}:\n"
+    response += serialize_tasks(structured_tasks, 0)
+
+    if next_page_token:
+        response += f"Next page token: {next_page_token}\n"
+
+    logger.info(
+        f"Found {len(tasks)} tasks in list {task_list_id} for {user_google_email}"
+    )
+    return response
 
 
 def get_structured_tasks(tasks: List[Dict[str, str]]) -> List[StructuredTask]:
@@ -672,43 +611,33 @@ async def get_task(
         f"[get_task] Invoked. Email: '{user_google_email}', Task List ID: {task_list_id}, Task ID: {task_id}"
     )
 
-    try:
-        task = await asyncio.to_thread(
-            service.tasks().get(tasklist=task_list_id, task=task_id).execute
-        )
+    task = await asyncio.to_thread(
+        service.tasks().get(tasklist=task_list_id, task=task_id).execute
+    )
 
-        response = f"""Task Details for {user_google_email}:
+    response = f"""Task Details for {user_google_email}:
 - Title: {task.get("title", "Untitled")}
 - ID: {task["id"]}
 - Status: {task.get("status", "N/A")}
 - Updated: {task.get("updated", "N/A")}"""
 
-        if task.get("due"):
-            response += f"\n- Due Date: {task['due']}"
-        if task.get("completed"):
-            response += f"\n- Completed: {task['completed']}"
-        if task.get("notes"):
-            response += f"\n- Notes: {task['notes']}"
-        if task.get("parent"):
-            response += f"\n- Parent Task ID: {task['parent']}"
-        if task.get("position"):
-            response += f"\n- Position: {task['position']}"
-        if task.get("selfLink"):
-            response += f"\n- Self Link: {task['selfLink']}"
-        if task.get("webViewLink"):
-            response += f"\n- Web View Link: {task['webViewLink']}"
+    if task.get("due"):
+        response += f"\n- Due Date: {task['due']}"
+    if task.get("completed"):
+        response += f"\n- Completed: {task['completed']}"
+    if task.get("notes"):
+        response += f"\n- Notes: {task['notes']}"
+    if task.get("parent"):
+        response += f"\n- Parent Task ID: {task['parent']}"
+    if task.get("position"):
+        response += f"\n- Position: {task['position']}"
+    if task.get("selfLink"):
+        response += f"\n- Self Link: {task['selfLink']}"
+    if task.get("webViewLink"):
+        response += f"\n- Web View Link: {task['webViewLink']}"
 
-        logger.info(f"Retrieved task {task_id} for {user_google_email}")
-        return response
-
-    except HttpError as error:
-        message = _format_reauth_message(error, user_google_email)
-        logger.error(message, exc_info=True)
-        raise Exception(message)
-    except Exception as e:
-        message = f"Unexpected error: {e}."
-        logger.exception(message)
-        raise Exception(message)
+    logger.info(f"Retrieved task {task_id} for {user_google_email}")
+    return response
 
 
 # --- Task _impl functions ---
@@ -973,8 +902,6 @@ async def manage_task(
         )
 
     if action == "update":
-        if status is not None and status not in allowed_statuses:
-            raise UserInputError("invalid status: must be 'needsAction' or 'completed'")
         if not task_id:
             raise UserInputError("'task_id' is required for the 'update' action.")
         return await _update_task_impl(
