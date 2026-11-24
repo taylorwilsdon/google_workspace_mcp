@@ -973,8 +973,21 @@ async def _delete_script_project_impl(
         f"[delete_script_project] Email: {user_google_email}, ScriptID: {script_id}"
     )
 
-    # Apps Script projects are stored as Drive files
-    await asyncio.to_thread(service.files().delete(fileId=script_id).execute)
+    # Apps Script projects are stored as Drive files, possibly in a shared drive.
+    # Drive deletes any file it is given and skips the trash, so check the ID is
+    # a script project before deleting.
+    file_info = await asyncio.to_thread(
+        service.files()
+        .get(fileId=script_id, fields="mimeType", supportsAllDrives=True)
+        .execute
+    )
+    if file_info.get("mimeType") != "application/vnd.google-apps.script":
+        raise UserInputError(
+            f"{script_id} is not an Apps Script project, so it was not deleted."
+        )
+    await asyncio.to_thread(
+        service.files().delete(fileId=script_id, supportsAllDrives=True).execute
+    )
 
     logger.info(f"[delete_script_project] Deleted script {script_id}")
     return f"Deleted Apps Script project: {script_id}"
