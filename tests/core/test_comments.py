@@ -9,12 +9,14 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from core.comments import (
+    _manage_comment_dispatch,
     _read_comments_impl,
     _create_comment_impl,
     _reply_to_comment_impl,
     _resolve_comment_impl,
     create_comment_tools,
 )
+from core.utils import UserInputError
 
 
 def _make_comment(comment_id, content="Comment text", author="Alice"):
@@ -270,6 +272,113 @@ class TestCommentOutputFormat:
         assert result.splitlines() == expected
 
 
+def _mock_own_comment(is_author):
+    """Build a mock service whose comments.get reports author.me."""
+    mock_service = Mock()
+    mock_service.comments.return_value.get.return_value.execute = Mock(
+        return_value={"author": {"me": is_author}}
+    )
+    return mock_service
+
+
+class TestUpdateDeleteComment:
+    """manage_*_comment can edit and delete existing comments."""
+
+    @pytest.mark.asyncio
+    async def test_update_patches_comment_content(self):
+        mock_service = _mock_own_comment(True)
+        mock_service.comments.return_value.update.return_value.execute = Mock(
+            return_value={
+                **_make_comment("c1", "fixed\ntypo"),
+                "modifiedTime": "2025-01-16T10:00:00Z",
+            }
+        )
+
+        result = await _manage_comment_dispatch(
+            mock_service,
+            "document",
+            "doc1",
+            "update",
+            comment_content="fixed\ntypo",
+            comment_id="c1",
+        )
+
+        call_kwargs = mock_service.comments.return_value.update.call_args.kwargs
+        assert call_kwargs["fileId"] == "doc1"
+        assert call_kwargs["commentId"] == "c1"
+        assert call_kwargs["body"] == {"content": "fixed\ntypo"}
+        assert call_kwargs["fields"] == "id,content,author,modifiedTime"
+        assert result.splitlines() == [
+            "Comment c1 updated successfully!",
+            "Author: Alice",
+            "Modified: 2025-01-16T10:00:00Z",
+            "Content: fixed",
+            " " * 9 + "typo",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_delete_removes_comment(self):
+        mock_service = _mock_own_comment(True)
+        mock_service.comments.return_value.delete.return_value.execute = Mock(
+            return_value=""
+        )
+
+        result = await _manage_comment_dispatch(
+            mock_service, "presentation", "pres1", " Delete ", comment_id="c1"
+        )
+
+        mock_service.comments.return_value.delete.assert_called_once_with(
+            fileId="pres1", commentId="c1"
+        )
+        assert result == "Comment c1 deleted from presentation pres1."
+
+    @pytest.mark.parametrize("action", ["update", "delete"])
+    @pytest.mark.asyncio
+    async def test_other_authors_comment_is_rejected(self, action):
+        mock_service = _mock_own_comment(False)
+
+        with pytest.raises(UserInputError, match="only its author"):
+            await _manage_comment_dispatch(
+                mock_service,
+                "document",
+                "doc1",
+                action,
+                comment_content="x",
+                comment_id="c1",
+            )
+
+        mock_service.comments.return_value.get.assert_called_once_with(
+            fileId="doc1", commentId="c1", fields="author(me)"
+        )
+        mock_service.comments.return_value.update.assert_not_called()
+        mock_service.comments.return_value.delete.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "action, kwargs, message",
+        [
+            ("update", {"comment_content": "x"}, "comment_id and comment_content"),
+            ("update", {"comment_id": "c1"}, "comment_id and comment_content"),
+            (
+                "update",
+                {"comment_id": "c1", "comment_content": ""},
+                "comment_id and comment_content",
+            ),
+            ("delete", {}, "comment_id is required for delete"),
+            ("delete", {"comment_id": ""}, "comment_id is required for delete"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_missing_arguments_are_rejected(self, action, kwargs, message):
+        mock_service = Mock()
+
+        with pytest.raises(ValueError, match=message):
+            await _manage_comment_dispatch(
+                mock_service, "document", "doc1", action, **kwargs
+            )
+
+        mock_service.comments.assert_not_called()
+
+
 class TestReadCommentsImplPagination:
     """Pagination behavior in _read_comments_impl."""
 
@@ -400,22 +509,26 @@ class TestCommentsEdgeCases:
     """Edge cases for comment pagination."""
 
     @pytest.mark.asyncio
-    async def test_max_comments_zero_returns_empty(self):
-        """max_comments=0 returns the no-comments message."""
+    @pytest.mark.parametrize("max_comments", [0, -5])
+    async def test_non_positive_max_comments_is_rejected(self, max_comments):
+        """A per-call cap below 1 is an input error, not an empty result."""
         mock_service = Mock()
-        result = await _read_comments_impl(
-            mock_service, "document", "doc1", max_comments=0
-        )
-        assert "No comments found" in result
+        with pytest.raises(UserInputError, match="positive integer"):
+            await _read_comments_impl(
+                mock_service, "document", "doc1", max_comments=max_comments
+            )
         mock_service.comments.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_negative_max_comments_falls_back_to_default(self):
-        """Negative max_comments falls back to the default (100)."""
+    @pytest.mark.parametrize("env_value", ["0", "-5"])
+    async def test_non_positive_env_var_falls_back_to_default(self, env_value):
+        """A non-positive WORKSPACE_MCP_COMMENTS_MAX falls back to 100."""
         comments = [_make_comment(f"c{i}") for i in range(3)]
         mock_service = _mock_service_pages([(comments, None)])
 
-        await _read_comments_impl(mock_service, "document", "doc1", max_comments=-5)
+        with patch.dict(os.environ, {"WORKSPACE_MCP_COMMENTS_MAX": env_value}):
+            await _read_comments_impl(mock_service, "document", "doc1")
+
         call_kwargs = mock_service.comments.return_value.list.call_args.kwargs
         assert call_kwargs["pageSize"] == 100
 

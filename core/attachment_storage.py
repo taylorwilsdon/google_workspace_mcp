@@ -16,6 +16,9 @@ import uuid
 from pathlib import Path
 from typing import NamedTuple, Optional, Dict
 from datetime import datetime, timedelta
+from urllib.parse import urlparse
+
+from core import config
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +42,8 @@ _MIME_TO_EXTENSION = {
     "text/plain": ".txt",
     "text/html": ".html",
 }
+
+_MAX_FILE_NAME_BYTES = 255
 
 _WINDOWS_RESERVED_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _WINDOWS_RESERVED_NAMES = {
@@ -85,7 +90,13 @@ def _build_save_name(
         # The full file_id, not a prefix: a truncated one lets two distinct
         # attachments land on the same path, silently overwriting the first.
         safe_filename = Path(sanitize_attachment_filename(filename))
-        return f"{safe_filename.stem}_{file_id}{safe_filename.suffix}"
+        tail = f"_{file_id}{safe_filename.suffix}"
+        if len(tail.encode()) >= _MAX_FILE_NAME_BYTES:
+            tail = f"_{file_id}"
+        budget = _MAX_FILE_NAME_BYTES - len(tail.encode())
+        # Drop any character split by the byte cut.
+        stem = safe_filename.stem.encode()[:budget].decode(errors="ignore")
+        return f"{stem}{tail}"
     return f"{file_id}{_MIME_TO_EXTENSION.get(mime_type or '', '')}"
 
 
@@ -402,6 +413,43 @@ def get_attachment_storage() -> AttachmentStorage:
         _attachment_storage = AttachmentStorage()
     _attachment_storage.sweep_expired()
     return _attachment_storage
+
+
+def _trusted_attachment_bases() -> set[tuple[str, str, str]]:
+    """Return the (scheme, host, path prefix) bases of this server's attachment links."""
+    bases: set[tuple[str, str, str]] = set()
+    for base in (
+        config.WORKSPACE_EXTERNAL_URL,
+        f"{config.WORKSPACE_MCP_BASE_URI}:{config.WORKSPACE_MCP_PORT}",
+    ):
+        if not base:
+            continue
+        parsed = urlparse(base)
+        if parsed.scheme and parsed.netloc:
+            bases.add(
+                (parsed.scheme.lower(), parsed.netloc.lower(), parsed.path.rstrip("/"))
+            )
+    return bases
+
+
+def resolve_local_attachment(url: str) -> Optional[tuple[Path, Dict]]:
+    """Return (path, metadata) when ``url`` is this server's own /attachments/{id} link."""
+    parsed = urlparse(url)
+    prefix, separator, file_id = parsed.path.rstrip("/").rpartition("/attachments/")
+    if not separator or "/" in file_id:
+        return None
+    base = (parsed.scheme.lower(), parsed.netloc.lower(), prefix)
+    if (parsed.netloc or prefix) and base not in _trusted_attachment_bases():
+        return None
+
+    storage = get_attachment_storage()
+    metadata = storage.get_attachment_metadata(file_id)
+    if metadata is None:
+        return None
+    file_path = storage.get_attachment_path(file_id)
+    if file_path is None:
+        return None
+    return Path(file_path), metadata
 
 
 def get_attachment_url(file_id: str) -> str:

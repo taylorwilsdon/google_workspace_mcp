@@ -17,6 +17,7 @@ from mcp.types import ToolAnnotations
 from auth.service_decorator import require_google_service
 from core.server import server
 from core.utils import ObjectList, UserInputError, handle_http_errors
+from gdrive.drive_helpers import flag_incomplete_search
 
 logger = logging.getLogger(__name__)
 
@@ -120,8 +121,11 @@ async def _list_script_projects_impl(
     request_params = {
         "q": query,
         "pageSize": page_size,
-        "fields": "nextPageToken, files(id, name, createdTime, modifiedTime)",
+        "fields": "nextPageToken, incompleteSearch, files(id, name, createdTime, modifiedTime)",
         "orderBy": "modifiedTime desc",
+        "supportsAllDrives": True,
+        "includeItemsFromAllDrives": True,
+        "corpora": "allDrives",
     }
     if page_token:
         request_params["pageToken"] = page_token
@@ -130,8 +134,8 @@ async def _list_script_projects_impl(
 
     files = response.get("files", [])
 
-    if not files:
-        return "No Apps Script projects found."
+    if not files and "nextPageToken" not in response:
+        return flag_incomplete_search("No Apps Script projects found.", response)
 
     output = [f"Found {len(files)} Apps Script projects:"]
     for file in files:
@@ -150,7 +154,7 @@ async def _list_script_projects_impl(
     logger.info(
         f"[list_script_projects] Found {len(files)} projects for {user_google_email}"
     )
-    return "\n".join(output)
+    return flag_incomplete_search("\n".join(output), response)
 
 
 def _require_project_action_service(action_services):
@@ -540,25 +544,30 @@ async def _run_script_function_impl(
     return "\n".join(output)
 
 
-async def _resolve_execution_deployment_id(
-    service: Any,
-    script_id: str,
-) -> Optional[str]:
-    """Return the newest versioned API Executable deployment for a project."""
-    all_deployments = []
+async def _list_all_pages(list_method: Any, script_id: str, key: str) -> List[Any]:
+    """Collect every page of a script-scoped list call (deployments, versions)."""
+    items = []
     page_token = None
     while True:
         list_params = {"scriptId": script_id}
         if page_token:
             list_params["pageToken"] = page_token
 
-        response = await asyncio.to_thread(
-            service.projects().deployments().list(**list_params).execute
-        )
-        all_deployments.extend(response.get("deployments", []))
+        response = await asyncio.to_thread(list_method(**list_params).execute)
+        items.extend(response.get(key, []))
         page_token = response.get("nextPageToken")
         if not page_token:
-            break
+            return items
+
+
+async def _resolve_execution_deployment_id(
+    service: Any,
+    script_id: str,
+) -> Optional[str]:
+    """Return the newest versioned API Executable deployment for a project."""
+    all_deployments = await _list_all_pages(
+        service.projects().deployments().list, script_id, "deployments"
+    )
 
     candidates = [
         deployment
@@ -762,11 +771,9 @@ async def _list_deployments_impl(
     """Internal implementation for list_deployments."""
     logger.info(f"[list_deployments] Email: {user_google_email}, ID: {script_id}")
 
-    response = await asyncio.to_thread(
-        service.projects().deployments().list(scriptId=script_id).execute
+    deployments = await _list_all_pages(
+        service.projects().deployments().list, script_id, "deployments"
     )
-
-    deployments = response.get("deployments", [])
 
     if not deployments:
         return f"No deployments found for script: {script_id}"
@@ -840,20 +847,28 @@ async def _update_deployment_impl(
         f"[update_deployment] Email: {user_google_email}, Script: {script_id}, Deployment: {deployment_id}"
     )
 
-    deployment_config: Dict[str, Any] = {"scriptId": script_id}
-    if version_number is not None:
-        deployment_config["versionNumber"] = version_number
-    if description:
-        deployment_config["description"] = description
+    async with _get_script_update_lock(script_id):
+        current = await asyncio.to_thread(
+            service.projects()
+            .deployments()
+            .get(scriptId=script_id, deploymentId=deployment_id)
+            .execute
+        )
+        deployment_config: Dict[str, Any] = dict(current.get("deploymentConfig") or {})
+        deployment_config["scriptId"] = script_id
+        if version_number is not None:
+            deployment_config["versionNumber"] = version_number
+        if description and description.strip():
+            deployment_config["description"] = description
 
-    request_body = {"deploymentConfig": deployment_config}
+        request_body = {"deploymentConfig": deployment_config}
 
-    deployment = await asyncio.to_thread(
-        service.projects()
-        .deployments()
-        .update(scriptId=script_id, deploymentId=deployment_id, body=request_body)
-        .execute
-    )
+        deployment = await asyncio.to_thread(
+            service.projects()
+            .deployments()
+            .update(scriptId=script_id, deploymentId=deployment_id, body=request_body)
+            .execute
+        )
 
     deployment_config_resp = deployment.get("deploymentConfig", {})
     resolved_version = deployment_config_resp.get("versionNumber", version_number)
@@ -1026,11 +1041,9 @@ async def _list_versions_impl(
     """Internal implementation for list_versions."""
     logger.info(f"[list_versions] Email: {user_google_email}, ScriptID: {script_id}")
 
-    response = await asyncio.to_thread(
-        service.projects().versions().list(scriptId=script_id).execute
+    versions = await _list_all_pages(
+        service.projects().versions().list, script_id, "versions"
     )
-
-    versions = response.get("versions", [])
 
     if not versions:
         return f"No versions found for script: {script_id}"

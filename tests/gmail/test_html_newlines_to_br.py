@@ -145,20 +145,23 @@ class TestPrepareGmailMessageNewlines:
             subject="Test", body=body, to="jane@example.com", body_format="plain"
         )
         parts = _decode_parts(raw_b64)
-        assert "text/html" not in parts
         assert parts["text/plain"].strip() == body
+        assert parts["text/html"].strip() == (
+            '<div dir="ltr"><div>Hi Jane,</div><div><br></div>'
+            "<div>plain text stays plain.</div></div>"
+        )
 
 
 class TestForwardNoteNewlines:
     def test_html_note_converted_but_original_untouched(self):
         original_html = "<div>\n<span>Hello</span>\n<span>world</span>\n</div>"
-        _, body, body_format = _build_forward_content(
+        _, plain, html_body = _build_forward_content(
             headers={},
             bodies={"html": original_html, "text": ""},
             forward_message="FYI\n\nsee below",
             forward_message_format="html",
             subject_override=None,
         )
-        assert body_format == "html"
-        assert "<div>FYI<br><br>\nsee below</div>" in body
-        assert original_html in body
+        assert "FYI<br><br>\nsee below<br><br>" in html_body
+        assert original_html in html_body
+        assert plain.startswith("FYI\n\nsee below\n\n")

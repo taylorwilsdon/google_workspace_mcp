@@ -14,9 +14,14 @@ OAUTH_ACCESS_TOKEN_EXPIRY_ENV = "WORKSPACE_MCP_OAUTH_PROXY_ACCESS_TOKEN_EXPIRY_S
 OAUTH_REFRESH_TOKEN_EXPIRY_ENV = (
     "WORKSPACE_MCP_OAUTH_PROXY_REFRESH_TOKEN_EXPIRY_SECONDS"
 )
+OAUTH_REQUIRE_CONSENT_ENV = "WORKSPACE_MCP_OAUTH_PROXY_REQUIRE_CONSENT"
+OAUTH_GOOGLE_PROMPT_ENV = "WORKSPACE_MCP_OAUTH_PROXY_GOOGLE_PROMPT"
 MAX_OAUTH_TOKEN_EXPIRY_THRESHOLD_SECONDS = 5 * 60
 MAX_OAUTH_ACCESS_TOKEN_EXPIRY_SECONDS = 30 * 24 * 60 * 60
 MAX_OAUTH_REFRESH_TOKEN_EXPIRY_SECONDS = 365 * 24 * 60 * 60
+
+_CONSENT_MODES: dict[str, bool | str] = {"always": True, "remember": "remember"}
+_GOOGLE_PROMPTS = ("consent", "select_account consent")
 
 
 def _parse_expiry_seconds_env(
@@ -89,3 +94,29 @@ def get_oauth_proxy_expiry_kwargs() -> dict[str, int]:
             fallback_refresh_token_expiry_seconds
         )
     return expiry_kwargs
+
+
+def get_oauth_proxy_consent_kwargs() -> dict[str, bool | str]:
+    """Return GoogleProvider's consent-screen kwarg, empty when unset."""
+    raw = os.getenv(OAUTH_REQUIRE_CONSENT_ENV, "").strip().lower()
+    if not raw:
+        return {}
+    if raw not in _CONSENT_MODES:
+        raise ValueError(
+            f"{OAUTH_REQUIRE_CONSENT_ENV} must be one of "
+            f"{', '.join(_CONSENT_MODES)}, got {raw!r}"
+        )
+    return {"require_authorization_consent": _CONSENT_MODES[raw]}
+
+
+def get_oauth_proxy_google_prompt_kwargs() -> dict[str, dict[str, str]]:
+    """Return GoogleProvider's upstream ``prompt`` kwarg, empty when unset."""
+    raw = " ".join(os.getenv(OAUTH_GOOGLE_PROMPT_ENV, "").lower().split())
+    if not raw:
+        return {}
+    if raw not in _GOOGLE_PROMPTS:
+        raise ValueError(
+            f"{OAUTH_GOOGLE_PROMPT_ENV} must be one of "
+            f"{', '.join(repr(p) for p in _GOOGLE_PROMPTS)}, got {raw!r}"
+        )
+    return {"extra_authorize_params": {"prompt": raw}}

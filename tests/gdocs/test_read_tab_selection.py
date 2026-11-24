@@ -10,6 +10,7 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from gdocs import docs_tools
+from gdocs.managers.table_operation_manager import TableOperationManager
 
 
 def _unwrap(tool):
@@ -294,6 +295,116 @@ async def test_get_doc_as_markdown_keeps_comments_document_wide_for_one_tab():
     assert "[^c1]" not in result
     assert "## Comments (entire document)" in result
     assert "Belongs to another tab" in result
+
+
+def _table_tab(tab_id, title, cell_text):
+    tab = _tab(tab_id, title, "")
+    tab["documentTab"]["body"]["content"] = [
+        {
+            "startIndex": 1,
+            "endIndex": 10,
+            "table": {
+                "tableRows": [
+                    {
+                        "tableCells": [
+                            {
+                                "startIndex": 2,
+                                "endIndex": 9,
+                                "content": [
+                                    {
+                                        "paragraph": {
+                                            "elements": [
+                                                {
+                                                    "startIndex": 3,
+                                                    "textRun": {"content": cell_text},
+                                                }
+                                            ]
+                                        }
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                ]
+            },
+        }
+    ]
+    return tab
+
+
+async def _debug_table_structure(doc, **kwargs):
+    service = _docs_service(doc)
+    result = await _unwrap(docs_tools.debug_table_structure)(
+        service=service,
+        user_google_email="user@example.com",
+        document_id="doc123",
+        **kwargs,
+    )
+    return service, result
+
+
+@pytest.mark.asyncio
+async def test_debug_table_structure_reads_a_table_in_a_nested_tab():
+    doc = {
+        "tabs": [
+            _tab(
+                "t.week1",
+                "Week 1",
+                "No table here\n",
+                child_tabs=[_table_tab("t.child", "Metrics", "42\n")],
+            )
+        ]
+    }
+
+    service, result = await _debug_table_structure(doc, tab_id="t.child")
+
+    call_kwargs = service.documents.return_value.get.call_args.kwargs
+    assert call_kwargs["includeTabsContent"] is True
+    assert '"dimensions": "1x1"' in result
+    assert '"insertion_index": 3' in result
+    assert "42" in result
+
+
+@pytest.mark.asyncio
+async def test_debug_table_structure_reports_an_unknown_tab():
+    _, result = await _debug_table_structure(TABBED_DOC, tab_id="t.missing")
+
+    assert result == "Error: Tab t.missing not found in document."
+
+
+@pytest.mark.asyncio
+async def test_populate_existing_table_targets_a_table_in_a_nested_tab():
+    doc = {
+        "tabs": [
+            _tab(
+                "t.week1",
+                "Week 1",
+                "No table here\n",
+                child_tabs=[_table_tab("t.child", "Metrics", "\n")],
+            )
+        ]
+    }
+    service = _docs_service(doc)
+
+    success, message, _ = await TableOperationManager(service).populate_existing_table(
+        "doc123", 0, [["42"]], tab_id="t.child"
+    )
+
+    assert success, message
+    service.documents.return_value.batchUpdate.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_populate_existing_table_reports_an_unknown_tab():
+    service = _docs_service(TABBED_DOC)
+
+    success, message, _ = await TableOperationManager(service).populate_existing_table(
+        "doc123", 0, [["42"]], tab_id="t.missing"
+    )
+
+    assert not success
+    assert "Tab t.missing not found in document." in message
+    service.documents.return_value.batchUpdate.assert_not_called()
 
 
 @pytest.mark.asyncio

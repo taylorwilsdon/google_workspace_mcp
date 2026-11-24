@@ -3,10 +3,12 @@
 import asyncio
 import gc
 import hashlib
+import inspect
 import logging
 import os
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from typing import List, Optional
+from typing import Any, List, Optional, TypeVar, overload
 from importlib import metadata
 from urllib.parse import urlparse, ParseResult
 
@@ -17,6 +19,8 @@ install_startup_warning_filters()
 from auth.auth_info_middleware import AuthInfoMiddleware
 from core.camel_case_middleware import CamelCaseArgumentsMiddleware
 from core.portable_schema_middleware import PortableSchemaMiddleware
+from core.tool_descriptions import docstring_description
+from core.toolset_header_middleware import ToolsetHeaderMiddleware
 from auth.google_auth import (
     check_client_secrets,
     get_google_api_timeout,
@@ -32,7 +36,11 @@ from auth.oauth_config import (
     get_oauth_config,
     is_trust_gateway_identity,
 )
-from auth.oauth_proxy_config import get_oauth_proxy_expiry_kwargs
+from auth.oauth_proxy_config import (
+    get_oauth_proxy_consent_kwargs,
+    get_oauth_proxy_expiry_kwargs,
+    get_oauth_proxy_google_prompt_kwargs,
+)
 from auth.oauth_responses import (
     create_error_response,
     create_success_response,
@@ -50,6 +58,7 @@ import fastmcp
 from fastmcp import FastMCP
 from auth.google_oauth_provider import GoogleProvider
 from fastmcp.server.lifespan import lifespan
+from fastmcp.utilities.types import AnyFunction
 from mcp.types import ToolAnnotations, Icon
 from starlette.applications import Starlette
 from starlette.datastructures import MutableHeaders
@@ -109,6 +118,9 @@ _SESSION_IDLE_TIMEOUT_ENV = "WORKSPACE_MCP_SESSION_IDLE_TIMEOUT"
 # Leave a minute beyond the usual one-hour Google access-token lifetime.
 _DEFAULT_SESSION_IDLE_TIMEOUT_SECONDS = 60 * 60 + 60
 _GOOGLE_API_WORKERS_ENV = "WORKSPACE_MCP_GOOGLE_API_WORKERS"
+_ALLOWED_HOSTS_ENV = "WORKSPACE_MCP_ALLOWED_HOSTS"
+_STATELESS_HTTP_ENV = "WORKSPACE_MCP_STATELESS_HTTP"
+_SERVER_INSTRUCTIONS_ENV = "WORKSPACE_MCP_SERVER_INSTRUCTIONS"
 
 
 def _parse_bool_env(value: str) -> bool:
@@ -176,8 +188,8 @@ def _is_same_origin_as_host(origin: str, host_header: Optional[str]) -> bool:
     parsed = urlparse(origin)
     if not parsed.hostname:
         return False
-    host = urlparse(f"//{host_header}")
     try:
+        host = urlparse(f"//{host_header}")
         origin_port = parsed.port or _DEFAULT_PORTS.get(parsed.scheme)
         host_port = host.port or _DEFAULT_PORTS.get(parsed.scheme)
     except ValueError:
@@ -186,6 +198,21 @@ def _is_same_origin_as_host(origin: str, host_header: Optional[str]) -> bool:
         parsed.hostname == host.hostname
         and origin_port == host_port
         and is_oauth21_enabled()
+    )
+
+
+def _is_host_allowed(host_header: Optional[str], allowed_hosts: frozenset[str]) -> bool:
+    """Return True when Host names loopback, an allowed host, or an allowed origin."""
+    try:
+        hostname = urlparse(f"//{host_header}").hostname if host_header else None
+    except ValueError:
+        return False
+    if not hostname:
+        return False
+    return (
+        hostname in _LOOPBACK_HOSTS
+        or hostname in allowed_hosts
+        or hostname in {urlparse(o).hostname for o in _get_allowed_http_origins()}
     )
 
 
@@ -212,17 +239,27 @@ def _is_null_origin_consent_compat_allowed(scope: Scope, origin: str) -> bool:
 class OriginValidationMiddleware:
     """Reject browser-originated HTTP requests from untrusted origins."""
 
-    def __init__(self, app: ASGIApp) -> None:
+    def __init__(
+        self, app: ASGIApp, allowed_hosts: Optional[frozenset[str]] = None
+    ) -> None:
         self.app = app
+        self.allowed_hosts = allowed_hosts
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "http":
             headers = dict(scope.get("headers") or [])
             raw_origin = headers.get(b"origin")
+            raw_host = headers.get(b"host")
+            host_header = raw_host.decode("latin-1") if raw_host else None
+            if self.allowed_hosts is not None and not _is_host_allowed(
+                host_header, self.allowed_hosts
+            ):
+                logger.warning("Rejected HTTP request for Host: %s", host_header)
+                response = JSONResponse({"error": "Host not allowed"}, status_code=403)
+                await response(scope, receive, send)
+                return
             if raw_origin:
                 origin = raw_origin.decode("latin-1")
-                raw_host = headers.get(b"host")
-                host_header = raw_host.decode("latin-1") if raw_host else None
                 if not _is_origin_allowed(origin) and not _is_same_origin_as_host(
                     origin, host_header
                 ):
@@ -242,9 +279,6 @@ class OriginValidationMiddleware:
                     return
 
         await self.app(scope, receive, send)
-
-
-origin_validation_middleware = Middleware(OriginValidationMiddleware)
 
 
 class WellKnownCacheControlMiddleware:
@@ -282,6 +316,14 @@ class WellKnownCacheControlMiddleware:
 well_known_cache_control_middleware = Middleware(WellKnownCacheControlMiddleware)
 
 
+def get_stateless_http() -> bool:
+    """Parse WORKSPACE_MCP_STATELESS_HTTP; ValueError unless unset, true or false."""
+    raw = os.getenv(_STATELESS_HTTP_ENV, "").strip().lower()
+    if raw not in ("", "true", "false"):
+        raise ValueError(f"{_STATELESS_HTTP_ENV} must be true or false, got {raw!r}")
+    return raw == "true"
+
+
 def get_session_idle_timeout() -> Optional[int]:
     """Parse WORKSPACE_MCP_SESSION_IDLE_TIMEOUT; 0 defers to FastMCP's setting.
 
@@ -307,6 +349,33 @@ def _compute_scope_fingerprint() -> str:
     """Compute a short hash of the current scope configuration for cache-busting."""
     scopes_str = ",".join(sorted(get_current_scopes()))
     return hashlib.sha256(scopes_str.encode()).hexdigest()[:12]
+
+
+def get_allowed_hosts() -> Optional[frozenset[str]]:
+    """Parse WORKSPACE_MCP_ALLOWED_HOSTS; None when unset, ValueError when invalid."""
+    raw = os.getenv(_ALLOWED_HOSTS_ENV, "").strip()
+    if not raw:
+        return None
+    hosts = set()
+    for entry in (part.strip() for part in raw.split(",")):
+        try:
+            parsed = urlparse(f"//{entry}")
+            valid = (
+                parsed.hostname is not None
+                and parsed.port is None
+                and parsed.netloc == entry
+                and "@" not in entry
+                and "*" not in entry
+            )
+        except ValueError:
+            valid = False
+        if not valid:
+            raise ValueError(
+                f"{_ALLOWED_HOSTS_ENV} must be a comma-separated list of hostnames "
+                f"without ports, got {entry!r}"
+            )
+        hosts.add(parsed.hostname)
+    return frozenset(hosts)
 
 
 def get_google_api_workers() -> Optional[int]:
@@ -359,8 +428,44 @@ async def _google_api_executor(server: FastMCP):
     yield None
 
 
+F = TypeVar("F", bound=AnyFunction)
+
+
 # Custom FastMCP that adds secure middleware stack for OAuth 2.1
 class SecureFastMCP(FastMCP):
+    @overload
+    def tool(self, name_or_fn: F, **kwargs: Any) -> F: ...
+
+    @overload
+    def tool(
+        self, name_or_fn: str | None = None, **kwargs: Any
+    ) -> Callable[[F], F]: ...
+
+    def tool(
+        self, name_or_fn: str | AnyFunction | None = None, **kwargs: Any
+    ) -> AnyFunction | Callable[[F], F]:
+        """Register a tool described by its docstring above ``Args:``, or ``description``."""
+        register = super().tool
+        if kwargs.get("description") is not None:
+            return register(name_or_fn, **kwargs)
+        kwargs.pop("description", None)
+        if inspect.isroutine(name_or_fn):
+            return register(
+                name_or_fn, description=docstring_description(name_or_fn), **kwargs
+            )
+        if name_or_fn is None or (
+            isinstance(name_or_fn, str) and kwargs.get("name") is None
+        ):
+            if name_or_fn is not None:
+                kwargs["name"] = name_or_fn
+
+            def register_with_description(fn: F) -> F:
+                return register(fn, description=docstring_description(fn), **kwargs)
+
+            return register_with_description
+        # Let FastMCP raise its usual error for unsupported arguments.
+        return register(name_or_fn, **kwargs)
+
     def http_app(self, **kwargs) -> "Starlette":
         """Override to add secure middleware stack for OAuth 2.1."""
         # Bound memory retained by abandoned stateful sessions. Resolve an omitted
@@ -374,7 +479,9 @@ class SecureFastMCP(FastMCP):
 
         # Add middleware in order (first added = outermost layer)
         app.user_middleware.insert(0, well_known_cache_control_middleware)
-        app.user_middleware.insert(1, origin_validation_middleware)
+        app.user_middleware.insert(
+            1, Middleware(OriginValidationMiddleware, allowed_hosts=get_allowed_hosts())
+        )
 
         # Session Management - extracts session info for MCP context
         app.user_middleware.insert(2, session_middleware)
@@ -459,15 +566,21 @@ class SecureFastMCP(FastMCP):
         return await super().call_tool(name, arguments, *args, **kwargs)
 
 
-# Build server instructions with user email context for single-user mode.
-# Skipped in trusted-gateway mode: the verified principal supersedes the configured
-# default, and user_google_email is no longer a tool parameter clients can pass.
-_server_instructions = None
-if USER_GOOGLE_EMAIL and not is_trust_gateway_identity():
-    _server_instructions = f"""Connected Google account: {USER_GOOGLE_EMAIL}
+def get_server_instructions() -> Optional[str]:
+    """Return WORKSPACE_MCP_SERVER_INSTRUCTIONS, then the single-user account context."""
+    sections = [os.getenv(_SERVER_INSTRUCTIONS_ENV, "").strip()]
+    # Skipped in trusted-gateway mode: the verified principal supersedes the configured
+    # default, and user_google_email is no longer a tool parameter clients can pass.
+    if USER_GOOGLE_EMAIL and not is_trust_gateway_identity():
+        sections.append(
+            f"Connected Google account: {USER_GOOGLE_EMAIL}\n\n"
+            f"When using Google Workspace tools, always use `{USER_GOOGLE_EMAIL}` "
+            "as the `user_google_email` parameter. Do not ask the user for their "
+            "email address."
+        )
+        logger.info(f"Server instructions configured for user: {USER_GOOGLE_EMAIL}")
+    return "\n\n".join(filter(None, sections)) or None
 
-When using Google Workspace tools, always use `{USER_GOOGLE_EMAIL}` as the `user_google_email` parameter. Do not ask the user for their email address."""
-    logger.info(f"Server instructions configured for user: {USER_GOOGLE_EMAIL}")
 
 # Branding for the OAuth consent page: FastMCP's OAuth proxy renders the server's
 # name / icon / website on the consent screen (auth/oauth_config reads the env vars).
@@ -479,11 +592,15 @@ _brand_icons = (
 server = SecureFastMCP(
     name=_brand_config.brand_name or "google_workspace",
     auth=None,
-    instructions=_server_instructions,
+    instructions=get_server_instructions(),
     website_url=_brand_config.brand_website_url,
     icons=_brand_icons,
     lifespan=_freeze_startup_heap | _google_api_executor,
 )
+
+# Narrow tools per request with X-MCP-Toolsets / X-MCP-Tools. See
+# https://github.com/taylorwilsdon/google_workspace_mcp/issues/509
+server.add_middleware(ToolsetHeaderMiddleware())
 
 # Accept camelCase argument names (calendarId, timeMin, ...) from callers that
 # mirror the Google API field names, mapping them onto the snake_case tool
@@ -769,6 +886,20 @@ def configure_server_for_http():
                         "OAuth 2.1: restricting DCR client redirect URIs to allowlist: %s",
                         allowed_client_redirect_uris,
                     )
+                if client_storage is None:
+                    storage_fingerprint = hashlib.sha256(
+                        derive_jwt_key(
+                            high_entropy_material=jwt_signing_key.decode(),
+                            salt="fastmcp-storage-encryption-key",
+                        )
+                    ).hexdigest()[:12]
+                    logger.info(
+                        "OAuth 2.1: Using FastMCP default encrypted FileTreeStore for OAuth proxy client_storage (directory=%s). "
+                        "Set WORKSPACE_MCP_OAUTH_PROXY_STORAGE_BACKEND to memory, disk or valkey to change it.",
+                        (
+                            fastmcp.settings.home / "oauth-proxy" / storage_fingerprint
+                        ).absolute(),
+                    )
                 provider = WorkspaceGoogleProvider(
                     client_id=config.client_id,
                     client_secret=config.client_secret,
@@ -780,6 +911,8 @@ def configure_server_for_http():
                     jwt_signing_key=jwt_signing_key,
                     allowed_client_redirect_uris=allowed_client_redirect_uris,
                     **expiry_kwargs,
+                    **get_oauth_proxy_consent_kwargs(),
+                    **get_oauth_proxy_google_prompt_kwargs(),
                 )
                 if provider.client_registration_options is not None:
                     # Keep protocol-level auth limited to base identity scopes, but

@@ -7,7 +7,7 @@ MCP tools for Google Drive file management, search, content retrieval, and permi
 - Content & Download: get_drive_file_content, get_drive_file_download_url
 - Create & Modify: create_drive_file, create_drive_folder, copy_drive_file, update_drive_file
 - Permissions & Sharing: set_drive_file_permissions, manage_drive_access, get_drive_file_permissions, get_drive_shareable_link, check_drive_file_public_access
-- Import: import_to_google_doc
+- Import: import_to_google_doc, import_to_google_sheets, import_to_google_slides
 - Tips
 
 ---
@@ -32,7 +32,7 @@ Search for files and folders across My Drive and shared drives.
 | include_trashed | boolean | no | false | Include files in the trash. A `trashed` clause (`=` or `!=`) written into `query` always wins over this flag |
 
 ### list_drive_items
-List files and folders in a specific folder.
+List files and folders in a specific folder, or list shared drive containers with `resource_type="shared_drives"`.
 
 | Parameter | Type | Required | Default | Notes |
 |-----------|------|----------|---------|-------|
@@ -46,6 +46,9 @@ List files and folders in a specific folder.
 | file_type | string | no | | Same friendly names as search_drive_files |
 | detailed | boolean | no | true | Include size, modified time, and link |
 | order_by | string | no | | Sort order (see Sort Order below) |
+| resource_type | string | no | items | `items` (folder contents) or `shared_drives` (shared drive containers) |
+| query | string | no | | Shared drive query, e.g. `name contains 'Engineering'`. Only with `resource_type="shared_drives"` |
+| include_organizers | boolean | no | false | Include organizer principals per shared drive (one extra API call each). Only with `resource_type="shared_drives"` |
 
 ---
 
@@ -58,11 +61,19 @@ Retrieve file content as text.
 |-----------|------|----------|---------|-------|
 | user_google_email | string | yes | | |
 | file_id | string | yes | | Drive file ID |
+| offset | integer | no | 0 | Character offset to start from, to read on after a cut-off result |
+| full_content | boolean | no | false | Return everything from `offset` onward in one call instead of a page |
 
 Content handling:
 - Google Docs/Sheets/Slides: exported as text/CSV
 - Office files (.docx/.xlsx/.pptx): parsed to extract readable text
+- PDFs: text extracted when possible; scanned PDFs return a download hint
+- Images (PNG, JPEG, GIF, WebP): metadata header as text, plus the image itself as MCP image content
+- SVG: returned as its markup (text). Each PNG, JPEG, GIF or WebP image embedded as a base64 data URI is attached as image content, and its place in the markup reads `[embedded image N, … attached as image content]`. Other embedded payloads, such as fonts, are omitted, with a note giving their size
+- BMP, TIFF: returned as base64 text after the header, or a pointer to `get_drive_file_download_url` when that text would be over the default page size below and `full_content` is not set
 - Other files: downloaded, UTF-8 decoded if possible
+
+By default, long content comes back a page at a time: at most 40,000 characters per call (the server sets this with `WORKSPACE_MCP_MAX_CONTENT_CHARS`; `0` returns whole content by default). A page ends at a line break where possible, with a note giving the range shown, how much follows, and the `offset` to call again with. To get the whole file in one call instead, pass `full_content=true`. The header names the file's version; if it changes between pages, start again from `offset=0`.
 
 ### get_drive_file_download_url
 Download a file to local disk (stdio mode) or get a temporary URL (HTTP mode, valid 1 hour).
@@ -71,12 +82,13 @@ Download a file to local disk (stdio mode) or get a temporary URL (HTTP mode, va
 |-----------|------|----------|---------|-------|
 | user_google_email | string | yes | | |
 | file_id | string | yes | | Drive file ID |
-| export_format | string | no | | `pdf`, `docx`, `xlsx`, `csv`, `pptx` |
+| export_format | string | no | | `pdf`, `docx`, `xlsx`, `csv`, `pptx`, `png`, `jpg`, `svg` |
 
 Default export formats for Google native files:
 - Docs: PDF (or `docx`)
 - Sheets: XLSX (or `pdf`, `csv`)
 - Slides: PDF (or `pptx`)
+- Drawings: PNG (or `pdf`, `jpg`, `svg`)
 
 ---
 
@@ -98,6 +110,8 @@ Office-to-Google conversion, use `import_to_google_doc`,
 | base64_content | string | no | | Standard base64-encoded binary content |
 | content_mime_type | string | with base64_content | | Source MIME type; Google-native MIME types are rejected |
 | base64_sha256 | string | no | | Optional SHA-256 integrity check for decoded binary content |
+| return_upload_url | boolean | no | false | Remote mode only (local file access off): return a resumable-upload URL to PUT the bytes to instead of passing a source |
+| shortcut_target_id | string | no | | Create a shortcut named `file_name` in `folder_id` pointing to this file or folder ID, instead of a file with content |
 
 The import tools also accept `base64_content` and optional `base64_sha256` for
 binary Office/OpenDocument sources. ZIP-based formats are checked for required
@@ -121,9 +135,10 @@ Copy an existing file.
 | file_id | string | yes | | ID of the file to copy |
 | new_name | string | no | | New name (defaults to "Copy of [original]") |
 | parent_folder_id | string | no | root | Destination folder ID |
+| copy_comments | boolean | no | false | Copy open comments and suggestions (Docs/Sheets/Slides only) |
 
 ### update_drive_file
-Update file metadata and properties.
+Update file metadata and properties, and/or replace or extend file content in place (keeps the file ID, sharing, comments, and links).
 
 | Parameter | Type | Required | Default | Notes |
 |-----------|------|----------|---------|-------|
@@ -139,6 +154,14 @@ Update file metadata and properties.
 | writers_can_share | boolean | no | | Whether editors can share |
 | copy_requires_writer_permission | boolean | no | | Prevent viewers from copying/printing/downloading |
 | properties | object | no | | Custom key-value properties |
+| content | string | no | | New text content (markdown, TXT, HTML). Required for `append`/`prepend` |
+| file_path | string | no | | Local file path or `file://` URL for new content (DOCX, ODT, etc.). Local file access only |
+| return_upload_url | boolean | no | false | Remote mode only (local file access off): return a resumable-upload URL to PUT the bytes to instead of passing a source |
+| file_url | string | no | | Remote http(s) URL to fetch new content from |
+| source_format | string | no | (auto-detect) | Conversion hint for native Google files, from the matching import tool's formats. Ignored for non-Google files |
+| mode | string | no | replace | `replace`, `append`, or `prepend`. Append/prepend need `content` and a UTF-8 text file (.md, .txt) |
+
+Provide at most one content source (`content`, `file_path`, `file_url`). Native Docs/Sheets/Slides are re-converted from the source format; other files are written back as-is. For native Google Docs prefer `modify_doc_text`, `insert_doc_elements`, or `find_and_replace_doc` over a full rewrite. On a shortcut, metadata changes apply to the shortcut and content follows to the target, so do not combine both in one call. Where local file access is disabled, `file_path` is replaced by `return_upload_url` (returns a resumable-upload URL to PUT bytes to; `replace` mode only).
 
 Move a file between folders by setting both `add_parents` and `remove_parents`.
 
@@ -200,6 +223,7 @@ Search for a file by name and check if it has public link sharing enabled.
 |-----------|------|----------|---------|-------|
 | user_google_email | string | yes | | |
 | file_name | string | yes | | File name to search for |
+| drive_id | string | no | | Shared drive ID to scope the search. Needed to reliably find files that live only in that shared drive |
 
 ---
 
@@ -207,7 +231,7 @@ Search for a file by name and check if it has public link sharing enabled.
 
 The `query` parameter of `search_drive_files` uses Google Drive query syntax (e.g. `name contains`, `mimeType =`, `'id' in parents`, `modifiedTime >`, `trashed =`, `sharedWithMe`). Combine with `and`/`or`/`not`.
 
-**Trash:** both `search_drive_files` and `list_drive_items` exclude trashed files by default. To see trashed files, either pass `include_trashed=true` to `search_drive_files` or write an explicit `trashed = true` clause into `query` — an explicit clause always wins over the flag.
+**Trash:** both `search_drive_files` and `list_drive_items` exclude trashed files by default. To see trashed files, either pass `include_trashed=true` to `search_drive_files` or write an explicit `trashed = true` clause into `query`. An explicit clause always wins over the flag.
 
 ---
 
@@ -288,10 +312,50 @@ Imports a file (Markdown, DOCX, TXT, HTML, RTF, ODT) into Google Docs format wit
 | user_google_email | string | yes | | |
 | file_name | string | yes | | Name for the new Google Doc |
 | content | any | no | | Text content for MD, TXT, HTML |
-| file_path | any | no | | Local file path for DOCX, ODT, etc. Supports `file://` URLs |
+| file_path | any | no | | Local file path for DOCX, ODT, etc. Supports `file://` URLs. Local file access only |
+| return_upload_url | boolean | no | false | Remote mode only (local file access off): return a resumable-upload URL to PUT the bytes to instead of passing a source |
 | file_url | any | no | | Remote URL to fetch (http/https) |
 | source_format | any | no | (auto-detect) | `md`, `markdown`, `docx`, `txt`, `html`, `rtf`, `odt` |
 | folder_id | string | no | root | Parent folder ID |
+| base64_content | string | no | | Standard base64-encoded bytes for a binary source (DOCX, ODT) |
+| base64_sha256 | string | no | | Expected SHA-256 of decoded `base64_content` for integrity checks |
+
+Either provide exactly one source (`content`, `file_path`, `file_url`, or `base64_content`), or set `return_upload_url=true` with `source_format` and no source. Without `source_format`, the `file_name` extension sets the format (e.g. `Notes.md` so Markdown tables convert); the extension is dropped from the title. `return_upload_url` is offered only where local file access is disabled (it replaces `file_path`) and returns a resumable-upload URL to PUT the bytes to.
+
+### import_to_google_sheets
+Imports a spreadsheet (XLSX, XLS, ODS, CSV, TSV) into Google Sheets format with automatic conversion.
+
+| Parameter | Type | Required | Default | Notes |
+|-----------|------|----------|---------|-------|
+| user_google_email | string | yes | | |
+| file_name | string | yes | | Name for the new spreadsheet; extension sets the format when `source_format` is omitted |
+| content | string | no | | Text content for CSV or TSV |
+| file_path | string | no | | Local file path for any supported format. Supports `file://` URLs. Local file access only |
+| return_upload_url | boolean | no | false | Remote mode only (local file access off): return a resumable-upload URL to PUT the bytes to instead of passing a source |
+| file_url | string | no | | Remote URL to fetch (http/https) |
+| source_format | string | no | (auto-detect) | `xlsx`, `xls`, `ods`, `csv`, `tsv` |
+| folder_id | string | no | root | Parent folder ID |
+| base64_content | string | no | | Standard base64-encoded bytes for XLSX, XLS, or ODS |
+| base64_sha256 | string | no | | Expected SHA-256 of decoded `base64_content` for integrity checks |
+
+Either provide exactly one source (`content`, `file_path`, `file_url`, or `base64_content`), or set `return_upload_url=true` with `source_format` and no source. Other rules match `import_to_google_doc`.
+
+### import_to_google_slides
+Imports a presentation (PPTX, PPT, ODP) into Google Slides format with automatic conversion.
+
+| Parameter | Type | Required | Default | Notes |
+|-----------|------|----------|---------|-------|
+| user_google_email | string | yes | | |
+| file_name | string | yes | | Name for the new presentation; extension sets the format when `source_format` is omitted |
+| file_path | string | no | | Local file path for any supported format. Supports `file://` URLs. Local file access only |
+| return_upload_url | boolean | no | false | Remote mode only (local file access off): return a resumable-upload URL to PUT the bytes to instead of passing a source |
+| file_url | string | no | | Remote URL to fetch (http/https) |
+| source_format | string | no | (auto-detect) | `pptx`, `ppt`, `odp` |
+| folder_id | string | no | root | Parent folder ID |
+| base64_content | string | no | | Standard base64-encoded bytes for PPTX or ODP |
+| base64_sha256 | string | no | | Expected SHA-256 of decoded `base64_content` for integrity checks |
+
+No inline text `content`: presentations are binary. Either provide exactly one source (`file_path`, `file_url`, or `base64_content`), or set `return_upload_url=true` with `source_format` and no source. Other rules match `import_to_google_doc`.
 
 ---
 
@@ -302,6 +366,8 @@ Imports a file (Markdown, DOCX, TXT, HTML, RTF, ODT) into Google Docs format wit
 **Pagination**: Both `search_drive_files` and `list_drive_items` return a `next_page_token` when more results exist. Pass it back as `page_token` to get the next page. Search results are incomplete without paginating.
 
 **Moving files**: Use `update_drive_file` with `add_parents` (destination) and `remove_parents` (source) set together.
+
+**Snapshot before destructive Doc edits**: Native Google Docs revisions cannot be pinned or named through the API (`keepForever` only applies to binary files), so take a sibling copy before a large rewrite: `copy_drive_file(file_id=<doc id>, new_name="<title>.snapshot.<YYYYMMDDTHHMMSSZ>", parent_folder_id=<doc's parent>)`, with the parent ID from `get_drive_file_permissions` (the default is My Drive root) and a compact UTC timestamp (no `:`) so the copy sorts next to the source. Drive allows duplicate names, so before retrying a failed snapshot, search for it (`search_drive_files` with `name = '<snapshot name>' and '<parent id>' in parents`, escaping `\` as `\\` and `'` as `\'` in the name) instead of copying again. The copy keeps content and formatting, plus open comments with `copy_comments=True`, but not resolved comments, version history or the original's direct sharing. Roll back by restoring the snapshot's content into the original, which keeps its ID, sharing and links; switching to the snapshot instead means re-sharing it and updating every link to the old ID.
 
 **Permission workflow**: Use `get_drive_file_permissions` to inspect current permissions (and get permission IDs), then `manage_drive_access` with `action: "update"` or `action: "revoke"` using those IDs.
 

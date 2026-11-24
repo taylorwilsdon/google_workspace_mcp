@@ -142,3 +142,21 @@ def test_lazy_workspace_mcp_port_preserves_port_precedence_without_resolver(
     monkeypatch.delenv("WORKSPACE_MCP_RESOLVED_PORT", raising=False)
     cfg = _import_fresh("core.config")
     assert cfg.WORKSPACE_MCP_PORT == 8000
+
+
+def test_allow_fallback_false_probes_only_preferred():
+    pr = _import_fresh("auth.port_resolver")
+    p = _free_port()
+    with _hold_port(p), pytest.raises(pr.NoAvailablePortError):
+        pr.resolve_port(
+            preferred=p, fallback_count=4, host="127.0.0.1", allow_fallback=False
+        )
+
+
+def test_allow_fallback_false_still_binds_free_preferred():
+    pr = _import_fresh("auth.port_resolver")
+    p = _free_port()
+    bound = pr.resolve_port(
+        preferred=p, fallback_count=4, host="127.0.0.1", allow_fallback=False
+    )
+    assert bound == p

@@ -170,7 +170,7 @@ class TestLinkTargets:
 
 class TestContextualElements:
     def test_chips_use_readable_values_and_fallbacks(self):
-        """Person, rich-link, and date chips retain available values and fallbacks."""
+        """Person, rich-link, date, and dropdown chips keep values and fallbacks."""
         doc = {
             "body": {
                 "content": [
@@ -220,6 +220,10 @@ class TestContextualElements:
                         },
                         _text(" | "),
                         {"dateElement": {"dateElementProperties": {}}},
+                        _text(" | "),
+                        {"dropdown": {"dropdownProperties": {"displayValue": "Open"}}},
+                        _text(" | "),
+                        {"dropdown": {"dropdownProperties": {}}},
                         _text("\n"),
                     )
                 ]
@@ -231,7 +235,8 @@ class TestContextualElements:
             "[Person chip: details unavailable] | "
             "Project (https://example.com/project) | "
             "[Rich link: details unavailable] | July 14, 2026 | "
-            "2026-07-14T00:00:00Z | [Date: details unavailable]\n"
+            "2026-07-14T00:00:00Z | [Date: details unavailable] | "
+            "Open | [Dropdown: details unavailable]\n"
         )
 
     @pytest.mark.parametrize(

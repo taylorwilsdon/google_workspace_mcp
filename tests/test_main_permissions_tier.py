@@ -42,6 +42,21 @@ def test_main_rejects_invalid_max_office_xml_bytes_at_startup(monkeypatch, capsy
     assert "WORKSPACE_MCP_MAX_OFFICE_XML_BYTES" in capsys.readouterr().err
 
 
+def test_main_rejects_invalid_stateless_http_at_startup(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("WORKSPACE_MCP_STATELESS_HTTP", "1")
+    monkeypatch.setattr(sys, "argv", ["main.py"])
+    monkeypatch.setattr(main, "configure_safe_logging", lambda: None)
+    monkeypatch.setattr("core.telemetry.configure_telemetry", lambda: None)
+
+    with pytest.raises(SystemExit) as exc:
+        main.main()
+
+    assert exc.value.code == 2
+    assert "WORKSPACE_MCP_STATELESS_HTTP" in capsys.readouterr().err
+
+
 def test_fastmcp_entrypoint_rejects_invalid_file_limits_at_startup():
     env = os.environ.copy()
     env["WORKSPACE_MCP_MAX_FILE_BYTES"] = "0"
@@ -100,19 +115,107 @@ def test_resolve_stdio_callback_port_marks_resolved_port(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[str] = []
+    seen_fallback: list[bool] = []
+    seen_preferred: list[object] = []
 
-    def fake_resolve_port() -> None:
+    def fake_resolve_port(preferred=None, allow_fallback: bool = True) -> None:
         calls.append("resolve")
+        seen_fallback.append(allow_fallback)
+        seen_preferred.append(preferred)
         monkeypatch.setenv("WORKSPACE_MCP_PORT", "8123")
         monkeypatch.setenv("WORKSPACE_MCP_RESOLVED_PORT", "1")
 
+    monkeypatch.delenv("GOOGLE_OAUTH_REDIRECT_URI", raising=False)
     monkeypatch.setattr("auth.port_resolver.resolve_port", fake_resolve_port)
     monkeypatch.setattr(main, "reload_oauth_config", lambda: calls.append("reload"))
 
     main.resolve_stdio_callback_port()
 
     assert calls == ["resolve", "reload"]
+    assert seen_fallback == [True]
+    assert seen_preferred == [None]
     assert os.environ["WORKSPACE_MCP_RESOLVED_PORT"] == "1"
+
+
+def test_resolve_stdio_callback_port_disables_fallback_for_pinned_redirect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen_fallback: list[bool] = []
+    seen_preferred: list[object] = []
+
+    def fake_resolve_port(preferred=None, allow_fallback: bool = True) -> None:
+        seen_fallback.append(allow_fallback)
+        seen_preferred.append(preferred)
+
+    monkeypatch.setenv(
+        "GOOGLE_OAUTH_REDIRECT_URI", "http://localhost:8103/oauth2callback"
+    )
+    monkeypatch.setattr("auth.port_resolver.resolve_port", fake_resolve_port)
+    monkeypatch.setattr(main, "reload_oauth_config", lambda: None)
+
+    main.resolve_stdio_callback_port()
+
+    assert seen_fallback == [False]
+    assert seen_preferred == [8103]
+
+
+def test_loopback_redirect_port_extracts_explicit_port():
+    assert main._loopback_redirect_port("http://localhost:8103/oauth2callback") == 8103
+    assert main._loopback_redirect_port("http://127.0.0.1:9000/oauth2callback") == 9000
+    assert main._loopback_redirect_port("http://[::1]:9100/oauth2callback") == 9100
+
+
+def test_loopback_redirect_port_ignores_unusable_uris():
+    assert main._loopback_redirect_port(None) is None
+    assert main._loopback_redirect_port("") is None
+    assert main._loopback_redirect_port("http://localhost/oauth2callback") is None
+    assert (
+        main._loopback_redirect_port("https://mcp.example.com:443/oauth2callback")
+        is None
+    )
+    assert main._loopback_redirect_port("http://localhost:notaport/oauth2") is None
+    assert main._loopback_redirect_port("https://localhost:8104/oauth2callback") is None
+    assert main._loopback_redirect_port("https://127.0.0.1:8443/oauth2callback") is None
+
+
+@pytest.mark.parametrize("port_free", [True, False])
+def test_resolve_stdio_callback_port_binds_the_redirect_uris_port(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, port_free: bool
+) -> None:
+    monkeypatch.setattr(
+        "auth.port_resolver._is_port_free", lambda host, port: port_free
+    )
+    monkeypatch.setenv("WORKSPACE_MCP_PORT", "8000")
+    monkeypatch.delenv("PORT", raising=False)
+    monkeypatch.delenv("WORKSPACE_MCP_RESOLVED_PORT", raising=False)
+    monkeypatch.setenv(
+        "GOOGLE_OAUTH_REDIRECT_URI", "http://localhost:8103/oauth2callback"
+    )
+    monkeypatch.setattr(main, "reload_oauth_config", lambda: None)
+
+    with caplog.at_level("WARNING", logger=main.logger.name):
+        main.resolve_stdio_callback_port()
+
+    assert os.environ["WORKSPACE_MCP_PORT"] == "8103"
+    assert os.environ["WORKSPACE_MCP_RESOLVED_PORT"] == "1"
+    assert ("GOOGLE_OAUTH_REDIRECT_URI" in caplog.text) is not port_free
+    assert "WORKSPACE_MCP_PORT_FALLBACK_COUNT" not in caplog.text
+
+
+def test_resolve_stdio_callback_port_survives_busy_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("auth.port_resolver._is_port_free", lambda host, port: False)
+    monkeypatch.setenv("WORKSPACE_MCP_PORT", "8000")
+    monkeypatch.delenv("PORT", raising=False)
+    monkeypatch.setenv("WORKSPACE_MCP_RESOLVED_PORT", "1")
+    monkeypatch.delenv("GOOGLE_OAUTH_REDIRECT_URI", raising=False)
+    monkeypatch.setattr(main, "reload_oauth_config", lambda: None)
+
+    main.resolve_stdio_callback_port()
+
+    assert os.environ["WORKSPACE_MCP_PORT"] == "8000"
+    assert "WORKSPACE_MCP_RESOLVED_PORT" not in os.environ
 
 
 def test_resolve_callback_port_for_transport_skips_streamable_http(
@@ -262,3 +365,64 @@ def test_main_skips_gcs_store_initialization_in_service_account_mode(monkeypatch
         main.main()
 
     assert exc.value.code == 0
+
+
+@pytest.mark.parametrize(
+    "flag, stateless_mode, expected",
+    [("true", False, True), (None, False, False), (None, True, True)],
+)
+def test_stateless_http_flag_reaches_server_run(
+    monkeypatch: pytest.MonkeyPatch,
+    flag: str | None,
+    stateless_mode: bool,
+    expected: bool,
+) -> None:
+    """WORKSPACE_MCP_STATELESS_HTTP or stateless mode makes the transport sessionless."""
+    seen: dict[str, object] = {}
+
+    def fake_run(*args: object, **kwargs: object) -> None:  # noqa: ARG001
+        seen.update(kwargs)
+        raise SystemExit(0)
+
+    monkeypatch.setattr(main, "configure_safe_logging", lambda: None)
+    monkeypatch.setattr(main, "import_module", lambda name: object())  # noqa: ARG005
+    monkeypatch.setattr(main, "set_enabled_tool_names", lambda names: None)
+    monkeypatch.setattr(main, "wrap_server_tool_method", lambda server: None)
+    monkeypatch.setattr(main, "filter_server_tools", lambda server: None)
+    monkeypatch.setattr(main, "set_transport_mode", lambda transport: None)
+    monkeypatch.setattr(main, "configure_server_for_http", lambda: None)
+    monkeypatch.setattr(main, "get_selected_backend", lambda: "local_directory")
+    monkeypatch.setattr(main, "is_stateless_mode", lambda: stateless_mode)
+    monkeypatch.setattr(main, "is_service_account_enabled", lambda: False)
+    monkeypatch.setattr(main, "get_credential_store", lambda: object())
+    monkeypatch.setattr(main, "check_credentials_directory_permissions", lambda: None)
+    monkeypatch.setattr(main, "_http_port_conflict", lambda host, port: None)
+    monkeypatch.setattr(
+        main,
+        "get_oauth_config",
+        lambda: SimpleNamespace(
+            service_account_key_file=None,
+            service_account_key_json=None,
+            client_secret="secret",
+            client_secrets_file=None,
+            stateless_mode=stateless_mode,
+            is_oauth21_enabled=lambda: False,
+            is_configured=lambda: True,
+        ),
+    )
+    monkeypatch.setattr(main.server, "run", fake_run)
+    monkeypatch.setattr(
+        sys, "argv", ["main.py", "--tools", "gmail", "--transport", "streamable-http"]
+    )
+    monkeypatch.setenv("USER_GOOGLE_EMAIL", "user@example.com")
+    if flag is None:
+        monkeypatch.delenv("WORKSPACE_MCP_STATELESS_HTTP", raising=False)
+    else:
+        monkeypatch.setenv("WORKSPACE_MCP_STATELESS_HTTP", flag)
+
+    with pytest.raises(SystemExit) as exc:
+        main.main()
+
+    assert exc.value.code == 0
+    assert seen.get("transport") == "streamable-http"
+    assert seen.get("stateless_http") is expected

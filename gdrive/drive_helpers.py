@@ -27,8 +27,10 @@ from googleapiclient.errors import HttpError
 from googleapiclient.http import HttpRequest, MediaIoBaseDownload, MediaIoBaseUpload
 
 from auth.service_decorator import require_google_service
+from core.attachment_storage import resolve_local_attachment
 from core.file_limits import download_media_bytes
 from core.http_utils import (
+    PrivateHostError,
     redact_url as _redact_url,
     ssrf_safe_stream as _ssrf_safe_stream,
 )
@@ -190,7 +192,7 @@ def validate_expiration_time(expiration_time: str) -> None:
     Raises:
         ValueError: If expiration_time is not valid RFC 3339 format
     """
-    if not RFC3339_PATTERN.match(expiration_time):
+    if not RFC3339_PATTERN.fullmatch(expiration_time):
         raise ValueError(
             f"Invalid expiration_time '{expiration_time}'. "
             "Must be RFC 3339 format (e.g., '2025-01-15T00:00:00Z')"
@@ -251,6 +253,11 @@ TRASHED_CLAUSE_PATTERN = re.compile(r"\btrashed\s*!?=\s*(true|false)\b", re.IGNO
 # style: 'a\'b' or "a\"b". Used to blank out literals before looking for operators, so
 # text that merely *looks* like a predicate inside a value is not mistaken for one.
 QUERY_STRING_LITERAL_PATTERN = re.compile(r"'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"")
+
+
+def escape_drive_query_value(value: str) -> str:
+    """Escape a value for use inside a single-quoted Drive query string literal."""
+    return value.replace("\\", "\\\\").replace("'", "\\'")
 
 
 def has_explicit_trashed_clause(query: str) -> bool:
@@ -677,6 +684,42 @@ async def _create_drive_folder_impl(
     )
 
 
+async def _create_drive_shortcut_impl(
+    service,
+    user_google_email: str,
+    shortcut_name: str,
+    target_id: str,
+    parent_folder_id: str = "root",
+) -> str:
+    """Create a metadata-only shortcut to target_id inside parent_folder_id."""
+    resolved_folder_id = await resolve_folder_id(service, parent_folder_id)
+    file_metadata = {
+        "name": shortcut_name,
+        "parents": [resolved_folder_id],
+        "mimeType": SHORTCUT_MIME_TYPE,
+        "shortcutDetails": {"targetId": target_id},
+    }
+    created_file = await asyncio.to_thread(
+        service.files()
+        .create(
+            body=file_metadata,
+            fields="id, name, webViewLink, shortcutDetails(targetId, targetMimeType)",
+            supportsAllDrives=True,
+        )
+        .execute
+    )
+    link = created_file.get("webViewLink", "No link available")
+    target = created_file.get("shortcutDetails") or {}
+    target_mime_type = target.get("targetMimeType")
+    target_note = f" ({target_mime_type})" if target_mime_type else ""
+    return (
+        f"Successfully created shortcut '{created_file.get('name', shortcut_name)}' "
+        f"(ID: {created_file.get('id', 'N/A')}) to '{target.get('targetId', target_id)}'"
+        f"{target_note} in folder '{parent_folder_id}' for {user_google_email}. "
+        f"Link: {link}"
+    )
+
+
 DOWNLOAD_CHUNK_SIZE_BYTES = 256 * 1024  # 256 KB
 UPLOAD_CHUNK_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB (Google recommended minimum)
 MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB safety limit for URL downloads
@@ -879,6 +922,27 @@ def reject_sources_with_upload_url(verb: str, **sources: Any) -> None:
         )
 
 
+def validate_shortcut_request(
+    target_id: str, mime_type: Optional[str], **sources: Any
+) -> None:
+    """Refuse a shortcut create that also carries content or a non-shortcut type."""
+    if not target_id.strip():
+        raise ValueError("shortcut_target_id must be a non-empty Drive file ID.")
+    given = [
+        f"'{name}'" for name, value in sources.items() if value not in (None, False)
+    ]
+    if given:
+        raise ValueError(
+            "A shortcut has no content of its own; do not pass "
+            f"{', '.join(given)} with shortcut_target_id."
+        )
+    if mime_type is not None and mime_type != SHORTCUT_MIME_TYPE:
+        raise ValueError(
+            f"shortcut_target_id creates a '{SHORTCUT_MIME_TYPE}' file; omit "
+            f"mime_type or set it to that value, not '{mime_type}'."
+        )
+
+
 def upload_url_not_offered_error(routes: tuple[str, ...]) -> UserInputError:
     """Refuse ``return_upload_url`` while local file access is enabled.
 
@@ -890,6 +954,15 @@ def upload_url_not_offered_error(routes: tuple[str, ...]) -> UserInputError:
         "Upload URLs are offered only when local file access is disabled on this "
         "server (WORKSPACE_MCP_DISABLE_LOCAL_FILES=true); pass the file via "
         f"{named}."
+    )
+
+
+def upload_url_hint(type_param: str) -> str:
+    """Point a refusal at ``return_upload_url``, naming the tool's ``type_param``."""
+    return (
+        "If the file is on the caller's machine, call this tool again with "
+        f"return_upload_url=true and {type_param}, then PUT the bytes to the URL it "
+        "returns."
     )
 
 
@@ -907,7 +980,48 @@ def resumable_upload_result(summary: str, upload_url: str, mime_type: str) -> st
 
 
 async def _stream_url_with_validation(
-    url: str, write_chunk: Optional[Callable[[bytes], Awaitable[None]]] = None
+    url: str,
+    write_chunk: Optional[Callable[[bytes], Awaitable[None]]] = None,
+    *,
+    upload_type_param: str,
+) -> Tuple[int, Optional[str]]:
+    """Stream a URL, hinting at the upload URL on a private-host refusal.
+
+    This server's own /attachments/{id} links are read from attachment storage.
+    """
+    local = resolve_local_attachment(url)
+    if local is not None:
+        file_path, metadata = local
+        return await _stream_file(file_path, write_chunk), metadata.get("mime_type")
+    try:
+        return await _stream_url(url, write_chunk)
+    except PrivateHostError as exc:
+        if local_file_access_enabled():
+            raise
+        raise ValueError(f"{exc}. {upload_url_hint(upload_type_param)}") from exc
+
+
+async def _stream_file(
+    path: Path, write_chunk: Optional[Callable[[bytes], Awaitable[None]]]
+) -> int:
+    """Stream a local file in download-sized chunks and return its size."""
+    size_bytes = path.stat().st_size
+    if size_bytes > MAX_DOWNLOAD_BYTES:
+        raise ValueError(
+            f"Attachment {path.name} exceeds the {MAX_DOWNLOAD_BYTES} byte limit "
+            f"({size_bytes} bytes)"
+        )
+    total_bytes = 0
+    with path.open("rb") as source:
+        while chunk := await asyncio.to_thread(source.read, DOWNLOAD_CHUNK_SIZE_BYTES):
+            total_bytes += len(chunk)
+            if write_chunk is not None:
+                await write_chunk(chunk)
+    return total_bytes
+
+
+async def _stream_url(
+    url: str, write_chunk: Optional[Callable[[bytes], Awaitable[None]]]
 ) -> Tuple[int, Optional[str]]:
     """Stream a remote file with shared status and size validation."""
     total_bytes = 0
@@ -939,7 +1053,9 @@ async def _stream_url_with_validation(
     return total_bytes, content_type
 
 
-async def _download_url_to_bytes(url: str) -> Tuple[BinaryIO, Optional[str]]:
+async def _download_url_to_bytes(
+    url: str, *, upload_type_param: str
+) -> Tuple[BinaryIO, Optional[str]]:
     """Download a remote file into a spooled temporary file with bounded streaming."""
     spool = SpooledTemporaryFile(max_size=UPLOAD_CHUNK_SIZE_BYTES)
     try:
@@ -947,7 +1063,9 @@ async def _download_url_to_bytes(url: str) -> Tuple[BinaryIO, Optional[str]]:
         async def _collect(chunk: bytes) -> None:
             await asyncio.to_thread(spool.write, chunk)
 
-        _total_bytes, content_type = await _stream_url_with_validation(url, _collect)
+        _total_bytes, content_type = await _stream_url_with_validation(
+            url, _collect, upload_type_param=upload_type_param
+        )
         await asyncio.to_thread(spool.seek, 0)
         return spool, content_type
     except Exception:
@@ -1043,6 +1161,27 @@ GOOGLE_SHEETS_IMPORT_FORMATS = {
 GOOGLE_DOCS_MIME_TYPE = "application/vnd.google-apps.document"
 GOOGLE_SLIDES_MIME_TYPE = "application/vnd.google-apps.presentation"
 GOOGLE_SHEETS_MIME_TYPE = "application/vnd.google-apps.spreadsheet"
+GOOGLE_DRAWINGS_MIME_TYPE = "application/vnd.google-apps.drawing"
+
+# Export targets for Google Drawings, keyed by export_format; PNG is the default.
+DRAWING_EXPORT_FORMATS = {
+    "png": ("png", "image/png"),
+    "pdf": ("pdf", "application/pdf"),
+    "jpg": ("jpg", "image/jpeg"),
+    "jpeg": ("jpg", "image/jpeg"),
+    "svg": ("svg", "image/svg+xml"),
+}
+
+
+def drawing_export_target(export_format: Optional[str]) -> Tuple[str, str]:
+    """(file extension, export MIME type) for a Google Drawing.
+
+    PNG unless export_format names another supported format.
+    """
+    return DRAWING_EXPORT_FORMATS.get(
+        (export_format or "").lower(), DRAWING_EXPORT_FORMATS["png"]
+    )
+
 
 IMPORT_FORMATS_BY_GOOGLE_MIME_TYPE = {
     GOOGLE_DOCS_MIME_TYPE: GOOGLE_DOCS_IMPORT_FORMATS,
@@ -1125,6 +1264,7 @@ async def _resolve_import_media(
     base64_sha256: Optional[str] = None,
     format_map: Optional[Dict[str, str]] = None,
     passthrough_mime_type: Optional[str] = None,
+    upload_type_param: str,
 ) -> Tuple[MediaIoBaseUpload, str, Optional[BinaryIO]]:
     """
     Resolve a content source into an upload ``MediaIoBaseUpload`` and source MIME type.
@@ -1141,6 +1281,7 @@ async def _resolve_import_media(
 
     Returns ``(media, source_mime_type, closeable)``; when the source is a remote URL,
     ``closeable`` is the download stream the caller must close after upload (else None).
+    ``upload_type_param`` is the type parameter the upload-URL hint names.
     """
     # Name file_path only where the tool schema advertises it.
     path_source = "'file_path', " if local_file_access_enabled() else ""
@@ -1237,9 +1378,14 @@ async def _resolve_import_media(
     else:  # file_url is not None
         parsed_url = urlparse(file_url)
         if parsed_url.scheme not in ("http", "https"):
-            raise ValueError(f"file_url must be http:// or https://, got: {file_url}")
+            message = f"file_url must be http:// or https://, got: {file_url}"
+            if not local_file_access_enabled():
+                message = f"{message}. {upload_url_hint(upload_type_param)}"
+            raise ValueError(message)
 
-        remote_file_data, remote_content_type = await _download_url_to_bytes(file_url)
+        remote_file_data, remote_content_type = await _download_url_to_bytes(
+            file_url, upload_type_param=upload_type_param
+        )
 
         # Prefer the response Content-Type, falling back to URL-based detection.
         if not source_format and not passthrough_mime_type:
@@ -1534,6 +1680,7 @@ async def _import_with_conversion(
         base64_content=base64_content,
         base64_sha256=base64_sha256,
         format_map=format_map,
+        upload_type_param="source_format",
     )
 
     # Clean up file name (remove extension since it becomes a Google Apps file)
