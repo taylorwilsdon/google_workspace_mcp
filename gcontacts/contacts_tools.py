@@ -1644,10 +1644,17 @@ async def manage_contact_group(
     response = f"Contact Group Members Modified for {user_google_email}:\n\n"
     response += f"Group: {group_id}\n"
 
+    # The API names the contacts it skipped, so leave those out of the counts.
+    # IDs can repeat in either list ("c1" and "people/c1"), so count each once.
+    skipped = set(not_found)
     if add_contact_ids:
-        response += f"Added: {len(add_contact_ids)} contacts\n"
+        added = set(modify_body["resourceNamesToAdd"]) - skipped
+        response += f"Added: {len(added)} contacts\n"
     if remove_contact_ids:
-        response += f"Removed: {len(remove_contact_ids)} contacts\n"
+        removed = (
+            set(modify_body["resourceNamesToRemove"]) - skipped - set(cannot_remove)
+        )
+        response += f"Removed: {len(removed)} contacts\n"
 
     if not_found:
         response += f"\nNot found: {', '.join(not_found)}\n"
