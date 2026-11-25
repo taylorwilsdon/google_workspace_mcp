@@ -4881,3 +4881,53 @@ async def batch_modify_gmail_message_labels(
         lines.append("")
         lines.append(thread_report)
     return "\n".join(lines)
+
+
+@server.tool(
+    title="Trash Gmail Messages",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("trash_gmail_messages", service_type="gmail")
+@require_google_service("gmail", GMAIL_MODIFY_SCOPE)
+async def trash_gmail_messages(
+    service,
+    user_google_email: str,
+    message_ids: StringList,
+) -> str:
+    """
+    Deletes (discards) Gmail drafts or emails by moving them to Trash, where they
+    stay recoverable for 30 days. Works on drafts as well as sent or received mail.
+
+    For a draft, pass its message ID (from search_gmail_messages with "in:drafts"),
+    not the draft ID returned by draft_gmail_message.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        message_ids (List[str]): Message IDs to move to Trash.
+
+    Returns:
+        str: How many messages were moved to Trash.
+    """
+    logger.info(
+        f"[trash_gmail_messages] Invoked. Email: '{user_google_email}', Message IDs: '{message_ids}'"
+    )
+
+    if not message_ids:
+        raise UserInputError("message_ids must not be empty.")
+
+    await asyncio.to_thread(
+        service.users()
+        .messages()
+        .batchModify(userId="me", body={"ids": message_ids, "addLabelIds": ["TRASH"]})
+        .execute
+    )
+
+    return (
+        f"Moved {len(message_ids)} message(s) to Trash in {user_google_email}. "
+        "Recoverable from Trash for 30 days."
+    )
