@@ -4883,6 +4883,9 @@ async def batch_modify_gmail_message_labels(
     return "\n".join(lines)
 
 
+_GMAIL_BATCH_MODIFY_MAX_IDS = 1000  # users.messages.batchModify limit
+
+
 @server.tool(
     title="Trash Gmail Messages",
     annotations=ToolAnnotations(
@@ -4901,7 +4904,7 @@ async def trash_gmail_messages(
 ) -> str:
     """
     Deletes (discards) Gmail drafts or emails by moving them to Trash, where they
-    stay recoverable for 30 days. Works on drafts as well as sent or received mail.
+    stay recoverable for a limited time. Works on drafts as well as sent or received mail.
 
     For a draft, pass its message ID (from search_gmail_messages with "in:drafts"),
     not the draft ID returned by draft_gmail_message.
@@ -4917,17 +4920,42 @@ async def trash_gmail_messages(
         f"[trash_gmail_messages] Invoked. Email: '{user_google_email}', Message IDs: '{message_ids}'"
     )
 
-    if not message_ids:
+    ids = list(dict.fromkeys(mid.strip() for mid in message_ids if mid.strip()))
+    if not ids:
         raise UserInputError("message_ids must not be empty.")
+    if len(ids) > _GMAIL_BATCH_MODIFY_MAX_IDS:
+        raise UserInputError(
+            f"At most {_GMAIL_BATCH_MODIFY_MAX_IDS} message IDs per call; got {len(ids)}."
+        )
 
     await asyncio.to_thread(
         service.users()
         .messages()
-        .batchModify(userId="me", body={"ids": message_ids, "addLabelIds": ["TRASH"]})
+        .batchModify(userId="me", body={"ids": ids, "addLabelIds": ["TRASH"]})
         .execute
     )
 
-    return (
-        f"Moved {len(message_ids)} message(s) to Trash in {user_google_email}. "
-        "Recoverable from Trash for 30 days."
-    )
+    # batchModify returns no per-message result and ignores unknown IDs (a draft ID
+    # or thread ID, for example), so read the messages back before claiming success.
+    statuses = await _verify_batch_label_changes(service, ids, ["TRASH"], None)
+    trashed = [mid for mid in ids if statuses.get(mid) == "applied"]
+    missing = [mid for mid in ids if statuses.get(mid) == "unresolved"]
+    unchanged = [mid for mid in ids if statuses.get(mid) == "not_applied"]
+    unverified = [mid for mid in ids if statuses.get(mid) == "unverified"]
+
+    lines = [
+        f"Moved {len(trashed)}/{len(ids)} message(s) to Trash in {user_google_email}. "
+        "Recoverable from Trash for a limited time (30 days by default)."
+    ]
+    if missing:
+        lines.append(
+            f"No such message ({len(missing)}): {_format_id_list(missing)}. "
+            "Use message IDs, not draft or thread IDs."
+        )
+    if unchanged:
+        lines.append(f"Not trashed ({len(unchanged)}): {_format_id_list(unchanged)}")
+    if unverified:
+        lines.append(
+            f"Could not verify ({len(unverified)}): {_format_id_list(unverified)}"
+        )
+    return "\n".join(lines)
