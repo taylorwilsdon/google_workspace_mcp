@@ -22,6 +22,7 @@ from gdrive.drive_helpers import flag_incomplete_search
 logger = logging.getLogger(__name__)
 
 _VALID_SCRIPT_FILE_TYPES = frozenset({"SERVER_JS", "HTML", "JSON"})
+_SCRIPT_MIME_TYPE = "application/vnd.google-apps.script"
 
 # These locks serialize updates only within this process. Other worker
 # processes or service instances can still race while merging the same script_id.
@@ -117,7 +118,7 @@ async def _list_script_projects_impl(
     )
 
     # Search for Apps Script files using Drive API
-    query = "mimeType='application/vnd.google-apps.script' and trashed=false"
+    query = f"mimeType='{_SCRIPT_MIME_TYPE}' and trashed=false"
     request_params = {
         "q": query,
         "pageSize": page_size,
@@ -974,7 +975,18 @@ async def _delete_script_project_impl(
     )
 
     # Apps Script projects are stored as Drive files
-    await asyncio.to_thread(service.files().delete(fileId=script_id).execute)
+    file_info = await asyncio.to_thread(
+        service.files()
+        .get(fileId=script_id, fields="mimeType", supportsAllDrives=True)
+        .execute
+    )
+    if file_info.get("mimeType") != _SCRIPT_MIME_TYPE:
+        raise UserInputError(
+            f"{script_id} is not an Apps Script project, so it was not deleted."
+        )
+    await asyncio.to_thread(
+        service.files().delete(fileId=script_id, supportsAllDrives=True).execute
+    )
 
     logger.info(f"[delete_script_project] Deleted script {script_id}")
     return f"Deleted Apps Script project: {script_id}"
