@@ -51,6 +51,8 @@ async def _manage_comment_dispatch(
 ) -> str:
     """Route comment management actions to the appropriate implementation."""
     action_lower = action.lower().strip()
+    anchor_text = anchor_text or None
+    tab_id = tab_id or None
     if anchor_text is not None and not anchor_text.strip():
         raise ValueError("anchor_text must not be empty")
     if cell and action_lower in ("reply", "resolve", "update", "delete"):

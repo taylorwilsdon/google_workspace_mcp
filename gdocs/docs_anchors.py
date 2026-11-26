@@ -39,8 +39,7 @@ def iter_paragraphs(
 ) -> Iterator[tuple[int, int, str, dict[str, Any]]]:
     """Yield (start_index, end_index, text, paragraph_style) for each paragraph.
 
-    With include_tables, paragraphs inside table cells are yielded too, in
-    document order, so text in a table can be matched as well.
+    include_tables also yields the paragraphs inside table cells, in document order.
     """
     for element in body.get("content", []):
         paragraph = element.get("paragraph")
@@ -113,14 +112,9 @@ def resolve_anchor_text(body: dict[str, Any], anchor: str, position: str) -> int
 
 
 def resolve_anchor_range(body: dict[str, Any], anchor: str) -> tuple[int, int]:
-    """
-    Resolve literal text within one paragraph to its (start_index, end_index).
+    """Resolve literal text within one paragraph to its (start_index, end_index).
 
-    Unlike resolve_anchor_text, which yields one insertion point, this returns
-    the whole span, which is what a comment or a style change is tied to. Text
-    inside table cells is searched too. The anchor must occur exactly once; an
-    empty anchor is refused because it would match everywhere. Text spanning
-    multiple paragraphs is not supported.
+    Table cells are searched too; the anchor must occur exactly once.
     """
     if not anchor or not anchor.strip():
         raise AnchorResolutionError("anchor_text must not be empty.")
@@ -129,8 +123,6 @@ def resolve_anchor_range(body: dict[str, Any], anchor: str) -> tuple[int, int]:
     for start_index, _end_index, text, _style in iter_paragraphs(
         body, include_tables=True
     ):
-        # Advance the UTF-16 position from the previous match rather than
-        # re-measuring the whole prefix, so a repeated anchor stays linear.
         position, units = 0, 0
         offset = text.find(anchor)
         while offset != -1:
@@ -140,9 +132,7 @@ def resolve_anchor_range(body: dict[str, Any], anchor: str) -> tuple[int, int]:
             matches.append((start, start + anchor_units))
             offset = text.find(anchor, offset + 1)
     if not matches:
-        raise AnchorResolutionError(
-            f"anchor_text '{anchor}' was not found in the document."
-        )
+        raise AnchorResolutionError(f"anchor_text '{anchor}' was not found in the tab.")
     if len(matches) > 1:
         raise AnchorResolutionError(
             f"anchor_text '{anchor}' matches {len(matches)} locations "

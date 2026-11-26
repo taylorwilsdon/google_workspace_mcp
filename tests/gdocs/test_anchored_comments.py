@@ -3,7 +3,8 @@
 import inspect
 import os
 import sys
-from unittest.mock import Mock
+from collections.abc import Callable
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from googleapiclient.errors import HttpError
@@ -14,6 +15,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 from auth.scopes import DRIVE_SCOPE
 from core.comments import create_comment_tools
 from core.utils import UserInputError
+from gdocs import docs_tools
 from gdocs.docs_anchors import (
     AnchorResolutionError,
     iter_paragraphs,
@@ -125,6 +127,23 @@ class TestResolveAnchorRange:
         body = {"content": [_paragraph(1, "\U0001f600 go\n")]}
         # The emoji occupies indices 1-3, the space 3-4, "go" 4-6.
         assert resolve_anchor_range(body, "go") == (4, 6)
+
+    def test_non_bmp_anchor_spans_two_index_units(self) -> None:
+        body = {"content": [_paragraph(1, "go \U0001f600\n")]}
+        assert resolve_anchor_range(body, "\U0001f600") == (4, 6)
+
+    def test_searches_tables_nested_in_table_cells(self) -> None:
+        inner = _table(5, ["Nested\n"])
+        body = {
+            "content": [
+                {
+                    "startIndex": 1,
+                    "endIndex": inner["endIndex"] + 1,
+                    "table": {"tableRows": [{"tableCells": [{"content": [inner]}]}]},
+                }
+            ]
+        }
+        assert resolve_anchor_range(body, "Nested") == (8, 14)
 
     def test_searches_table_cells(self):
         start, end = resolve_anchor_range(BODY, "Differs / Unknown")
@@ -300,6 +319,17 @@ class TestInsertAnchoredComment:
         service.documents.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_content_cap_counts_utf8_bytes(self) -> None:
+        service = _docs_service()
+        at_cap = "é" * (MAX_COMMENT_UTF8_UNITS // 2)
+
+        await insert_anchored_comment(service, DOC_ID, "quick brown", at_cap)
+        with pytest.raises(UserInputError, match="2048"):
+            await insert_anchored_comment(service, DOC_ID, "quick brown", at_cap + "é")
+
+        service.documents.return_value.batchUpdate.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_failed_comment_update_state_is_reported(self):
         service = _docs_service(update_state=COMMENT_UPDATE_FAILED)
 
@@ -345,6 +375,47 @@ class TestManageDocumentCommentAnchorText:
         drive.comments.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_tab_id_reaches_the_docs_request(
+        self, manage_comment: Callable[..., object]
+    ) -> None:
+        doc = {
+            "tabs": [
+                {"tabProperties": {"tabId": "t.0"}, "documentTab": {"body": {}}},
+                {"tabProperties": {"tabId": "t.1"}, "documentTab": {"body": BODY}},
+            ]
+        }
+        docs = _docs_service(doc)
+
+        await manage_comment(
+            Mock(),
+            docs,
+            "user@example.com",
+            DOC_ID,
+            "create",
+            comment_content="Looks off",
+            anchor_text="quick brown",
+            tab_id="t.1",
+        )
+
+        assert _batch_requests(docs)[0]["insertComment"]["range"]["tabId"] == "t.1"
+
+    @pytest.mark.asyncio
+    async def test_registered_document_tool_anchors_comments(self) -> None:
+        docs = _docs_service(comment_id="thread-7")
+
+        result = await _unwrap(docs_tools.manage_document_comment)(
+            Mock(),
+            docs,
+            "user@example.com",
+            DOC_ID,
+            "create",
+            comment_content="Looks off",
+            anchor_text="quick brown",
+        )
+
+        assert "Comment ID: thread-7" in result
+
+    @pytest.mark.asyncio
     async def test_create_without_anchor_text_uses_drive(self, manage_comment):
         drive = Mock()
         drive.comments.return_value.create.return_value.execute.return_value = {
@@ -367,7 +438,7 @@ class TestManageDocumentCommentAnchorText:
         docs.documents.assert_not_called()
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("anchor_text", ["", "   "])
+    @pytest.mark.parametrize("anchor_text", ["   ", "\n"])
     async def test_blank_anchor_text_is_rejected_before_any_api_call(
         self, manage_comment, anchor_text
     ):
@@ -388,6 +459,60 @@ class TestManageDocumentCommentAnchorText:
         drive.comments.assert_not_called()
         docs.documents.assert_not_called()
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "action, impl",
+        [
+            ("reply", "_reply_to_comment_impl"),
+            ("resolve", "_resolve_comment_impl"),
+            ("update", "_update_comment_impl"),
+            ("delete", "_delete_comment_impl"),
+        ],
+    )
+    async def test_empty_anchor_and_tab_are_absent_outside_create(
+        self, manage_comment: Callable[..., object], action: str, impl: str
+    ) -> None:
+        with patch(f"core.comments.{impl}", AsyncMock(return_value="ok")) as mocked:
+            result = await manage_comment(
+                Mock(),
+                Mock(),
+                "user@example.com",
+                DOC_ID,
+                action,
+                comment_content="hi",
+                comment_id="c1",
+                anchor_text="",
+                tab_id="",
+            )
+
+        assert result == "ok"
+        mocked.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_empty_anchor_text_creates_a_document_level_comment(
+        self, manage_comment: Callable[..., object]
+    ) -> None:
+        drive = Mock()
+        drive.comments.return_value.create.return_value.execute.return_value = {
+            "id": "c1"
+        }
+        docs = Mock()
+
+        result = await manage_comment(
+            drive,
+            docs,
+            "user@example.com",
+            DOC_ID,
+            "create",
+            comment_content="Document-level",
+            anchor_text="",
+            tab_id="",
+        )
+
+        assert "Comment ID: c1" in result
+        drive.comments.return_value.create.assert_called_once()
+        docs.documents.assert_not_called()
+
     @pytest.mark.parametrize("action", ["reply", "resolve", "update", "delete"])
     @pytest.mark.asyncio
     async def test_anchor_text_rejected_outside_create(self, manage_comment, action):
@@ -401,6 +526,22 @@ class TestManageDocumentCommentAnchorText:
                 comment_content="hi",
                 comment_id="c1",
                 anchor_text="quick brown",
+            )
+
+    @pytest.mark.asyncio
+    async def test_tab_id_rejected_outside_create(
+        self, manage_comment: Callable[..., object]
+    ) -> None:
+        with pytest.raises(ValueError, match="only supported for the create"):
+            await manage_comment(
+                Mock(),
+                Mock(),
+                "user@example.com",
+                DOC_ID,
+                "reply",
+                comment_content="hi",
+                comment_id="c1",
+                tab_id="t.0",
             )
 
     @pytest.mark.asyncio

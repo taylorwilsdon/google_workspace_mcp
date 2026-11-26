@@ -310,7 +310,7 @@ Create, reply to, resolve, edit, or delete a comment. A comment created with `an
 | anchor_text | string | no | | `create` only. Nonblank literal text within one paragraph, occurring exactly once in the tab (table cells included); the comment anchors to it |
 | tab_id | string | no | | `create` only, with `anchor_text`. Tab to search; the first tab by default |
 
-Tip: pick an anchor contained in one paragraph and unique across the tab. An anchor that matches several places, or none, is refused before anything is written. Omit `anchor_text` for a document-level comment; an explicitly blank anchor is rejected.
+Tip: pick an anchor contained in one paragraph and unique across the tab. An anchor that matches several places, or none, is refused before anything is written. Omit `anchor_text` for a document-level comment; a whitespace-only anchor is rejected.
 
 ---
 
