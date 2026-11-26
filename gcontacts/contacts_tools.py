@@ -1638,14 +1638,12 @@ async def manage_contact_group(
         .execute
     )
 
-    not_found = result.get("notFoundResourceNames", [])
-    cannot_remove = result.get("canNotRemoveLastContactGroupResourceNames", [])
+    not_found = result.get("notFoundResourceNames") or []
+    cannot_remove = result.get("canNotRemoveLastContactGroupResourceNames") or []
 
     response = f"Contact Group Members Modified for {user_google_email}:\n\n"
     response += f"Group: {group_id}\n"
 
-    # The API names the contacts it skipped, so leave those out of the counts.
-    # IDs can repeat in either list ("c1" and "people/c1"), so count each once.
     skipped = set(not_found)
     if add_contact_ids:
         added = set(modify_body["resourceNamesToAdd"]) - skipped
