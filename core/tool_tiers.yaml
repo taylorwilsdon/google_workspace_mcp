@@ -177,3 +177,10 @@ appscript:
     - get_script_activity
     - manage_script_trigger
   complete: []
+
+# Opt-in only: excluded unless admin is explicitly selected.
+admin:
+  core:
+    - get_admin_users
+  extended: []
+  complete: []
