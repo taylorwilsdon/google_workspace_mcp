@@ -7,6 +7,7 @@ based on tier configuration, replacing direct @server.tool() decorators.
 
 import logging
 import os
+import re
 from typing import Callable, Iterable, Optional, Set
 
 from fastmcp import FastMCP
@@ -25,6 +26,7 @@ _disabled_tools: Set[str] = set()
 
 _ALWAYS_LOAD_TOOLS_ENV = "WORKSPACE_MCP_ALWAYS_LOAD_TOOLS"
 ALWAYS_LOAD_META_KEY = "anthropic/alwaysLoad"
+_TOOL_NAME_RE = re.compile(r"[a-z0-9_]+")
 
 
 def set_enabled_tools(tool_names: Optional[Set[str]]):
@@ -75,8 +77,15 @@ def resolve_disabled_tools(cli_names: Optional[list[str]] = None) -> Set[str]:
 
 
 def get_always_load_tools() -> Set[str]:
-    """Return the lowercased tool names listed in WORKSPACE_MCP_ALWAYS_LOAD_TOOLS."""
-    return _normalize_tool_names(os.getenv(_ALWAYS_LOAD_TOOLS_ENV, "").split(","))
+    """Parse WORKSPACE_MCP_ALWAYS_LOAD_TOOLS; ValueError on a malformed tool name."""
+    names = _normalize_tool_names(os.getenv(_ALWAYS_LOAD_TOOLS_ENV, "").split(","))
+    malformed = sorted(name for name in names if not _TOOL_NAME_RE.fullmatch(name))
+    if malformed:
+        raise ValueError(
+            f"{_ALWAYS_LOAD_TOOLS_ENV} must be a comma-separated list of tool names, "
+            f"got {malformed[0]!r}"
+        )
+    return names
 
 
 def is_tool_enabled(tool_name: str) -> bool:

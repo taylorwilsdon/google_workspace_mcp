@@ -159,6 +159,24 @@ def test_get_always_load_tools_returns_empty_set_when_unset() -> None:
     assert get_always_load_tools() == set()
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        "search_gmail_messages get_events",
+        "search_gmail_messages;get_events",
+        '["search_gmail_messages"]',
+        "get_events,gmail.search",
+    ],
+)
+def test_get_always_load_tools_rejects_malformed_names(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setenv(ALWAYS_LOAD_ENV_VAR, value)
+
+    with pytest.raises(ValueError, match=ALWAYS_LOAD_ENV_VAR):
+        get_always_load_tools()
+
+
 @pytest.mark.asyncio
 async def test_always_load_meta_is_listed_on_marked_tools_only(
     monkeypatch: pytest.MonkeyPatch,
@@ -205,5 +223,9 @@ def test_always_load_entry_for_a_filtered_tool_warns_without_marking(
     with caplog.at_level(logging.WARNING, logger="core.tool_registry"):
         assert mark_always_load_tools(server) == 0
 
-    assert "send_gmail_message" in caplog.text
+    assert [
+        record.levelno
+        for record in caplog.records
+        if "Always-load entry 'send_gmail_message'" in record.getMessage()
+    ] == [logging.WARNING]
     assert set(get_tool_components(server)) == {"search_gmail_messages"}

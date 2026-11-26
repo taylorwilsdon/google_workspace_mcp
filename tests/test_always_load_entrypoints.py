@@ -10,7 +10,10 @@ import pytest
 
 _LIST_MARKED = """
 import asyncio, json
+import dotenv
 from fastmcp import Client
+
+dotenv.load_dotenv = lambda *args, **kwargs: False
 
 async def list_marked(server):
     async with Client(server) as client:
@@ -30,7 +33,6 @@ print(json.dumps(asyncio.run(list_marked(fastmcp_server.server))))
 """
 )
 
-# main.main() marks tools right before server.run(), so stand in for run().
 _MAIN = (
     _LIST_MARKED
     + """
@@ -74,7 +76,6 @@ def test_listed_tool_is_marked_through_the_entrypoint(
     }
     env = {
         **inherited,
-        "PYTHON_DOTENV_DISABLED": "1",
         "WORKSPACE_MCP_ALWAYS_LOAD_TOOLS": "Search_Gmail_Messages",
         "WORKSPACE_MCP_DISABLED_TOOLS": "",
         "TRUST_GATEWAY_IDENTITY": "false",
