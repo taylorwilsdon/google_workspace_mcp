@@ -6,6 +6,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -14,6 +15,14 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 import main  # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+AddrInfo = tuple[
+    socket.AddressFamily,
+    socket.SocketKind,
+    int,
+    str,
+    tuple[str, int] | tuple[str, int, int, int] | tuple[int, bytes],
+]
 
 pytestmark = pytest.mark.skipif(
     os.name == "nt", reason="TIME_WAIT bind semantics differ on Windows"
@@ -112,12 +121,12 @@ def test_default_host_probe_skips_a_family_the_host_cannot_bind(
     srv.close()
     real_getaddrinfo = socket.getaddrinfo
 
-    def fake_getaddrinfo(host: str | None, *args: object, **kwargs: object) -> list:
+    def fake_getaddrinfo(host: str | None, *args: Any, **kwargs: Any) -> list[AddrInfo]:
         infos = real_getaddrinfo(host, *args, **kwargs)
         if host is not None:
             return infos
         # 2001:db8::/32 is documentation space, so bind fails EADDRNOTAVAIL.
-        unbindable = (
+        unbindable: AddrInfo = (
             socket.AF_INET6,
             socket.SOCK_STREAM,
             0,
@@ -192,7 +201,7 @@ def _server_command(*args: str) -> list[str]:
     return [sys.executable, "main.py", "--tools", "gmail", *args]
 
 
-def _server_env(tmp_path, **env: str) -> dict[str, str]:
+def _server_env(tmp_path: Path, **env: str) -> dict[str, str]:
     return {
         **{k: v for k, v in os.environ.items() if k != "PORT"},
         "MCP_ENABLE_OAUTH21": "false",
@@ -201,7 +210,9 @@ def _server_env(tmp_path, **env: str) -> dict[str, str]:
     }
 
 
-def _start_server(tmp_path, *args: str, **env: str) -> subprocess.CompletedProcess:
+def _start_server(
+    tmp_path: Path, *args: str, **env: str
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         _server_command(*args),
         cwd=REPO_ROOT,
@@ -234,7 +245,7 @@ def test_streamable_http_port_conflict_is_logged_at_error(tmp_path):
     assert f"a server is already listening on 127.0.0.1:{port}" in result.stderr
 
 
-def test_oauth21_default_host_reports_an_ipv6_port_conflict(tmp_path) -> None:
+def test_oauth21_default_host_reports_an_ipv6_port_conflict(tmp_path: Path) -> None:
     srv = _ipv6_listener()
     try:
         port = srv.getsockname()[1]
