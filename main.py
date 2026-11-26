@@ -357,6 +357,36 @@ def _http_port_conflict(host: str, port: int) -> str | None:
     return None
 
 
+def _systemd_activation_sockets() -> list[socket.socket] | None:
+    """Return the listening sockets systemd passed via sd_listen_fds(3), or None."""
+    listen_pid = os.environ.get("LISTEN_PID")
+    listen_fds = os.environ.get("LISTEN_FDS")
+    if not listen_pid or not listen_fds:
+        return None
+    try:
+        pid_matches = int(listen_pid) == os.getpid()
+        fd_count = int(listen_fds)
+    except ValueError:
+        return None
+    if not pid_matches:
+        logger.warning(
+            "Ignoring systemd socket activation: LISTEN_PID=%s is not this process "
+            "(pid %d). uvx and uv run start the server as a child; point ExecStart= "
+            "at an installed workspace-mcp executable.",
+            listen_pid,
+            os.getpid(),
+        )
+        return None
+    if fd_count <= 0:
+        return None
+    os.environ.pop("LISTEN_PID", None)
+    os.environ.pop("LISTEN_FDS", None)
+    sockets = [socket.socket(fileno=fd) for fd in range(3, 3 + fd_count)]
+    for sock in sockets:
+        sock.set_inheritable(False)
+    return sockets
+
+
 def configure_safe_logging():
     """Replace console handlers with ASCII-safe formatters for Windows compatibility."""
 
@@ -429,31 +459,6 @@ def _mode_field(
     if not enabled:
         return label, f"off · {env_var}", "off"
     return label, f"on  · {env_var}", "warn" if warn_when_on else "on"
-
-
-def _systemd_activation_sockets() -> list[socket.socket] | None:
-    """Return sockets handed off via systemd socket activation, if any.
-
-    Follows the sd_listen_fds(3) protocol: LISTEN_PID must match our own
-    pid (guards against a child process inheriting the env vars) and
-    LISTEN_FDS gives the number of inherited, already-bound/listening
-    sockets starting at fd 3. Unsets both env vars once consumed so a
-    child process (if any) doesn't also try to claim them.
-    """
-    listen_pid = os.environ.get("LISTEN_PID")
-    listen_fds = os.environ.get("LISTEN_FDS")
-    if not listen_pid or not listen_fds:
-        return None
-    try:
-        pid_matches = int(listen_pid) == os.getpid()
-        fd_count = int(listen_fds)
-    except ValueError:
-        return None
-    if not pid_matches or fd_count <= 0:
-        return None
-    os.environ.pop("LISTEN_PID", None)
-    os.environ.pop("LISTEN_FDS", None)
-    return [socket.socket(fileno=fd) for fd in range(3, 3 + fd_count)]
 
 
 def _disabled_tools_field(disabled_tools: set[str]) -> tuple[str, str, str]:
