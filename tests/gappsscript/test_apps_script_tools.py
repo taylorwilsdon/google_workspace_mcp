@@ -1107,7 +1107,7 @@ async def test_delete_script_project():
 
 
 @pytest.mark.asyncio
-async def test_delete_script_project_reaches_shared_drives():
+async def test_delete_script_project_reaches_shared_drives() -> None:
     """Projects in shared drives are listed, so they must be deletable too."""
     mock_service = Mock()
     mock_service.files().get().execute.return_value = {
@@ -1131,7 +1131,7 @@ async def test_delete_script_project_reaches_shared_drives():
 
 
 @pytest.mark.asyncio
-async def test_delete_script_project_refuses_other_files():
+async def test_delete_script_project_refuses_other_files() -> None:
     """A Doc or Sheet ID is refused instead of being deleted past the trash."""
     mock_service = Mock()
     mock_service.files().get().execute.return_value = {
@@ -1145,6 +1145,11 @@ async def test_delete_script_project_refuses_other_files():
             script_id="doc123",
         )
 
+    assert mock_service.files().get.call_args.kwargs == {
+        "fileId": "doc123",
+        "fields": "mimeType",
+        "supportsAllDrives": True,
+    }
     mock_service.files().delete.return_value.execute.assert_not_called()
 
 
