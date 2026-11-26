@@ -5,6 +5,7 @@ MCP tools for Gmail message search, sending, drafting, labels, and filters. All 
 ## Contents
 - Search & Read: search_gmail_messages, get_gmail_message_content, get_gmail_messages_content_batch, get_gmail_thread_content, get_gmail_threads_content_batch, get_gmail_attachment_content
 - Send & Draft: send_gmail_message, draft_gmail_message
+- Trash: trash_gmail_messages
 - Label Management: list_gmail_labels, manage_gmail_label, modify_gmail_message_labels, batch_modify_gmail_message_labels
 - Filter Management: list_gmail_filters, manage_gmail_filter
 - Tips
@@ -214,7 +215,15 @@ Add or remove labels on multiple messages, or on every message of whole threads,
 - Mark read: remove `"UNREAD"`
 - Mark unread: add `"UNREAD"`
 - Star: add `"STARRED"`
-- Trash: add `"TRASH"`
+- Trash: add `"TRASH"` (or use `trash_gmail_messages`)
+
+### trash_gmail_messages
+Delete drafts or emails by moving them to Trash (recoverable for 30 days). For a draft, pass its message ID from `search_gmail_messages` with `in:drafts`, not the draft ID.
+
+| Parameter | Type | Required | Default | Notes |
+|-----------|------|----------|---------|-------|
+| user_google_email | string | yes | | |
+| message_ids | array of strings | yes | | Message IDs to move to Trash |
 
 ---
 

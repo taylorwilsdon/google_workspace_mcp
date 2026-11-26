@@ -84,6 +84,7 @@ For server options, transport, auth modes, tool filtering, and deployment: [refe
 | Download attachment | `get_gmail_attachment_content` |
 | Add/remove labels (one) | `modify_gmail_message_labels` |
 | Add/remove labels (batch) | `batch_modify_gmail_message_labels` |
+| Delete/trash drafts or emails | `trash_gmail_messages` |
 | Manage labels | `manage_gmail_label` |
 | List labels | `list_gmail_labels` |
 | Manage filters | `manage_gmail_filter` |
