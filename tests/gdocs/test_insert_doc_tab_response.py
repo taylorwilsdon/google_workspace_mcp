@@ -170,6 +170,35 @@ async def test_populate_tab_accepts_empty_markdown_to_clear_existing_content():
 
 
 @pytest.mark.asyncio
+async def test_populate_tab_keeps_content_when_markdown_renders_empty() -> None:
+    """Non-empty markdown that renders nothing must not clear the tab."""
+    service = Mock()
+    docs = service.documents.return_value
+    docs.get.return_value.execute.return_value = {
+        "tabs": [
+            {
+                "tabProperties": {"tabId": "t.clear"},
+                "documentTab": {
+                    "body": {"content": [{"endIndex": 1}, {"endIndex": 12}]}
+                },
+            }
+        ]
+    }
+
+    with pytest.raises(UserInputError, match="rendered to no content"):
+        await _unwrap(docs_tools.manage_doc_tab)(
+            service=service,
+            user_google_email="test@example.com",
+            document_id="doc-abc",
+            action="populate_from_markdown",
+            tab_id="t.clear",
+            markdown_text="> # Heading",
+        )
+
+    docs.batchUpdate.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_populate_tab_rejects_missing_tab_before_batch_update():
     """Missing tabs should produce a user-facing error before request generation."""
     service = Mock()
