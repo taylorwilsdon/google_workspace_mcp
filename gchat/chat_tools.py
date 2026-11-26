@@ -7,7 +7,6 @@ This module provides MCP tools for interacting with Google Chat API.
 import base64
 import logging
 import asyncio
-import re
 import ssl
 from typing import List, Optional
 
@@ -26,9 +25,12 @@ from gchat.chat_helpers import (
     _execute_chat_request,
     _extract_rich_links,
     _format_search_message_ids,
+    _format_space_members,
     _name_spaces,
     _none_if_blank,
     _none_if_null_sentinel,
+    _normalize_message_resource_name,
+    _normalize_space_resource_name,
     _resolve_sender,
 )
 
@@ -69,13 +71,28 @@ async def list_spaces(
     user_google_email: str,
     page_size: int = 100,
     space_type: str = "all",  # "all", "room", "dm"
+    space_id: Optional[str] = None,
 ) -> str:
     """
-    Lists Google Chat spaces (rooms and direct messages) accessible to the user.
+    Lists Google Chat spaces (rooms and direct messages) accessible to the user,
+    or the members of one space.
+
+    Args:
+        space_id: Space (spaces/X or a bare ID X) whose members to list instead
+            of spaces, up to page_size: people, apps and groups with role and
+            invite state.
 
     Returns:
-        str: A formatted list of Google Chat spaces accessible to the user.
+        str: A formatted list of Google Chat spaces, or of the members of space_id.
     """
+    space_id = _none_if_blank(space_id)
+    if space_id is not None:
+        space_id = _normalize_space_resource_name(space_id)
+        logger.info(f"[list_spaces] Members of {space_id}")
+        return await _format_space_members(
+            chat_service, people_service, space_id, max(page_size, 1)
+        )
+
     logger.info(f"[list_spaces] Email={user_google_email}, Type={space_type}")
 
     # Build filter based on space_type
@@ -156,6 +173,7 @@ async def get_messages(
         str: Formatted messages from the specified space. When more messages
             remain, a "Next page token" line is appended.
     """
+    space_id = _normalize_space_resource_name(space_id)
     logger.info(f"[get_messages] Space ID: '{space_id}' for user '{user_google_email}'")
 
     # Get space info first
@@ -291,6 +309,7 @@ async def send_message(
     Returns:
         str: Confirmation message with the sent or updated message details.
     """
+    space_id = _normalize_space_resource_name(space_id)
     logger.info(f"[send_message] Email: '{user_google_email}', Space: '{space_id}'")
 
     thread_key = _none_if_blank(thread_key)
@@ -303,13 +322,8 @@ async def send_message(
                 "message_name cannot be combined with thread_name or thread_key: "
                 "editing a message cannot move it to another thread."
             )
-        message_match = re.fullmatch(r"spaces/([^/]+)/messages/[^/]+", message_name)
-        if message_match is None:
-            raise UserInputError(
-                f"Invalid message_name '{message_name}'. "
-                "Expected the full resource name, e.g. spaces/X/messages/Y."
-            )
-        if f"spaces/{message_match.group(1)}" != space_id:
+        message_name = _normalize_message_resource_name(message_name, "message_name")
+        if message_name.split("/messages/", 1)[0] != space_id:
             raise UserInputError(
                 f"message_name '{message_name}' does not belong to space '{space_id}'. "
                 "Expected the full resource name, e.g. spaces/X/messages/Y."
@@ -432,6 +446,7 @@ async def search_messages(
 
     # If specific space provided, search within that space
     if space_id:
+        space_id = _normalize_space_resource_name(space_id)
         list_params = {
             "parent": space_id,
             "pageSize": page_size,
@@ -614,6 +629,7 @@ async def create_reaction(
     Returns:
         str: Confirmation message.
     """
+    message_id = _normalize_message_resource_name(message_id)
     logger.info(f"[create_reaction] Message: '{message_id}', Emoji: '{emoji_unicode}'")
 
     reaction = await asyncio.to_thread(
@@ -661,6 +677,7 @@ async def download_chat_attachment(
     Returns:
         str: Attachment metadata with either a local file path or download URL.
     """
+    message_id = _normalize_message_resource_name(message_id)
     logger.info(
         f"[download_chat_attachment] Message: '{message_id}', Index: {attachment_index}"
     )

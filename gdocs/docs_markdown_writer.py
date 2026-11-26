@@ -137,22 +137,23 @@ def _emit_requests(tokens, requests, tab_id, start_index):
                         requests.extend(inline_styles)
                 k += 1
             list_end = cursor[0]
-            requests.append(
-                _build_paragraph_style(list_start, list_end, _NORMAL_TEXT, tab_id)
-            )
-            # One createParagraphBullets covering the full list range
-            rng = {"startIndex": list_start, "endIndex": list_end}
-            if tab_id:
-                rng["tabId"] = tab_id
-            requests.append(
-                {
-                    "createParagraphBullets": {
-                        "range": rng,
-                        "bulletPreset": preset,
+            if list_end > list_start:
+                requests.append(
+                    _build_paragraph_style(list_start, list_end, _NORMAL_TEXT, tab_id)
+                )
+                # One createParagraphBullets covering the full list range
+                rng = {"startIndex": list_start, "endIndex": list_end}
+                if tab_id:
+                    rng["tabId"] = tab_id
+                requests.append(
+                    {
+                        "createParagraphBullets": {
+                            "range": rng,
+                            "bulletPreset": preset,
+                        }
                     }
-                }
-            )
-            _append_block_gap(requests, list_start, list_end, tab_id)
+                )
+                _append_block_gap(requests, list_start, list_end, tab_id)
             i = j + 1
             continue
 
@@ -218,19 +219,20 @@ def _emit_requests(tokens, requests, tab_id, start_index):
                     continue
                 k += 1
             quote_end = cursor[0]
-            # One request: Docs applies namedStyleType before indentStart.
-            requests.append(
-                _build_paragraph_style(
-                    quote_start,
-                    quote_end,
-                    {
-                        **_NORMAL_TEXT,
-                        "indentStart": {"magnitude": 36, "unit": "PT"},
-                    },
-                    tab_id,
+            if quote_end > quote_start:
+                # One request: Docs applies namedStyleType before indentStart.
+                requests.append(
+                    _build_paragraph_style(
+                        quote_start,
+                        quote_end,
+                        {
+                            **_NORMAL_TEXT,
+                            "indentStart": {"magnitude": 36, "unit": "PT"},
+                        },
+                        tab_id,
+                    )
                 )
-            )
-            _append_block_gap(requests, quote_start, quote_end, tab_id)
+                _append_block_gap(requests, quote_start, quote_end, tab_id)
             i = j + 1
             continue
 

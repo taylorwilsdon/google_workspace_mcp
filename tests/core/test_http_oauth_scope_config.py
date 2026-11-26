@@ -464,7 +464,9 @@ def test_configure_server_for_http_passes_token_validation_settings(monkeypatch)
     assert captured["token_validation_cache_ttl"] == 45
 
 
-def test_configure_server_for_http_passes_consent_mode_to_google_provider(monkeypatch):
+def test_configure_server_for_http_passes_consent_and_prompt_to_google_provider(
+    monkeypatch,
+):
     captured = {}
 
     class FakeGoogleProvider:
@@ -475,6 +477,9 @@ def test_configure_server_for_http_passes_consent_mode_to_google_provider(monkey
             self._cimd_manager = SimpleNamespace(default_scope="")
 
     monkeypatch.setenv("WORKSPACE_MCP_OAUTH_PROXY_REQUIRE_CONSENT", "remember")
+    monkeypatch.setenv(
+        "WORKSPACE_MCP_OAUTH_PROXY_GOOGLE_PROMPT", "select_account consent"
+    )
     monkeypatch.setattr(server_module, "get_transport_mode", lambda: "streamable-http")
     monkeypatch.setattr(server_module, "WorkspaceGoogleProvider", FakeGoogleProvider)
     monkeypatch.setattr(server_module, "set_auth_provider", lambda provider: None)
@@ -503,6 +508,7 @@ def test_configure_server_for_http_passes_consent_mode_to_google_provider(monkey
     server_module.configure_server_for_http()
 
     assert captured["require_authorization_consent"] == "remember"
+    assert captured["extra_authorize_params"] == {"prompt": "select_account consent"}
 
 
 def _configure_standard_oauth21(monkeypatch):

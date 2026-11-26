@@ -1,5 +1,6 @@
 """Tests for the heading-addressed mode of modify_doc_text."""
 
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
@@ -215,6 +216,58 @@ def _batch_body(service):
 
 
 class TestModifyDocTextHeading:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("revision", ["rev-1", None])
+    @pytest.mark.parametrize(
+        "kwargs,request_type,operation",
+        [
+            ({"text": "New **body**"}, "deleteContentRange", "Replaced"),
+            (
+                {"text": "More", "end_of_segment": True},
+                "insertText",
+                "Appended to",
+            ),
+            ({"bold": True}, "updateTextStyle", "Applied formatting to"),
+        ],
+    )
+    async def test_suggestion_mode_preserves_heading_operation_and_revision_guard(
+        self,
+        revision: str | None,
+        kwargs: dict[str, Any],
+        request_type: str,
+        operation: str,
+    ) -> None:
+        service = _service(_doc(revision=revision))
+
+        result = await _call(service, heading="Status", write_mode="SUGGEST", **kwargs)
+
+        body = _batch_body(service)
+        expected_control = {"writeMode": "SUGGEST"}
+        if revision:
+            expected_control["requiredRevisionId"] = revision
+        assert body["writeControl"] == expected_control
+        assert request_type in body["requests"][0]
+        assert result.startswith(f"Suggested: {operation}")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "kwargs",
+        [{"text": "New"}, {"text": "More", "end_of_segment": True}, {"bold": True}],
+    )
+    async def test_failed_heading_suggestion_save_reports_error(
+        self, kwargs: dict[str, Any]
+    ) -> None:
+        service = _service(_doc())
+        service.documents.return_value.batchUpdate.return_value.execute.return_value = {
+            "commentUpdateState": "ALL_FAILED_UNKNOWN_REASON"
+        }
+
+        result = await _call(service, heading="Status", write_mode="SUGGEST", **kwargs)
+
+        assert result.startswith("Error:")
+        assert "did not save these changes as suggestions" in result
+        assert "version history" in result
+
     @pytest.mark.asyncio
     async def test_replace_section_deletes_body_then_inserts_markdown(self):
         service = _service(_doc())

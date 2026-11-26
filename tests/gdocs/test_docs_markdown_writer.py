@@ -2,7 +2,10 @@
 
 import pathlib
 
-from gdocs.docs_markdown_writer import markdown_to_docs_requests
+from gdocs.docs_markdown_writer import (
+    build_markdown_insert_requests,
+    markdown_to_docs_requests,
+)
 
 FIXTURE_DIR = pathlib.Path(__file__).parent / "fixtures"
 
@@ -636,3 +639,45 @@ def test_blockquote_sets_named_style_and_indent_in_one_request():
     )
     assert quote_style["paragraphStyle"]["namedStyleType"] == "NORMAL_TEXT"
     assert quote_style["fields"] == "namedStyleType,indentStart"
+
+
+def test_empty_lists_and_blockquotes_emit_no_zero_length_ranges() -> None:
+    """Empty lists/blockquotes must not emit invalid startIndex == endIndex ranges."""
+    for md in (
+        ">",
+        "> # Heading",
+        "> ```\n> code\n> ```",
+        "-",
+        "1.",
+        "- ```\n  code\n  ```",
+    ):
+        assert markdown_to_docs_requests(md) == [], md
+
+
+def test_mixed_markdown_emits_only_positive_ranges() -> None:
+    """Every emitted range must satisfy startIndex < endIndex."""
+    md = "Before\n\n>\n\n-\n\n1.\n\nAfter"
+    requests = markdown_to_docs_requests(md)
+    texts = [r["insertText"]["text"] for r in requests if "insertText" in r]
+    assert texts == ["Before\n", "After\n"]
+    for req in requests:
+        for key in (
+            "updateParagraphStyle",
+            "createParagraphBullets",
+            "updateTextStyle",
+        ):
+            if key in req:
+                rng = req[key]["range"]
+                assert rng["startIndex"] < rng["endIndex"], req
+
+
+def test_build_markdown_insert_requests_treats_empty_block_as_noop() -> None:
+    """No-op markdown must not emit split newlines or zero-length style ranges."""
+    assert (
+        build_markdown_insert_requests(">", 10, split_paragraph=True, drop_bullet=True)
+        == []
+    )
+    assert (
+        build_markdown_insert_requests("-", 10, split_paragraph=True, drop_bullet=True)
+        == []
+    )

@@ -122,7 +122,7 @@ For parameters: [references/drive.md](references/drive.md)
 | List calendars | `list_calendars` |
 | Create secondary calendar / share calendar, list, update or remove access | `manage_calendar` |
 | Get events | `get_events` |
-| Create/update/delete event | `manage_event` |
+| Create/update/delete/move event | `manage_event` |
 | Out of office (auto-decline) | `manage_out_of_office` |
 | Focus time (auto-decline, DND) | `manage_focus_time` |
 | Check availability | `query_freebusy` |
@@ -164,6 +164,7 @@ For parameters: [references/docs.md](references/docs.md)
 | Write/append/clear values | `modify_sheet_values` |
 | Insert smart chips | `modify_sheet_values` (`chips`) |
 | Copy/paste a range with formulas and formatting | `modify_sheet_values` (`source_range`) |
+| Load rows from a local CSV/TSV file into an existing sheet | `modify_sheet_values` (`file_path`) |
 | Format cells | `format_sheet_range` |
 | Conditional formatting | `manage_conditional_formatting` |
 | Get spreadsheet info | `get_spreadsheet_info` |
@@ -184,12 +185,13 @@ For parameters: [references/sheets.md](references/sheets.md)
 
 | Task | Tool |
 |------|------|
-| Get presentation | `get_presentation` |
-| Get specific slide | `get_page` |
+| List slides and layouts | `get_presentation` (`action="deck"`) |
+| Read a slide's elements and text | `get_presentation` (`action="page"`) |
+| A slide's geometry and styles as JSON | `get_presentation` (`action="markup"`) |
 | Look at a slide (render to image) | `render_page_to_image` |
 | Create presentation | `create_presentation` |
 | Batch update | `batch_update_presentation` |
-| Speaker notes | `get_presentation` (`include_speaker_notes`) + `batch_update_presentation` |
+| Speaker notes | `get_presentation` (`action="page"`) + `batch_update_presentation` |
 | Comments | `manage_presentation_comment` / `list_presentation_comments` |
 
 For parameters: [references/slides.md](references/slides.md)
@@ -240,6 +242,7 @@ For parameters: [references/contacts.md](references/contacts.md)
 | Task | Tool |
 |------|------|
 | List spaces | `list_spaces` |
+| List a space's members | `list_spaces` (`space_id`) |
 | Get messages | `get_messages` |
 | Search messages | `search_messages` |
 | Send message | `send_message` |
