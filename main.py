@@ -2,6 +2,7 @@ import io
 import argparse
 import asyncio
 import errno
+import ipaddress
 import json
 import logging
 import os
@@ -215,6 +216,9 @@ def add_startup_notice(message: str) -> None:
     logger.debug(message)
 
 
+_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+
 def resolve_bind_host_for_transport(transport: str) -> str:
     """Choose a safe default bind host for the selected transport/auth mode."""
     configured_host = os.getenv("WORKSPACE_MCP_HOST")
@@ -227,7 +231,7 @@ def resolve_bind_host_for_transport(transport: str) -> str:
         return host
 
     if configured_host:
-        if configured_host not in {"localhost", "127.0.0.1", "::1"}:
+        if configured_host not in _LOOPBACK_HOSTS:
             add_startup_notice(
                 f"Legacy streamable-http mode has no MCP-level auth provider and is "
                 f"bound to {configured_host} because WORKSPACE_MCP_HOST was explicitly "
@@ -409,6 +413,16 @@ def _systemd_activation_sockets() -> list[socket.socket] | None:
     for sock in sockets:
         sock.set_inheritable(False)
     return sockets
+
+
+def _non_loopback_addresses(sockets: list[socket.socket]) -> list[str]:
+    """Return the non-loopback IP addresses the sockets listen on."""
+    addresses = [
+        sock.getsockname()[0]
+        for sock in sockets
+        if sock.family in (socket.AF_INET, socket.AF_INET6)
+    ]
+    return [a for a in addresses if not ipaddress.ip_address(a).is_loopback]
 
 
 def configure_safe_logging():
@@ -1129,6 +1143,18 @@ def main():
                         ui,
                         f"Cannot start HTTP server on {_format_address(host, port)}",
                         conflict,
+                    )
+            elif (
+                host in _LOOPBACK_HOSTS and not get_oauth_config().is_oauth21_enabled()
+            ):
+                exposed = _non_loopback_addresses(activation_sockets)
+                if exposed:
+                    fatal(
+                        ui,
+                        f"Refusing socket activation on {', '.join(exposed)}",
+                        "Legacy streamable-http mode has no MCP-level auth provider. "
+                        "Use ListenStream=127.0.0.1:<port>, set WORKSPACE_MCP_HOST "
+                        "explicitly for a trusted network, or set MCP_ENABLE_OAUTH21=true.",
                     )
 
             server.run(
