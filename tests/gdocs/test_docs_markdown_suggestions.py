@@ -3,14 +3,17 @@
 import os
 import re
 import sys
-from copy import deepcopy
 
 import pytest
 from markdown_it import MarkdownIt
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-from gdocs.docs_markdown import SUGGESTION_LEGEND, convert_doc_to_markdown
+from gdocs.docs_markdown import (
+    SUGGESTION_LEGEND,
+    convert_doc_to_markdown,
+    format_comments_inline,
+)
 
 
 def _run(text, style=None, **extra):
@@ -44,117 +47,6 @@ SUGGESTED_DOC = _doc(
         _run(".\n"),
     ]
 )
-
-
-class TestDatePropertySuggestions:
-    @pytest.mark.parametrize(
-        "proposed,state,expected",
-        [
-            (
-                {"timestamp": "2026-10-21T00:30:00Z"},
-                {"timestampSuggested": True},
-                "2026-10-21",
-            ),
-            (
-                {
-                    "timestamp": "2026-10-21T00:30:00Z",
-                    "displayText": "Oct 21, 2026",
-                },
-                {"timestampSuggested": True},
-                "Oct 21, 2026",
-            ),
-            (
-                {"timeZoneId": "America/Bogota"},
-                {"timeZoneIdSuggested": True},
-                "2026-10-19",
-            ),
-            (
-                {"timeFormat": "TIME_FORMAT_HOUR_MINUTE"},
-                {"timeFormatSuggested": True},
-                "2026-10-20 00:30",
-            ),
-            (
-                {"timeFormat": "TIME_FORMAT_HOUR_MINUTE_TIMEZONE"},
-                {"timeFormatSuggested": True},
-                "2026-10-20 00:30 UTC",
-            ),
-            (
-                {"timestamp": "2099-01-01T00:00:00Z"},
-                {"timestampSuggested": False},
-                "Oct 20, 2026",
-            ),
-            (
-                {"timestamp": "2099-01-01T00:00:00Z", "displayText": "Wrong date"},
-                {},
-                "Oct 20, 2026",
-            ),
-            (
-                {"locale": "es", "timestamp": "2099-01-01T00:00:00Z"},
-                {"localeSuggested": True, "timestampSuggested": False},
-                "2026-10-20",
-            ),
-        ],
-    )
-    def test_date_property_suggestions_use_flagged_values(
-        self, proposed, state, expected
-    ):
-        doc = _doc(
-            [
-                {
-                    "dateElement": {
-                        "dateElementProperties": {
-                            "displayText": "Oct 20, 2026",
-                            "timestamp": "2026-10-20T00:30:00Z",
-                        },
-                        "suggestedDateElementPropertiesChanges": {
-                            "s": {
-                                "dateElementProperties": proposed,
-                                "dateElementPropertiesSuggestionState": state,
-                            }
-                        },
-                    }
-                }
-            ]
-        )
-        original = deepcopy(doc)
-
-        assert convert_doc_to_markdown(doc) == SUGGESTION_LEGEND + expected + "\n"
-        assert doc == original
-
-    def test_later_suggestion_does_not_reuse_earlier_display_text(self):
-        doc = _doc(
-            [
-                {
-                    "dateElement": {
-                        "dateElementProperties": {
-                            "timestamp": "2026-10-20T00:00:00Z",
-                            "displayText": "Oct 20, 2026",
-                        },
-                        "suggestedDateElementPropertiesChanges": {
-                            "first": {
-                                "dateElementProperties": {
-                                    "timestamp": "2026-10-21T00:00:00Z",
-                                    "displayText": "Oct 21, 2026",
-                                },
-                                "dateElementPropertiesSuggestionState": {
-                                    "timestampSuggested": True
-                                },
-                            },
-                            "second": {
-                                "dateElementProperties": {
-                                    "timestamp": "2026-10-22T00:00:00Z"
-                                },
-                                "dateElementPropertiesSuggestionState": {
-                                    "timestampSuggested": True
-                                },
-                            },
-                        },
-                    }
-                }
-            ]
-        )
-
-        assert convert_doc_to_markdown(doc) == SUGGESTION_LEGEND + "2026-10-22\n"
 
 
 class TestLinkedSuggestionBoundaries:
@@ -317,6 +209,30 @@ class TestSuggestionMarkers:
         assert "{++" not in body
         assert body.strip() == "End of line"
 
+    @pytest.mark.parametrize("unrendered", ["headers", "footers", "positionedObjects"])
+    def test_no_legend_for_suggestions_outside_rendered_content(
+        self, unrendered: str
+    ) -> None:
+        doc = _doc([_run("Plain text.\n")])
+        doc[unrendered] = {"x": {"content": SUGGESTED_DOC["body"]["content"]}}
+
+        assert convert_doc_to_markdown(doc) == "Plain text.\n"
+
+    def test_inline_comment_anchors_skip_the_legend(self) -> None:
+        doc = _doc(
+            [
+                _run("Keep the "),
+                _run("old ", suggestedDeletionIds=["s"]),
+                _run("deleted text here.\n"),
+            ]
+        )
+        comment = {"author": "Ana", "content": "Why?", "anchor_text": "deleted text"}
+
+        markdown = format_comments_inline(convert_doc_to_markdown(doc), [comment])
+
+        assert markdown.startswith(SUGGESTION_LEGEND)
+        assert "{--old --}deleted text[^c1] here." in markdown
+
     def test_legend_is_found_inside_tabs(self):
         doc = {
             "title": "Tabbed",
@@ -415,7 +331,10 @@ class TestSuggestedTextStyle:
                     suggestedTextStyleChanges={
                         "suggest.4": {
                             "textStyle": {"bold": True, "italic": True},
-                            "textStyleSuggestionState": {"italicSuggested": True},
+                            "textStyleSuggestionState": {
+                                "boldSuggested": False,
+                                "italicSuggested": True,
+                            },
                         }
                     },
                 ),

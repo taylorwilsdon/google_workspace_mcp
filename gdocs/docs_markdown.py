@@ -20,7 +20,6 @@ import re
 from datetime import datetime
 from typing import Any
 from urllib.parse import quote
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from gdocs.docs_links import resolve_link_target
 
@@ -40,21 +39,16 @@ HEADING_MAP = {
 }
 
 
-# Pending suggestions, as the Docs API returns them in the SUGGESTIONS_INLINE
-# view: the old and new text sit side by side, each run labelled with the
-# suggestion it belongs to. Rendered as CriticMarkup so a reader can tell them
-# apart; the legend precedes the document whenever any appear.
 SUGGESTION_INSERT_MARKERS = ("{++", "++}")
 SUGGESTION_DELETE_MARKERS = ("{--", "--}")
 SUGGESTION_LEGEND = (
     "> Pending suggestions are shown inline: {++inserted text++}, "
-    "{--deleted text--}. Suggested formatting is shown as if accepted.\n\n"
+    "{--deleted text--}. Suggested text formatting is shown as if accepted.\n\n"
 )
 _SUGGESTION_KEYS = (
     "suggestedInsertionIds",
     "suggestedDeletionIds",
     "suggestedTextStyleChanges",
-    "suggestedDateElementPropertiesChanges",
 )
 
 
@@ -82,17 +76,18 @@ def convert_doc_to_markdown(doc: dict[str, Any], include_colors: bool = False) -
         # Legacy: no tabs, use top-level body/lists/footnotes/inlineObjects
         markdown = _convert_body_to_markdown(doc, include_colors=include_colors)
 
-    if _has_pending_suggestions(doc):
+    rendered: list[tuple[str, dict[str, Any]]] = []
+    _collect_tabs(tabs, rendered)
+    if any(
+        _has_pending_suggestions([tab_doc.get("body"), tab_doc.get("footnotes")])
+        for _, tab_doc in rendered or [("", doc)]
+    ):
         return SUGGESTION_LEGEND + markdown
     return markdown
 
 
 def _has_pending_suggestions(node: Any) -> bool:
-    """Whether any element in the response carries a pending suggestion.
-
-    Covers inserted and deleted elements as well as style-only suggestions,
-    which the Docs API exposes without insertion or deletion ids.
-    """
+    """Whether any element under ``node`` carries a pending suggestion."""
     if isinstance(node, dict):
         if any(node.get(key) for key in _SUGGESTION_KEYS):
             return True
@@ -259,12 +254,9 @@ def _convert_paragraph_text(
     color_visible = False
     for position, elem in enumerate(elements):
         if "textRun" in elem:
-            link = _effective_text_run_link(elements, position)
-            suggestion_ids = _text_run_suggestion_ids(elements, position)
-            if (
-                _effective_text_run_link(elements, position - 1) != link
-                or _text_run_suggestion_ids(elements, position - 1) != suggestion_ids
-            ):
+            group = _link_group(elements, position)
+            link = group[0]
+            if _link_group(elements, position - 1) != group:
                 link_start = len(parts)
             parts.append(_convert_text_run(elem["textRun"], skip_strikethrough))
             color = _text_run_color(elements, position) if include_colors else None
@@ -277,13 +269,9 @@ def _convert_paragraph_text(
                 and color_visible
                 and _text_run_color(elements, position + 1) != color
             )
-            # Build the whole link before marking it, keeping ordinary text
-            # and different suggestions in separate links.
-            if link and (
-                color_ends
-                or _effective_text_run_link(elements, position + 1) != link
-                or _text_run_suggestion_ids(elements, position + 1) != suggestion_ids
-            ):
+            # Link a label split across styled runs once, after its final run,
+            # at a suggestion boundary or before a color note.
+            if link and (color_ends or _link_group(elements, position + 1) != group):
                 parts[link_start:] = [
                     _mark_suggested(
                         _apply_link("".join(parts[link_start:]), link), elem["textRun"]
@@ -338,7 +326,6 @@ def _convert_paragraph_text(
             part = _convert_equation(carrier)
         else:
             continue
-        # Suggestion IDs belong to the typed payload, as they do for textRun.
         parts.append(_mark_suggested(part, carrier))
     return "".join(parts).strip()
 
@@ -354,30 +341,27 @@ def _mark_suggested(text: str, carrier: dict[str, Any]) -> str:
     return text
 
 
-def _effective_text_run_link(
+def _link_group(
     elements: list[dict[str, Any]], index: int
-) -> dict[str, Any] | None:
-    """Link of the text run at ``index`` with pending link suggestions applied.
+) -> tuple[dict[str, Any] | None, tuple[str, ...], tuple[str, ...]] | None:
+    """Effective link and suggestion ids of the text run at ``index``.
 
-    Mirrors docs_links.text_run_link, which reads the base style only; grouping
-    on the effective link keeps a suggested link from being dropped or rendered
-    with its old target.
+    Neighboring runs with an equal value render as one link.
     """
-    if 0 <= index < len(elements):
-        text_run = elements[index].get("textRun")
-        if text_run is not None:
-            return _effective_text_style(text_run).get("link")
+    if 0 <= index < len(elements) and "textRun" in elements[index]:
+        run = elements[index]["textRun"]
+        return (
+            _effective_text_style(run).get("link"),
+            tuple(run.get("suggestedInsertionIds", ())),
+            tuple(run.get("suggestedDeletionIds", ())),
+        )
     return None
 
 
 def _convert_text_run(
     text_run: dict[str, Any], skip_strikethrough: bool = False
 ) -> str:
-    """Convert a single text run to markdown.
-
-    Suggested style changes are applied as if accepted. Paragraph conversion
-    adds insertion/deletion markers after assembling any complete links.
-    """
+    """Convert a single text run to markdown, suggested style changes applied."""
     content = text_run.get("content", "")
     style = _effective_text_style(text_run)
 
@@ -391,25 +375,10 @@ def _convert_text_run(
     return _apply_text_style(text, style, skip_strikethrough)
 
 
-def _text_run_suggestion_ids(
-    elements: list[dict[str, Any]], index: int
-) -> tuple[tuple[str, ...], tuple[str, ...]] | None:
-    """Identify suggestion boundaries while grouping a linked label's runs."""
-    if 0 <= index < len(elements) and "textRun" in elements[index]:
-        run = elements[index]["textRun"]
-        return (
-            tuple(run.get("suggestedInsertionIds", [])),
-            tuple(run.get("suggestedDeletionIds", [])),
-        )
-    return None
-
-
 def _effective_text_style(text_run: dict[str, Any]) -> dict[str, Any]:
     """The run's text style with pending style suggestions applied.
 
-    suggestedTextStyleChanges maps a suggestion id to the proposed textStyle and
-    a textStyleSuggestionState whose <field>Suggested flags say which fields the
-    suggestion changes; only those fields are taken from the proposed style.
+    Only the fields a suggestion flags as ``<field>Suggested`` are taken from it.
     """
     style = dict(text_run.get("textStyle", {}))
     for change in text_run.get("suggestedTextStyleChanges", {}).values():
@@ -454,27 +423,10 @@ def _convert_rich_link_chip(rich_link: dict[str, Any]) -> str:
 def _convert_date_chip(date_elem: dict[str, Any]) -> str:
     """Convert a date smart chip (dateElement) to markdown.
 
-    Apply flagged property suggestions before using Google's displayText.
-    A changed date without fresh displayText uses an ISO date/time fallback;
-    this fallback does not reproduce locale-specific date formatting.
+    Date elements contain dateElementProperties with displayText (the
+    locale-formatted string) and a timestamp.
     """
-    props = dict(date_elem.get("dateElementProperties", {}))
-    for change in date_elem.get("suggestedDateElementPropertiesChanges", {}).values():
-        suggested = change.get("dateElementProperties", {})
-        state = change.get("dateElementPropertiesSuggestionState", {})
-        changed = False
-        for field in ("timestamp", "timeZoneId", "locale", "dateFormat", "timeFormat"):
-            if state.get(f"{field}Suggested"):
-                changed = True
-                if field in suggested:
-                    props[field] = suggested[field]
-                else:
-                    props.pop(field, None)
-        if changed:
-            # The base displayText was derived from the old properties.
-            props.pop("displayText", None)
-            if suggested.get("displayText"):
-                props["displayText"] = suggested["displayText"]
+    props = date_elem.get("dateElementProperties", {})
     display_text = props.get("displayText", "")
     if display_text:
         return display_text
@@ -483,19 +435,8 @@ def _convert_date_chip(date_elem: dict[str, Any]) -> str:
     if timestamp:
         try:
             dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-            dt = dt.replace(tzinfo=dt.tzinfo or ZoneInfo("UTC"))
-            dt = dt.astimezone(ZoneInfo(props.get("timeZoneId") or "UTC"))
-            text = dt.strftime("%Y-%m-%d")
-            time_format = props.get("timeFormat")
-            if time_format in (
-                "TIME_FORMAT_HOUR_MINUTE",
-                "TIME_FORMAT_HOUR_MINUTE_TIMEZONE",
-            ):
-                text += dt.strftime(" %H:%M")
-                if time_format == "TIME_FORMAT_HOUR_MINUTE_TIMEZONE":
-                    text += f" {dt.tzname()}"
-            return text
-        except (ValueError, TypeError, ZoneInfoNotFoundError):
+            return dt.strftime("%Y-%m-%d")
+        except (ValueError, TypeError):
             return timestamp
     return ""
 
@@ -793,6 +734,8 @@ def format_comments_inline(markdown: str, comments: list[dict[str, Any]]) -> str
     if not comments:
         return markdown
 
+    legend = SUGGESTION_LEGEND if markdown.startswith(SUGGESTION_LEGEND) else ""
+    markdown = markdown[len(legend) :]
     footnotes: list[str] = []
     unmatched: list[dict[str, Any]] = []
 
@@ -814,7 +757,7 @@ def format_comments_inline(markdown: str, comments: list[dict[str, Any]]) -> str
         if appendix.strip():
             markdown = markdown.rstrip("\n") + "\n\n" + appendix
 
-    return markdown
+    return legend + markdown
 
 
 def _format_footnote(num: int, comment: dict[str, Any]) -> str:
