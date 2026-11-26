@@ -376,3 +376,12 @@ def test_local_files_disabled_hides_file_path_from_shipped_schema() -> None:
 def test_local_files_enabled_advertises_file_path() -> None:
     """Verify that enabled local file access exposes the file_path schema parameter."""
     assert "file_path" in _shipped({})["properties"]
+
+
+@pytest.mark.asyncio
+async def test_empty_photo_inputs_count_as_unset(people: MagicMock) -> None:
+    """Treat empty-string photo inputs as omitted."""
+    await _call(people, "delete_photo", photo_base64="", file_path="")
+    people.deleteContactPhoto.assert_called_once()
+    await _call(people, photo_base64=PHOTO_BASE64, file_path="")
+    people.updateContactPhoto.assert_called_once()

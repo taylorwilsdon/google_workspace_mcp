@@ -831,6 +831,8 @@ async def manage_contact(
             f"Invalid action '{action}'. Must be 'create', 'update', 'delete', 'set_photo', or 'delete_photo'."
         )
 
+    photo_base64 = photo_base64 or None
+    file_path = file_path or None
     if action != "set_photo" and (photo_base64 is not None or file_path is not None):
         raise UserInputError("Photo inputs are only supported with action='set_photo'.")
 
