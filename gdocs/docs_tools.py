@@ -3207,6 +3207,11 @@ async def manage_doc_tab(
     tab_end = last_element.get("endIndex", 1)
 
     if replace_existing:
+        markdown_requests = markdown_to_docs_requests(markdown_text, tab_id=tab_id)
+        if markdown_text.strip() and not markdown_requests:
+            raise UserInputError(
+                "'markdown_text' rendered to no content; the tab was left unchanged."
+            )
         # tab_end includes the segment-terminating newline that Google Docs
         # refuses to delete, so we delete up to tab_end - 1. Empty tabs
         # (tab_end <= 2) have nothing to clear.
@@ -3222,7 +3227,7 @@ async def manage_doc_tab(
                     }
                 }
             )
-        all_requests.extend(markdown_to_docs_requests(markdown_text, tab_id=tab_id))
+        all_requests.extend(markdown_requests)
     else:
         # Append after existing content instead of prepending at index 1.
         insert_at = tab_end - 1 if tab_end > 2 else 1
