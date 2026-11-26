@@ -117,7 +117,7 @@ Send an email. Supports new messages, replies, forwards, HTML, attachments, CC/B
 | in_reply_to | string | no | | RFC Message-ID of a specific reply target; omit to reply to the latest eligible message |
 | references | string | no | | Optional Message-ID ancestry chain; normally derived from thread_id |
 | reply_all | boolean | no | false | Derive recipients from the thread: To = sender being replied to, Cc = other participants (minus you and from_email). Requires thread_id; explicit to/cc win |
-| quote_original | boolean | no | false | Include the message being replied to as a quoted original (requires thread_id) |
+| quote_original | boolean | no | false | Quote the message being replied to, as Gmail web does (requires thread_id); if the quote cannot be built the result says why |
 | include_signature | boolean | no | true | Append Gmail signature if available |
 | attachments | array | no | | See attachment format below |
 | priority | string | no | normal | `high` or `low` adds Importance / X-Priority / Priority headers that Outlook, Apple Mail and Thunderbird display; Gmail does not show them |
@@ -149,7 +149,7 @@ Create a draft. Same capabilities as send (including forwards and reply_all).
 | attachments | array | no | | Same format as send |
 | include_signature | boolean | no | true | Append Gmail signature if available |
 | reply_all | boolean | no | false | Derive recipients from the thread: To = sender being replied to, Cc = other participants (minus you and from_email). Requires thread_id; explicit to/cc win |
-| quote_original | boolean | no | false | Include original message as quoted reply (requires thread_id) |
+| quote_original | boolean | no | false | Quote the message being replied to, as Gmail web does (requires thread_id); if the quote cannot be built the result says why |
 | priority | string | no | normal | `high` or `low` adds Importance / X-Priority / Priority headers that Outlook, Apple Mail and Thunderbird display; Gmail does not show them |
 
 Operational Gmail settings errors such as rate limits abort draft creation instead of silently falling back to a potentially unintended sender.

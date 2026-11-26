@@ -1441,16 +1441,27 @@ def _fill_missing_body(plain: str, html_body: str) -> tuple[str, str]:
 def _web_quote_attribution(
     target: Mapping[str, Any],
 ) -> Optional[tuple[str, str, datetime]]:
-    """Parse the (name, email, date) Gmail's reply attribution needs from ``target``.
-
-    Returns None when the parent lacks a usable sender address or date, in
-    which case no Gmail-web quote can be built.
-    """
+    """Return the (name, email, date) of Gmail's reply attribution, or None if unparseable."""
     parent_name, parent_email = parseaddr(target.get("from") or "")
     parent_dt = _parse_message_date(target.get("date") or "")
     if "@" not in parent_email or parent_dt is None:
         return None
     return parent_name.strip() or parent_email, parent_email, parent_dt
+
+
+def _resolve_reply_quote(
+    target: Optional[Mapping[str, Any]], web_path: bool
+) -> tuple[Optional[Mapping[str, Any]], str]:
+    """Return the parent to quote, or None and a tool-result note saying why not."""
+    if target is None:
+        reason = "the message being replied to could not be loaded from the thread"
+    elif target.get("body_error"):
+        reason = f"its body could not be fetched ({target['body_error']})"
+    elif web_path and _web_quote_attribution(target) is None:
+        reason = "it has no parseable From address or Date header"
+    else:
+        return target, ""
+    return None, f" Note: the original message was not quoted because {reason}."
 
 
 def _build_web_reply_bodies(
