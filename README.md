@@ -165,6 +165,43 @@ Each page lists every tool with its tier, parameters, required scopes, and examp
 
 You'll need an OAuth client from [Google Cloud Console](https://console.cloud.google.com/) in a project with the Google APIs enabled for the services you plan to use. The docs have [one-click enable links for every API](https://workspacemcp.com/docs?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=quickstart-enable-apis#authentication) plus a single `gcloud services enable` command that covers them all, and the [quick start guide](https://workspacemcp.com/quick-start?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=quickstart-inline) walks through the whole setup in about five minutes.
 
+<details>
+<summary><b>Let your coding agent do the setup</b> - paste this prompt into Claude Code or any agent with shell access</summary>
+
+<br>
+
+The agent runs every `gcloud` step and checks its own work. Google has no CLI or API for the consent screen or a standard OAuth client, so it hands you two short console steps and gives you the exact links. The prompt tells it never to read or repeat your client secret.
+
+```text
+Set up the Google Workspace MCP server (https://github.com/taylorwilsdon/google_workspace_mcp) on this machine. Use the gcloud CLI for everything it supports, check each step, and stop and ask me when something fails or needs a decision.
+
+Ask me first, all at once:
+1. A new Google Cloud project or an existing one (list mine with `gcloud projects list`).
+2. Which services: gmail, drive, calendar, docs, sheets, slides, forms, tasks, contacts, chat, search, appscript (default: gmail drive calendar docs sheets).
+3. Which tool tier (core, extended, complete) and whether to run read-only.
+4. Which MCP client to connect (default: this one).
+
+Safety rules for the whole run:
+- Show me every command that creates or changes something before you run it. Read-only commands are fine.
+- Never print, echo, log or paste the OAuth client secret, and never ask me to paste it into chat. Don't open the client secret file with a file-reading tool; only use the commands below that print the client ID and client type.
+- Change only the project I picked. Don't touch billing, IAM roles, org policies or service accounts, and don't create keys.
+- Don't put credentials in any git repository or in a file another process can read.
+
+Steps:
+1. Check that `gcloud` and `uv` are installed and that `gcloud auth list` shows an active account. If I need to log in, tell me to run `! gcloud auth login` myself, since it opens a browser.
+2. Create the project if I picked a new one (`gcloud projects create <PROJECT_ID>`). Pass `--project <PROJECT_ID>` to every gcloud command from here on instead of running `gcloud config set project`, so my default project stays unchanged.
+3. Enable the APIs for my services in a single `gcloud services enable --project <PROJECT_ID>` call: gmail.googleapis.com, drive.googleapis.com (drive, docs, sheets, slides, appscript), calendar-json.googleapis.com, docs.googleapis.com, sheets.googleapis.com, slides.googleapis.com, forms.googleapis.com, tasks.googleapis.com, people.googleapis.com (contacts, chat), chat.googleapis.com, customsearch.googleapis.com (search), script.googleapis.com (appscript). Confirm with `gcloud services list --enabled --project <PROJECT_ID>`. If I chose appscript, also tell me to open https://script.google.com/home/usersettings and turn on "Google Apps Script API". Warn me first that the switch is per user but applies to every app I authorize, not just this server, and that gcloud can't set it.
+4. Console step: send me to https://console.cloud.google.com/auth/overview?project=<PROJECT_ID> to set up the consent screen. Audience is Internal if my account belongs to a Google Workspace organization, otherwise External, with my email added as a test user under Audience. Tell me that External apps in Testing status get refresh tokens that expire after 7 days. If I chose chat, also point me to the one-time Chat app configuration in https://workspacemcp.com/welcome/faq. Wait until I say it's done.
+5. Console step: send me to https://console.cloud.google.com/auth/clients/create?project=<PROJECT_ID> to create a client with application type "Desktop app", download its JSON, and tell you the downloaded file's path. Wait for the path.
+6. Run `mkdir -p ~/.config/workspace-mcp && chmod 700 ~/.config/workspace-mcp`, move the file to ~/.config/workspace-mcp/client_secret.json (ask me before replacing one that is already there), and `chmod 600` it. Check it without showing the secret: `python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); k=next(iter(d)); print(k, d[k]["client_id"])' ~/.config/workspace-mcp/client_secret.json`. The type should be "installed" and the client ID should end in .apps.googleusercontent.com.
+7. Start the server over streamable HTTP with OAuth 2.1. Check that nothing is listening on port 8000, then give me this command to run in a separate terminal that I leave open: `env -u GOOGLE_OAUTH_CLIENT_ID -u GOOGLE_OAUTH_CLIENT_SECRET PORT=8000 MCP_ENABLE_OAUTH21=true WORKSPACE_MCP_HOST=127.0.0.1 GOOGLE_CLIENT_SECRET_PATH=~/.config/workspace-mcp/client_secret.json uvx workspace-mcp --transport streamable-http --tool-tier <tier> --tools <services>`, plus `--read-only` if I chose it. If I chose search, first tell me that Google has closed the Custom Search JSON API to new customers and discontinues it on January 1, 2027 (https://developers.google.com/custom-search/v1/overview), and ask whether to drop search. If I keep it, tell me to create the API key and Programmable Search Engine myself, run `read -rs GOOGLE_PSE_API_KEY && export GOOGLE_PSE_API_KEY` (fish: `read -gsx GOOGLE_PSE_API_KEY`) in the terminal that will run the server, before the launch command, so the key stays out of shell history, and add `GOOGLE_PSE_ENGINE_ID=<id>` before `uvx`; never ask me for the key. Don't start it as your own background job, since it would stop when this session ends, and don't install a launchd or systemd service unless I ask. When I say it's running, check that `curl -s http://localhost:8000/health` reports "healthy", then register it with my MCP client. For Claude Code: `claude mcp add --scope user --transport http workspace-mcp http://localhost:8000/mcp`. For other clients, follow https://workspacemcp.com/guides.
+8. Verify: have me restart or reconnect the client and sign in with Google in the browser (in Claude Code, run `/mcp` and choose workspace-mcp). Then call one read-only tool, such as listing my calendars or searching my Drive.
+
+Finish with a short report: project ID, APIs enabled, where the credentials file is, the command that starts the server (it must be running whenever I use the tools), the client config you changed, the tool call that proved it works, and anything I still need to do.
+```
+
+</details>
+
 > **Agentic OAuth clients:** this server only calls Google's REST APIs, so your OAuth client does not need Google's "Use this client for an AI-powered agent" setting. If your organization wants agent traffic labeled for admin controls, create a separate client with that setting enabled; it can't be changed on an existing client after November 12, 2026.
 
 <table>
