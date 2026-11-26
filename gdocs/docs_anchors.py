@@ -8,7 +8,7 @@ error, where an edit lands on unrelated content without failing.
 """
 
 import logging
-from typing import Any, Optional
+from typing import Any, Iterator, Optional
 
 from gdocs.docs_helpers import _paragraph_element_text, utf16_length
 
@@ -34,18 +34,28 @@ def _aligned_paragraph_text(paragraph: dict[str, Any]) -> str:
     )
 
 
-def iter_paragraphs(body: dict[str, Any]):
-    """Yield (start_index, end_index, text, paragraph_style) for each paragraph."""
+def iter_paragraphs(
+    body: dict[str, Any], include_tables: bool = False
+) -> Iterator[tuple[int, int, str, dict[str, Any]]]:
+    """Yield (start_index, end_index, text, paragraph_style) for each paragraph.
+
+    include_tables also yields the paragraphs inside table cells, in document order.
+    """
     for element in body.get("content", []):
         paragraph = element.get("paragraph")
-        if paragraph is None:
+        if paragraph is not None:
+            yield (
+                element.get("startIndex", 0),
+                element.get("endIndex", 0),
+                _aligned_paragraph_text(paragraph),
+                paragraph.get("paragraphStyle", {}),
+            )
             continue
-        yield (
-            element.get("startIndex", 0),
-            element.get("endIndex", 0),
-            _aligned_paragraph_text(paragraph),
-            paragraph.get("paragraphStyle", {}),
-        )
+        table = element.get("table")
+        if include_tables and table is not None:
+            for row in table.get("tableRows", []):
+                for cell in row.get("tableCells", []):
+                    yield from iter_paragraphs(cell, include_tables=True)
 
 
 def _only_match(matches: list[int], anchor_kind: str, needle: str) -> int:
@@ -99,6 +109,37 @@ def resolve_anchor_text(body: dict[str, Any], anchor: str, position: str) -> int
             )
             offset = text.find(anchor, offset + 1)
     return _only_match(matches, "anchor_text", anchor)
+
+
+def resolve_anchor_range(body: dict[str, Any], anchor: str) -> tuple[int, int]:
+    """Resolve literal text within one paragraph to its (start_index, end_index).
+
+    Table cells are searched too; the anchor must occur exactly once.
+    """
+    if not anchor or not anchor.strip():
+        raise AnchorResolutionError("anchor_text must not be empty.")
+    anchor_units = utf16_length(anchor)
+    matches: list[tuple[int, int]] = []
+    for start_index, _end_index, text, _style in iter_paragraphs(
+        body, include_tables=True
+    ):
+        position, units = 0, 0
+        offset = text.find(anchor)
+        while offset != -1:
+            units += utf16_length(text[position:offset])
+            position = offset
+            start = start_index + units
+            matches.append((start, start + anchor_units))
+            offset = text.find(anchor, offset + 1)
+    if not matches:
+        raise AnchorResolutionError(f"anchor_text '{anchor}' was not found in the tab.")
+    if len(matches) > 1:
+        raise AnchorResolutionError(
+            f"anchor_text '{anchor}' matches {len(matches)} locations "
+            f"(at indices {', '.join(str(start) for start, _ in matches)}). "
+            "Use a longer, unique anchor."
+        )
+    return matches[0]
 
 
 def resolve_operation_anchor(
