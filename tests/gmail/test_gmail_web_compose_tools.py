@@ -285,3 +285,61 @@ async def test_send_html_body_plain_part_keeps_paragraph_breaks():
     plain = _part(_raw_sent(gmail), "text/plain")
     assert "First.Second." not in plain
     assert "First.\nSecond." in plain.replace("\r\n", "\n")
+
+
+@pytest.mark.asyncio
+async def test_send_with_attachments_derives_reply_headers(monkeypatch):
+    """Thread replies with attachments derive In-Reply-To/References too."""
+    import gmail.gmail_tools as gt
+
+    gmail = _gmail_service()
+
+    async def fake_context(service, thread_id, in_reply_to=None, include_bodies=False):
+        return {"message_ids": ["<first@example.com>", "<second@example.com>"]}
+
+    captured = {}
+
+    def fake_build(**kwargs):
+        captured.update(kwargs)
+        return "cmF3"
+
+    monkeypatch.setattr(gt, "_fetch_thread_reply_context", fake_context)
+    monkeypatch.setattr(gt, "_build_web_compose_raw", fake_build)
+
+    await _unwrap(send_gmail_message)(
+        service=gmail,
+        user_google_email="grace@example.org",
+        to="ada@example.com",
+        subject="Re: Project sync",
+        body="See attached",
+        thread_id="thread123",
+        attachments=[{"filename": "a.txt", "content": "eA=="}],
+        include_signature=False,
+    )
+
+    assert captured["in_reply_to"] == "<second@example.com>"
+    assert "<first@example.com>" in captured["references"]
+    assert "<second@example.com>" in captured["references"]
+    assert [p["filename"] for p in captured["attachment_parts"]] == ["a.txt"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body_format", ["plain", "html"])
+async def test_send_with_attachment_honors_direction(body_format):
+    """Attachments take the web path too, so direction still applies."""
+    gmail = _gmail_service()
+    body = "<div>OK שלום</div>" if body_format == "html" else "OK שלום"
+
+    await _unwrap(send_gmail_message)(
+        service=gmail,
+        user_google_email="grace@example.org",
+        to="ada@example.com",
+        subject="Project sync",
+        body=body,
+        body_format=body_format,
+        direction="rtl",
+        attachments=[{"filename": "a.txt", "content": "eA=="}],
+        include_signature=False,
+    )
+
+    assert '<div dir="rtl">' in _part(_raw_sent(gmail), "text/html")
