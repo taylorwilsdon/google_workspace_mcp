@@ -6,6 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 
+import auth.permissions as permissions
 import auth.scopes as scopes
 from auth.scopes import CONTACTS_OTHER_READONLY_SCOPE, DIRECTORY_READONLY_SCOPE
 from core.config import is_extended_name_lookup_enabled
@@ -36,6 +37,7 @@ def test_flag_parsing(monkeypatch, value, expected):
 class TestScopes:
     def teardown_method(self):
         importlib.reload(scopes)
+        importlib.reload(permissions)
 
     def test_default_requests_no_new_scopes(self, monkeypatch):
         monkeypatch.delenv("GMAIL_EXTENDED_NAME_LOOKUP", raising=False)
@@ -52,6 +54,20 @@ class TestScopes:
         importlib.reload(scopes)
         assert EXTRA <= set(scopes.CONTACTS_SCOPES)
         assert EXTRA <= set(scopes.TOOL_READONLY_SCOPES_MAP["contacts"])
+
+    @pytest.mark.parametrize("flag,expected", [(None, False), ("1", True)])
+    def test_permissions_contacts_readonly_follows_flag(
+        self, monkeypatch, flag, expected
+    ):
+        if flag is None:
+            monkeypatch.delenv("GMAIL_EXTENDED_NAME_LOOKUP", raising=False)
+        else:
+            monkeypatch.setenv("GMAIL_EXTENDED_NAME_LOOKUP", flag)
+        importlib.reload(scopes)
+        importlib.reload(permissions)
+        for level in ("readonly", "full"):
+            granted = permissions.get_scopes_for_permission("contacts", level)
+            assert (DIRECTORY_READONLY_SCOPE in granted) is expected
 
 
 def _gmail_service():
