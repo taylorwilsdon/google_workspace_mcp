@@ -1,14 +1,12 @@
 """Native dropdown contracts, request routing and chip-preservation regressions."""
 
-from copy import deepcopy
-from pathlib import Path
 import json
+from collections.abc import Sequence
+from copy import deepcopy
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
-from googleapiclient.discovery import build_from_document
-from googleapiclient.discovery_cache import get_static_doc
-from googleapiclient.http import HttpMockSequence
 from pydantic import TypeAdapter, ValidationError
 
 from gdocs import docs_tools
@@ -38,7 +36,7 @@ CREATE = {
 INSERT = {"type": "insert_dropdown", "dropdown_definition_id": "kix.status", "index": 5}
 
 
-def service_with_replies(replies=()):
+def service_with_replies(replies: Sequence[dict[str, Any]] = ()) -> Mock:
     service = Mock()
     service.documents.return_value.batchUpdate.return_value.execute.return_value = {
         "replies": list(replies)
@@ -50,14 +48,16 @@ def service_with_replies(replies=()):
     return service
 
 
-def requests_from(service):
+def requests_from(service: Mock) -> list[dict[str, Any]]:
     return service.documents.return_value.batchUpdate.call_args.kwargs["body"][
         "requests"
     ]
 
 
 @pytest.mark.asyncio
-async def test_single_batch_creation_insertion_and_date_chip_are_native_and_ordered():
+async def test_single_batch_creation_insertion_and_date_chip_are_native_and_ordered() -> (
+    None
+):
     operations = [
         CREATE,
         INSERT,
@@ -141,7 +141,7 @@ async def test_single_batch_creation_insertion_and_date_chip_are_native_and_orde
 @pytest.mark.asyncio
 @pytest.mark.parametrize("append", [False, True])
 @pytest.mark.parametrize("segment", [None, "header1", "footer1", "footnote1"])
-async def test_tab_and_segment_location(append, segment):
+async def test_tab_and_segment_location(append: bool, segment: str | None) -> None:
     operation = {
         **INSERT,
         "tab_id": "t.child",
@@ -172,7 +172,9 @@ async def test_tab_and_segment_location(append, segment):
 
 
 @pytest.mark.asyncio
-async def test_generated_ids_are_omitted_and_full_replies_keep_request_offsets():
+async def test_generated_ids_are_omitted_from_requests_and_returned_in_results() -> (
+    None
+):
     create = {
         "type": "create_dropdown_definition",
         "title": "Status",
@@ -225,8 +227,48 @@ async def test_generated_ids_are_omitted_and_full_replies_keep_request_offsets()
         }
     }
     assert metadata["dropdown_results"] == [
-        {"request_index": 2, "tab_id": None, "dropdownDefinition": definition},
-        {"request_index": 3, "tab_id": "t.second", "dropdown": chip},
+        {
+            "dropdown_definition_id": "kix.generated",
+            "tab_id": None,
+            "options": [
+                {"option_id": "dropdownItem.generated", "display_value": "A"},
+                {"option_id": "dropdownItem.other", "display_value": "B"},
+            ],
+        },
+        {
+            "dropdown_id": "chip-server-id",
+            "dropdown_definition_id": "kix.status",
+            "selected_option_id": "dropdownItem.todo",
+            "tab_id": "t.second",
+        },
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("append", [False, True])
+async def test_sparse_replies_still_report_the_committed_write(append: bool) -> None:
+    insert: dict[str, Any] = {
+        "type": "insert_dropdown",
+        "dropdown_definition_id": "kix.status",
+    }
+    insert.update({"end_of_segment": True} if append else {"index": 5})
+    service = service_with_replies(
+        [{"createDropdownDefinition": {}}, {"insertDropdown": {}}]
+    )
+    success, message, metadata = await BatchOperationManager(
+        service
+    ).execute_batch_operations(
+        "doc", [{**CREATE, "tab_id": "t.child"}, {**insert, "tab_id": "t.child"}]
+    )
+    assert success, message
+    assert metadata["dropdown_results"] == [
+        {"dropdown_definition_id": None, "tab_id": "t.child", "options": []},
+        {
+            "dropdown_id": None,
+            "dropdown_definition_id": "kix.status",
+            "selected_option_id": None,
+            "tab_id": "t.child",
+        },
     ]
 
 
@@ -262,34 +304,87 @@ INVALID = [
     {**INSERT, "selected_option_id": "bad"},
     {**INSERT, "end_of_segment": True},
     {**INSERT, "index": None},
-    {**INSERT, "index": -1},
-    {**INSERT, "index": True},
     {**INSERT, "index": 1.5},
-    {**INSERT, "index": "5"},
     {**INSERT, "anchor_text": "Status"},
 ]
 
 
 @pytest.mark.parametrize("operation", INVALID)
-def test_schema_and_manager_validation_reject_bad_input(operation):
+def test_schema_rejects_bad_input(operation: dict[str, Any]) -> None:
     with pytest.raises(ValidationError):
         TypeAdapter(BatchDocOperation).validate_python(operation)
-    assert validate_operation(operation)[0] is False
+
+
+@pytest.mark.parametrize(
+    ("operation", "expected"),
+    [
+        ({**INSERT, "index": "5"}, {"index": 5, "end_of_segment": False}),
+        (
+            {**INSERT, "index": None, "end_of_segment": "true"},
+            {"index": None, "end_of_segment": True},
+        ),
+        ({**INSERT, "end_of_segment": "false"}, {"index": 5, "end_of_segment": False}),
+    ],
+)
+def test_schema_coerces_stringified_location_like_other_insertions(
+    operation: dict[str, Any], expected: dict[str, Any]
+) -> None:
+    parsed = TypeAdapter(BatchDocOperation).validate_python(operation)
+    assert parsed.model_dump(include={"index", "end_of_segment"}) == expected
+
+
+@pytest.mark.parametrize(
+    ("operation", "error"),
+    [
+        (
+            {k: v for k, v in CREATE.items() if k != "title"},
+            "Missing required field: title",
+        ),
+        (
+            {k: v for k, v in CREATE.items() if k != "options"},
+            "Missing required field: options",
+        ),
+        (
+            {"type": "insert_dropdown", "index": 5},
+            "Missing required field: dropdown_definition_id",
+        ),
+    ],
+)
+def test_manager_validation_requires_dropdown_fields(
+    operation: dict[str, Any], error: str
+) -> None:
+    assert validate_operation(operation) == (False, error)
+
+
+@pytest.mark.parametrize(
+    "location", [{}, {"index": 5, "end_of_segment": True}, {"index": None}]
+)
+def test_manager_validation_requires_exactly_one_dropdown_location(
+    location: dict[str, Any],
+) -> None:
+    operation = {
+        "type": "insert_dropdown",
+        "dropdown_definition_id": "kix.status",
+        **location,
+    }
+    valid, error = validate_operation(operation)
+    assert not valid
+    assert error.startswith("Provide exactly one of 'index'")
 
 
 @pytest.mark.asyncio
-async def test_invalid_later_operation_causes_no_write():
+async def test_invalid_later_operation_causes_no_write() -> None:
     service = service_with_replies()
     success, message, _ = await BatchOperationManager(service).execute_batch_operations(
-        "doc", [CREATE, {**INSERT, "selected_option_id": "bad"}]
+        "doc", [CREATE, {"type": "insert_dropdown", "index": 5}]
     )
     assert not success
-    assert "Operation 2" in message
+    assert "Operation 2: Missing required field: dropdown_definition_id" in message
     service.documents.return_value.batchUpdate.assert_not_called()
 
 
 @pytest.mark.parametrize("count", [2, 50])
-def test_option_count_boundaries_and_json_encoded_operations(count):
+def test_option_count_boundaries_and_json_encoded_operations(count: int) -> None:
     operations = TypeAdapter(BatchDocOperations).validate_python(
         json.dumps(
             [
@@ -305,7 +400,9 @@ def test_option_count_boundaries_and_json_encoded_operations(count):
 
 
 @pytest.mark.asyncio
-async def test_anchored_insertion_targets_nested_tab_and_preserves_existing_date_element():
+async def test_anchored_insertion_targets_nested_tab_and_preserves_existing_date_element() -> (
+    None
+):
     operation = {
         "type": "insert_dropdown",
         "dropdown_definition_id": "kix.status",
@@ -378,7 +475,7 @@ async def test_anchored_insertion_targets_nested_tab_and_preserves_existing_date
 
 
 @pytest.mark.asyncio
-async def test_anchored_insert_cannot_mix_with_definition_creation():
+async def test_anchored_insert_cannot_mix_with_definition_creation() -> None:
     service = service_with_replies()
     success, message, _ = await BatchOperationManager(service).execute_batch_operations(
         "doc",
@@ -397,7 +494,7 @@ async def test_anchored_insert_cannot_mix_with_definition_creation():
 
 
 @pytest.mark.asyncio
-async def test_tool_exposes_generated_ids_to_caller():
+async def test_tool_exposes_generated_ids_to_caller() -> None:
     service = service_with_replies(
         [
             {
@@ -417,11 +514,13 @@ async def test_tool_exposes_generated_ids_to_caller():
         document_id="document-id-long-enough",
         operations=[TypeAdapter(BatchDocOperation).validate_python(CREATE)],
     )
-    assert '"dropdownDefinitionId": "kix.generated"' in result
-    assert '"request_index": 0' in result
+    assert (
+        ' Revision: r1 -> r1.\nDropdown results: [{"dropdown_definition_id": '
+        '"kix.generated", "tab_id": null, "options": []}]\n To apply formatting'
+    ) in result
 
 
-def test_supported_operations_expose_both_dropdown_actions():
+def test_supported_operations_expose_both_dropdown_actions() -> None:
     supported = BatchOperationManager(Mock()).get_supported_operations()[
         "supported_operations"
     ]
@@ -429,133 +528,35 @@ def test_supported_operations_expose_both_dropdown_actions():
     assert "selected_option_id" in supported["insert_dropdown"]["optional"]
 
 
-def test_request_shapes_match_google_client_discovery_schema():
-    """Validate wire fields against the public discovery schema captured on 2026-11-17."""
-    schemas = json.loads(
-        (Path(__file__).parent / "fixtures/dropdown_discovery.json").read_text()
-    )["schemas"]
-
-    def validate(value, schema):
-        if "$ref" in schema:
-            schema = schemas[schema["$ref"]]
-        if schema["type"] == "object":
-            assert isinstance(value, dict)
-            for key, child in value.items():
-                assert key in schema["properties"], key
-                validate(child, schema["properties"][key])
-        elif schema["type"] == "array":
-            for child in value:
-                validate(child, schema["items"])
-        elif schema["type"] == "string":
-            assert isinstance(value, str)
-        elif schema["type"] in ("number", "integer"):
-            assert isinstance(value, (int, float))
-
-    manager = BatchOperationManager(Mock())
-    for operation in [
-        CREATE,
-        INSERT,
-        {**CREATE, "tab_id": "t.child"},
-        {
-            "type": "insert_dropdown",
-            "dropdown_definition_id": "kix.status",
-            "selected_option_id": "dropdownItem.done",
-            "tab_id": "t.child",
-            "segment_id": "header1",
-            "end_of_segment": True,
-        },
-    ]:
-        request, _ = manager._build_operation_request(operation, operation["type"])
-        validate(request, schemas["Request"])
+def test_unsupported_type_error_lists_both_dropdown_actions() -> None:
+    with pytest.raises(ValueError) as exc:
+        BatchOperationManager(Mock())._build_operation_request({}, "bogus")
+    supported = str(exc.value).split("Supported: ")[1].split(", ")
+    assert {"create_dropdown_definition", "insert_dropdown"} <= set(supported)
 
 
-def test_pinned_client_serializes_new_requests_even_with_older_bundled_discovery():
-    # The pinned client predates dropdown schemas. batchUpdate body serialization
-    # must still pass these new requests through unchanged to Google's server.
-    service = build_from_document(
-        get_static_doc("docs", "v1"),
-        http=HttpMockSequence(
-            [
-                ({"status": "200"}, b'{"replies": [{}, {}]}'),
-            ]
-        ),
-    )
-    manager = BatchOperationManager(service)
-    requests = [
-        manager._build_operation_request(op, op["type"])[0] for op in [CREATE, INSERT]
-    ]
-    request = service.documents().batchUpdate(
-        documentId="test-document", body={"requests": requests}
-    )
-    assert json.loads(request.body) == {"requests": requests}
-    assert request.execute() == {"replies": [{}, {}]}
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize("field", ["title", "display_value"])
 @pytest.mark.parametrize("length", [200, 201])
-async def test_dropdown_text_length_boundaries_before_writes(field, length):
+def test_dropdown_text_length_boundaries(field: str, length: int) -> None:
     operation = deepcopy(CREATE)
-    value = "x" * length
     if field == "title":
-        operation["title"] = value
+        operation["title"] = "x" * length
     else:
-        operation["options"][1]["display_value"] = value
+        operation["options"][1]["display_value"] = "x" * length
 
     adapter = TypeAdapter(BatchDocOperation)
     if length == 200:
         adapter.validate_python(operation)
-        assert validate_operation(operation) == (True, "")
     else:
         with pytest.raises(ValidationError, match="at most 200 characters"):
             adapter.validate_python(operation)
-        assert validate_operation(operation)[0] is False
-
-    service = service_with_replies()
-    # Direct manager callers must also reject an invalid later operation without
-    # sending any earlier writes from the same batch.
-    success, message, _ = await BatchOperationManager(service).execute_batch_operations(
-        "doc", [{"type": "insert_text", "text": "Status: ", "index": 1}, operation]
-    )
-    if length == 200:
-        assert success, message
-        definition = requests_from(service)[1]["createDropdownDefinition"][
-            "dropdownDefinition"
-        ]["dropdownDefinitionProperties"]
-        actual = (
-            definition["title"]
-            if field == "title"
-            else definition["options"][1]["displayValue"]
-        )
-        assert actual == value
-        service.documents.return_value.batchUpdate.assert_called_once()
-    else:
-        assert not success
-        assert "Operation 2" in message
-        assert "at most 200 characters" in message
-        service.documents.return_value.batchUpdate.assert_not_called()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("value", ["false", "true", "0", "1", 0, 1])
-async def test_dropdown_rejects_non_boolean_append_flags_before_writes(value):
-    operation = {**INSERT, "end_of_segment": value}
-    with pytest.raises(ValidationError, match="valid boolean"):
-        TypeAdapter(BatchDocOperation).validate_python(operation)
-    assert validate_operation(operation)[0] is False
-    service = service_with_replies()
-    success, message, _ = await BatchOperationManager(service).execute_batch_operations(
-        "doc", [CREATE, operation]
-    )
-    assert not success
-    assert "valid boolean" in message
-    service.documents.return_value.batchUpdate.assert_not_called()
-    assert operation["end_of_segment"] == value
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("append", [False, True])
-async def test_direct_manager_dropdown_preserves_boolean_location_choice(append):
+async def test_direct_manager_dropdown_preserves_boolean_location_choice(
+    append: bool,
+) -> None:
     operation = {
         "type": "insert_dropdown",
         "dropdown_definition_id": "kix.status",

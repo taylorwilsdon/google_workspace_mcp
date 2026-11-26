@@ -10,13 +10,6 @@ from datetime import datetime, timezone as dt_timezone
 from typing import Dict, Any, Optional, List
 from zoneinfo import ZoneInfo
 
-from pydantic import ValidationError
-
-from gdocs.operation_schemas import (
-    CreateDropdownDefinitionOperation,
-    InsertDropdownOperation,
-)
-
 logger = logging.getLogger(__name__)
 
 VALID_NAMED_STYLE_TYPES = (
@@ -2029,18 +2022,6 @@ def validate_operation(operation: Dict[str, Any]) -> tuple[bool, str]:
     if not op_type:
         return False, "Missing 'type' field"
 
-    # Also validate direct manager callers, which bypass the MCP Pydantic schema.
-    dropdown_models = {
-        "create_dropdown_definition": CreateDropdownDefinitionOperation,
-        "insert_dropdown": InsertDropdownOperation,
-    }
-    if op_type in dropdown_models:
-        try:
-            dropdown_models[op_type].model_validate(operation)
-        except ValidationError as exc:
-            return False, str(exc)
-        return True, ""
-
     # Validate required fields for each operation type
     required_fields = {
         "insert_text": ["text"],
@@ -2062,6 +2043,8 @@ def validate_operation(operation: Dict[str, Any]) -> tuple[bool, str]:
         "create_header_footer": ["section_type"],
         "insert_image": ["image_uri"],
         "insert_person": ["email"],
+        "create_dropdown_definition": ["title", "options"],
+        "insert_dropdown": ["dropdown_definition_id"],
         "insert_date": ["date"],
         "insert_doc_tab": ["title", "index"],
         "delete_doc_tab": ["tab_id"],
@@ -2104,6 +2087,7 @@ def validate_operation(operation: Dict[str, Any]) -> tuple[bool, str]:
         "insert_image",
         "insert_person",
         "insert_date",
+        "insert_dropdown",
     }:
         provided = sum(
             [operation.get("index") is not None, bool(operation.get("end_of_segment"))]

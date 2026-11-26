@@ -1715,17 +1715,17 @@ async def batch_update_doc(
             f"API replies: {replies_count}.{length_info}",
         ]
 
-        if metadata.get("dropdown_results"):
-            parts.append(
-                "\nDropdown results: " + json.dumps(metadata["dropdown_results"])
-            )
-
         revision_before = metadata.get("revision_before")
         revision_after = metadata.get("revision_after")
         if revision_before or revision_after:
             parts.append(
                 f" Revision: {revision_before or 'unknown'} -> "
                 f"{revision_after or 'unknown'}."
+            )
+
+        if metadata.get("dropdown_results"):
+            parts.append(
+                f"\nDropdown results: {json.dumps(metadata['dropdown_results'])}\n"
             )
 
         # Reporting what the edited range now looks like lets the caller confirm

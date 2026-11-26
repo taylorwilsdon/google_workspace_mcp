@@ -221,27 +221,7 @@ class BatchOperationManager:
             if created_tabs:
                 metadata["created_tabs"] = created_tabs
 
-            # Replies align with API requests, not operations (some expand to multiple requests).
-            dropdown_results = []
-            for request_index, (request, reply) in enumerate(
-                zip(requests, result.get("replies", []))
-            ):
-                for kind, field in (
-                    ("createDropdownDefinition", "dropdownDefinition"),
-                    ("insertDropdown", "dropdown"),
-                ):
-                    if kind in reply:
-                        payload = request[kind]
-                        location = payload.get(
-                            "location", payload.get("endOfSegmentLocation", {})
-                        )
-                        dropdown_results.append(
-                            {
-                                "request_index": request_index,
-                                "tab_id": payload.get("tabId", location.get("tabId")),
-                                field: reply[kind][field],
-                            }
-                        )
+            dropdown_results = self._extract_dropdown_results(requests, result)
             if dropdown_results:
                 metadata["dropdown_results"] = dropdown_results
 
@@ -1296,6 +1276,53 @@ class BatchOperationManager:
                         created_tabs.append({"tab_id": tab_id, "title": title})
                     break
         return created_tabs
+
+    @staticmethod
+    def _extract_dropdown_results(
+        requests: list[dict[str, Any]], result: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        """IDs of each created dropdown definition and inserted chip, in request order."""
+        results = []
+        for request, reply in zip(requests, result.get("replies", [])):
+            if "createDropdownDefinition" in reply:
+                definition = reply["createDropdownDefinition"].get(
+                    "dropdownDefinition", {}
+                )
+                options = definition.get("dropdownDefinitionProperties", {}).get(
+                    "options", []
+                )
+                results.append(
+                    {
+                        "dropdown_definition_id": definition.get(
+                            "dropdownDefinitionId"
+                        ),
+                        "tab_id": request["createDropdownDefinition"].get("tabId"),
+                        "options": [
+                            {
+                                "option_id": option.get("optionId"),
+                                "display_value": option.get("displayValue"),
+                            }
+                            for option in options
+                        ],
+                    }
+                )
+            elif "insertDropdown" in reply:
+                payload = request["insertDropdown"]
+                location = payload.get(
+                    "location", payload.get("endOfSegmentLocation", {})
+                )
+                chip = reply["insertDropdown"].get("dropdown", {})
+                results.append(
+                    {
+                        "dropdown_id": chip.get("dropdownId"),
+                        "dropdown_definition_id": payload["dropdownDefinitionId"],
+                        "selected_option_id": chip.get("dropdownProperties", {}).get(
+                            "selectedOptionId"
+                        ),
+                        "tab_id": location.get("tabId"),
+                    }
+                )
+        return results
 
     def _build_operation_summary(self, operation_descriptions: list[str]) -> str:
         """

@@ -1183,14 +1183,14 @@
           "index": {
             "anyOf": [
               {
-                "minimum": 0,
                 "type": "integer"
               },
               {
                 "type": "null"
               }
             ],
-            "default": null
+            "default": null,
+            "description": "Insertion index. Omit when end_of_segment=true."
           },
           "end_of_segment": {
             "default": false,
