@@ -1,5 +1,8 @@
 import io
 import argparse
+import asyncio
+import errno
+import ipaddress
 import json
 import logging
 import os
@@ -216,7 +219,7 @@ def add_startup_notice(message: str) -> None:
 def resolve_bind_host_for_transport(transport: str) -> str:
     """Choose a safe default bind host for the selected transport/auth mode."""
     configured_host = os.getenv("WORKSPACE_MCP_HOST")
-    host = configured_host or "0.0.0.0"
+    host = configured_host or ""
     if transport != "streamable-http":
         return host
 
@@ -225,7 +228,7 @@ def resolve_bind_host_for_transport(transport: str) -> str:
         return host
 
     if configured_host:
-        if configured_host not in {"localhost", "127.0.0.1", "::1"}:
+        if configured_host not in _LOOPBACK_HOSTS:
             add_startup_notice(
                 f"Legacy streamable-http mode has no MCP-level auth provider and is "
                 f"bound to {configured_host} because WORKSPACE_MCP_HOST was explicitly "
@@ -334,27 +337,89 @@ def _local_ipv4_addresses() -> list[str]:
     return list(dict.fromkeys(["127.0.0.1", *(info[4][0] for info in infos)]))
 
 
+def _format_address(host: str, port: int) -> str:
+    """Render host:port for messages, bracketing IPv6 and showing "" as *."""
+    return f"[{host}]:{port}" if ":" in host else f"{host or '*'}:{port}"
+
+
 def _http_port_conflict(host: str, port: int) -> str | None:
     """Return why uvicorn could not serve host:port, or None if it can."""
     # macOS SO_REUSEADDR wildcard binds coexist with specific-address listeners.
-    connect_hosts = _local_ipv4_addresses() if host in ("", "0.0.0.0") else [host]
+    connect_hosts = [host]
+    if host in ("", "0.0.0.0", "::"):
+        connect_hosts = [
+            *([] if host == "::" else _local_ipv4_addresses()),
+            *([] if host == "0.0.0.0" else ["::1"]),
+        ]
     for connect_host in connect_hosts:
         try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.settimeout(0.5)
-                if s.connect_ex((connect_host, port)) == 0:
-                    return f"a server is already listening on {connect_host}:{port}"
+            socket.create_connection((connect_host, port), timeout=0.5).close()
         except OSError:
-            pass
+            continue
+        return f"a server is already listening on {_format_address(connect_host, port)}"
 
     try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            if os.name != "nt":  # matches asyncio's reuse_address default
-                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            s.bind((host, port))
+        infos = socket.getaddrinfo(
+            host or None, port, type=socket.SOCK_STREAM, flags=socket.AI_PASSIVE
+        )
     except OSError as e:
         return str(e)
-    return None
+    bound, skipped = False, None
+    for family, kind, proto, _, address in infos:
+        try:
+            with socket.socket(family, kind, proto) as s:
+                if os.name != "nt":  # matches asyncio's reuse_address default
+                    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                if family == socket.AF_INET6:  # asyncio never binds dual-stack
+                    s.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+                s.bind(address)
+            bound = True
+        except OSError as e:
+            # asyncio skips address families the host has disabled.
+            if e.errno not in (errno.EADDRNOTAVAIL, errno.EAFNOSUPPORT):
+                return str(e)
+            skipped = str(e)
+    return None if bound else skipped
+
+
+def _systemd_activation_sockets() -> list[socket.socket] | None:
+    """Return the listening sockets systemd passed via sd_listen_fds(3), or None."""
+    listen_pid = os.environ.get("LISTEN_PID")
+    listen_fds = os.environ.get("LISTEN_FDS")
+    if not listen_pid or not listen_fds:
+        return None
+    try:
+        pid_matches = int(listen_pid) == os.getpid()
+        fd_count = int(listen_fds)
+    except ValueError:
+        return None
+    if not pid_matches:
+        logger.warning(
+            "Ignoring systemd socket activation: LISTEN_PID=%s is not this process "
+            "(pid %d). uvx and uv run start the server as a child; point ExecStart= "
+            "at an installed workspace-mcp executable.",
+            listen_pid,
+            os.getpid(),
+        )
+        return None
+    if fd_count <= 0:
+        return None
+    os.environ.pop("LISTEN_PID", None)
+    os.environ.pop("LISTEN_FDS", None)
+    sockets = [socket.socket(fileno=fd) for fd in range(3, 3 + fd_count)]
+    for sock in sockets:
+        sock.set_inheritable(False)
+    return sockets
+
+
+def _non_loopback_addresses(sockets: list[socket.socket]) -> list[str]:
+    """Return the non-loopback IP addresses the sockets listen on."""
+    addresses = [
+        sock.getsockname()[0]
+        for sock in sockets
+        if sock.family in (socket.AF_INET, socket.AF_INET6)
+    ]
+    return [a for a in addresses if not ipaddress.ip_address(a).is_loopback]
 
 
 def configure_safe_logging():
@@ -1065,10 +1130,29 @@ def main():
         ui.blank()
 
         if args.transport == "streamable-http":
-            # Check port availability before starting HTTP server
-            conflict = _http_port_conflict(host, port)
-            if conflict is not None:
-                fatal(ui, f"Cannot start HTTP server on {host}:{port}", conflict)
+            activation_sockets = _systemd_activation_sockets()
+
+            if activation_sockets is None:
+                # Check port availability before starting HTTP server
+                conflict = _http_port_conflict(host, port)
+                if conflict is not None:
+                    fatal(
+                        ui,
+                        f"Cannot start HTTP server on {_format_address(host, port)}",
+                        conflict,
+                    )
+            elif (
+                host in _LOOPBACK_HOSTS and not get_oauth_config().is_oauth21_enabled()
+            ):
+                exposed = _non_loopback_addresses(activation_sockets)
+                if exposed:
+                    fatal(
+                        ui,
+                        f"Refusing socket activation on {', '.join(exposed)}",
+                        "Legacy streamable-http mode has no MCP-level auth provider. "
+                        "Use ListenStream=127.0.0.1:<port>, set WORKSPACE_MCP_HOST "
+                        "explicitly for a trusted network, or set MCP_ENABLE_OAUTH21=true.",
+                    )
 
             server.run(
                 transport="streamable-http",
@@ -1076,11 +1160,11 @@ def main():
                 port=port,
                 stateless_http=is_stateless_mode() or stateless_http,
                 show_banner=False,
+                sockets=activation_sockets,
             )
         else:
             if http_port is not None:
                 # Dual transport: stdio for MCP client + HTTP for workspace-cli
-                import asyncio
                 import uvicorn
 
                 # Bind sidecar to loopback only — auth provider is not initialized
