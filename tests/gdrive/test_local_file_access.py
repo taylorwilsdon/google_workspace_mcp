@@ -610,6 +610,7 @@ import asyncio, json
 from core.server import server, set_transport_mode
 set_transport_mode('streamable-http')
 import gdrive.drive_tools
+import gsheets.sheets_tools
 from fastmcp import Client
 
 async def main():
@@ -628,7 +629,7 @@ async def main():
         print("SHIPPED:" + json.dumps(shipped, sort_keys=True))
 
 asyncio.run(main())
-""" % (TestSchemaThroughFastMCP.TOOLS,)
+""" % (TestSchemaThroughFastMCP.TOOLS + ("modify_sheet_values",),)
 
     def _shipped(self, env):
         out = _run_subprocess(self.CODE, env)
@@ -636,13 +637,15 @@ asyncio.run(main())
 
     def test_disabled_ships_no_text_naming_file_path(self):
         shipped = self._shipped({"WORKSPACE_MCP_DISABLE_LOCAL_FILES": "true"})
-        assert set(shipped) == set(TestSchemaThroughFastMCP.TOOLS)
+        assert set(shipped) == set(TestSchemaThroughFastMCP.TOOLS) | {
+            "modify_sheet_values"
+        }
         offenders = [
             (name, where)
             for name, tool in shipped.items()
             for where, text in [("description", tool["description"])]
             + list(tool["properties"].items())
-            if "file_path" in text
+            if "file_path" in text or where == "file_path"
         ]
         assert offenders == []
 
