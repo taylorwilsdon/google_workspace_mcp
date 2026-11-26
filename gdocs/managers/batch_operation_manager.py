@@ -1293,6 +1293,9 @@ class BatchOperationManager:
                 )
                 results.append(
                     {
+                        "title": request["createDropdownDefinition"][
+                            "dropdownDefinition"
+                        ]["dropdownDefinitionProperties"]["title"],
                         "dropdown_definition_id": definition.get(
                             "dropdownDefinitionId"
                         ),

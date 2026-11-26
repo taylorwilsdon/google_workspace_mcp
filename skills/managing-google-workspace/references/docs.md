@@ -418,8 +418,8 @@ A definition ID must match `^kix\.[a-zA-Z0-9_-]{2,14}$` and be unique within its
 tab; an option ID must match `^dropdownItem\.[a-zA-Z0-9_-]{2,14}$` and be unique
 within its definition. Explicit IDs let one batch create a definition and insert
 its chips. Omit them and Google generates them: the `Dropdown results` JSON in
-the response lists each created definition (`dropdown_definition_id`, `tab_id`,
-`options` with `option_id` and `display_value`) and each inserted chip
+the response lists each created definition (`title`, `dropdown_definition_id`,
+`tab_id`, `options` with `option_id` and `display_value`) and each inserted chip
 (`dropdown_id`, `dropdown_definition_id`, `selected_option_id`, `tab_id`), where
 a `null` `tab_id` means the first tab. Do not repeat a successful creation with
 the same IDs.

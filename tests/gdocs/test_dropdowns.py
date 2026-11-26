@@ -228,6 +228,7 @@ async def test_generated_ids_are_omitted_from_requests_and_returned_in_results()
     }
     assert metadata["dropdown_results"] == [
         {
+            "title": create["title"],
             "dropdown_definition_id": "kix.generated",
             "tab_id": None,
             "options": [
@@ -262,7 +263,12 @@ async def test_sparse_replies_still_report_the_committed_write(append: bool) -> 
     )
     assert success, message
     assert metadata["dropdown_results"] == [
-        {"dropdown_definition_id": None, "tab_id": "t.child", "options": []},
+        {
+            "title": CREATE["title"],
+            "dropdown_definition_id": None,
+            "tab_id": "t.child",
+            "options": [],
+        },
         {
             "dropdown_id": None,
             "dropdown_definition_id": "kix.status",
@@ -270,6 +276,38 @@ async def test_sparse_replies_still_report_the_committed_write(append: bool) -> 
             "tab_id": "t.child",
         },
     ]
+
+
+@pytest.mark.asyncio
+async def test_generated_definitions_in_one_batch_are_told_apart_by_title() -> None:
+    options = [{"display_value": "Yes"}, {"display_value": "No"}]
+    replies = [
+        {
+            "createDropdownDefinition": {
+                "dropdownDefinition": {"dropdownDefinitionId": i}
+            }
+        }
+        for i in ("kix.one", "kix.two")
+    ]
+    service = service_with_replies([{}, {}, *replies])
+    success, message, metadata = await BatchOperationManager(
+        service
+    ).execute_batch_operations(
+        "doc",
+        [
+            {"type": "replace_text", "start_index": 1, "end_index": 2, "text": "X"},
+            *[
+                {"type": "create_dropdown_definition", "title": t, "options": options}
+                for t in ("A set", "B set")
+            ],
+        ],
+    )
+    assert success, message
+    assert len(requests_from(service)) == 4
+    assert [
+        (result["title"], result["dropdown_definition_id"])
+        for result in metadata["dropdown_results"]
+    ] == [("A set", "kix.one"), ("B set", "kix.two")]
 
 
 INVALID = [
@@ -515,8 +553,9 @@ async def test_tool_exposes_generated_ids_to_caller() -> None:
         operations=[TypeAdapter(BatchDocOperation).validate_python(CREATE)],
     )
     assert (
-        ' Revision: r1 -> r1.\nDropdown results: [{"dropdown_definition_id": '
-        '"kix.generated", "tab_id": null, "options": []}]\n To apply formatting'
+        f' Revision: r1 -> r1.\nDropdown results: [{{"title": "{CREATE["title"]}", '
+        '"dropdown_definition_id": "kix.generated", "tab_id": null, "options": []}]'
+        "\n To apply formatting"
     ) in result
 
 
