@@ -15,6 +15,8 @@ from gdocs.docs_anchors import (
 )
 from gdocs.docs_helpers import (
     utf16_length,
+    build_batch_update_body,
+    suggestion_save_error,
     create_insert_text_request,
     create_delete_range_request,
     create_format_text_request,
@@ -25,6 +27,8 @@ from gdocs.docs_helpers import (
     create_insert_page_break_request,
     create_insert_section_break_request,
     create_insert_image_request,
+    create_insert_person_request,
+    create_insert_date_request,
     create_bullet_list_request,
     create_delete_bullet_list_request,
     create_named_range_request,
@@ -95,7 +99,10 @@ class BatchOperationManager:
         self.validation_manager = ValidationManager()
 
     async def execute_batch_operations(
-        self, document_id: str, operations: list[dict[str, Any]]
+        self,
+        document_id: str,
+        operations: list[dict[str, Any]],
+        write_mode: str = "EDIT",
     ) -> tuple[bool, str, dict[str, Any]]:
         """
         Execute multiple document operations in a single atomic batch.
@@ -105,6 +112,8 @@ class BatchOperationManager:
         Args:
             document_id: ID of the document to update
             operations: List of operation dictionaries
+            write_mode: "EDIT" applies the changes; "SUGGEST" records them as
+                suggested edits
 
         Returns:
             Tuple of (success, message, metadata)
@@ -143,7 +152,13 @@ class BatchOperationManager:
             revision_before = await self._get_revision_id(document_id)
 
             # Execute the batch
-            result = await self._execute_batch_requests(document_id, requests)
+            result = await self._execute_batch_requests(
+                document_id, requests, write_mode
+            )
+
+            save_error = suggestion_save_error(result, write_mode)
+            if save_error:
+                return False, save_error, {}
 
             # Process results
             metadata = {
@@ -206,11 +221,22 @@ class BatchOperationManager:
 
             summary = self._build_operation_summary(operation_descriptions)
             msg = f"Successfully executed {len(operations)} operations ({summary})"
+            if write_mode == "SUGGEST":
+                msg += " as suggested edits"
             if created_tabs:
                 tab_info = ", ".join(
                     f"'{t['title']}' (tab_id: {t['tab_id']})" for t in created_tabs
                 )
                 msg += f". Created tabs: {tab_info}"
+
+            replace_verb = (
+                "Suggested replacing" if write_mode == "SUGGEST" else "Replaced"
+            )
+            for request, reply in zip(requests, result.get("replies", [])):
+                if "replaceAllText" in request:
+                    count = reply.get("replaceAllText", {}).get("occurrencesChanged", 0)
+                    find_text = request["replaceAllText"]["containsText"]["text"]
+                    msg += f". {replace_verb} {count} occurrence(s) of '{find_text}'"
 
             return True, msg, metadata
 
@@ -246,6 +272,8 @@ class BatchOperationManager:
                 "insert_page_break",
                 "insert_section_break",
                 "insert_image",
+                "insert_person",
+                "insert_date",
             }:
                 return "Semantic anchors are supported only for insertion operations."
             valid, error = validate_operation(op)
@@ -969,6 +997,37 @@ class BatchOperationManager:
                 else f"insert image at {op.get('index')}"
             )
 
+        elif op_type == "insert_person":
+            request = create_insert_person_request(
+                op.get("index"),
+                op["email"],
+                tab_id,
+                segment_id=segment_id,
+                end_of_segment=end_of_segment,
+            )
+            description = (
+                f"mention {op['email']} at end of segment '{segment_id or 'body'}'"
+                if end_of_segment
+                else f"mention {op['email']} at {op.get('index')}"
+            )
+
+        elif op_type == "insert_date":
+            request = create_insert_date_request(
+                op.get("index"),
+                op["date"],
+                op.get("date_format"),
+                op.get("time_format"),
+                op.get("timezone"),
+                tab_id,
+                segment_id=segment_id,
+                end_of_segment=end_of_segment,
+            )
+            description = (
+                f"date chip {op['date']} at end of segment '{segment_id or 'body'}'"
+                if end_of_segment
+                else f"date chip {op['date']} at {op.get('index')}"
+            )
+
         elif op_type == "insert_doc_tab":
             request = create_insert_doc_tab_request(
                 op["title"], op["index"], op.get("parent_tab_id")
@@ -1120,6 +1179,8 @@ class BatchOperationManager:
                 "update_section_style",
                 "create_header_footer",
                 "insert_image",
+                "insert_person",
+                "insert_date",
                 "insert_doc_tab",
                 "delete_doc_tab",
                 "update_doc_tab",
@@ -1140,7 +1201,10 @@ class BatchOperationManager:
         return request, description
 
     async def _execute_batch_requests(
-        self, document_id: str, requests: list[dict[str, Any]]
+        self,
+        document_id: str,
+        requests: list[dict[str, Any]],
+        write_mode: str = "EDIT",
     ) -> dict[str, Any]:
         """
         Execute the batch requests against the Google Docs API.
@@ -1148,13 +1212,17 @@ class BatchOperationManager:
         Args:
             document_id: Document ID
             requests: List of API requests
+            write_mode: "EDIT" or "SUGGEST"
 
         Returns:
             API response
         """
         return await asyncio.to_thread(
             self.service.documents()
-            .batchUpdate(documentId=document_id, body={"requests": requests})
+            .batchUpdate(
+                documentId=document_id,
+                body=build_batch_update_body(requests, write_mode),
+            )
             .execute
         )
 
@@ -1421,6 +1489,24 @@ class BatchOperationManager:
                         "height",
                     ],
                     "description": "Insert an inline image at a location or at the end of a segment",
+                },
+                "insert_person": {
+                    "required": ["email"],
+                    "optional": ["index", "end_of_segment", "segment_id", "tab_id"],
+                    "description": "Insert a person @mention smart chip",
+                },
+                "insert_date": {
+                    "required": ["date"],
+                    "optional": [
+                        "index",
+                        "end_of_segment",
+                        "segment_id",
+                        "tab_id",
+                        "date_format",
+                        "time_format",
+                        "timezone",
+                    ],
+                    "description": "Insert a date smart chip",
                 },
                 "insert_doc_tab": {
                     "required": ["title", "index"],

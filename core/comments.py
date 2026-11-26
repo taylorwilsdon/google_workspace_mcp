@@ -14,7 +14,7 @@ from mcp.types import ToolAnnotations
 
 from auth.service_decorator import require_google_service, require_multiple_services
 from core.server import server
-from core.utils import handle_http_errors
+from core.utils import UserInputError, handle_http_errors
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ READ_COMMENT_ANNOTATIONS = ToolAnnotations(
 
 MANAGE_COMMENT_ANNOTATIONS = ToolAnnotations(
     readOnlyHint=False,
-    destructiveHint=False,
+    destructiveHint=True,
     idempotentHint=False,
     openWorldHint=True,
 )
@@ -47,7 +47,7 @@ async def _manage_comment_dispatch(
 ) -> str:
     """Route comment management actions to the appropriate implementation."""
     action_lower = action.lower().strip()
-    if cell and action_lower in ("reply", "resolve"):
+    if cell and action_lower in ("reply", "resolve", "update", "delete"):
         raise ValueError("cell is only supported for the create action")
     if action_lower == "create":
         if not comment_content:
@@ -71,9 +71,22 @@ async def _manage_comment_dispatch(
         if not comment_id:
             raise ValueError("comment_id is required for resolve action")
         return await _resolve_comment_impl(service, app_name, file_id, comment_id)
+    elif action_lower == "update":
+        if not comment_id or not comment_content:
+            raise ValueError(
+                "comment_id and comment_content are required for update action"
+            )
+        return await _update_comment_impl(
+            service, app_name, file_id, comment_id, comment_content
+        )
+    elif action_lower == "delete":
+        if not comment_id:
+            raise ValueError("comment_id is required for delete action")
+        return await _delete_comment_impl(service, app_name, file_id, comment_id)
     else:
         raise ValueError(
-            f"Invalid action '{action_lower}'. Must be 'create', 'reply', or 'resolve'."
+            f"Invalid action '{action_lower}'. Must be 'create', 'reply', "
+            "'resolve', 'update', or 'delete'."
         )
 
 
@@ -133,6 +146,8 @@ def create_comment_tools(
                 the Google Docs UI can do that.
               - reply: Reply to a comment. Requires comment_id and comment_content.
               - resolve: Resolve a comment. Requires comment_id.
+              - update: Edit a comment's text. Requires comment_id and comment_content.
+              - delete: Delete a comment. Requires comment_id.
             """
             return await _manage_comment_dispatch(
                 service, app_name, document_id, action, comment_content, comment_id
@@ -184,6 +199,8 @@ def create_comment_tools(
                 anchor it to a cell; otherwise it is a file-level comment.
               - reply: Reply to a comment. Requires comment_id and comment_content.
               - resolve: Resolve a comment. Requires comment_id.
+              - update: Edit a comment's text. Requires comment_id and comment_content.
+              - delete: Delete a comment. Requires comment_id.
             """
             return await _manage_comment_dispatch(
                 service,
@@ -231,6 +248,8 @@ def create_comment_tools(
                 Slides comments are element-scoped via the API.
               - reply: Reply to a comment. Requires comment_id and comment_content.
               - resolve: Resolve a comment. Requires comment_id.
+              - update: Edit a comment's text. Requires comment_id and comment_content.
+              - delete: Delete a comment. Requires comment_id.
             """
             return await _manage_comment_dispatch(
                 service, app_name, presentation_id, action, comment_content, comment_id
@@ -269,16 +288,15 @@ async def _read_comments_impl(
     """Implementation for reading comments from any Google Workspace file."""
     logger.info(f"[read_{app_name}_comments] Reading comments for {app_name} {file_id}")
 
+    if max_comments is not None and max_comments < 1:
+        raise UserInputError("max_comments must be a positive integer.")
     if max_comments is None:
         try:
             max_comments = int(os.getenv("WORKSPACE_MCP_COMMENTS_MAX", "100"))
-        except (ValueError, TypeError):
+        except ValueError:
             max_comments = 100
-
-    if max_comments < 0:
-        max_comments = 100
-    if max_comments == 0:
-        return f"No comments found in {app_name} {file_id}"
+        if max_comments < 1:
+            max_comments = 100
 
     comments: list = []
     page_token: str | None = None
@@ -450,3 +468,59 @@ async def _resolve_comment_impl(
     created = reply.get("createdTime", "")
 
     return f"Comment {comment_id} has been resolved successfully.\nResolve reply ID: {reply_id}\nAuthor: {author}\nCreated: {created}"
+
+
+async def _require_own_comment(service, file_id: str, comment_id: str) -> None:
+    """Raise UserInputError unless the authenticated user wrote the comment."""
+    comment = await asyncio.to_thread(
+        service.comments()
+        .get(fileId=file_id, commentId=comment_id, fields="author(me)")
+        .execute
+    )
+    if not comment.get("author", {}).get("me"):
+        raise UserInputError(
+            f"Comment {comment_id} was written by another user; only its author "
+            "can update or delete it."
+        )
+
+
+async def _update_comment_impl(
+    service, app_name: str, file_id: str, comment_id: str, comment_content: str
+) -> str:
+    """Implementation for editing a comment on any Google Workspace file."""
+    logger.info(
+        f"[update_{app_name}_comment] Updating comment {comment_id} in {app_name} {file_id}"
+    )
+    await _require_own_comment(service, file_id, comment_id)
+
+    comment = await asyncio.to_thread(
+        service.comments()
+        .update(
+            fileId=file_id,
+            commentId=comment_id,
+            body={"content": comment_content},
+            fields="id,content,author,modifiedTime",
+        )
+        .execute
+    )
+
+    author = comment.get("author", {}).get("displayName", "Unknown")
+    modified = comment.get("modifiedTime", "")
+
+    return f"Comment {comment_id} updated successfully!\nAuthor: {author}\nModified: {modified}\n{_format_field('Content: ', comment_content)}"
+
+
+async def _delete_comment_impl(
+    service, app_name: str, file_id: str, comment_id: str
+) -> str:
+    """Implementation for deleting a comment on any Google Workspace file."""
+    logger.info(
+        f"[delete_{app_name}_comment] Deleting comment {comment_id} in {app_name} {file_id}"
+    )
+    await _require_own_comment(service, file_id, comment_id)
+
+    await asyncio.to_thread(
+        service.comments().delete(fileId=file_id, commentId=comment_id).execute
+    )
+
+    return f"Comment {comment_id} deleted from {app_name} {file_id}."

@@ -1490,7 +1490,6 @@ def test_try_read_local_attachment_requires_metadata_without_scan_fallback(
     tmp_path, monkeypatch
 ):
     file_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-    monkeypatch.setattr(gmail_tools, "STORAGE_DIR", tmp_path)
     (tmp_path / f"report_{file_id[:8]}.pdf").write_bytes(b"%PDF-fake")
 
     storage = gmail_tools.get_attachment_storage()
@@ -1767,7 +1766,15 @@ async def test_send_gmail_message_quotes_original_when_requested():
 
 
 @pytest.mark.asyncio
-async def test_send_gmail_message_reply_all_derives_recipients():
+@pytest.mark.parametrize(
+    "cc, expected_cc",
+    [
+        (None, "bob@example.com, carol@example.com"),
+        ("", None),
+        ("explicit@example.com", "explicit@example.com"),
+    ],
+)
+async def test_send_gmail_message_reply_all_derives_recipients(cc, expected_cc):
     mock_service = _mock_gmail_service()
     mock_service.users().messages().send().execute.return_value = {"id": "sent_reply"}
     mock_service.users().threads().get().execute.return_value = {
@@ -1788,6 +1795,7 @@ async def test_send_gmail_message_reply_all_derives_recipients():
         body="Thanks all.",
         thread_id="thread123",
         reply_all=True,
+        cc=cc,
         include_signature=False,
     )
 
@@ -1796,8 +1804,7 @@ async def test_send_gmail_message_reply_all_derives_recipients():
     )
     parsed = _parse_raw_message(send_kwargs["body"]["raw"])
     assert parsed["To"] == "alice@example.com"
-    # The authenticated account is dropped; everyone else on the message is kept.
-    assert parsed["Cc"] == "bob@example.com, carol@example.com"
+    assert parsed["Cc"] == expected_cc
 
 
 @pytest.mark.asyncio
@@ -1935,6 +1942,27 @@ async def test_send_gmail_message_reply_all_excludes_the_send_as_alias_from_to()
 
 
 @pytest.mark.asyncio
+async def test_send_gmail_message_reply_all_stops_without_reply_context():
+    mock_service = _mock_gmail_service()
+    mock_service.users().threads().get().execute.return_value = {"messages": []}
+
+    # An explicit 'to' must not let the send go through with only the caller's
+    # recipients, silently dropping everyone reply-all would add.
+    with pytest.raises(UserInputError, match="reply-all recipients cannot be derived"):
+        await _unwrap(send_gmail_message)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            to="alice@example.com",
+            subject="Re: Meeting tomorrow",
+            body="Thanks all.",
+            thread_id="thread123",
+            reply_all=True,
+        )
+
+    mock_service.users.return_value.messages.return_value.send.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_send_gmail_message_reply_all_requires_a_thread_id():
     mock_service = _mock_gmail_service()
 
@@ -1983,6 +2011,89 @@ async def test_send_gmail_message_requires_to_when_forwarding():
         )
 
     mock_service.users.return_value.messages.return_value.get.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "cc, expected_cc",
+    [
+        (None, "bob@example.com, carol@example.com"),
+        ("", None),
+        ("explicit@example.com", "explicit@example.com"),
+    ],
+)
+async def test_draft_gmail_message_reply_all_derives_recipients(cc, expected_cc):
+    mock_service = _mock_gmail_service()
+    mock_service.users().drafts().create().execute.return_value = {"id": "draft_reply"}
+    mock_service.users().threads().get().execute.return_value = {
+        "messages": [
+            _thread_message(
+                "<msg1@example.com>",
+                from_value="Alice Example <alice@example.com>",
+                to_value="user@example.com, bob@example.com",
+                cc_value="carol@example.com",
+            )
+        ]
+    }
+
+    await _unwrap(draft_gmail_message)(
+        service=mock_service,
+        user_google_email="user@example.com",
+        subject="Re: Meeting tomorrow",
+        body="Thanks all.",
+        thread_id="thread123",
+        reply_all=True,
+        cc=cc,
+        include_signature=False,
+    )
+
+    create_kwargs = (
+        mock_service.users.return_value.drafts.return_value.create.call_args.kwargs
+    )
+    parsed = _parse_raw_message(create_kwargs["body"]["message"]["raw"])
+    assert parsed["To"] == "alice@example.com"
+    assert parsed["Cc"] == expected_cc
+
+
+@pytest.mark.asyncio
+async def test_draft_gmail_message_reply_all_stops_without_reply_context():
+    mock_service = _mock_gmail_service()
+    mock_service.users().threads().get().execute.return_value = {"messages": []}
+
+    # An explicit subject must not let the draft fall through with only the
+    # caller's recipients, silently dropping everyone reply-all would add.
+    with pytest.raises(UserInputError, match="reply-all recipients cannot be derived"):
+        await _unwrap(draft_gmail_message)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            to="alice@example.com",
+            subject="Re: Meeting tomorrow",
+            body="Thanks all.",
+            thread_id="thread123",
+            reply_all=True,
+            include_signature=False,
+        )
+
+    mock_service.users.return_value.drafts.return_value.create.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_draft_gmail_message_reply_all_requires_a_thread_id():
+    mock_service = _mock_gmail_service()
+
+    with pytest.raises(UserInputError, match="'reply_all' requires a thread_id"):
+        await _unwrap(draft_gmail_message)(
+            service=mock_service,
+            user_google_email="user@example.com",
+            to="recipient@example.com",
+            subject="Hello",
+            body="Hi there!",
+            reply_all=True,
+            include_signature=False,
+        )
+
+    mock_service.users.return_value.drafts.return_value.create.assert_not_called()
+    mock_service.users.return_value.threads.return_value.get.assert_not_called()
 
 
 @pytest.mark.asyncio

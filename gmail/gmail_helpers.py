@@ -3,21 +3,39 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
+import codecs
+import contextlib
+import hashlib
+import itertools
 import logging
 import re
 import secrets
 import ssl
-from collections import Counter
+import sys
+from collections import Counter, OrderedDict
 from datetime import datetime, timezone
 from email.header import Header
+from email.message import Message
+from email.parser import BytesParser
+from email.policy import default as default_email_policy
 from email.utils import getaddresses, parseaddr, parsedate_to_datetime
 from html.parser import HTMLParser
+from threading import Lock
+from time import monotonic
 from typing import Any, Callable, Dict, Iterable, List, Literal, Mapping, Optional
+from urllib.parse import quote
 
 import httplib2
 from fastmcp.exceptions import ToolError as ToolExecutionError
 from googleapiclient.errors import HttpError
 
+from core.file_limits import (
+    FileTooLargeError,
+    ensure_within_file_size_limit,
+    get_max_file_bytes,
+)
 from core.utils import UserInputError
 from gmail.gmail_web_mime import (
     TextDirection,
@@ -41,6 +59,12 @@ from gmail.gmail_web_mime import (
 logger = logging.getLogger(__name__)
 
 RAW_BODY_TRUNCATE_LIMIT = 20000
+MAX_PAGINATED_MESSAGE_BYTES = 64 * 1024 * 1024
+_PAGE_CACHE_BYTES = 64 * 1024 * 1024
+_PAGE_CACHE_ENTRIES = 128
+_PAGE_CACHE_TTL = 300
+_PAGE_CACHE = OrderedDict()
+_PAGE_CACHE_LOCK = Lock()
 GMAIL_QUOTA_ERROR_MARKERS = (
     "dailyLimitExceeded",
     "quotaExceeded",
@@ -198,6 +222,195 @@ GMAIL_LABEL_COLORS = frozenset(
 )
 
 
+def _render_paginated_message_body(
+    raw: bytes, body_format: str, formatter: Callable
+) -> str:
+    """Render the outer message body, excluding attachments and attached messages."""
+    message = BytesParser(policy=default_email_policy).parsebytes(raw)
+    pending = [(message, 0)]
+    while pending:
+        part, depth = pending.pop()
+        if (
+            part.get_content_disposition() == "attachment"
+            or part.get_content_maintype() == "message"
+        ):
+            continue
+        if depth > 50:
+            raise ToolExecutionError("Message MIME nesting is too deep to paginate.")
+        if part.get_content_maintype() == "multipart" and not part.is_multipart():
+            raise ToolExecutionError(
+                "Malformed multipart message cannot be paginated completely."
+            )
+        if part.is_multipart():
+            pending.extend((child, depth + 1) for child in part.iter_parts())
+
+    def decode(part):
+        try:
+            return part.get_content()
+        except LookupError:
+            return (part.get_payload(decode=True) or b"").decode(
+                "utf-8", errors="replace"
+            )
+
+    def render(part):
+        if (
+            part.get_content_disposition() == "attachment"
+            or part.get_content_maintype() == "message"
+        ):
+            return ""
+        if part.get_content_type() == "multipart/alternative":
+            plain = part.get_body(preferencelist=("plain",))
+            html = part.get_body(preferencelist=("html",))
+            return formatter(
+                decode(plain) if plain is not None else "",
+                decode(html) if html is not None else "",
+                body_format=body_format,
+                truncate_limit=None,
+            )
+        if part.get_content_type() == "multipart/related":
+            children = list(part.iter_parts())
+            if not children:
+                return ""
+            start = part.get_param("start")
+            root = next(
+                (p for p in children if start and p.get("Content-ID") == start),
+                children[0],
+            )
+            return render(root)
+        if part.is_multipart():
+            return "\n".join(filter(None, (render(p) for p in part.iter_parts())))
+        if part.get_content_type() == "text/plain":
+            return decode(part)
+        if part.get_content_type() == "text/html":
+            return formatter(
+                "", decode(part), body_format=body_format, truncate_limit=None
+            )
+        return ""
+
+    return render(message)
+
+
+async def _fetch_paginated_message_body(
+    service, message_id, body_format, formatter, limit
+):
+    """Read and render a bounded message for the page cache."""
+    response = await asyncio.to_thread(
+        service.users().messages().get(userId="me", id=message_id, format="raw").execute
+    )
+    encoded = response.get("raw")
+    if not isinstance(encoded, str) or not encoded:
+        raise ToolExecutionError("Gmail returned no raw message body to paginate.")
+    if len(encoded) > ((limit + 2) // 3) * 4:
+        raise ToolExecutionError("Message exceeds the paginated-read size limit.")
+    try:
+        raw = await asyncio.to_thread(
+            base64.b64decode,
+            encoded + "=" * (-len(encoded) % 4),
+            altchars=b"-_",
+            validate=True,
+        )
+    except (binascii.Error, ValueError) as exc:
+        raise ToolExecutionError("Gmail returned invalid raw message data.") from exc
+    ensure_within_file_size_limit(
+        len(raw),
+        file_id=message_id,
+        kind="message page",
+        max_bytes=limit,
+    )
+    try:
+        text = await asyncio.to_thread(
+            _render_paginated_message_body, raw, body_format, formatter
+        )
+    except RecursionError as exc:
+        raise ToolExecutionError(
+            "Message MIME nesting is too deep to paginate."
+        ) from exc
+    encoded_body = await asyncio.to_thread(text.encode, "utf-8")
+    ensure_within_file_size_limit(
+        len(encoded_body),
+        file_id=message_id,
+        kind="message page",
+        max_bytes=limit,
+    )
+    digest = await asyncio.to_thread(hashlib.sha256, encoded_body)
+    return text, len(raw), len(encoded_body), digest.hexdigest()
+
+
+async def read_gmail_message_page(
+    service,
+    message_id: str,
+    declared_size: Optional[int],
+    body_format: str,
+    page_offset: int,
+    page_size: int,
+    expected_sha256: Optional[str],
+    formatter: Callable,
+    *,
+    account: str,
+    include_links: bool = False,
+) -> dict:
+    """Fetch an authorized body and return a bounded page using a bounded process-local cache."""
+    limit = min(
+        get_max_file_bytes() or MAX_PAGINATED_MESSAGE_BYTES, MAX_PAGINATED_MESSAGE_BYTES
+    )
+    ensure_within_file_size_limit(
+        declared_size,
+        file_id=message_id,
+        kind="message page",
+        max_bytes=limit,
+    )
+    key = (account.lower(), message_id, body_format, include_links) if account else None
+    with _PAGE_CACHE_LOCK:
+        now = monotonic()
+        for old_key, (expires, _) in list(_PAGE_CACHE.items()):
+            if expires <= now:
+                del _PAGE_CACHE[old_key]
+        cached = _PAGE_CACHE.get(key)
+    body = cached[1] if cached is not None else None
+    if body is None:
+        body = await _fetch_paginated_message_body(
+            service, message_id, body_format, formatter, limit
+        )
+        cost = sys.getsizeof(body[0]) + 256
+        if key is not None and cost <= _PAGE_CACHE_BYTES:
+            with _PAGE_CACHE_LOCK:
+                _PAGE_CACHE.pop(key, None)
+                while _PAGE_CACHE and (
+                    len(_PAGE_CACHE) >= _PAGE_CACHE_ENTRIES
+                    or sum(
+                        sys.getsizeof(entry[1][0]) + 256
+                        for entry in _PAGE_CACHE.values()
+                    )
+                    + cost
+                    > _PAGE_CACHE_BYTES
+                ):
+                    _PAGE_CACHE.popitem(last=False)
+                _PAGE_CACHE[key] = (monotonic() + _PAGE_CACHE_TTL, body)
+    text, raw_size, encoded_size, digest = body
+    for size in (raw_size, encoded_size):
+        ensure_within_file_size_limit(
+            size, file_id=message_id, kind="message page", max_bytes=limit
+        )
+    if expected_sha256 is not None and digest != expected_sha256:
+        raise UserInputError(
+            "Message representation changed; restart at page_offset=0."
+        )
+    if page_offset > len(text):
+        raise UserInputError("page_offset exceeds total_chars.")
+    end = min(page_offset + page_size, len(text))
+    return {
+        "message_id": message_id,
+        "body_format": body_format,
+        "body": text[page_offset:end],
+        "page_offset": page_offset,
+        "next_offset": end if end < len(text) else None,
+        "total_chars": len(text),
+        "complete": end == len(text),
+        "body_sha256": digest,
+        "scope": "Decoded outer message body, excluding attachments and attached messages.",
+    }
+
+
 def _validate_label_color(field: str, value: str) -> str:
     """Normalize one label color and check it against Gmail's fixed palette.
 
@@ -255,6 +468,19 @@ def _normalize_email(address: str) -> str:
 def _new_attachment_id() -> str:
     """Return a random attachment id in the shape Gmail web uses (``f_...``)."""
     return f"f_{secrets.token_hex(5)}"
+
+
+def _generate_gmail_web_url(
+    item_id: str, account_index: int = 0, user_google_email: Optional[str] = None
+) -> str:
+    """Return the Gmail web URL for a message or thread ID in any label (#all).
+
+    Selects the account by ``authuser`` email when known, else by index in the path.
+    """
+    if user_google_email:
+        authuser = quote(user_google_email, safe="@")
+        return f"https://mail.google.com/mail/?authuser={authuser}#all/{item_id}"
+    return f"https://mail.google.com/mail/u/{account_index}/#all/{item_id}"
 
 
 def _http_error_status(error: HttpError) -> Optional[int]:
@@ -332,6 +558,77 @@ async def _fetch_with_retry(
 
     logger.error(f"[{log_prefix}] Failed to fetch {item_label} {item_id}: {last_error}")
     return item_id, None, last_error
+
+
+async def _fetch_body_data(
+    service, message_id: Optional[str], attachment_id: str, body: Dict[str, Any]
+) -> Optional[str]:
+    """Store an attachment-backed body part's data on ``body``; return why it failed."""
+    try:
+        ensure_within_file_size_limit(
+            body.get("size"), file_id=attachment_id, kind="message body"
+        )
+        _, response, error = await _fetch_with_retry(
+            lambda: (
+                service.users()
+                .messages()
+                .attachments()
+                .get(userId="me", messageId=message_id, id=attachment_id)
+            ),
+            item_id=attachment_id,
+            item_label="message body",
+            log_prefix="fetch_attachment_backed_bodies",
+        )
+        if error is not None:
+            return f"Could not fetch message body {attachment_id}: {error}"
+        response = response or {}
+        ensure_within_file_size_limit(
+            response.get("size"), file_id=attachment_id, kind="message body"
+        )
+    except FileTooLargeError as error:
+        logger.warning(f"Skipping message body of {message_id}: {error}")
+        return str(error)
+    data = response.get("data") or ""
+    try:
+        decoded = _decode_base64url(data)
+    except binascii.Error:
+        decoded = b""
+    if not decoded:
+        return f"Message body {attachment_id} came back empty or undecodable"
+    body["data"] = data
+    return None
+
+
+async def fetch_attachment_backed_bodies(
+    service, messages: Iterable[Mapping[str, Any]]
+) -> List[str]:
+    """Fill in the text/plain and text/html bodies Gmail stores behind an attachmentId.
+
+    Returns why each body that is still missing could not be fetched.
+    """
+    errors: List[str] = []
+    for message in messages:
+        pending = [message.get("payload") or {}]
+        failures: Dict[str, str] = {}
+        wanted = {"text/plain", "text/html"}
+        while pending and wanted:
+            part = pending.pop(0)
+            mime_type = part.get("mimeType", "")
+            body = part.get("body") or {}
+            attachment_id = None if part.get("filename") else body.get("attachmentId")
+            if mime_type in wanted and not body.get("data") and attachment_id:
+                error = await _fetch_body_data(
+                    service, message.get("id"), attachment_id, body
+                )
+                if error:
+                    failures[mime_type] = error
+            if mime_type in wanted and body.get("data"):
+                wanted.discard(mime_type)
+                failures.pop(mime_type, None)
+            if mime_type.startswith("multipart/"):
+                pending.extend(part.get("parts") or [])
+        errors.extend(failures.values())
+    return errors
 
 
 async def send_message_once(service, send_body: Dict[str, Any]) -> Dict[str, Any]:
@@ -509,7 +806,7 @@ def _derive_reply_all_recipients(
         )
 
     derived_cc = cc
-    if not derived_cc:
+    if derived_cc is None:
         seen = {addr.lower() for _n, addr in getaddresses([derived_to or ""]) if addr}
         seen |= excluded
         others = []
@@ -525,6 +822,17 @@ def _derive_reply_all_recipients(
         derived_cc = ", ".join(others) or None
 
     return derived_to or None, derived_cc
+
+
+def thread_message_status(message: Mapping[str, Any]) -> str:
+    """Return a header suffix such as " [DRAFT, NOT SENT]" for draft or trashed mail."""
+    labels = set(message.get("labelIds") or ())
+    parts = []
+    if "DRAFT" in labels:
+        parts.append("DRAFT, NOT SENT")
+    if "TRASH" in labels:
+        parts.append("IN TRASH")
+    return f" [{', '.join(parts)}]" if parts else ""
 
 
 def _analyze_thread_ownership_impl(
@@ -681,7 +989,7 @@ class _HTMLBlockTextExtractor(HTMLParser):
 
     # Elements whose boundaries are visible line breaks once the markup is
     # gone. Table cells are deliberately absent: a line per cell would wreck
-    # table-based layouts, and the separator they do need is its own issue.
+    # table-based layouts, so handle_starttag separates them with a space.
     _BLOCK_TAGS = frozenset(
         {
             "address",
@@ -747,6 +1055,12 @@ class _HTMLBlockTextExtractor(HTMLParser):
             # A nested block starts a new visual line even when its parent
             # already contains text (for example, Name<div>Title</div>).
             self._append_line_break()
+            if ("data-smartmail", "gmail_signature") in attrs:
+                self._append_line_break(force=True)
+        elif tag in ("td", "th"):
+            # Separating at the start tag also covers omitted </td> and </th>.
+            if self._text and not self._text[-1].endswith((" ", "\n")):
+                self._text.append(" ")
 
     def handle_endtag(self, tag):
         # Closing a block ends its visual line. _append_line_break avoids a
@@ -778,6 +1092,39 @@ class _HTMLBlockTextExtractor(HTMLParser):
         return text.strip()
 
 
+def _decode_base64url(data: str) -> bytes:
+    """Decode Gmail base64url data, which may arrive without padding."""
+    return base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
+
+
+def decode_part_body(part: Mapping[str, Any]) -> str:
+    """Decode a Gmail payload part's body.
+
+    Gmail converts inline ``format="full"`` data to UTF-8 but serves
+    attachment-backed bodies in their declared charset.
+    """
+    raw = _decode_base64url(part["body"]["data"])
+    headers = Message()
+    for header in part.get("headers", []):
+        headers[header["name"]] = header["value"]
+    charset = headers.get_content_charset() or "utf-8"
+    attempts = [(charset, "strict"), ("utf-8", "strict"), (charset, "ignore")]
+    with contextlib.suppress(LookupError):
+        name = codecs.lookup(charset).name
+        if name in {"ascii", "cp1252", "iso8859-1"}:
+            # WHATWG reads these labels as windows-1252, and they often mislabel UTF-8.
+            attempts = [("utf-8", "strict"), ("cp1252", "strict"), ("cp1252", "ignore")]
+        elif not part["body"].get("attachmentId") and not name.startswith("iso2022"):
+            # Raw ISO-2022 bytes are also valid UTF-8, so that codec stays first.
+            attempts = [("utf-8", "strict"), (charset, "strict"), (charset, "ignore")]
+    for codec, errors in attempts:
+        try:
+            return raw.decode(codec, errors)
+        except (LookupError, UnicodeError):
+            continue
+    return raw.decode("utf-8", errors="ignore")
+
+
 def html_to_text_preserving_breaks(html_content: str) -> str:
     """Convert HTML to plain text, keeping block boundaries as line breaks.
 
@@ -795,6 +1142,83 @@ def html_to_text_preserving_breaks(html_content: str) -> str:
         return parser.get_text()
     except Exception:
         return html_content
+
+
+class _HTMLLinkExtractor(HTMLParser):
+    """Collect http(s) anchor URLs mapped to their visible text, in document order."""
+
+    def __init__(self):
+        super().__init__()
+        self.links: Dict[str, str] = {}
+        self._href: Optional[str] = None
+        self._text: List[str] = []
+
+    def _flush(self) -> None:
+        if self._href is not None and not self.links.get(self._href):
+            self.links[self._href] = " ".join("".join(self._text).split())
+        self._href = None
+        self._text = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "br":
+            self.handle_data(" ")
+        if tag != "a":
+            return
+        self._flush()
+        href = re.sub(r"[\t\n\r]", "", dict(attrs).get("href") or "").strip()
+        if href.lower().startswith(("http://", "https://")):
+            self._href = href
+
+    def handle_endtag(self, tag):
+        if tag == "a":
+            self._flush()
+
+    def handle_data(self, data):
+        if self._href is not None:
+            self._text.append(data)
+
+    def parse_marked_section(self, i, report=1):
+        # Older CPython patch releases raise on unknown <![...]> sections.
+        try:
+            return super().parse_marked_section(i, report)
+        except AssertionError:
+            return self.parse_bogus_comment(i)
+
+    def close(self):
+        super().close()
+        self._flush()
+
+
+_TEXT_URL_RE = re.compile(r"https?://[^\s<>\"]+", re.IGNORECASE)
+
+
+def format_html_links(
+    html_body: str, known_text: str, limit: Optional[int] = None
+) -> str:
+    """Return a LINKS section of http(s) anchors missing from ``known_text``, capped at ``limit``."""
+    if not html_body:
+        return ""
+    parser = _HTMLLinkExtractor()
+    parser.feed(html_body)
+    parser.close()
+    shown = {
+        url
+        for token in _TEXT_URL_RE.findall(known_text)
+        for url in (token, token.rstrip(".,;:!?)]"))
+    }
+    lines = [
+        f"- {text}: {url}" if text and text != url else f"- {url}"
+        for url, text in parser.links.items()
+        if url not in shown
+    ]
+    if limit is not None:
+        kept = sum(
+            size <= limit
+            for size in itertools.accumulate(len(line) + 1 for line in lines)
+        )
+        if kept < len(lines):
+            lines = lines[:kept] + [f"[{len(lines) - kept} more links omitted]"]
+    return "\n\n--- LINKS ---\n" + "\n".join(lines) if lines else ""
 
 
 _HTML_BLOCK_TAGS = frozenset(
@@ -1104,10 +1528,23 @@ def _build_forward_content(
     return subject, forward_plain, forward_html
 
 
+_REPLY_PREFIX_RE = re.compile(r"^\s*(?:\[[^\]]*\]\s*)*re\s*:", re.IGNORECASE)
+
+
 def _reply_subject(subject: str, in_reply_to: Optional[str]) -> str:
-    """Prefix ``Re:`` onto a reply's subject unless it already carries one."""
-    if in_reply_to and not subject.lower().startswith("re:"):
+    """Prefix ``Re:`` onto a reply's subject unless one follows any ``[tag]`` prefixes."""
+    if in_reply_to and not _REPLY_PREFIX_RE.match(subject):
         return f"Re: {subject}"
+    return subject
+
+
+def _inherit_reply_subject(thread_id: str, target: Optional[Mapping[str, Any]]) -> str:
+    """Return the replied-to message's subject, raising when it has none."""
+    subject = (target or {}).get("subject") or ""
+    if not subject.strip():
+        raise UserInputError(
+            f"Could not inherit a subject from thread '{thread_id}'. Pass 'subject' explicitly."
+        )
     return subject
 
 
@@ -1116,6 +1553,35 @@ def _checked_header(field: str, value: str) -> str:
     if "\r" in value or "\n" in value:
         raise ValueError(f"Invalid {field} header value: line breaks not allowed.")
     return value
+
+
+MessagePriority = Literal["high", "normal", "low"]
+
+PRIORITY_DESCRIPTION = (
+    "'high' or 'low' sets the Importance/X-Priority headers that Outlook, Apple Mail "
+    "and Thunderbird flag; Gmail ignores them. 'normal' adds none."
+)
+
+_PRIORITY_HEADERS: Dict[str, tuple[tuple[str, str], ...]] = {
+    "high": (
+        ("Importance", "High"),
+        ("X-Priority", "1 (Highest)"),
+        ("Priority", "urgent"),
+    ),
+    "normal": (),
+    "low": (
+        ("Importance", "Low"),
+        ("X-Priority", "5 (Lowest)"),
+        ("Priority", "non-urgent"),
+    ),
+}
+
+
+def _priority_headers(priority: str) -> tuple[tuple[str, str], ...]:
+    """Return the headers that mark a message with ``priority``."""
+    if priority not in _PRIORITY_HEADERS:
+        raise ValueError("priority must be one of 'high', 'normal' or 'low'.")
+    return _PRIORITY_HEADERS[priority]
 
 
 def _prepare_gmail_message_web(
@@ -1129,6 +1595,7 @@ def _prepare_gmail_message_web(
     references: Optional[str] = None,
     from_email: Optional[str] = None,
     from_name: Optional[str] = None,
+    priority: MessagePriority = "normal",
 ) -> str:
     """Assemble a Gmail-web faithful ``multipart/alternative`` raw message.
 
@@ -1161,6 +1628,8 @@ def _prepare_gmail_message_web(
     if cc:
         headers.append(("Cc", format_address_list(_checked_header("Cc", cc))))
 
+    headers.extend(_priority_headers(priority))
+
     message = assemble_alternative(
         headers=headers,
         plain_text=plain_body,
@@ -1184,6 +1653,7 @@ def _build_web_compose_raw(
     references: Optional[str],
     direction: TextDirection,
     reply_target: Optional[Mapping[str, Any]],
+    priority: MessagePriority,
 ) -> str:
     """Build a Gmail-web raw message for the attachment-free send/draft paths.
 
@@ -1207,12 +1677,59 @@ def _build_web_compose_raw(
         references=references,
         from_email=from_email,
         from_name=from_name,
+        priority=priority,
     )
 
 
 def _signature_html_to_text(signature_html: str) -> str:
     """Convert Gmail signature HTML to plain text, preserving line breaks."""
     return html_to_text_preserving_breaks(signature_html)
+
+
+_MARGIN_BLOCK_TAGS = frozenset(
+    {
+        "blockquote",
+        "dl",
+        "figure",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "ol",
+        "p",
+        "pre",
+        "ul",
+    }
+)
+_END_TAG_RE = re.compile(r"</([a-zA-Z][a-zA-Z0-9]*)\s*>\s*")
+_TRAILING_BREAK_RE = re.compile(r"<[bh]r\b[^<>]*>\s*\Z", re.IGNORECASE)
+_RESTYLED_MARGIN_RE = re.compile(
+    rf"<style\b[^<>]*>[^<]*margin|<(?:{'|'.join(sorted(_MARGIN_BLOCK_TAGS))})\b[^<>]*margin",
+    re.IGNORECASE,
+)
+
+
+def _html_signature_separator(body: str) -> str:
+    """Return markup leaving one blank line between an HTML body and a signature."""
+    body = body.rstrip()
+    while body.endswith("-->") and (start := body.rfind("<!--")) != -1:
+        body = body[:start].rstrip()
+    if not body:
+        return ""
+    if _TRAILING_BREAK_RE.search(body):
+        return "<br>"
+    closed_tags = set()
+    end = len(body)
+    while match := _END_TAG_RE.fullmatch(body, body.rfind("</", 0, end), end):
+        closed_tags.add(match[1].lower())
+        end = match.start()
+    if closed_tags & _MARGIN_BLOCK_TAGS and not _RESTYLED_MARGIN_RE.search(body):
+        return ""
+    if closed_tags & _HTMLBlockTextExtractor._BLOCK_TAGS:
+        return "<br>"
+    return "<br><br>"
 
 
 def _wrap_signature_html(signature_html: str) -> str:

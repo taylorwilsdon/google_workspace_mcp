@@ -15,11 +15,16 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from mcp.types import ToolAnnotations
 
+from auth.oauth_config import is_service_account_enabled
 from auth.service_decorator import require_google_service
 from core.server import server
 from core.utils import UserInputError, handle_http_errors, StringList
 from gcontacts.contacts_helpers import (
+    DEFAULT_PERSON_FIELDS,
+    OTHER_CONTACT_FIELDS,
+    _contact_group_resource_name,
     _format_contact,
+    _list_contacts,
     _merge_emails,
     _merge_names,
     _merge_nicknames,
@@ -29,12 +34,11 @@ from gcontacts.contacts_helpers import (
     _merge_urls,
     _merge_user_defined,
     _parse_birthday,
+    _people_resource_name,
+    _search_request,
 )
 
 logger = logging.getLogger(__name__)
-
-# Default person fields for list/search operations
-DEFAULT_PERSON_FIELDS = "names,nicknames,emailAddresses,phoneNumbers,organizations"
 
 # Detailed person fields for get operations
 DETAILED_PERSON_FIELDS = (
@@ -318,7 +322,7 @@ def _build_person_body(
         emails: List of EmailInput items {address, value?, type?}.
         organizations: List of OrganizationInput items {name?, title?, department?, jobDescription?, type?}.
         notes: Additional notes/biography.
-        address: Street address.
+        address: Street address, replacing any existing addresses. "" clears them.
         birthday: Birthday as 'YYYY-MM-DD', 'MM-DD' (no year), or 'clear'/'' to remove.
         email: [DEPRECATED] Single email address. Use emails instead.
         phone: [DEPRECATED] Single phone number. Use phones instead.
@@ -515,8 +519,9 @@ def _build_person_body(
         else:
             body["biographies"] = []
 
-    if address:
-        body["addresses"] = [{"formattedValue": address}]
+    # Same convention as notes: None → no change, "" → explicit clear.
+    if address is not None:
+        body["addresses"] = [{"formattedValue": address}] if address else []
 
     if birthday is not None:
         if birthday.strip().lower() in ("clear", ""):
@@ -527,30 +532,23 @@ def _build_person_body(
     return body
 
 
-async def _warmup_search_cache(service: Resource, user_google_email: str) -> None:
-    """
-    Warm up the People API search cache.
-
-    The People API requires an initial empty query to warm up the search cache
-    before searches will return results.
-
-    Args:
-        service: Authenticated People API service.
-        user_google_email: User's email for tracking.
-    """
+async def _warmup_search_cache(
+    service: Resource, user_google_email: str, source: str
+) -> None:
+    """Send the empty-query search the People API needs before a source's first search."""
     global _search_cache_warmed_up
 
-    if _search_cache_warmed_up.get(user_google_email):
+    cache_key = f"{source}:{user_google_email}"
+    if _search_cache_warmed_up.get(cache_key):
         return
 
     try:
         logger.debug(f"[contacts] Warming up search cache for {user_google_email}")
-        await asyncio.to_thread(
-            service.people()
-            .searchContacts(query="", readMask="names", pageSize=1)
-            .execute
+        request = _search_request(
+            service, source, query="", readMask="names", pageSize=1
         )
-        _search_cache_warmed_up[user_google_email] = True
+        await asyncio.to_thread(request.execute)
+        _search_cache_warmed_up[cache_key] = True
         logger.debug(f"[contacts] Search cache warmed up for {user_google_email}")
     except HttpError as e:
         # Warmup failure is non-fatal, search may still work
@@ -572,66 +570,39 @@ async def _warmup_search_cache(service: Resource, user_google_email: str) -> Non
     ),
 )
 @require_google_service("people", "contacts_read")
-@handle_http_errors("list_contacts", service_type="people")
+@handle_http_errors("list_contacts", is_read_only=True, service_type="people")
 async def list_contacts(
     service: Resource,
     user_google_email: str,
     page_size: int = 100,
     page_token: Optional[str] = None,
     sort_order: Optional[str] = None,
+    request_sync_token: bool = False,
+    sync_token: Optional[str] = None,
 ) -> str:
     """
-    List contacts for the authenticated user.
+    List contacts for the authenticated user, optionally as a full or incremental sync.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
         page_size (int): Maximum number of contacts to return (default: 100, max: 1000).
-        page_token (Optional[str]): Token for pagination.
-        sort_order (Optional[str]): Sort order: "LAST_MODIFIED_ASCENDING", "LAST_MODIFIED_DESCENDING", "FIRST_NAME_ASCENDING", or "LAST_NAME_ASCENDING".
+        page_token (Optional[str]): Token for pagination. Keep all other arguments unchanged when following it.
+        sort_order (Optional[str]): Sort order: "LAST_MODIFIED_ASCENDING", "LAST_MODIFIED_DESCENDING", "FIRST_NAME_ASCENDING", or "LAST_NAME_ASCENDING". Not supported when syncing.
+        request_sync_token (bool): Start a full sync. The last page returns a sync token.
+        sync_token (Optional[str]): List only changes since the sync that returned this token, marking deleted contacts. The last page returns a new sync token.
 
     Returns:
         str: List of contacts with their basic information.
     """
-    logger.info(f"[list_contacts] Invoked. Email: '{user_google_email}'")
-
-    if page_size < 1:
-        raise UserInputError("page_size must be >= 1")
-    page_size = min(page_size, 1000)
-
-    params: Dict[str, Any] = {
-        "resourceName": "people/me",
-        "personFields": DEFAULT_PERSON_FIELDS,
-        "pageSize": page_size,
-    }
-
-    if page_token:
-        params["pageToken"] = page_token
-    if sort_order:
-        params["sortOrder"] = sort_order
-
-    result = await asyncio.to_thread(
-        service.people().connections().list(**params).execute
+    return await _list_contacts(
+        service,
+        user_google_email,
+        page_size,
+        page_token,
+        sort_order,
+        request_sync_token,
+        sync_token,
     )
-
-    connections = result.get("connections", [])
-    next_page_token = result.get("nextPageToken")
-    total_people = result.get("totalPeople", len(connections))
-
-    if not connections:
-        return f"No contacts found for {user_google_email}."
-
-    response = (
-        f"Contacts for {user_google_email} ({len(connections)} of {total_people}):\n\n"
-    )
-
-    for person in connections:
-        response += _format_contact(person) + "\n\n"
-
-    if next_page_token:
-        response += f"Next page token: {next_page_token}"
-
-    logger.info(f"Found {len(connections)} contacts for {user_google_email}")
-    return response
 
 
 @server.tool(
@@ -660,11 +631,7 @@ async def get_contact(
     Returns:
         str: Detailed contact information.
     """
-    # Normalize resource name
-    if not contact_id.startswith("people/"):
-        resource_name = f"people/{contact_id}"
-    else:
-        resource_name = contact_id
+    resource_name = _people_resource_name(contact_id)
 
     logger.info(
         f"[get_contact] Invoked. Email: '{user_google_email}', Contact: {resource_name}"
@@ -699,6 +666,7 @@ async def search_contacts(
     user_google_email: str,
     query: str,
     page_size: int = 30,
+    source: Literal["saved", "other"] = "saved",
 ) -> str:
     """
     Search contacts by name, email, phone number, or other fields.
@@ -707,6 +675,7 @@ async def search_contacts(
         user_google_email (str): The user's Google email address. Required.
         query (str): Search query string (searches names, emails, phone numbers).
         page_size (int): Maximum number of results to return (default: 30, max: 30).
+        source (str): "saved" (default) or "other" for people you've emailed but never saved (Gmail's "Other contacts").
 
     Returns:
         str: Matching contacts with their basic information.
@@ -719,24 +688,29 @@ async def search_contacts(
     if page_size < 1:
         raise UserInputError("page_size must be >= 1")
     page_size = min(page_size, 30)
+    if source == "other" and is_service_account_enabled():
+        raise UserInputError(
+            "source='other' is not available in service-account mode; "
+            "it needs user OAuth with the contacts.other.readonly scope."
+        )
 
     # Warm up the search cache if needed
-    await _warmup_search_cache(service, user_google_email)
+    await _warmup_search_cache(service, user_google_email, source)
 
-    result = await asyncio.to_thread(
-        service.people()
-        .searchContacts(
-            query=query,
-            readMask=DEFAULT_PERSON_FIELDS,
-            pageSize=page_size,
-        )
-        .execute
+    request = _search_request(
+        service,
+        source,
+        query=query,
+        readMask=OTHER_CONTACT_FIELDS if source == "other" else DEFAULT_PERSON_FIELDS,
+        pageSize=page_size,
     )
+    result = await asyncio.to_thread(request.execute)
 
     results = result.get("results", [])
 
     if not results:
-        return f"No contacts found matching '{query}' for {user_google_email}."
+        label = "other contacts" if source == "other" else "contacts"
+        return f"No {label} found matching '{query}' for {user_google_email}."
 
     response = f"Search Results for '{query}' ({len(results)} found):\n\n"
 
@@ -818,7 +792,7 @@ async def manage_contact(
         relations (Optional[List[Dict]]): List of relation dicts {person, type?}.
             Supported types: spouse, child, parent, friend, manager, assistant, etc.
         notes (Optional[str]): Additional notes (for create/update).
-        address (Optional[str]): Street address (for create/update).
+        address (Optional[str]): Street address, replacing any existing addresses. "" clears them (for create/update).
         birthday (Optional[str]): Birthday as 'YYYY-MM-DD', 'MM-DD' (no year), or 'clear'/'' to remove.
         phones_mode (str): How to update phones on "update": "merge" (default), "replace", or "remove".
             merge = read-modify-write with dedup by canonicalForm/normalized value.
@@ -828,7 +802,7 @@ async def manage_contact(
         organizations_mode (str): How to update orgs on "update": "merge" (default), "replace", or "remove".
         nicknames_mode (str): How to update nicknames on "update": "merge" (default), "replace", or "remove".
         urls_mode (str): How to update urls on "update": "merge" (default), "replace", or "remove".
-            merge dedups by normalized URL (lowercased, trailing slash stripped).
+            merge and remove match URLs case-insensitively on scheme and host only, ignoring a trailing slash.
         user_defined_mode (str): How to update custom fields on "update": "merge" (default), "replace", or "remove".
             merge overrides value on matching key; new keys appended.
         relations_mode (str): How to update relations on "update": "merge" (default), "replace", or "remove".
@@ -906,11 +880,7 @@ async def manage_contact(
     if not contact_id:
         raise UserInputError(f"contact_id is required for '{action}' action.")
 
-    # Normalize resource name
-    if not contact_id.startswith("people/"):
-        resource_name = f"people/{contact_id}"
-    else:
-        resource_name = contact_id
+    resource_name = _people_resource_name(contact_id)
 
     if action == "update":
         # Retry loop for etag conflicts (412 Precondition Failed)
@@ -1175,11 +1145,7 @@ async def get_contact_group(
     Returns:
         str: Contact group details including members.
     """
-    # Normalize resource name
-    if not group_id.startswith("contactGroups/"):
-        resource_name = f"contactGroups/{group_id}"
-    else:
-        resource_name = group_id
+    resource_name = _contact_group_resource_name(group_id)
 
     logger.info(
         f"[get_contact_group] Invoked. Email: '{user_google_email}', Group: {resource_name}"
@@ -1267,12 +1233,13 @@ async def manage_contacts_batch(
         user_google_email (str): The user's Google email address. Required.
         action (str): The action to perform: "create", "update", or "delete".
         contacts (Optional[List[Dict]]): List of contact dicts for "create" action.
-            Each dict may contain: given_name, family_name, phones, emails, organizations,
-            notes, address. Deprecated: phone, email, organization, job_title.
+            Each dict may contain: given_name, family_name, phones, emails,
+            organizations, nicknames, urls, user_defined, relations, notes, address,
+            birthday. Deprecated: phone, email, organization, job_title.
         updates (Optional[List[Dict]]): List of update dicts for "update" action.
             Each dict must contain contact_id and may contain the same fields as contacts.
         contact_ids (Optional[List[str]]): List of contact IDs for "delete" action.
-        field (str): For "update" action — the single People API field to update across
+        field (str): For "update" action, the single People API field to update across
             all contacts in this batch. Required. Must be one of: names, phoneNumbers,
             emailAddresses, organizations, nicknames, urls, userDefined, relations,
             biographies, addresses, birthdays. Using a single field per batch call prevents
@@ -1393,9 +1360,7 @@ async def manage_contacts_batch(
             cid = update.contact_id
             if not cid:
                 raise UserInputError("Each update must include a contact_id.")
-            if not cid.startswith("people/"):
-                cid = f"people/{cid}"
-            resource_names.append(cid)
+            resource_names.append(_people_resource_name(cid))
 
         batch_get_result = await asyncio.to_thread(
             service.people()
@@ -1407,11 +1372,15 @@ async def manage_contacts_batch(
         )
 
         current_people = {}
+        lookup_misses: Dict[str, str] = {}
         for resp in batch_get_result.get("responses", []):
             person = resp.get("person", {})
             rname = person.get("resourceName")
+            requested = resp.get("requestedResourceName", rname)
             if rname and person.get("etag"):
                 current_people[rname] = person
+                if requested != rname:
+                    lookup_misses[requested] = f"resolves to {rname}"
 
         # Map field name to body key produced by _build_person_body
         field_to_body_key = {
@@ -1431,15 +1400,13 @@ async def manage_contacts_batch(
 
         # Build contacts map (Dict[resourceName, Person]) — required by batchUpdateContacts API
         contacts_map: Dict[str, Any] = {}
+        skipped: List[str] = []
 
-        for update in updates:
-            cid = update.contact_id
-            if not cid.startswith("people/"):
-                cid = f"people/{cid}"
-
+        for cid, update in zip(resource_names, updates):
             current = current_people.get(cid)
             if not current:
                 logger.warning(f"No etag found for {cid}, skipping")
+                skipped.append(f"{cid}: {lookup_misses.get(cid, 'not found')}")
                 continue
 
             body = _build_person_body(
@@ -1466,6 +1433,7 @@ async def manage_contacts_batch(
                 logger.warning(
                     f"Field '{field}' (key '{body_key}') not present in update for {cid}, skipping"
                 )
+                skipped.append(f"{cid}: no {field} in the update")
                 continue
 
             if body_key == "names":
@@ -1477,8 +1445,11 @@ async def manage_contacts_batch(
             }
             contacts_map[cid] = person_body
 
+        skipped_report = f"Skipped {len(skipped)} contacts:\n" + "".join(
+            f"  {line}\n" for line in skipped
+        )
         if not contacts_map:
-            raise UserInputError("No valid update data provided.")
+            raise UserInputError(f"No valid update data provided.\n{skipped_report}")
 
         batch_body = {
             "contacts": contacts_map,
@@ -1499,6 +1470,9 @@ async def manage_contacts_batch(
             person = update_result.get("person", {})
             response += _format_contact(person) + "\n\n"
 
+        if skipped:
+            response += skipped_report
+
         logger.info(
             f"Batch updated {len(update_results)} contacts for {user_google_email}"
         )
@@ -1511,12 +1485,7 @@ async def manage_contacts_batch(
     if len(contact_ids) > 500:
         raise UserInputError("Maximum 500 contacts can be deleted in a batch.")
 
-    resource_names = []
-    for cid in contact_ids:
-        if not cid.startswith("people/"):
-            resource_names.append(f"people/{cid}")
-        else:
-            resource_names.append(cid)
+    resource_names = [_people_resource_name(cid) for cid in contact_ids]
 
     batch_body = {"resourceNames": resource_names}
 
@@ -1605,11 +1574,7 @@ async def manage_contact_group(
     if not group_id:
         raise UserInputError(f"group_id is required for '{action}' action.")
 
-    # Normalize resource name
-    if not group_id.startswith("contactGroups/"):
-        resource_name = f"contactGroups/{group_id}"
-    else:
-        resource_name = group_id
+    resource_name = _contact_group_resource_name(group_id)
 
     if action == "update":
         if not name:
@@ -1657,22 +1622,14 @@ async def manage_contact_group(
     modify_body: Dict[str, Any] = {}
 
     if add_contact_ids:
-        add_names = []
-        for contact_id in add_contact_ids:
-            if not contact_id.startswith("people/"):
-                add_names.append(f"people/{contact_id}")
-            else:
-                add_names.append(contact_id)
-        modify_body["resourceNamesToAdd"] = add_names
+        modify_body["resourceNamesToAdd"] = [
+            _people_resource_name(contact_id) for contact_id in add_contact_ids
+        ]
 
     if remove_contact_ids:
-        remove_names = []
-        for contact_id in remove_contact_ids:
-            if not contact_id.startswith("people/"):
-                remove_names.append(f"people/{contact_id}")
-            else:
-                remove_names.append(contact_id)
-        modify_body["resourceNamesToRemove"] = remove_names
+        modify_body["resourceNamesToRemove"] = [
+            _people_resource_name(contact_id) for contact_id in remove_contact_ids
+        ]
 
     result = await asyncio.to_thread(
         service.contactGroups()
@@ -1681,16 +1638,21 @@ async def manage_contact_group(
         .execute
     )
 
-    not_found = result.get("notFoundResourceNames", [])
-    cannot_remove = result.get("canNotRemoveLastContactGroupResourceNames", [])
+    not_found = result.get("notFoundResourceNames") or []
+    cannot_remove = result.get("canNotRemoveLastContactGroupResourceNames") or []
 
     response = f"Contact Group Members Modified for {user_google_email}:\n\n"
     response += f"Group: {group_id}\n"
 
+    skipped = set(not_found)
     if add_contact_ids:
-        response += f"Added: {len(add_contact_ids)} contacts\n"
+        added = set(modify_body["resourceNamesToAdd"]) - skipped
+        response += f"Added: {len(added)} contacts\n"
     if remove_contact_ids:
-        response += f"Removed: {len(remove_contact_ids)} contacts\n"
+        removed = (
+            set(modify_body["resourceNamesToRemove"]) - skipped - set(cannot_remove)
+        )
+        response += f"Removed: {len(removed)} contacts\n"
 
     if not_found:
         response += f"\nNot found: {', '.join(not_found)}\n"

@@ -36,7 +36,12 @@ def _load_startup_dependencies():
         install_noisy_log_filters,
     )
     from core.utils import check_credentials_directory_permissions
-    from core.server import server, set_transport_mode, configure_server_for_http
+    from core.server import (
+        server,
+        set_transport_mode,
+        configure_server_for_http,
+        get_stateless_http,
+    )
     from core.tool_tier_loader import resolve_tools_from_tier
     from core.tool_registry import (
         set_enabled_tools as set_enabled_tool_names,
@@ -44,6 +49,7 @@ def _load_startup_dependencies():
         set_disabled_tools,
         wrap_server_tool_method,
         filter_server_tools,
+        mark_always_load_tools,
     )
 
     return (
@@ -60,12 +66,14 @@ def _load_startup_dependencies():
         server,
         set_transport_mode,
         configure_server_for_http,
+        get_stateless_http,
         resolve_tools_from_tier,
         set_enabled_tool_names,
         resolve_disabled_tools,
         set_disabled_tools,
         wrap_server_tool_method,
         filter_server_tools,
+        mark_always_load_tools,
     )
 
 
@@ -86,12 +94,14 @@ load_dotenv(dotenv_path=dotenv_path)
     server,
     set_transport_mode,
     configure_server_for_http,
+    get_stateless_http,
     resolve_tools_from_tier,
     set_enabled_tool_names,
     resolve_disabled_tools,
     set_disabled_tools,
     wrap_server_tool_method,
     filter_server_tools,
+    mark_always_load_tools,
 ) = _load_startup_dependencies()
 
 # Suppress googleapiclient discovery cache warning
@@ -324,6 +334,38 @@ def fatal(ui: StartupDisplay, text: str, *details: str) -> NoReturn:
     sys.exit(1)
 
 
+def _local_ipv4_addresses() -> list[str]:
+    """Best-effort list of this machine's IPv4 addresses, loopback first."""
+    try:
+        infos = socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)
+    except (OSError, UnicodeError):
+        infos = []
+    return list(dict.fromkeys(["127.0.0.1", *(info[4][0] for info in infos)]))
+
+
+def _http_port_conflict(host: str, port: int) -> str | None:
+    """Return why uvicorn could not serve host:port, or None if it can."""
+    # macOS SO_REUSEADDR wildcard binds coexist with specific-address listeners.
+    connect_hosts = _local_ipv4_addresses() if host in ("", "0.0.0.0") else [host]
+    for connect_host in connect_hosts:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(0.5)
+                if s.connect_ex((connect_host, port)) == 0:
+                    return f"a server is already listening on {connect_host}:{port}"
+        except OSError:
+            pass
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            if os.name != "nt":  # matches asyncio's reuse_address default
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind((host, port))
+    except OSError as e:
+        return str(e)
+    return None
+
+
 def configure_safe_logging():
     """Replace console handlers with ASCII-safe formatters for Windows compatibility."""
 
@@ -459,6 +501,11 @@ def describe_mode_config(
         _mode_field("OAuth 2.1", "MCP_ENABLE_OAUTH21", config.is_oauth21_enabled()),
         _mode_field("Stateless", "WORKSPACE_MCP_STATELESS_MODE", config.stateless_mode),
         _mode_field(
+            "Sessionless HTTP",
+            "WORKSPACE_MCP_STATELESS_HTTP",
+            config.stateless_mode or get_stateless_http(),
+        ),
+        _mode_field(
             "Single-user",
             "MCP_SINGLE_USER_MODE",
             single_user or os.getenv("MCP_SINGLE_USER_MODE") == "1",
@@ -574,6 +621,11 @@ def main():
 
     try:
         validate_file_limit_settings()
+    except ValueError as exc:
+        parser.error(str(exc))
+
+    try:
+        stateless_http = get_stateless_http()
     except ValueError as exc:
         parser.error(str(exc))
 
@@ -830,6 +882,7 @@ def main():
 
     # Filter tools based on tier configuration (if tier-based loading is enabled)
     tools_removed = filter_server_tools(server)
+    mark_always_load_tools(server)
 
     ui.section("Services")
     ui.grid([(SERVICE_ICONS.get(t, "🔧"), t.title()) for t in loaded])
@@ -1022,20 +1075,15 @@ def main():
 
         if args.transport == "streamable-http":
             # Check port availability before starting HTTP server
-            try:
-                asyncio.run(probe_http_bind(host, port))
-            except OSError as e:
-                fatal(
-                    ui,
-                    f"Port {port} is already in use. Cannot start HTTP server.",
-                    str(e),
-                )
+            conflict = _http_port_conflict(host, port)
+            if conflict is not None:
+                fatal(ui, f"Cannot start HTTP server on {host}:{port}", conflict)
 
             server.run(
                 transport="streamable-http",
                 host=host,
                 port=port,
-                stateless_http=is_stateless_mode(),
+                stateless_http=is_stateless_mode() or stateless_http,
                 show_banner=False,
             )
         else:
@@ -1050,13 +1098,12 @@ def main():
                 async def _run_dual() -> None:
                     """Run stdio and HTTP transports concurrently."""
                     http_available = True
-                    try:
-                        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                            s.bind((http_host, http_port))
-                    except OSError:
+                    conflict = _http_port_conflict(http_host, http_port)
+                    if conflict is not None:
                         logger.warning(
-                            "Port %d in use, workspace-cli HTTP endpoint unavailable",
+                            "workspace-cli HTTP endpoint unavailable on port %d: %s",
                             http_port,
+                            conflict,
                         )
                         http_available = False
 

@@ -17,10 +17,12 @@ from mcp.types import ToolAnnotations
 from auth.service_decorator import require_google_service
 from core.server import server
 from core.utils import ObjectList, UserInputError, handle_http_errors
+from gdrive.drive_helpers import flag_incomplete_search
 
 logger = logging.getLogger(__name__)
 
 _VALID_SCRIPT_FILE_TYPES = frozenset({"SERVER_JS", "HTML", "JSON"})
+_SCRIPT_MIME_TYPE = "application/vnd.google-apps.script"
 
 # These locks serialize updates only within this process. Other worker
 # processes or service instances can still race while merging the same script_id.
@@ -116,12 +118,15 @@ async def _list_script_projects_impl(
     )
 
     # Search for Apps Script files using Drive API
-    query = "mimeType='application/vnd.google-apps.script' and trashed=false"
+    query = f"mimeType='{_SCRIPT_MIME_TYPE}' and trashed=false"
     request_params = {
         "q": query,
         "pageSize": page_size,
-        "fields": "nextPageToken, files(id, name, createdTime, modifiedTime)",
+        "fields": "nextPageToken, incompleteSearch, files(id, name, createdTime, modifiedTime)",
         "orderBy": "modifiedTime desc",
+        "supportsAllDrives": True,
+        "includeItemsFromAllDrives": True,
+        "corpora": "allDrives",
     }
     if page_token:
         request_params["pageToken"] = page_token
@@ -130,8 +135,8 @@ async def _list_script_projects_impl(
 
     files = response.get("files", [])
 
-    if not files:
-        return "No Apps Script projects found."
+    if not files and "nextPageToken" not in response:
+        return flag_incomplete_search("No Apps Script projects found.", response)
 
     output = [f"Found {len(files)} Apps Script projects:"]
     for file in files:
@@ -150,7 +155,7 @@ async def _list_script_projects_impl(
     logger.info(
         f"[list_script_projects] Found {len(files)} projects for {user_google_email}"
     )
-    return "\n".join(output)
+    return flag_incomplete_search("\n".join(output), response)
 
 
 def _require_project_action_service(action_services):
@@ -540,25 +545,30 @@ async def _run_script_function_impl(
     return "\n".join(output)
 
 
-async def _resolve_execution_deployment_id(
-    service: Any,
-    script_id: str,
-) -> Optional[str]:
-    """Return the newest versioned API Executable deployment for a project."""
-    all_deployments = []
+async def _list_all_pages(list_method: Any, script_id: str, key: str) -> List[Any]:
+    """Collect every page of a script-scoped list call (deployments, versions)."""
+    items = []
     page_token = None
     while True:
         list_params = {"scriptId": script_id}
         if page_token:
             list_params["pageToken"] = page_token
 
-        response = await asyncio.to_thread(
-            service.projects().deployments().list(**list_params).execute
-        )
-        all_deployments.extend(response.get("deployments", []))
+        response = await asyncio.to_thread(list_method(**list_params).execute)
+        items.extend(response.get(key, []))
         page_token = response.get("nextPageToken")
         if not page_token:
-            break
+            return items
+
+
+async def _resolve_execution_deployment_id(
+    service: Any,
+    script_id: str,
+) -> Optional[str]:
+    """Return the newest versioned API Executable deployment for a project."""
+    all_deployments = await _list_all_pages(
+        service.projects().deployments().list, script_id, "deployments"
+    )
 
     candidates = [
         deployment
@@ -762,11 +772,9 @@ async def _list_deployments_impl(
     """Internal implementation for list_deployments."""
     logger.info(f"[list_deployments] Email: {user_google_email}, ID: {script_id}")
 
-    response = await asyncio.to_thread(
-        service.projects().deployments().list(scriptId=script_id).execute
+    deployments = await _list_all_pages(
+        service.projects().deployments().list, script_id, "deployments"
     )
-
-    deployments = response.get("deployments", [])
 
     if not deployments:
         return f"No deployments found for script: {script_id}"
@@ -967,7 +975,18 @@ async def _delete_script_project_impl(
     )
 
     # Apps Script projects are stored as Drive files
-    await asyncio.to_thread(service.files().delete(fileId=script_id).execute)
+    file_info = await asyncio.to_thread(
+        service.files()
+        .get(fileId=script_id, fields="mimeType", supportsAllDrives=True)
+        .execute
+    )
+    if file_info.get("mimeType") != _SCRIPT_MIME_TYPE:
+        raise UserInputError(
+            f"{script_id} is not an Apps Script project, so it was not deleted."
+        )
+    await asyncio.to_thread(
+        service.files().delete(fileId=script_id, supportsAllDrives=True).execute
+    )
 
     logger.info(f"[delete_script_project] Deleted script {script_id}")
     return f"Deleted Apps Script project: {script_id}"
@@ -1034,11 +1053,9 @@ async def _list_versions_impl(
     """Internal implementation for list_versions."""
     logger.info(f"[list_versions] Email: {user_google_email}, ScriptID: {script_id}")
 
-    response = await asyncio.to_thread(
-        service.projects().versions().list(scriptId=script_id).execute
+    versions = await _list_all_pages(
+        service.projects().versions().list, script_id, "versions"
     )
-
-    versions = response.get("versions", [])
 
     if not versions:
         return f"No versions found for script: {script_id}"

@@ -47,7 +47,7 @@ calendar:
     - get_events
     - manage_event
   extended:
-    - create_calendar
+    - manage_calendar
     - query_freebusy
     - manage_out_of_office
     - manage_focus_time
@@ -126,8 +126,7 @@ slides:
     - get_presentation
   extended:
     - batch_update_presentation
-    - get_page
-    - get_page_thumbnail
+    - render_page_to_image
   complete:
     - list_presentation_comments
     - manage_presentation_comment

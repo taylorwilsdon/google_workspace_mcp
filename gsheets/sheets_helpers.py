@@ -6,13 +6,14 @@ conditional formatting helpers.
 """
 
 import asyncio
+import csv
 import json
 import logging
 import math
 import re
 from typing import Any, List, Optional, Union
 
-from core.utils import UserInputError
+from core.utils import UserInputError, validate_file_path
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,15 @@ SHEET_TITLE_SAFE_RE = re.compile(r"^[A-Za-z0-9_]+$")
 COLUMN_LETTER_REGEX = re.compile(r"^[A-Za-z]+$")
 QUOTED_SHEET_ONLY_REGEX = re.compile(r"^'(?:[^']|'')+'$")
 MERGE_TYPES = ("MERGE_ALL", "MERGE_COLUMNS", "MERGE_ROWS")
+PASTE_TYPES = (
+    "PASTE_NORMAL",
+    "PASTE_VALUES",
+    "PASTE_FORMAT",
+    "PASTE_NO_BORDERS",
+    "PASTE_FORMULA",
+    "PASTE_DATA_VALIDATION",
+    "PASTE_CONDITIONAL_FORMATTING",
+)
 
 
 def _column_to_index(column: str) -> Optional[int]:
@@ -574,7 +584,10 @@ def _a1_range_for_values(a1_range: str, values: List[List[object]]) -> Optional[
         return None
 
     start_part = range_part.split(":", 1)[0]
-    start_col, start_row = _parse_a1_part(start_part)
+    try:
+        start_col, start_row = _parse_a1_part(start_part)
+    except UserInputError:
+        return None
     if start_col is None or start_row is None:
         return None
 
@@ -595,6 +608,57 @@ def _a1_range_for_values(a1_range: str, values: List[List[object]]) -> Optional[
     if sheet_name:
         return f"{_quote_sheet_title_for_a1(sheet_name)}!{range_ref}"
     return range_ref
+
+
+def _values_start(a1_range: str) -> Optional[tuple[int, int]]:
+    """Return the zero-based (column, row) of an A1 range's first cell, else None."""
+    _, range_part = _split_sheet_and_range(a1_range)
+    if not range_part:
+        return None
+    try:
+        start_col, start_row = _parse_a1_part(range_part.split(":", 1)[0])
+    except UserInputError:
+        return None
+    # A bare "Totals" is a named range, not column TOTALS.
+    if ":" not in range_part and (start_col is None or start_row is None):
+        return None
+    if start_col is None and start_row is None:
+        return None
+    return start_col or 0, start_row or 0
+
+
+_TSV_ESCAPES = str.maketrans({"\\": "\\\\", "\t": "\\t", "\r": "\\r", "\n": "\\n"})
+
+
+def _format_sheet_values_rows(a1_range: str, values: List[List[object]]) -> str:
+    """Render values as lines of sheet row number, then tab-separated cells."""
+    start = _values_start(a1_range)
+    if start is None:
+        start_col, start_row = 0, 0
+        legend = "Each line: row number within the range, then tab-separated cells."
+    else:
+        start_col, start_row = start
+        legend = (
+            "Each line: sheet row number, then tab-separated cells from column "
+            f"{_index_to_column(start_col)}."
+        )
+
+    lines = []
+    escaped = False
+    for offset, row in enumerate(values):
+        cells = ["" if cell is None else str(cell) for cell in row]
+        while cells and cells[-1] == "":
+            cells.pop()
+        escaped_cells = [cell.translate(_TSV_ESCAPES) for cell in cells]
+        escaped = escaped or escaped_cells != cells
+        lines.append("\t".join([str(start_row + offset + 1), *escaped_cells]))
+
+    if escaped:
+        legend += (
+            " Tabs, line breaks and backslashes inside a cell are shown as \\t, "
+            "\\n, \\r and \\\\."
+        )
+    return "\n".join([legend, *lines])
 
 
 def _a1_range_cell_count(a1_range: str) -> Optional[int]:
@@ -878,6 +942,11 @@ def _grid_range_to_a1(grid_range: dict, sheet_titles: dict[int, str]) -> str:
     if start_row is None and end_row is None and start_col is None and end_col is None:
         return sheet_title
 
+    if end_row is not None and start_row is None:
+        start_row = 0
+    if end_col is not None and start_col is None:
+        start_col = 0
+
     def row_label(idx: Optional[int]) -> str:
         return str(idx + 1) if idx is not None else ""
 
@@ -898,14 +967,10 @@ def _grid_range_to_a1(grid_range: dict, sheet_titles: dict[int, str]) -> str:
             if start_label == end_label and is_single_cell
             else f"{start_label}:{end_label}"
         )
-    elif start_label:
-        range_ref = start_label
-    elif end_label:
-        range_ref = end_label
     else:
-        range_ref = ""
+        range_ref = start_label
 
-    return f"{sheet_title}!{range_ref}" if range_ref else sheet_title
+    return f"{sheet_title}!{range_ref}"
 
 
 def _summarize_conditional_rule(
@@ -1057,6 +1122,140 @@ def _select_sheet(sheets: List[dict], sheet_name: Optional[str]) -> dict:
     raise UserInputError(
         f"Sheet '{sheet_name}' not found. Available sheets: {', '.join(available_titles)}."
     )
+
+
+async def _copy_paste_range(
+    service,
+    spreadsheet_id: str,
+    source_range: str,
+    destination_range: str,
+    paste_type: str,
+) -> str:
+    """Copy source_range onto destination_range with a copyPaste request; return the paste type used."""
+    normalized = paste_type.strip().upper()
+    if normalized not in PASTE_TYPES:
+        raise UserInputError(f"paste_type must be one of {list(PASTE_TYPES)}.")
+
+    metadata = await asyncio.to_thread(
+        service.spreadsheets()
+        .get(
+            spreadsheetId=spreadsheet_id,
+            fields="sheets(properties(sheetId,title,hidden))",
+        )
+        .execute
+    )
+    sheets = sorted(
+        metadata.get("sheets", []),
+        key=lambda sheet: sheet.get("properties", {}).get("hidden", False),
+    )
+    destination = _parse_a1_range(destination_range, sheets)
+    if set(destination) == {"sheetId"}:
+        raise UserInputError("range_name must include a row or column to paste into.")
+    request = {
+        "copyPaste": {
+            "source": _parse_a1_range(source_range, sheets),
+            "destination": destination,
+            "pasteType": normalized,
+        }
+    }
+    await asyncio.to_thread(
+        service.spreadsheets()
+        .batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": [request]})
+        .execute
+    )
+    return normalized
+
+
+DELIMITED_FILE_DELIMITERS = {".csv": ",", ".tsv": "\t"}
+
+
+def _read_delimited_file_values(file_path: str) -> List[List[str]]:
+    """Read a local .csv or .tsv file into rows of cell strings."""
+    path_obj = validate_file_path(file_path)
+    if not path_obj.is_file():
+        raise UserInputError(f"file_path is not a file: {file_path}")
+    delimiter = DELIMITED_FILE_DELIMITERS.get(path_obj.suffix.lower())
+    if delimiter is None:
+        raise UserInputError(
+            "file_path must be a .csv or .tsv file; convert other formats with "
+            "import_to_google_sheets."
+        )
+    try:
+        with open(path_obj, encoding="utf-8-sig", newline="") as handle:
+            rows = list(csv.reader(handle, delimiter=delimiter, strict=True))
+    except UnicodeDecodeError as exc:
+        raise UserInputError(f"file_path must be UTF-8 text: {exc}") from exc
+    except csv.Error as exc:
+        raise UserInputError(
+            f"Could not parse file_path as delimited text: {exc}"
+        ) from exc
+    if not any(rows):
+        raise UserInputError(f"file_path has no rows to write: {file_path}")
+    return rows
+
+
+async def _copy_sheet_to_spreadsheet(
+    service,
+    spreadsheet_id: str,
+    sheet_id: int,
+    destination_spreadsheet_id: str,
+    sheet_name: Optional[str],
+    insert_sheet_index: Optional[int],
+) -> dict:
+    """Copy a sheet into another spreadsheet with an optional title and index; return its properties."""
+    new_props = await asyncio.to_thread(
+        service.spreadsheets()
+        .sheets()
+        .copyTo(
+            spreadsheetId=spreadsheet_id,
+            sheetId=sheet_id,
+            body={"destinationSpreadsheetId": destination_spreadsheet_id},
+        )
+        .execute
+    )
+
+    updates: dict[str, Any] = {}
+    if sheet_name is not None:
+        updates["title"] = sheet_name
+    if insert_sheet_index is not None:
+        updates["index"] = insert_sheet_index
+    if not updates:
+        return new_props
+
+    new_id = new_props["sheetId"]
+    update_request = {
+        "updateSheetProperties": {
+            "properties": {"sheetId": new_id, **updates},
+            "fields": ",".join(updates),
+        }
+    }
+    try:
+        await asyncio.to_thread(
+            service.spreadsheets()
+            .batchUpdate(
+                spreadsheetId=destination_spreadsheet_id,
+                body={"requests": [update_request]},
+            )
+            .execute
+        )
+    except Exception:
+        try:
+            await asyncio.to_thread(
+                service.spreadsheets()
+                .batchUpdate(
+                    spreadsheetId=destination_spreadsheet_id,
+                    body={"requests": [{"deleteSheet": {"sheetId": new_id}}]},
+                )
+                .execute
+            )
+        except Exception as cleanup_error:
+            raise RuntimeError(
+                f"Copied sheet '{new_props['title']}' (ID: {new_id}) to spreadsheet "
+                f"{destination_spreadsheet_id} but could not set its title or index; "
+                "delete or rename it before retrying."
+            ) from cleanup_error
+        raise
+    return {**new_props, **updates}
 
 
 def _parse_condition_values(
@@ -1285,6 +1484,138 @@ def _format_sheet_notes_section(
         else ""
     )
     return f"\n\nCell notes in range '{range_label}':\n" + "\n".join(lines) + suffix
+
+
+def _describe_data_validation(rule: dict[str, Any]) -> str:
+    """Describe a DataValidationRule as e.g. 'ONE_OF_LIST: "Yes", "No" (strict)'."""
+    condition = rule.get("condition") or {}
+    text = condition.get("type") or "UNKNOWN"
+    values = [
+        json.dumps(
+            str(value.get("userEnteredValue") or value.get("relativeDate") or ""),
+            ensure_ascii=False,
+        )
+        for value in condition.get("values") or []
+    ]
+    if values:
+        text += ": " + ", ".join(values)
+    if rule.get("strict"):
+        text += " (strict)"
+    if rule.get("inputMessage"):
+        text += f" (help: {json.dumps(rule['inputMessage'], ensure_ascii=False)})"
+    return text
+
+
+def _extract_cell_validation_from_grid(
+    spreadsheet: dict[str, Any],
+) -> list[dict[str, str]]:
+    """Return {"range", "rule"} entries, merging a rule's consecutive rows in a column."""
+    runs: list[dict[str, Any]] = []
+    open_runs: dict[tuple[str, int, str], dict[str, Any]] = {}
+    for sheet in spreadsheet.get("sheets", []) or []:
+        sheet_title = sheet.get("properties", {}).get("title") or "Unknown"
+        for grid in sheet.get("data", []) or []:
+            start_row = _coerce_int(grid.get("startRow"), default=0)
+            start_col = _coerce_int(grid.get("startColumn"), default=0)
+            for row_offset, row_data in enumerate(grid.get("rowData", []) or []):
+                for col_offset, cell_data in enumerate(
+                    (row_data or {}).get("values", []) or []
+                ):
+                    rule = (cell_data or {}).get("dataValidation")
+                    if not rule:
+                        continue
+                    row = start_row + row_offset
+                    col = start_col + col_offset
+                    key = (sheet_title, col, json.dumps(rule, sort_keys=True))
+                    run = open_runs.get(key)
+                    if run and run["end_row"] == row - 1:
+                        run["end_row"] = row
+                        continue
+                    run = {
+                        "sheet": sheet_title,
+                        "col": col,
+                        "rule": _describe_data_validation(rule),
+                        "start_row": row,
+                        "end_row": row,
+                    }
+                    open_runs[key] = run
+                    runs.append(run)
+
+    rules: list[dict[str, str]] = []
+    for run in runs:
+        cell_range = _format_a1_cell(run["sheet"], run["start_row"], run["col"])
+        if run["end_row"] != run["start_row"]:
+            cell_range += f":{_index_to_column(run['col'])}{run['end_row'] + 1}"
+        rules.append({"range": cell_range, "rule": run["rule"]})
+    return rules
+
+
+def _format_sheet_validation_section(
+    *, rules: list[dict[str, str]], range_label: str, max_details: int = 25
+) -> str:
+    """Format data validation rules into a human-readable section."""
+    if not rules:
+        return ""
+
+    lines = [f"- {item['range']}: {item['rule']}" for item in rules[:max_details]]
+    suffix = (
+        f"\n... and {len(rules) - max_details} more validation ranges"
+        if len(rules) > max_details
+        else ""
+    )
+    return (
+        f"\n\nData validation in range '{range_label}':\n" + "\n".join(lines) + suffix
+    )
+
+
+async def _fetch_validation_section(
+    service: Any,
+    spreadsheet_id: str,
+    requested_range: str,
+    values: List[List[object]],
+) -> str:
+    """Fetch data validation rules as a formatted section.
+
+    Reads the requested range, since validation often sits on blank cells that
+    ``values.get`` leaves out, and falls back to the populated range when the
+    requested one is open-ended or over the cell cap.
+    """
+    target = requested_range
+    cell_count = _a1_range_cell_count(target)
+    if cell_count is None or cell_count > MAX_GRID_METADATA_CELLS:
+        target = _a1_range_for_values(requested_range, values)
+        cell_count = _a1_range_cell_count(target) if target else None
+    if cell_count is None or cell_count > MAX_GRID_METADATA_CELLS:
+        return (
+            f"\n\nData validation was not read for range '{requested_range}': "
+            f"pass a range of at most {MAX_GRID_METADATA_CELLS} cells."
+        )
+
+    try:
+        response = await asyncio.to_thread(
+            service.spreadsheets()
+            .get(
+                spreadsheetId=spreadsheet_id,
+                ranges=[target],
+                includeGridData=True,
+                fields=(
+                    "sheets(properties(title),data(startRow,startColumn,"
+                    "rowData(values(dataValidation))))"
+                ),
+            )
+            .execute
+        )
+    except Exception as exc:
+        logger.warning(
+            "[read_sheet_values] Failed fetching data validation for range '%s': %s",
+            target,
+            exc,
+        )
+        return f"\n\nData validation could not be read for range '{target}'."
+
+    return _format_sheet_validation_section(
+        rules=_extract_cell_validation_from_grid(response), range_label=target
+    )
 
 
 async def _fetch_cell_formulas(
