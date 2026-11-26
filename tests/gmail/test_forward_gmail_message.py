@@ -149,6 +149,7 @@ async def test_forward_simple_text_email():
 
     result = await _forward_gmail_message_impl(
         service=mock_service,
+        people_service=None,
         message_id="msg123",
         to="recipient@example.com",
         user_google_email="me@example.com",
@@ -188,6 +189,7 @@ async def test_forward_reports_unknown_delivery_on_ambiguous_failure():
     with pytest.raises(ToolError, match="Check the Sent folder before sending again"):
         await _forward_gmail_message_impl(
             service=mock_service,
+            people_service=None,
             message_id="msg123",
             to="recipient@example.com",
             user_google_email="me@example.com",
@@ -207,6 +209,7 @@ async def test_forward_html_only_original_fills_plain_part():
 
     await _forward_gmail_message_impl(
         service=mock_service,
+        people_service=None,
         message_id="msg789",
         to="recipient@example.com",
         user_google_email="me@example.com",
@@ -233,6 +236,7 @@ async def test_forward_with_message_plain():
 
     result = await _forward_gmail_message_impl(
         service=mock_service,
+        people_service=None,
         message_id="msg789",
         to="recipient@example.com",
         forward_message="Please see below.",
@@ -279,6 +283,7 @@ async def test_forward_html_base_direction(
 
     await _forward_gmail_message_impl(
         service=mock_service,
+        people_service=None,
         message_id="msg789",
         to="recipient@example.com",
         forward_message=note,
@@ -307,6 +312,7 @@ async def test_forward_header_formats_date_like_gmail(date, expected):
 
     await _forward_gmail_message_impl(
         service=mock_service,
+        people_service=None,
         message_id="msg789",
         to="recipient@example.com",
         user_google_email="me@example.com",
@@ -333,6 +339,7 @@ async def test_forward_header_without_sender_address(from_header, expected_from)
 
     await _forward_gmail_message_impl(
         service=mock_service,
+        people_service=None,
         message_id="msg789",
         to="recipient@example.com",
         user_google_email="me@example.com",
@@ -359,6 +366,7 @@ async def test_forward_header_blank_sender_name_renders_bare_address():
 
     await _forward_gmail_message_impl(
         service=mock_service,
+        people_service=None,
         message_id="msg789",
         to="recipient@example.com",
         user_google_email="me@example.com",
@@ -384,6 +392,7 @@ async def test_forward_with_message_html():
 
     result = await _forward_gmail_message_impl(
         service=mock_service,
+        people_service=None,
         message_id="msgabc",
         to="recipient@example.com",
         forward_message="<b>Note:</b> See below.",
@@ -416,6 +425,7 @@ async def test_forward_plain_original_with_html_note():
 
     result = await _forward_gmail_message_impl(
         service=mock_service,
+        people_service=None,
         message_id="msgpqr",
         to="recipient@example.com",
         forward_message="<b>Heads up</b>",
@@ -457,6 +467,7 @@ async def test_forward_without_attachments():
 
     result = await _forward_gmail_message_impl(
         service=mock_service,
+        people_service=None,
         message_id="msgdef",
         to="recipient@example.com",
         include_attachments=False,
@@ -501,6 +512,7 @@ async def test_forward_with_attachments():
 
     result = await _forward_gmail_message_impl(
         service=mock_service,
+        people_service=None,
         message_id="msgghi",
         to="recipient@example.com",
         include_attachments=True,
@@ -545,6 +557,7 @@ async def test_forward_attachment_download_failure_raises():
     with pytest.raises(Exception, match="Failed to include requested attachment"):
         await _forward_gmail_message_impl(
             service=mock_service,
+            people_service=None,
             message_id="msgvwx",
             to="recipient@example.com",
             include_attachments=True,
@@ -576,6 +589,7 @@ async def test_forward_rejects_oversized_attachment_before_download(monkeypatch)
     with pytest.raises(UserInputError, match="huge.zip.*too large"):
         await _forward_gmail_message_impl(
             service=mock_service,
+            people_service=None,
             message_id="msg-large",
             to="recipient@example.com",
             include_attachments=True,
@@ -599,6 +613,7 @@ async def test_forward_with_cc_bcc():
 
     result = await _forward_gmail_message_impl(
         service=mock_service,
+        people_service=None,
         message_id="msgmno",
         to="recipient@example.com",
         cc="cc@example.com",
@@ -633,6 +648,7 @@ async def test_forward_subject(original, override, expected):
 
     await _forward_gmail_message_impl(
         service=mock_service,
+        people_service=None,
         message_id="msgyz",
         to="recipient@example.com",
         subject=override,
@@ -668,6 +684,7 @@ async def test_forward_as_draft_keeps_attachments_and_does_not_send():
 
     result = await _forward_gmail_message_impl(
         service=mock_service,
+        people_service=None,
         message_id="msgdraft",
         to=None,
         user_google_email="me@example.com",

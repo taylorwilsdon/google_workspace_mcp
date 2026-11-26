@@ -50,7 +50,7 @@ from auth.scopes import (
     TASKS_READONLY_SCOPE,
     CONTACTS_SCOPE,
     CONTACTS_READONLY_SCOPE,
-    CONTACTS_OTHER_READONLY_SCOPE,
+    CONTACTS_READONLY_SCOPES,
     CUSTOM_SEARCH_SCOPE,
     SCRIPT_PROJECTS_SCOPE,
     SCRIPT_PROJECTS_READONLY_SCOPE,
@@ -117,7 +117,8 @@ SERVICE_PERMISSION_LEVELS: Dict[str, List[Tuple[str, List[str]]]] = {
         ("full", []),
     ],
     "contacts": [
-        ("readonly", [CONTACTS_READONLY_SCOPE, CONTACTS_OTHER_READONLY_SCOPE]),
+        # Includes directory.readonly when GMAIL_EXTENDED_NAME_LOOKUP is on.
+        ("readonly", CONTACTS_READONLY_SCOPES),
         ("full", [CONTACTS_SCOPE]),
     ],
     "search": [
