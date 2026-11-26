@@ -454,7 +454,7 @@ async def test_inspect_doc_structure_field_mask_omits_legacy_top_level_content()
         "title,tabs(tabProperties,childTabs,documentTab("
         "documentStyle,namedRanges,headers,footers,body(content("
         "startIndex,endIndex,"
-        "paragraph(elements(startIndex,endIndex,textRun/content),paragraphStyle,"
+        "paragraph(elements(startIndex,endIndex,textRun(content,suggestedInsertionIds,suggestedDeletionIds)),paragraphStyle,"
         "bullet,positionedObjectIds,suggestedPositionedObjectIds),"
         "table(tableRows/tableCells(startIndex,endIndex,content),tableStyle),"
         "sectionBreak/sectionStyle,tableOfContents))))"
