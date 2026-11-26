@@ -108,3 +108,238 @@ async def test_start_google_auth_uses_verified_gateway_principal(monkeypatch):
     assert result == "auth-url"
     assert captured["user_google_email"] == "verified@example.com"
     assert captured["principal_source"] == "gateway_assertion"
+
+
+@pytest.fixture
+def legacy_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Force legacy OAuth 2.0 mode in both the server and the credential-store helper."""
+    for target in ("core.server", "auth.oauth_config"):
+        monkeypatch.setattr(f"{target}.is_oauth21_enabled", lambda: False)
+        monkeypatch.setattr(f"{target}.is_trust_gateway_identity", lambda: False)
+
+
+def _use_store(monkeypatch: pytest.MonkeyPatch, store: object) -> None:
+    """Make the credential-store helper return the given fake store."""
+    monkeypatch.setattr("auth.credential_store.get_credential_store", lambda: store)
+
+
+class _FakeStore:
+    """Credential store stub returning a fixed list of users."""
+
+    def __init__(self, users: list[str]) -> None:
+        self._users = users
+
+    def list_users(self) -> list[str]:
+        """Return the configured users."""
+        return list(self._users)
+
+
+@pytest.mark.asyncio
+async def test_start_google_auth_lists_accounts_in_legacy_mode(
+    monkeypatch: pytest.MonkeyPatch, legacy_mode: None
+) -> None:
+    """list_accounts=True reports every stored account in legacy mode."""
+    _use_store(monkeypatch, _FakeStore(["alice@example.com", "bob@example.com"]))
+
+    result = await start_google_auth(list_accounts=True)
+
+    assert result == "Authenticated accounts: alice@example.com, bob@example.com"
+
+
+@pytest.mark.asyncio
+async def test_start_google_auth_lists_accounts_when_service_name_omitted(
+    monkeypatch: pytest.MonkeyPatch, legacy_mode: None
+) -> None:
+    """Omitting service_name, or passing list_accounts, lists accounts."""
+    _use_store(monkeypatch, _FakeStore(["alice@example.com"]))
+
+    assert await start_google_auth() == "Authenticated accounts: alice@example.com"
+    assert (
+        await start_google_auth(service_name="gmail", list_accounts=True)
+        == "Authenticated accounts: alice@example.com"
+    )
+
+
+@pytest.mark.asyncio
+async def test_start_google_auth_blank_service_name_does_not_list(
+    monkeypatch: pytest.MonkeyPatch, legacy_mode: None
+) -> None:
+    """An explicitly blank service_name keeps the authentication path."""
+    _use_store(monkeypatch, _FakeStore(["alice@example.com"]))
+
+    with pytest.raises(ValueError) as excinfo:
+        await start_google_auth(service_name="", user_google_email="")
+
+    assert "user_google_email must be provided" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_start_google_auth_lists_accounts_when_empty(
+    monkeypatch: pytest.MonkeyPatch, legacy_mode: None
+) -> None:
+    """An empty store reports that no accounts are authenticated."""
+    _use_store(monkeypatch, _FakeStore([]))
+
+    result = await start_google_auth(list_accounts=True)
+
+    assert result == "No accounts are currently authenticated."
+
+
+@pytest.mark.asyncio
+async def test_start_google_auth_reports_store_failure(
+    monkeypatch: pytest.MonkeyPatch, legacy_mode: None
+) -> None:
+    """A store that cannot be opened is reported, not shown as 'no accounts'."""
+
+    def broken_store() -> object:
+        raise OSError("credentials directory unreadable")
+
+    monkeypatch.setattr("auth.credential_store.get_credential_store", broken_store)
+
+    result = await start_google_auth(list_accounts=True)
+
+    assert result.startswith("Could not list authenticated accounts:")
+    assert "No accounts are currently authenticated" not in result
+    assert "unreadable" not in result
+
+
+@pytest.mark.asyncio
+async def test_start_google_auth_list_accounts_disabled_in_oauth21(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """OAuth 2.1 mode never lists stored accounts."""
+    monkeypatch.setattr("core.server.is_oauth21_enabled", lambda: True)
+    monkeypatch.setattr("core.server.is_external_oauth21_provider", lambda: False)
+    _use_store(monkeypatch, _FakeStore(["secret_user@example.com"]))
+
+    result = await start_google_auth(list_accounts=True)
+
+    assert "start_google_auth is disabled when OAuth 2.1 is enabled" in result
+    assert "secret_user@example.com" not in result
+
+
+@pytest.mark.asyncio
+async def test_start_google_auth_list_accounts_disabled_in_gateway_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Trusted-gateway mode never lists stored accounts."""
+    monkeypatch.setattr("core.server.is_oauth21_enabled", lambda: False)
+    monkeypatch.setattr("core.server.is_trust_gateway_identity", lambda: True)
+    _use_store(monkeypatch, _FakeStore(["secret_user@example.com"]))
+
+    for result in (
+        await start_google_auth(list_accounts=True),
+        await start_google_auth(),
+    ):
+        assert (
+            "Listing accounts is disabled when gateway identity verification is enabled."
+            in result
+        )
+        assert "secret_user@example.com" not in result
+
+
+@pytest.mark.asyncio
+async def test_start_google_auth_missing_email_reports_authenticated_accounts(
+    monkeypatch: pytest.MonkeyPatch, legacy_mode: None
+) -> None:
+    """A missing user_google_email error names the authenticated accounts."""
+    _use_store(monkeypatch, _FakeStore(["user1@example.com", "user2@example.com"]))
+
+    with pytest.raises(ValueError) as excinfo:
+        await start_google_auth(service_name="Gmail", user_google_email="")
+
+    msg = str(excinfo.value)
+    assert "user_google_email must be provided" in msg
+    assert "Authenticated accounts: user1@example.com, user2@example.com" in msg
+
+
+@pytest.mark.asyncio
+async def test_start_google_auth_output_never_exposes_tokens_or_file_paths(
+    monkeypatch: pytest.MonkeyPatch, legacy_mode: None
+) -> None:
+    """Only email addresses appear in the account list."""
+
+    class FakeStoreWithSensitiveData(_FakeStore):
+        """Store stub carrying token-like attributes that must never be printed."""
+
+        token = "ya29.sensitive_access_token_data"
+        refresh_token = "1//secret_refresh_token_data"
+        file_path = "/home/user/.credentials/user@example.com.json"
+
+    _use_store(monkeypatch, FakeStoreWithSensitiveData(["alice@example.com"]))
+
+    result = await start_google_auth(list_accounts=True)
+
+    assert result == "Authenticated accounts: alice@example.com"
+    for forbidden in ["ya29", "secret", ".credentials", "/home/user", "json"]:
+        assert forbidden not in result.lower()
+
+
+def test_get_legacy_authenticated_users_helper(
+    monkeypatch: pytest.MonkeyPatch, legacy_mode: None
+) -> None:
+    """The helper filters non-emails, respects modes and separates failures."""
+    from auth.credential_store import (
+        CredentialStoreUnavailableError,
+        get_legacy_authenticated_users,
+    )
+
+    _use_store(
+        monkeypatch, _FakeStore(["b@example.com", "a@example.com", "not-an-email"])
+    )
+    assert get_legacy_authenticated_users() == ["b@example.com", "a@example.com"]
+
+    monkeypatch.setattr("auth.oauth_config.is_oauth21_enabled", lambda: True)
+    assert get_legacy_authenticated_users() == []
+
+    monkeypatch.setattr("auth.oauth_config.is_oauth21_enabled", lambda: False)
+    monkeypatch.setattr("auth.oauth_config.is_trust_gateway_identity", lambda: True)
+    assert get_legacy_authenticated_users() == []
+    monkeypatch.setattr("auth.oauth_config.is_trust_gateway_identity", lambda: False)
+
+    class NoEnumerationStore:
+        """Backend that cannot enumerate users."""
+
+        def list_users(self) -> list[str]:
+            """Signal that enumeration is unsupported."""
+            raise NotImplementedError("unsupported")
+
+    _use_store(monkeypatch, NoEnumerationStore())
+    assert get_legacy_authenticated_users() == []
+
+    class FailingStore:
+        """Backend whose enumeration fails."""
+
+        def list_users(self) -> list[str]:
+            """Fail as an unreadable store would."""
+            raise OSError("disk error")
+
+    _use_store(monkeypatch, FailingStore())
+    with pytest.raises(CredentialStoreUnavailableError):
+        get_legacy_authenticated_users()
+
+
+@pytest.mark.asyncio
+async def test_start_google_auth_blank_service_name_uses_generic_label(
+    monkeypatch: pytest.MonkeyPatch, legacy_mode: None
+) -> None:
+    """A blank service_name still authenticates, with a generic display label."""
+    captured = {}
+
+    async def fake_start_auth_flow(**kwargs: object) -> str:
+        captured.update(kwargs)
+        return "auth-url"
+
+    monkeypatch.setattr("core.server.check_client_secrets", lambda: None)
+    monkeypatch.setattr("auth.oauth_callback_server.get_transport_mode", lambda: "http")
+    monkeypatch.setattr(
+        "core.server.get_oauth_redirect_uri_for_current_mode",
+        lambda: "http://localhost:8000/oauth2callback",
+    )
+    monkeypatch.setattr("core.server.start_auth_flow", fake_start_auth_flow)
+
+    result = await start_google_auth(service_name="  ", user_google_email="a@x.com")
+
+    assert result == "auth-url"
+    assert captured["service_name"] == "Google Workspace"
+    assert captured["user_google_email"] == "a@x.com"
