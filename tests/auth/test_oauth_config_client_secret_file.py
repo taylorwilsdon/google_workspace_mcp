@@ -23,11 +23,6 @@ _OAUTH_ENV_VARS = (
     "MCP_ENABLE_OAUTH21",
     "EXTERNAL_OAUTH21_PROVIDER",
     "WORKSPACE_MCP_STATELESS_MODE",
-    "FASTMCP_SERVER_AUTH",
-    "FASTMCP_SERVER_AUTH_GOOGLE_CLIENT_ID",
-    "FASTMCP_SERVER_AUTH_GOOGLE_CLIENT_SECRET",
-    "FASTMCP_SERVER_AUTH_GOOGLE_BASE_URL",
-    "FASTMCP_SERVER_AUTH_GOOGLE_REDIRECT_PATH",
 )
 
 
@@ -259,6 +254,24 @@ def test_no_file_access_when_env_complete(monkeypatch):
 
     assert cfg.client_id == "env-id"
     assert cfg.client_secret == "env-secret"
+
+
+def test_config_does_not_export_credentials_to_environment(monkeypatch):
+    """Building a config must not write the client id or secret into os.environ."""
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "env-id")
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_SECRET", "env-secret")
+    monkeypatch.setenv("MCP_ENABLE_OAUTH21", "true")
+    before = dict(os.environ)
+
+    OAuthConfig()
+
+    # Report names only, so a failure cannot print a secret value.
+    changed = sorted(
+        name
+        for name in before.keys() | os.environ.keys()
+        if before.get(name) != os.environ.get(name)
+    )
+    assert changed == []
 
 
 def test_legacy_load_client_secrets_prefers_env(monkeypatch, tmp_path):

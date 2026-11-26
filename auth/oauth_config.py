@@ -260,9 +260,6 @@ class OAuthConfig:
         self.redirect_uri = self._get_redirect_uri()
         self.redirect_path = self._get_redirect_path(self.redirect_uri)
 
-        # Ensure FastMCP's Google provider picks up our existing configuration
-        self._apply_fastmcp_google_env()
-
     def _apply_client_secrets_file_fallback(self, required: bool) -> None:
         """Fill missing client credentials from the client secrets file.
 
@@ -344,33 +341,6 @@ class OAuthConfig:
             # If the value was already a path, ensure it starts with '/'
             path = uri if uri.startswith("/") else f"/{uri}"
         return path or "/oauth2callback"
-
-    def _apply_fastmcp_google_env(self) -> None:
-        """Mirror legacy GOOGLE_* env vars into FastMCP Google provider settings."""
-        if not self.client_id:
-            return
-
-        def _set_if_absent(key: str, value: Optional[str]) -> None:
-            if value and key not in os.environ:
-                os.environ[key] = value
-
-        # Don't set FASTMCP_SERVER_AUTH if using external OAuth provider
-        # (external OAuth means protocol-level auth is disabled, only tool-level auth)
-        if not self.external_oauth21_provider:
-            _set_if_absent(
-                "FASTMCP_SERVER_AUTH",
-                "fastmcp.server.auth.providers.google.GoogleProvider"
-                if self.oauth21_enabled
-                else None,
-            )
-
-        _set_if_absent("FASTMCP_SERVER_AUTH_GOOGLE_CLIENT_ID", self.client_id)
-        if self.client_secret:
-            _set_if_absent(
-                "FASTMCP_SERVER_AUTH_GOOGLE_CLIENT_SECRET", self.client_secret
-            )
-        _set_if_absent("FASTMCP_SERVER_AUTH_GOOGLE_BASE_URL", self.get_oauth_base_url())
-        _set_if_absent("FASTMCP_SERVER_AUTH_GOOGLE_REDIRECT_PATH", self.redirect_path)
 
     def is_public_client(self) -> bool:
         """Return True when only a client_id is configured (no client_secret)."""

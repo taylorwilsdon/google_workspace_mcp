@@ -11,27 +11,87 @@
         "description": "ID of the document to update"
       },
       "start_index": {
-        "type": "integer",
-        "description": "Start position for operation using Docs API indices from\ninspect_doc_structure. For the main body, 0 is also accepted as an\nalias for the first writable position."
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Start position for operation using Docs API indices from\ninspect_doc_structure. For the main body, 0 is also accepted as an\nalias for the first writable position. Required unless heading is set."
       },
       "end_index": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
         "default": null,
-        "type": "integer",
         "description": "End position for text replacement/formatting (if not provided with text, text is inserted)"
       },
       "text": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
         "default": null,
-        "type": "string",
-        "description": "New text to insert or replace with (optional - can format existing text without changing it)"
+        "description": "New text to insert or replace with (optional - can format existing text without changing it).\nRendered as Markdown when heading is set."
+      },
+      "heading": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Text of a body heading (case-insensitive, must match exactly one) whose\nsection to edit instead of start_index/end_index"
+      },
+      "heading_level": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Optional 1-6 heading level to narrow the heading match"
       },
       "tab_id": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
         "default": null,
-        "type": "string",
-        "description": "Optional document tab ID to target"
+        "description": "Optional document tab ID to target (required with heading when the doc has multiple tabs)"
       },
       "segment_id": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
         "default": null,
-        "type": "string",
         "description": "Optional header/footer/footnote segment ID to target"
       },
       "end_of_segment": {
@@ -40,75 +100,170 @@
         "description": "Insert text at the end of the targeted segment instead of start_index"
       },
       "bold": {
+        "anyOf": [
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "null"
+          }
+        ],
         "default": null,
-        "type": "boolean",
         "description": "Whether to make text bold (True/False/None to leave unchanged)"
       },
       "italic": {
+        "anyOf": [
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "null"
+          }
+        ],
         "default": null,
-        "type": "boolean",
         "description": "Whether to make text italic (True/False/None to leave unchanged)"
       },
       "underline": {
+        "anyOf": [
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "null"
+          }
+        ],
         "default": null,
-        "type": "boolean",
         "description": "Whether to underline text (True/False/None to leave unchanged)"
       },
       "strikethrough": {
+        "anyOf": [
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "null"
+          }
+        ],
         "default": null,
-        "type": "boolean",
         "description": "Whether to strike through text (True/False/None to leave unchanged)"
       },
       "font_size": {
+        "anyOf": [
+          {
+            "type": "number"
+          },
+          {
+            "type": "null"
+          }
+        ],
         "default": null,
-        "type": "number",
         "description": "Font size in points"
       },
       "font_family": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
         "default": null,
-        "type": "string",
         "description": "Font family name (e.g., \"Arial\", \"Times New Roman\")"
       },
       "font_weight": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
         "default": null,
-        "type": "integer",
         "description": "Font weight (100-900 in steps of 100; requires font_family)"
       },
       "text_color": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
         "default": null,
-        "type": "string",
         "description": "Foreground text color (#RRGGBB)"
       },
       "background_color": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
         "default": null,
-        "type": "string",
         "description": "Background/highlight color (#RRGGBB)"
       },
       "link_url": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
         "default": null,
-        "type": "string",
         "description": "Hyperlink URL (http/https)"
       },
       "clear_link": {
+        "anyOf": [
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "null"
+          }
+        ],
         "default": null,
-        "type": "boolean",
         "description": "Remove hyperlink from the target range"
       },
       "baseline_offset": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
         "default": null,
-        "type": "string",
         "description": "One of NONE, SUPERSCRIPT, SUBSCRIPT"
       },
       "small_caps": {
+        "anyOf": [
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "null"
+          }
+        ],
         "default": null,
-        "type": "boolean",
         "description": "Whether to apply small caps"
+      },
+      "write_mode": {
+        "default": "EDIT",
+        "type": "string",
+        "description": "\"EDIT\" (default) applies the change directly; \"SUGGEST\"\nrecords it as a suggested edit that collaborators can accept or reject"
       }
     },
     "required": [
       "user_google_email",
-      "document_id",
-      "start_index"
+      "document_id"
     ],
     "type": "object"
   },
@@ -710,6 +865,158 @@
         ],
         "type": "object"
       },
+      "InsertDateOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "tab_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional document tab ID to target."
+          },
+          "segment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional header/footer/footnote segment ID. Use a real ID returned by inspect_doc_structure; do not guess values like 'kix.header'."
+          },
+          "index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Insertion index. Omit when end_of_segment=true."
+          },
+          "end_of_segment": {
+            "default": false,
+            "description": "Append to the end of the targeted body/segment instead of using index.",
+            "type": "boolean"
+          },
+          "after_heading": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Insert immediately after the heading paragraph with this exact text, resolved to an index at execution time. Errors when it matches zero or more than one heading."
+          },
+          "before_heading": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Insert immediately before the heading paragraph with this exact text. Errors when it matches zero or more than one heading."
+          },
+          "anchor_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Insert relative to this literal text, which must occur exactly once within a single paragraph. Use anchor_position to pick which side."
+          },
+          "anchor_position": {
+            "default": "after",
+            "description": "Which side of anchor_text to insert on. Defaults to 'after'.",
+            "enum": [
+              "before",
+              "after"
+            ],
+            "type": "string"
+          },
+          "type": {
+            "const": "insert_date",
+            "type": "string"
+          },
+          "date": {
+            "description": "YYYY-MM-DD, or an ISO 8601 timestamp with an offset (displayed in UTC unless timezone is set).",
+            "minLength": 1,
+            "type": "string"
+          },
+          "date_format": {
+            "anyOf": [
+              {
+                "enum": [
+                  "DATE_FORMAT_MONTH_DAY_ABBREVIATED",
+                  "DATE_FORMAT_MONTH_DAY_FULL",
+                  "DATE_FORMAT_MONTH_DAY_YEAR_ABBREVIATED",
+                  "DATE_FORMAT_ISO8601"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Defaults to DATE_FORMAT_MONTH_DAY_YEAR_ABBREVIATED."
+          },
+          "time_format": {
+            "anyOf": [
+              {
+                "enum": [
+                  "TIME_FORMAT_DISABLED",
+                  "TIME_FORMAT_HOUR_MINUTE",
+                  "TIME_FORMAT_HOUR_MINUTE_TIMEZONE"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Omit to show no time."
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "IANA time zone ID shown on the chip. Requires time_format TIME_FORMAT_HOUR_MINUTE_TIMEZONE."
+          }
+        },
+        "required": [
+          "type",
+          "date"
+        ],
+        "type": "object"
+      },
       "InsertDocTabOperation": {
         "additionalProperties": false,
         "properties": {
@@ -769,14 +1076,6 @@
             "default": null,
             "description": "Optional header/footer/footnote segment ID. Use a real ID returned by inspect_doc_structure; do not guess values like 'kix.header'."
           },
-          "type": {
-            "const": "insert_image",
-            "type": "string"
-          },
-          "image_uri": {
-            "description": "Image URL or resolvable image URI.",
-            "type": "string"
-          },
           "index": {
             "anyOf": [
               {
@@ -788,28 +1087,6 @@
             ],
             "default": null,
             "description": "Insertion index. Omit when end_of_segment=true."
-          },
-          "width": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null
-          },
-          "height": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null
           },
           "end_of_segment": {
             "default": false,
@@ -860,6 +1137,36 @@
               "after"
             ],
             "type": "string"
+          },
+          "type": {
+            "const": "insert_image",
+            "type": "string"
+          },
+          "image_uri": {
+            "description": "Image URL or resolvable image URI.",
+            "type": "string"
+          },
+          "width": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "height": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "required": [
@@ -883,9 +1190,104 @@
             "default": null,
             "description": "Optional document tab ID to target."
           },
+          "index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Insertion index. Omit when end_of_segment=true."
+          },
+          "end_of_segment": {
+            "default": false,
+            "description": "Append to the end of the targeted body/segment instead of using index.",
+            "type": "boolean"
+          },
+          "after_heading": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Insert immediately after the heading paragraph with this exact text, resolved to an index at execution time. Errors when it matches zero or more than one heading."
+          },
+          "before_heading": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Insert immediately before the heading paragraph with this exact text. Errors when it matches zero or more than one heading."
+          },
+          "anchor_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Insert relative to this literal text, which must occur exactly once within a single paragraph. Use anchor_position to pick which side."
+          },
+          "anchor_position": {
+            "default": "after",
+            "description": "Which side of anchor_text to insert on. Defaults to 'after'.",
+            "enum": [
+              "before",
+              "after"
+            ],
+            "type": "string"
+          },
           "type": {
             "const": "insert_page_break",
             "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "type": "object"
+      },
+      "InsertPersonOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "tab_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional document tab ID to target."
+          },
+          "segment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional header/footer/footnote segment ID. Use a real ID returned by inspect_doc_structure; do not guess values like 'kix.header'."
           },
           "index": {
             "anyOf": [
@@ -948,10 +1350,20 @@
               "after"
             ],
             "type": "string"
+          },
+          "type": {
+            "const": "insert_person",
+            "type": "string"
+          },
+          "email": {
+            "description": "Email of the person to @mention as a smart chip.",
+            "minLength": 1,
+            "type": "string"
           }
         },
         "required": [
-          "type"
+          "type",
+          "email"
         ],
         "type": "object"
       },
@@ -970,10 +1382,6 @@
             "default": null,
             "description": "Optional document tab ID to target."
           },
-          "type": {
-            "const": "insert_section_break",
-            "type": "string"
-          },
           "index": {
             "anyOf": [
               {
@@ -990,14 +1398,6 @@
             "default": false,
             "description": "Append to the end of the targeted body/segment instead of using index.",
             "type": "boolean"
-          },
-          "section_type": {
-            "default": "NEXT_PAGE",
-            "enum": [
-              "CONTINUOUS",
-              "NEXT_PAGE"
-            ],
-            "type": "string"
           },
           "after_heading": {
             "anyOf": [
@@ -1041,6 +1441,18 @@
             "enum": [
               "before",
               "after"
+            ],
+            "type": "string"
+          },
+          "type": {
+            "const": "insert_section_break",
+            "type": "string"
+          },
+          "section_type": {
+            "default": "NEXT_PAGE",
+            "enum": [
+              "CONTINUOUS",
+              "NEXT_PAGE"
             ],
             "type": "string"
           }
@@ -1114,16 +1526,6 @@
             "default": null,
             "description": "Optional header/footer/footnote segment ID. Use a real ID returned by inspect_doc_structure; do not guess values like 'kix.header'."
           },
-          "type": {
-            "const": "insert_table",
-            "type": "string"
-          },
-          "rows": {
-            "type": "integer"
-          },
-          "columns": {
-            "type": "integer"
-          },
           "index": {
             "anyOf": [
               {
@@ -1185,6 +1587,16 @@
               "after"
             ],
             "type": "string"
+          },
+          "type": {
+            "const": "insert_table",
+            "type": "string"
+          },
+          "rows": {
+            "type": "integer"
+          },
+          "columns": {
+            "type": "integer"
           }
         },
         "required": [
@@ -1258,14 +1670,6 @@
             "default": null,
             "description": "Optional header/footer/footnote segment ID. Use a real ID returned by inspect_doc_structure; do not guess values like 'kix.header'."
           },
-          "type": {
-            "const": "insert_text",
-            "type": "string"
-          },
-          "text": {
-            "description": "Text to insert.",
-            "type": "string"
-          },
           "index": {
             "anyOf": [
               {
@@ -1326,6 +1730,14 @@
               "before",
               "after"
             ],
+            "type": "string"
+          },
+          "type": {
+            "const": "insert_text",
+            "type": "string"
+          },
+          "text": {
+            "description": "Text to insert.",
             "type": "string"
           }
         },
@@ -2552,9 +2964,11 @@
               "delete_text": "#/$defs/DeleteTextOperation",
               "find_replace": "#/$defs/FindReplaceOperation",
               "format_text": "#/$defs/FormatTextOperation",
+              "insert_date": "#/$defs/InsertDateOperation",
               "insert_doc_tab": "#/$defs/InsertDocTabOperation",
               "insert_image": "#/$defs/InsertImageOperation",
               "insert_page_break": "#/$defs/InsertPageBreakOperation",
+              "insert_person": "#/$defs/InsertPersonOperation",
               "insert_section_break": "#/$defs/InsertSectionBreakOperation",
               "insert_table": "#/$defs/InsertTableOperation",
               "insert_table_column": "#/$defs/InsertTableColumnOperation",
@@ -2658,6 +3072,12 @@
               "$ref": "#/$defs/InsertImageOperation"
             },
             {
+              "$ref": "#/$defs/InsertPersonOperation"
+            },
+            {
+              "$ref": "#/$defs/InsertDateOperation"
+            },
+            {
               "$ref": "#/$defs/InsertDocTabOperation"
             },
             {
@@ -2670,6 +3090,11 @@
         },
         "type": "array",
         "description": "List of operation dicts. Each operation MUST have a 'type' field.\n        All operations accept an optional 'tab_id' to target a specific tab."
+      },
+      "write_mode": {
+        "default": "EDIT",
+        "type": "string",
+        "description": "\"EDIT\" (default) applies the batch directly; \"SUGGEST\" records\n        every operation as a suggested edit that collaborators can accept\n        or reject. The Docs API rejects some operations in SUGGEST mode,\n        such as named range and tab changes."
       }
     },
     "required": [

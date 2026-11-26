@@ -7,7 +7,9 @@ import pytest
 from fastmcp import Client, FastMCP
 from fastmcp.exceptions import ToolError
 
+from auth.auth_info_middleware import AuthInfoMiddleware
 from core.camel_case_middleware import CamelCaseArgumentsMiddleware, to_snake_case
+from core.server import server
 
 
 def test_to_snake_case_conversions():
@@ -147,3 +149,9 @@ async def test_colliding_camel_case_keys_are_rejected():
         # A single unambiguous spelling still works
         result = await client.call_tool("find_event", {"iCalUid": "ok"})
     assert result.content[0].text == "ok"
+
+
+def test_arguments_are_normalized_before_auth_reads_them():
+    order = [type(mw) for mw in server.middleware]
+
+    assert order.index(CamelCaseArgumentsMiddleware) < order.index(AuthInfoMiddleware)

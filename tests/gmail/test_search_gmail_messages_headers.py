@@ -131,14 +131,14 @@ async def test_default_output_is_unchanged():
             "",
             "📧 MESSAGES:",
             "  1. Message ID: msg-1",
-            "     Web Link: https://mail.google.com/mail/u/0/#all/msg-1",
+            "     Web Link: https://mail.google.com/mail/?authuser=user@example.com#all/msg-1",
             "     Thread ID: thread-msg-1",
-            "     Thread Link: https://mail.google.com/mail/u/0/#all/thread-msg-1",
+            "     Thread Link: https://mail.google.com/mail/?authuser=user@example.com#all/thread-msg-1",
             "",
             "  2. Message ID: msg-2",
-            "     Web Link: https://mail.google.com/mail/u/0/#all/msg-2",
+            "     Web Link: https://mail.google.com/mail/?authuser=user@example.com#all/msg-2",
             "     Thread ID: thread-msg-2",
-            "     Thread Link: https://mail.google.com/mail/u/0/#all/thread-msg-2",
+            "     Thread Link: https://mail.google.com/mail/?authuser=user@example.com#all/thread-msg-2",
             "",
             "💡 USAGE:",
             "  • Pass the Message IDs **as a list** to get_gmail_messages_content_batch()",
@@ -380,7 +380,10 @@ async def test_batch_failure_falls_back_to_sequential(monkeypatch):
     service = _build_service(
         list_response=_list_response(["msg-1"]),
         message_responses={
-            ("msg-1", "metadata"): _metadata_response("msg-1"),
+            ("msg-1", "metadata"): {
+                **_metadata_response("msg-1"),
+                "labelIds": ["DRAFT"],
+            },
         },
         batch_factory=_broken_batch,
     )
@@ -389,3 +392,34 @@ async def test_batch_failure_falls_back_to_sequential(monkeypatch):
 
     assert "Subject: Example subject" in result
     assert "From: sender@example.com" in result
+    assert "Labels: DRAFT\n" in result
+
+
+@pytest.mark.asyncio
+async def test_include_headers_lists_labels_so_drafts_are_told_from_sent_mail():
+    draft = _metadata_response("m1")
+    draft["labelIds"] = ["DRAFT"]
+    sent = _metadata_response("m2")
+    sent["labelIds"] = ["SENT", "INBOX"]
+    service = _build_service(
+        list_response=_list_response(["m1", "m2"]),
+        message_responses={("m1", "metadata"): draft, ("m2", "metadata"): sent},
+    )
+
+    result = await _run_search(service, include_headers=True)
+
+    assert "Labels: DRAFT\n" in result
+    assert "Labels: SENT, INBOX\n" in result
+
+
+@pytest.mark.asyncio
+async def test_include_headers_without_label_ids_adds_no_labels_line():
+    service = _build_service(
+        list_response=_list_response(["m1"]),
+        message_responses={("m1", "metadata"): _metadata_response("m1")},
+    )
+
+    result = await _run_search(service, include_headers=True)
+
+    assert "Subject: Example subject" in result
+    assert "Labels:" not in result

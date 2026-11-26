@@ -632,6 +632,15 @@ class OAuth21SessionStore:
             mcp_session_id = None
 
         with self._lock:
+            bound_user = self._session_auth_binding.get(mcp_session_id)
+            if bound_user and bound_user != user_email:
+                logger.error(
+                    f"SECURITY: Attempt to rebind session {mcp_session_id} from {bound_user} to {user_email}"
+                )
+                raise ValueError(
+                    f"Session {mcp_session_id} is already bound to a different user"
+                )
+
             normalized_expiry = _normalize_expiry_to_naive_utc(expiry)
 
             # Clean up previous session mappings for this user before storing new one
@@ -679,20 +688,14 @@ class OAuth21SessionStore:
                 # Create immutable session binding (first binding wins, cannot be changed)
                 if mcp_session_id not in self._session_auth_binding:
                     self._session_auth_binding[mcp_session_id] = user_email
-                    logger.info(
+                    # Debug: sessionless (2026-07-28) clients get a new session ID
+                    # on every request, so this fires per tool call.
+                    logger.debug(
                         f"Created immutable session binding: {mcp_session_id} -> {user_email}"
-                    )
-                elif self._session_auth_binding[mcp_session_id] != user_email:
-                    # Security: Attempt to bind session to different user
-                    logger.error(
-                        f"SECURITY: Attempt to rebind session {mcp_session_id} from {self._session_auth_binding[mcp_session_id]} to {user_email}"
-                    )
-                    raise ValueError(
-                        f"Session {mcp_session_id} is already bound to a different user"
                     )
 
                 self._mcp_session_mapping[mcp_session_id] = user_email
-                logger.info(
+                logger.debug(
                     f"Stored OAuth 2.1 session for {user_email} (session_id: {session_id}, mcp_session_id: {mcp_session_id})"
                 )
             else:
@@ -1231,7 +1234,7 @@ def get_credentials_from_token(
         # credentials during request authentication by
         # ``ensure_session_from_access_token`` and cached in the session store,
         # which is the ``store.get_credentials`` lookup above. There is no
-        # token-keyed provider cache to consult here on fastmcp 3.x.
+        # token-keyed provider cache to consult here.
 
         # Create minimal credentials with just the access token
         # Assume token is valid for 1 hour (typical for Google tokens)

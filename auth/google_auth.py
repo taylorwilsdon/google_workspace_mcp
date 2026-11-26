@@ -5,23 +5,27 @@ import hashlib
 import jwt
 import logging
 import os
+import time
 import webbrowser
 
-from typing import List, Optional, Tuple, Dict, Any
+from collections import deque
+from contextlib import contextmanager
+from typing import List, Optional, Tuple, Dict, Any, Iterator
 from urllib.parse import parse_qs, urlparse
 
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from google.auth.transport.requests import Request
 from google.auth.exceptions import RefreshError
-from googleapiclient.discovery import build
+import google.auth.credentials
+from googleapiclient.discovery import Resource, build
 from googleapiclient.errors import HttpError
 import httplib2
 import google_auth_httplib2
 from auth.scopes import SCOPES, get_current_scopes, has_required_scopes  # noqa
 from auth.client_secrets import get_client_secrets_path, load_client_secrets_file
 from auth.oauth21_session_store import get_oauth21_session_store
-from auth.credential_store import get_credential_store
+from auth.credential_store import CredentialStore, get_credential_store
 from auth.gateway_identity import normalize_principal_email
 from auth.oauth_config import (
     is_oauth21_enabled,
@@ -64,20 +68,12 @@ def get_default_credentials_dir():
     # Check WORKSPACE_MCP_CREDENTIALS_DIR first (preferred)
     workspace_creds_dir = os.getenv("WORKSPACE_MCP_CREDENTIALS_DIR")
     if workspace_creds_dir:
-        expanded = os.path.expanduser(workspace_creds_dir)
-        logger.info(
-            f"Using credentials directory from WORKSPACE_MCP_CREDENTIALS_DIR: {expanded}"
-        )
-        return expanded
+        return os.path.expanduser(workspace_creds_dir)
 
     # Fall back to GOOGLE_MCP_CREDENTIALS_DIR for backward compatibility
     google_creds_dir = os.getenv("GOOGLE_MCP_CREDENTIALS_DIR")
     if google_creds_dir:
-        expanded = os.path.expanduser(google_creds_dir)
-        logger.info(
-            f"Using credentials directory from GOOGLE_MCP_CREDENTIALS_DIR: {expanded}"
-        )
-        return expanded
+        return os.path.expanduser(google_creds_dir)
 
     # Use user home directory for credentials storage
     home_dir = os.path.expanduser("~")
@@ -91,14 +87,85 @@ def get_default_credentials_dir():
 DEFAULT_CREDENTIALS_DIR = get_default_credentials_dir()
 
 
-def _build_authorized_http(
-    credentials: Credentials, timeout: int = 30
-) -> google_auth_httplib2.AuthorizedHttp:
-    """Return credentialed HTTP with an explicit socket timeout."""
-    http = httplib2.Http(timeout=timeout)
+_GOOGLE_API_TIMEOUT_ENV = "WORKSPACE_MCP_GOOGLE_API_TIMEOUT_SECONDS"
+# googleapiclient's own default socket timeout.
+_DEFAULT_GOOGLE_API_TIMEOUT_SECONDS = 60
+# Token validation holds one of a few dedicated workers, so it is not stretched
+# by a timeout raised for long tool requests.
+_USER_INFO_TIMEOUT_SECONDS = 30
+
+
+def get_google_api_timeout() -> int:
+    """Parse WORKSPACE_MCP_GOOGLE_API_TIMEOUT_SECONDS, defaulting when unset.
+
+    Invalid values raise instead of falling back, so a misconfigured deployment
+    fails at startup.
+    """
+    raw = os.getenv(_GOOGLE_API_TIMEOUT_ENV, "").strip()
+    if not raw:
+        return _DEFAULT_GOOGLE_API_TIMEOUT_SECONDS
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value < 1:
+        raise ValueError(
+            f"{_GOOGLE_API_TIMEOUT_ENV} must be a positive integer, got {raw!r}"
+        )
+    return value
+
+
+# httplib2 does not retry a request whose send fails on a connection the server
+# already dropped, so only reuse connections that were active recently.
+_HTTP_MAX_IDLE_SECONDS = 60
+# Raw httplib2.Http objects only: they hold sockets, never credentials, so a
+# pooled connection can safely serve any user's next request.
+_idle_http: deque[tuple[float, httplib2.Http]] = deque(maxlen=32)
+
+
+def _acquire_http() -> httplib2.Http:
+    """Pop the most recently released connection, or create a new one."""
+    try:
+        while True:
+            released_at, http = _idle_http.pop()
+            if time.monotonic() - released_at < _HTTP_MAX_IDLE_SECONDS:
+                return http
+            http.close()
+    except IndexError:
+        pass
+    http = httplib2.Http(timeout=get_google_api_timeout())
     # Drive uses 308 Resume Incomplete with Range during resumable uploads, not a redirect.
     http.redirect_codes = http.redirect_codes - {308}
-    return google_auth_httplib2.AuthorizedHttp(credentials, http=http)
+    return http
+
+
+def _build_authorized_http(
+    credentials: google.auth.credentials.Credentials,
+) -> google_auth_httplib2.AuthorizedHttp:
+    """Return credentialed HTTP over a pooled, timeout-bounded connection."""
+    return google_auth_httplib2.AuthorizedHttp(credentials, http=_acquire_http())
+
+
+def build_google_service(
+    service_name: str, version: str, credentials: google.auth.credentials.Credentials
+) -> Resource:
+    """Build a discovery client on a pooled, timeout-bounded connection."""
+    return build(service_name, version, http=_build_authorized_http(credentials))
+
+
+@contextmanager
+def recycling(service: Resource) -> Iterator[Resource]:
+    """Like contextlib.closing, but return the connection to the pool on success.
+
+    After an error or cancellation a worker thread may still be mid-request on
+    this connection, so it is closed instead and never shared with another call.
+    """
+    try:
+        yield service
+    except BaseException:
+        service.close()
+        raise
+    _idle_http.append((time.monotonic(), service._http.http))
 
 
 # Session credentials now handled by OAuth21SessionStore - no local cache needed
@@ -150,19 +217,31 @@ def _find_any_credentials(
     return None, None
 
 
+def _stored_user_email(store: CredentialStore, user_email: str) -> str:
+    """Return the stored spelling of user_email, matched case-insensitively."""
+    users = store.list_users()
+    if user_email in users:
+        return user_email
+    lowered = user_email.lower()
+    return next((user for user in users if user.lower() == lowered), user_email)
+
+
+def _id_token_email(credentials: Credentials) -> Optional[str]:
+    """Return the email claim from the credentials' id_token, if present."""
+    if not (credentials and credentials.id_token):
+        return None
+    try:
+        return jwt.decode(
+            credentials.id_token, options={"verify_signature": False}
+        ).get("email")
+    except Exception as e:
+        logger.debug(f"Could not decode id_token to get email: {e}")
+        return None
+
+
 def save_credentials_to_session(session_id: str, credentials: Credentials):
     """Saves user credentials using OAuth21SessionStore."""
-    # Get user email from credentials if possible
-    user_email = None
-    if credentials and credentials.id_token:
-        try:
-            decoded_token = jwt.decode(
-                credentials.id_token, options={"verify_signature": False}
-            )
-            user_email = decoded_token.get("email")
-        except Exception as e:
-            logger.debug(f"Could not decode id_token to get email: {e}")
-
+    user_email = _id_token_email(credentials)
     if user_email:
         store = get_oauth21_session_store()
         store.store_session(
@@ -854,9 +933,7 @@ async def handle_auth_callback(
 
             if session_id:
                 try:
-                    session_credentials = store.get_credentials_by_mcp_session(
-                        session_id
-                    )
+                    session_credentials = store.get_credentials(user_google_email)
                     if session_credentials and session_credentials.refresh_token:
                         fallback_refresh_token = session_credentials.refresh_token
                         logger.info(
@@ -914,6 +991,14 @@ async def handle_auth_callback(
                     "session state was not updated."
                 )
 
+        session_user = store.get_user_by_mcp_session(session_id) if session_id else None
+        if session_user and session_user != user_google_email:
+            logger.info(
+                f"[handle_auth_callback] Session belongs to {session_user}; storing "
+                f"{user_google_email} without a session binding"
+            )
+            session_id = None
+
         # Always save to OAuth21SessionStore for centralized management
         store.store_session(
             user_email=user_google_email,
@@ -948,7 +1033,6 @@ def get_credentials(
 ) -> Optional[Credentials]:
     """
     Retrieves stored credentials, prioritizing OAuth 2.1 store, then session, then file. Refreshes if necessary.
-    If credentials are loaded from file and a session_id is present, they are cached in the session.
     In single-user mode, bypasses session mapping. If user_google_email is provided, only credentials
     for that email are used and the function returns None instead of falling back to any available
     credentials. If user_google_email is not provided, any available credentials may be used.
@@ -1066,6 +1150,7 @@ def get_credentials(
         # to avoid session binding conflicts when multiple credential files exist
         if user_google_email:
             credential_store = get_credential_store()
+            user_google_email = _stored_user_email(credential_store, user_google_email)
             credentials = credential_store.get_credential(user_google_email)
             if credentials:
                 logger.info(
@@ -1123,15 +1208,6 @@ def get_credentials(
                     f"[get_credentials] No session credentials, skipping file store in stateless mode for user_google_email '{user_google_email}'."
                 )
 
-            if credentials and session_id:
-                logger.debug(
-                    f"[get_credentials] Loaded from file for user '{user_google_email}', caching to session '{session_id}'."
-                )
-                if not skip_session_cache:
-                    save_credentials_to_session(
-                        session_id, credentials
-                    )  # Cache for current session
-
         if not credentials:
             logger.info(
                 f"[get_credentials] No credentials found for user '{user_google_email}' or session '{session_id}'."
@@ -1159,6 +1235,19 @@ def get_credentials(
                 "[get_credentials] Refreshing token using embedded client credentials"
             )
             credentials.refresh(Request())
+            refreshed_email = _id_token_email(credentials)
+            if (
+                user_google_email
+                and refreshed_email
+                and normalize_principal_email(refreshed_email)
+                != normalize_principal_email(user_google_email)
+            ):
+                logger.error(
+                    "[get_credentials] Refreshed credentials belong to %s, not %s; discarding them",
+                    refreshed_email,
+                    user_google_email,
+                )
+                return None
             logger.info(
                 f"[get_credentials] Credentials refreshed successfully. User: '{user_google_email}', Session: '{session_id}'"
             )
@@ -1200,6 +1289,10 @@ def get_credentials(
                 if persist_succeeded or is_stateless_mode():
                     # Also update OAuth21SessionStore
                     store = get_oauth21_session_store()
+                    mcp_session_id = session_id
+                    if skip_session_cache:
+                        existing_session = store.get_session_info(user_google_email)
+                        mcp_session_id = (existing_session or {}).get("mcp_session_id")
                     store.store_session(
                         user_email=user_google_email,
                         access_token=credentials.token,
@@ -1209,11 +1302,15 @@ def get_credentials(
                         client_secret=credentials.client_secret,
                         scopes=credentials.scopes,
                         expiry=credentials.expiry,
-                        mcp_session_id=session_id,
+                        mcp_session_id=mcp_session_id,
                         issuer="https://accounts.google.com",  # Add issuer for Google tokens
                     )
 
-            if session_id and (persist_succeeded or is_stateless_mode()):
+            if (
+                session_id
+                and not skip_session_cache
+                and (persist_succeeded or is_stateless_mode())
+            ):
                 # Update session cache if it was the source or is active
                 save_credentials_to_session(session_id, credentials)
         except RefreshError as e:
@@ -1262,7 +1359,10 @@ def get_user_info(
     try:
         # Using googleapiclient discovery to get user info
         # Requires 'google-api-python-client' library
-        service = build("oauth2", "v2", http=_build_authorized_http(credentials))
+        authorized_http = google_auth_httplib2.AuthorizedHttp(
+            credentials, http=httplib2.Http(timeout=_USER_INFO_TIMEOUT_SECONDS)
+        )
+        service = build("oauth2", "v2", http=authorized_http)
         user_info = service.userinfo().get().execute()
         logger.info(f"Successfully fetched user info: {user_info.get('email')}")
         return user_info
@@ -1411,7 +1511,7 @@ async def get_authenticated_google_service(
         raise GoogleAuthenticationError(auth_response)
 
     try:
-        service = build(service_name, version, http=_build_authorized_http(credentials))
+        service = build_google_service(service_name, version, credentials)
         log_user_email = user_google_email
 
         # Try to get email from credentials if needed for validation

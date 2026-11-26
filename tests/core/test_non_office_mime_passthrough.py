@@ -6,6 +6,12 @@ import pytest
 from core.utils import OfficeXmlExtractionError, extract_office_xml_text
 
 
+@pytest.fixture(autouse=True)
+def _no_ambient_office_xml_limit(monkeypatch):
+    """The expansion limit is read from the environment on every extraction."""
+    monkeypatch.delenv("WORKSPACE_MCP_MAX_OFFICE_XML_BYTES", raising=False)
+
+
 OFFICE_PACKAGES = [
     (
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",

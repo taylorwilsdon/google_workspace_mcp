@@ -379,3 +379,98 @@ def test_gmail_attach_logs_length_not_filename(caplog):
     assert SECRET not in info_text
     assert secret_name not in info_text
     assert file_path not in info_text
+
+
+def _resumable_session_ok():
+    response = Mock()
+    response.status = 200
+    response.get = Mock(return_value="https://upload.example/session")
+    return response, b""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "tool, kwargs",
+    [
+        ("create_drive_file", {"mime_type": "application/pdf"}),
+        ("import_to_google_doc", {"source_format": "docx"}),
+    ],
+)
+async def test_resumable_upload_url_logs_event_not_file_name(
+    caplog, monkeypatch, tool, kwargs
+):
+    """A file name is user content; the return_upload_url paths log the event at
+    INFO and the name only at DEBUG (via the invocation log)."""
+    import gdrive.drive_tools as drive_tools
+
+    # return_upload_url is offered only where local file access is disabled.
+    monkeypatch.setenv("WORKSPACE_MCP_DISABLE_LOCAL_FILES", "true")
+    service = Mock()
+    service.files().get().execute.return_value = {
+        "id": "root",
+        "mimeType": "application/vnd.google-apps.folder",
+    }
+    service._http.request.return_value = _resumable_session_ok()
+
+    with caplog.at_level(logging.DEBUG):
+        await _unwrap(getattr(drive_tools, tool))(
+            service=service,
+            user_google_email="user@example.com",
+            file_name=f"{SECRET}.bin",
+            return_upload_url=True,
+            **kwargs,
+        )
+
+    info_text = _info_text(caplog)
+    assert "Returned resumable upload URL" in info_text
+    assert SECRET not in info_text
+
+
+def test_glide_logs_never_include_valkey_credentials():
+    pytest.importorskip("glide")
+    password = f"pw-{SECRET}".replace(" ", "-")
+    username = "svc-user-hygiene"
+    code = """
+import asyncio, logging
+from core.valkey_storage import (
+    _create_client, build_valkey_client_config, configure_glide_logging,
+)
+
+async def main():
+    logging.getLogger().setLevel(logging.DEBUG)
+    configure_glide_logging()
+    try:
+        await _create_client(build_valkey_client_config())
+    except Exception as exc:
+        print(f"create failed: {type(exc).__name__}: {exc}")
+
+asyncio.run(main())
+"""
+    prefix = "WORKSPACE_MCP_OAUTH_PROXY_VALKEY_"
+    env = os.environ.copy()
+    env.update(
+        {
+            prefix + "HOST": "127.0.0.1",
+            prefix + "PORT": "1",
+            prefix + "USERNAME": username,
+            prefix + "PASSWORD": password,
+            prefix + "CONNECTION_TIMEOUT_MS": "200",
+        }
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=os.path.dirname(os.path.dirname(__file__)),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    assert "Connection configuration" in output
+    assert "create failed: ClosingError" in output
+    assert password not in output
+    assert username not in output

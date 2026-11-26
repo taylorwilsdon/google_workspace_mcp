@@ -86,6 +86,36 @@ def test_content_id_attachment_uses_multipart_related():
     )
 
 
+def test_inline_image_carries_x_attachment_id():
+    """An inline part needs X-Attachment-Id equal to its Content-ID, as Gmail
+    web writes for pasted images. Without it, sending the draft from the Gmail
+    web composer drops the part and rewrites the <img> to a URL only the
+    sender can load."""
+    raw_b64, _, _, errors = _prepare_gmail_message(
+        subject="inline-img-test",
+        body='<html><body><img src="cid:ii_a20330ff4a"></body></html>',
+        body_format="html",
+        to="someone@example.com",
+        attachments=[
+            {
+                "content": _TINY_PNG_B64,
+                "filename": "fig.png",
+                "mime_type": "image/png",
+                "content_id": "ii_a20330ff4a",
+            }
+        ],
+    )
+
+    assert errors == []
+    img = next(
+        p
+        for p in _walk_parts(_decode_raw(raw_b64))
+        if p.get_content_type() == "image/png"
+    )
+    assert img.get("X-Attachment-Id") == "ii_a20330ff4a"
+    assert img.get("Content-ID") == "<ii_a20330ff4a>"
+
+
 def test_url_based_inline_attachment_preserves_content_id(monkeypatch):
     """A URL-resolved attachment must keep content_id so it remains inline."""
 
@@ -248,7 +278,8 @@ def test_attachment_without_content_id_still_uses_mixed():
     image_parts = [p for p in parts if p.get_content_type() == "image/png"]
     assert len(image_parts) == 1
     img = image_parts[0]
-    assert img.get("Content-ID") is None, (
+    # Only the generated attachment id, never a caller-supplied cid.
+    assert img.get("Content-ID") == f"<{img.get('X-Attachment-Id')}>", (
         f"unexpected Content-ID on legacy attachment: {img.get('Content-ID')!r}"
     )
     disposition = img.get("Content-Disposition", "")
@@ -293,11 +324,15 @@ def test_mixed_inline_and_legacy_attachments():
     assert "multipart/mixed" in content_types
     assert "multipart/related" in content_types
 
-    # One image with Content-ID = hero, one without.
+    # One inline image with Content-ID = hero, one regular attachment whose
+    # Content-ID is its generated attachment id.
     image_parts = [p for p in parts if p.get_content_type() == "image/png"]
     assert len(image_parts) == 2
-    cids = {(p.get("Content-ID") or "").strip("<>") for p in image_parts}
-    assert cids == {"hero", ""}, f"expected one cid 'hero' and one empty, got {cids}"
+    inline = [p for p in image_parts if p.get_content_disposition() == "inline"]
+    regular = [p for p in image_parts if p.get_content_disposition() == "attachment"]
+    assert [p["Content-ID"].strip("<>") for p in inline] == ["hero"]
+    assert len(regular) == 1
+    assert regular[0]["Content-ID"] == f"<{regular[0]['X-Attachment-Id']}>"
 
 
 def test_plaintext_body_with_content_id_fallback():

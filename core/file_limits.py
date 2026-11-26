@@ -5,6 +5,19 @@ process memory (Drive MediaIo downloads, Gmail attachments, etc.).
 
 Default is disabled (``0`` / unset) so existing deployments keep uncapped
 behavior. Set a positive integer (e.g. ``5242880`` for 5 MiB) to enable.
+
+``WORKSPACE_MCP_MAX_OFFICE_XML_BYTES`` independently caps both the XML expanded
+from one Office file and the text extracted from it. It is on by default;
+``0`` disables it.
+
+``WORKSPACE_MCP_STATELESS_INLINE_MAX_BYTES`` caps the file a stateless-mode
+download returns inline. It defaults to 10 MiB and never exceeds
+``WORKSPACE_MCP_MAX_FILE_BYTES``.
+
+``WORKSPACE_MCP_MAX_CONTENT_CHARS`` sets the default page size of the text
+``get_drive_file_content`` returns; the rest is available by calling again with
+an offset, and a client can pass ``full_content=True`` for all of it in one
+call. It defaults to 40,000 characters; ``0`` returns whole content by default.
 """
 
 from __future__ import annotations
@@ -12,6 +25,10 @@ from __future__ import annotations
 import asyncio
 import io
 import os
+import sys
+import time
+from collections import OrderedDict
+from collections.abc import Callable, Hashable
 from typing import Any, Optional
 
 import httpx
@@ -20,6 +37,30 @@ from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaIoBaseDownload
 
 _ENV_NAME = "WORKSPACE_MCP_MAX_FILE_BYTES"
+_OFFICE_XML_ENV_NAME = "WORKSPACE_MCP_MAX_OFFICE_XML_BYTES"
+_STATELESS_INLINE_ENV_NAME = "WORKSPACE_MCP_STATELESS_INLINE_MAX_BYTES"
+_CONTENT_CHARS_ENV_NAME = "WORKSPACE_MCP_MAX_CONTENT_CHARS"
+_PAGED_CONTENT_CACHE_ENV_NAME = "WORKSPACE_MCP_PAGED_CONTENT_CACHE_BYTES"
+
+# Office files are ZIP archives, so the download cap above bounds only the
+# COMPRESSED size, and XML compresses by orders of magnitude. Unlike the
+# download cap this one is on by default: the download cap is opt-in to protect
+# deployments that need large downloads, and nothing comparable depends on
+# unbounded expansion.
+#
+# This counts expanded XML bytes, not memory. The parsed tree is much larger:
+# measured with tracemalloc on 1 MiB of XML, peak allocation was about 14x the
+# XML size for paragraphs of short text and about 30x for empty elements. The
+# default therefore allows a worst case in the hundreds of MiB per extraction;
+# small containers should set it lower.
+DEFAULT_MAX_OFFICE_XML_BYTES = 25 * 1024 * 1024  # 25 MiB
+
+# Base64 inflates an inline payload by a third, so this is ~13.4 MiB on the wire.
+DEFAULT_STATELESS_INLINE_MAX_BYTES = 10 * 1024 * 1024  # 10 MiB
+
+DEFAULT_MAX_CONTENT_CHARS = 40_000
+
+DEFAULT_PAGED_CONTENT_CACHE_BYTES = 32 * 1024 * 1024  # 32 MiB
 
 # Keep the uncapped path from asking httplib2 to materialize its 100 MiB
 # default response chunk. This does not impose a total-size limit; it only
@@ -47,22 +88,182 @@ def get_max_file_bytes() -> Optional[int]:
     - positive int → that many bytes
     - invalid or negative value → raise ``ValueError``
     """
-    raw = os.getenv(_ENV_NAME)
+    value = _byte_count_from_env(_ENV_NAME)
+    return value or None
+
+
+def get_max_office_xml_bytes() -> Optional[int]:
+    """Return the cap on bytes expanded out of one Office file, or ``None``.
+
+    Parsing rules:
+    - unset or empty → ``DEFAULT_MAX_OFFICE_XML_BYTES``
+    - ``0`` → uncapped (``None``)
+    - positive int → that many bytes
+    - invalid or negative value → raise ``ValueError``
+    """
+    value = _byte_count_from_env(_OFFICE_XML_ENV_NAME)
+    if value is None:
+        return DEFAULT_MAX_OFFICE_XML_BYTES
+    return value or None
+
+
+def get_stateless_inline_max_bytes() -> int:
+    """Return the largest file a stateless-mode download may return inline.
+
+    Parsing rules:
+    - unset or empty → ``DEFAULT_STATELESS_INLINE_MAX_BYTES``
+    - ``0`` → nothing is inlined
+    - positive int → that many bytes
+    - invalid or negative value → raise ``ValueError``
+
+    Inlining holds the whole file in memory, so ``WORKSPACE_MCP_MAX_FILE_BYTES``
+    lowers this when set.
+    """
+    value = _byte_count_from_env(_STATELESS_INLINE_ENV_NAME)
+    if value is None:
+        value = DEFAULT_STATELESS_INLINE_MAX_BYTES
+    max_file_bytes = get_max_file_bytes()
+    return min(value, max_file_bytes) if max_file_bytes else value
+
+
+def get_max_content_chars() -> Optional[int]:
+    """Return the default page size for content reads in characters, or ``None``
+    for whole content.
+
+    Parsing rules:
+    - unset or empty → ``DEFAULT_MAX_CONTENT_CHARS``
+    - ``0`` → whole content (``None``)
+    - positive int → that many characters
+    - invalid or negative value → raise ``ValueError``
+    """
+    value = _byte_count_from_env(_CONTENT_CHARS_ENV_NAME, unit="character")
+    if value is None:
+        return DEFAULT_MAX_CONTENT_CHARS
+    return value or None
+
+
+def get_paged_content_cache_bytes() -> int:
+    """Return the memory paged content may be kept in between calls.
+
+    Parsing rules:
+    - unset or empty → ``DEFAULT_PAGED_CONTENT_CACHE_BYTES``
+    - ``0`` → nothing is kept
+    - positive int → that many bytes
+    - invalid or negative value → raise ``ValueError``
+    """
+    value = _byte_count_from_env(_PAGED_CONTENT_CACHE_ENV_NAME)
+    return DEFAULT_PAGED_CONTENT_CACHE_BYTES if value is None else value
+
+
+def validate_file_limit_settings() -> None:
+    """Raise ``ValueError`` if any file-limit environment setting is invalid."""
+    get_max_file_bytes()
+    get_max_office_xml_bytes()
+    get_stateless_inline_max_bytes()
+    get_max_content_chars()
+    get_paged_content_cache_bytes()
+
+
+def _byte_count_from_env(name: str, *, unit: str = "byte") -> Optional[int]:
+    """Parse a non-negative count from ``name``; ``None`` when unset or empty."""
+    raw = os.getenv(name)
     if raw is None or raw.strip() == "":
         return None
     try:
         value = int(raw.strip())
     except ValueError as exc:
         raise ValueError(
-            f"Invalid {_ENV_NAME}={raw!r}; expected a non-negative integer byte count."
+            f"Invalid {name}={raw!r}; expected a non-negative integer {unit} count."
         ) from exc
     if value < 0:
         raise ValueError(
-            f"Invalid {_ENV_NAME}={raw!r}; expected a non-negative integer byte count."
+            f"Invalid {name}={raw!r}; expected a non-negative integer {unit} count."
         )
-    if value == 0:
-        return None
     return value
+
+
+def page_content_text(
+    text: str,
+    *,
+    offset: int = 0,
+    max_chars: Optional[int] = None,
+    alternative: str = "",
+) -> str:
+    """Return up to ``max_chars`` of ``text`` from ``offset``, plus a read-on note
+    with the next offset when more follows. ``None`` means no limit."""
+    total = len(text)
+    if offset > total:
+        return (
+            f"[offset={offset:,} is past the end of the content "
+            f"({total:,} characters).]"
+        )
+    if max_chars is None or total - offset <= max_chars:
+        return text[offset:]
+
+    page = text[offset : offset + max_chars]
+    line_end = page.rfind("\n") + 1
+    if line_end >= max_chars / 2:
+        page = page[:line_end]
+    end = offset + len(page)
+    return (
+        f"{page}\n\n[Truncated: showing characters {offset:,} to {end:,} of "
+        f"{total:,}; {total - end:,} more follow (default page size "
+        f"{max_chars:,}, set by {_CONTENT_CHARS_ENV_NAME}). Call again with offset={end} to "
+        f"read on{alternative}.]"
+    )
+
+
+class PagedContentCache:
+    """TTL and LRU cache of paged text, bounded by ``max_bytes`` of memory.
+
+    A single entry may take at most a quarter of ``max_bytes``.
+    """
+
+    def __init__(
+        self,
+        *,
+        ttl_seconds: float,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._ttl_seconds = ttl_seconds
+        self._clock = clock
+        self._entries: OrderedDict[Hashable, tuple[float, str, int]] = OrderedDict()
+        self._bytes = 0
+
+    def get(self, key: Hashable) -> Optional[str]:
+        entry = self._entries.get(key)
+        if entry is None:
+            return None
+        stored_at, text, _ = entry
+        if self._clock() - stored_at > self._ttl_seconds:
+            self._drop(key)
+            return None
+        self._entries.move_to_end(key)
+        return text
+
+    def put(self, key: Hashable, text: str, *, max_bytes: int) -> None:
+        now = self._clock()
+        for stale in [
+            k for k, (t, _, _) in self._entries.items() if now - t > self._ttl_seconds
+        ]:
+            self._drop(stale)
+        if key in self._entries:
+            self._drop(key)
+        size = sys.getsizeof(text)
+        if size > max_bytes // 4:
+            return
+        self._entries[key] = (now, text, size)
+        self._bytes += size
+        while self._bytes > max_bytes:
+            self._drop(next(iter(self._entries)))
+
+    def clear(self) -> None:
+        self._entries.clear()
+        self._bytes = 0
+
+    def _drop(self, key: Hashable) -> None:
+        _, _, size = self._entries.pop(key)
+        self._bytes -= size
 
 
 def format_file_too_large_message(

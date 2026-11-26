@@ -20,8 +20,9 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
+from core.utils import UserInputError
+from gcalendar.calendar_helpers import _build_time_boundary
 from gcalendar.calendar_tools import (
-    _build_time_boundary,
     _create_event_impl,
     _modify_event_impl,
     manage_event,
@@ -69,10 +70,10 @@ def test_boundary_pairs_datetime_with_its_zone():
     }
 
 
-def test_boundary_strips_offset_when_zone_given():
-    """An explicit offset would override the IANA zone and defeat DST resolution."""
+def test_boundary_converts_offset_when_zone_given():
+    """Changing the zone preserves the instant, including its DST offset."""
     assert _build_time_boundary("2026-08-21T17:50:00+03:00", "Europe/Amsterdam") == {
-        "dateTime": "2026-08-21T17:50:00",
+        "dateTime": "2026-08-21T16:50:00+02:00",
         "timeZone": "Europe/Amsterdam",
     }
 
@@ -83,10 +84,27 @@ def test_boundary_keeps_offset_when_no_zone_given():
     }
 
 
+def test_boundary_without_zone_rejects_invalid_timestamp():
+    with pytest.raises(UserInputError, match="Invalid RFC3339 timestamp"):
+        _build_time_boundary("2026-08-21T25:00:00", None)
+
+
 def test_boundary_handles_all_day_dates():
     assert _build_time_boundary("2026-08-21", "Europe/Amsterdam") == {
         "date": "2026-08-21"
     }
+    assert _build_time_boundary("2024-02-29", None) == {"date": "2024-02-29"}
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["Nov 10, 2026 23:00", "2026-11-10 23:00", "2026-02-30", "20261110"],
+)
+def test_all_day_boundary_rejects_values_that_are_not_calendar_dates(
+    value: str,
+) -> None:
+    with pytest.raises(UserInputError, match="YYYY-MM-DD"):
+        _build_time_boundary(value, "America/New_York")
 
 
 # --- create ------------------------------------------------------------------
@@ -281,12 +299,12 @@ def test_unresolvable_timezone_raises_rather_than_silently_dropping():
     with no error, which is worse than the bug: the event lands somewhere the
     caller never asked for. Fail loudly with a name they can act on instead.
     """
-    with pytest.raises(ValueError, match="Unrecognized IANA timezone"):
+    with pytest.raises(UserInputError, match="Unrecognized IANA timezone"):
         _build_time_boundary("2026-08-21T17:50:00+03:00", "Mars/Olympus_Mons")
 
 
 def test_validation_error_names_the_offending_zone():
-    with pytest.raises(ValueError, match="Mars/Olympus_Mons"):
+    with pytest.raises(UserInputError, match="Mars/Olympus_Mons"):
         _build_time_boundary("2026-08-21T17:50:00", "Mars/Olympus_Mons")
 
 
@@ -317,7 +335,7 @@ def test_zoneinfo_uses_packaged_tzdata_without_system_database():
 @pytest.mark.asyncio
 async def test_create_rejects_unresolvable_boundary_timezone():
     service = _create_mock_service()
-    with pytest.raises(ValueError, match="Unrecognized IANA timezone"):
+    with pytest.raises(UserInputError, match="Unrecognized IANA timezone"):
         await _create_event_impl(
             service=service,
             user_google_email="user@example.com",
@@ -336,7 +354,7 @@ async def test_create_rejects_unresolvable_boundary_timezone():
 
 def test_empty_timezone_is_rejected_not_treated_as_omitted():
     """`""` is an invalid value, not an absent one."""
-    with pytest.raises(ValueError, match="Unrecognized IANA timezone"):
+    with pytest.raises(UserInputError, match="Unrecognized IANA timezone"):
         _build_time_boundary("2026-08-21T09:00:00", "")
 
 
@@ -354,7 +372,7 @@ async def test_empty_boundary_timezone_does_not_fall_back_to_event_wide():
     the event-wide one, so the caller got a zone they never asked for and no error.
     """
     service = _create_mock_service()
-    with pytest.raises(ValueError, match="Unrecognized IANA timezone"):
+    with pytest.raises(UserInputError, match="Unrecognized IANA timezone"):
         await _create_event_impl(
             service=service,
             user_google_email="user@example.com",
@@ -370,7 +388,7 @@ async def test_empty_boundary_timezone_does_not_fall_back_to_event_wide():
 @pytest.mark.asyncio
 async def test_empty_boundary_timezone_rejected_without_event_wide_timezone():
     service = _create_mock_service()
-    with pytest.raises(ValueError, match="Unrecognized IANA timezone"):
+    with pytest.raises(UserInputError, match="Unrecognized IANA timezone"):
         await _create_event_impl(
             service=service,
             user_google_email="user@example.com",
@@ -385,7 +403,7 @@ async def test_empty_boundary_timezone_rejected_without_event_wide_timezone():
 @pytest.mark.asyncio
 async def test_update_rejects_empty_boundary_timezone():
     service = _create_mock_service()
-    with pytest.raises(ValueError, match="Unrecognized IANA timezone"):
+    with pytest.raises(UserInputError, match="Unrecognized IANA timezone"):
         await _modify_event_impl(
             service=service,
             user_google_email="user@example.com",

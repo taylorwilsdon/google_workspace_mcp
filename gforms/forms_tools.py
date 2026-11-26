@@ -10,6 +10,7 @@ import json
 from typing import List, Optional, Dict, Any
 
 
+from googleapiclient.errors import HttpError
 from mcp.types import ToolAnnotations
 
 from auth.service_decorator import require_google_service
@@ -154,11 +155,8 @@ async def create_form(
 
     form_body: Dict[str, Any] = {"info": {"title": title}}
 
-    if description:
-        form_body["info"]["description"] = description
-
     if document_title:
-        form_body["info"]["document_title"] = document_title
+        form_body["info"]["documentTitle"] = document_title
 
     created_form = await asyncio.to_thread(
         service.forms().create(body=form_body).execute
@@ -172,6 +170,33 @@ async def create_form(
 
     confirmation_message = f"Successfully created form '{created_form.get('info', {}).get('title', title)}' for {user_google_email}. Form ID: {form_id}. Edit URL: {edit_url}. Responder URL: {responder_url}"
     logger.info(f"Form created successfully for {user_google_email}. ID: {form_id}")
+
+    if description:
+        # The form already exists, so surface its ID rather than inviting a duplicate create.
+        try:
+            await asyncio.to_thread(
+                service.forms()
+                .batchUpdate(
+                    formId=form_id,
+                    body={
+                        "requests": [
+                            {
+                                "updateFormInfo": {
+                                    "info": {"description": description},
+                                    "updateMask": "description",
+                                }
+                            }
+                        ]
+                    },
+                )
+                .execute
+            )
+        except HttpError as error:
+            logger.error(
+                f"[create_form] Description update failed for {form_id}: {error}"
+            )
+            return f"{confirmation_message}. Warning: the description was not applied ({error}). Set it with batch_update_form on form ID {form_id} instead of calling create_form again."
+
     return confirmation_message
 
 
@@ -343,11 +368,17 @@ async def get_form_response(
     answer_details = []
     for question_id, answer_data in answers.items():
         question_response = answer_data.get("textAnswers", {}).get("answers", [])
+        uploaded_files = answer_data.get("fileUploadAnswers", {}).get("answers", [])
         if question_response:
             answer_text = ", ".join([ans.get("value", "") for ans in question_response])
-            answer_details.append(f"  Question ID {question_id}: {answer_text}")
+        elif uploaded_files:
+            answer_text = ", ".join(
+                f"{f.get('fileName', 'Unnamed file')} (file ID: {f.get('fileId', 'Unknown')})"
+                for f in uploaded_files
+            )
         else:
-            answer_details.append(f"  Question ID {question_id}: No answer provided")
+            answer_text = "No answer provided"
+        answer_details.append(f"  Question ID {question_id}: {answer_text}")
 
     answers_text = "\n".join(answer_details) if answer_details else "  No answers found"
 

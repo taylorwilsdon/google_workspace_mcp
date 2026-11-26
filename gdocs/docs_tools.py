@@ -7,9 +7,9 @@ This module provides MCP tools for interacting with Google Docs API and managing
 import logging
 import asyncio
 import io
-import inspect
 import re
 from typing import List, Any, Literal, Optional, Union
+from urllib.parse import parse_qs, urlsplit
 
 from typing_extensions import TypedDict
 
@@ -28,6 +28,7 @@ from core.file_limits import (
 from core.utils import (
     GOOGLE_API_WRITE_RETRIES,
     OfficeXmlExtractionError,
+    OfficeXmlTooLargeError,
     extract_office_xml_text,
     handle_http_errors,
     UserInputError,
@@ -50,6 +51,9 @@ from gdocs.docs_helpers import (
     create_update_doc_tab_request,
     create_delete_doc_tab_request,
     validate_suggestions_view_mode,
+    validate_write_mode,
+    build_batch_update_body,
+    suggestion_save_error,
     create_update_paragraph_style_request,
     extract_text_from_elements,
     process_tab_hierarchy,
@@ -62,6 +66,8 @@ from gdocs.docs_structure import (
     analyze_document_complexity,
     summarize_paragraph_layout,
     truncate_preview,
+    find_heading_section,
+    heading_section_document,
 )
 from gdocs.docs_tables import extract_table_as_data
 from gdocs.docs_markdown import (
@@ -70,7 +76,12 @@ from gdocs.docs_markdown import (
     format_comments_appendix,
     parse_drive_comments,
 )
-from gdocs.docs_markdown_writer import markdown_to_docs_requests
+from gdocs.docs_markdown_writer import (
+    build_markdown_insert_requests,
+    build_section_markdown_requests,
+    markdown_to_docs_requests,
+)
+from gdocs.docs_plain_text import render_doc_to_plain_text
 from gdocs.operation_schemas import BatchDocOperations, ParagraphBorderEdge
 
 # Import operation managers for complex business logic
@@ -79,6 +90,11 @@ from gdocs.managers import (
     HeaderFooterManager,
     ValidationManager,
     BatchOperationManager,
+)
+from gdrive.drive_helpers import (
+    escape_drive_query_value,
+    flag_incomplete_search,
+    move_new_file_to_folder,
 )
 import json
 
@@ -125,6 +141,35 @@ def _tab_title(tab: dict) -> str:
     return tab.get("tabProperties", {}).get("title", "Untitled Tab")
 
 
+def _parse_doc_reference(
+    document_id: str, tab_id: Optional[str]
+) -> tuple[str, Optional[str], bool]:
+    """Split a document ID or URL into (document_id, tab_id, tab_from_url).
+
+    A URL's ?tab= selects that tab unless tab_id was passed explicitly.
+    """
+    url_match = re.search(r"/d/([\w-]+)", document_id)
+    if not url_match:
+        return document_id, tab_id, False
+    url_tabs = parse_qs(urlsplit(document_id).query).get("tab", [])
+    if tab_id is None and url_tabs:
+        return url_match.group(1), url_tabs[0], True
+    return url_match.group(1), tab_id, False
+
+
+def _url_tab_notice(tabs: list, tab: dict, tab_id: str) -> str:
+    """Say when a tab picked from a URL hid other tabs.
+
+    Browsers add ?tab= to every Docs URL, so the caller may not expect it.
+    """
+    if tabs == [tab] and not tab.get("childTabs"):
+        return ""
+    return (
+        f"Showing only tab '{_tab_title(tab)}' ({tab_id}) from the URL; "
+        'pass tab_id="" to read every tab.'
+    )
+
+
 @server.tool(
     title="Search Docs",
     annotations=ToolAnnotations(
@@ -141,39 +186,61 @@ async def search_docs(
     user_google_email: str,
     query: str,
     page_size: int = 10,
+    page_token: Optional[str] = None,
+    corpora: Optional[str] = None,
+    drive_id: Optional[str] = None,
 ) -> str:
     """
     Searches for Google Docs by name using Drive API (mimeType filter).
 
+    Args:
+        user_google_email: The user's Google email address.
+        query: Text to search for in document names.
+        page_size: Maximum number of documents to return. Defaults to 10.
+        page_token: Page token from a previous response's nextPageToken to
+            retrieve the next page of results.
+        corpora: Corpus to search ('user', 'domain', 'drive', 'allDrives').
+            Defaults to 'drive' when drive_id is set, otherwise 'allDrives'.
+        drive_id: Optional shared drive ID to search.
+
     Returns:
         str: A formatted list of Google Docs matching the search query.
+            Includes a nextPageToken line when more results are available.
     """
     logger.info(f"[search_docs] Email={user_google_email}, query_len={len(query)}")
     logger.debug(f"[search_docs] Query='{query}'")
 
-    escaped_query = query.replace("'", "\\'")
+    escaped_query = escape_drive_query_value(query)
 
     response = await asyncio.to_thread(
         service.files()
         .list(
             q=f"name contains '{escaped_query}' and mimeType='application/vnd.google-apps.document' and trashed=false",
             pageSize=page_size,
-            fields="files(id, name, createdTime, modifiedTime, webViewLink)",
+            pageToken=page_token,
+            fields="nextPageToken, incompleteSearch, files(id, name, createdTime, modifiedTime, webViewLink)",
             supportsAllDrives=True,
             includeItemsFromAllDrives=True,
+            corpora=corpora or ("drive" if drive_id else "allDrives"),
+            driveId=drive_id,
         )
         .execute
     )
     files = response.get("files", [])
-    if not files:
-        return f"No Google Docs found matching '{query}'."
+    next_token = response.get("nextPageToken")
+    if not files and not next_token:
+        return flag_incomplete_search(
+            f"No Google Docs found matching '{query}'.", response
+        )
 
     output = [f"Found {len(files)} Google Docs matching '{query}':"]
     for f in files:
         output.append(
             f"- {f['name']} (ID: {f['id']}) Modified: {f.get('modifiedTime')} Link: {f.get('webViewLink')}"
         )
-    return "\n".join(output)
+    if next_token:
+        output.append(f"nextPageToken: {next_token}")
+    return flag_incomplete_search("\n".join(output), response)
 
 
 @server.tool(
@@ -203,13 +270,16 @@ async def get_doc_content(
     document_id: str,
     suggestions_view_mode: str = "DEFAULT_FOR_CURRENT_ACCESS",
     tab_id: Optional[str] = None,
+    preserve_context: bool = False,
+    heading: Optional[str] = None,
+    heading_level: Optional[int] = None,
 ) -> str:
     """
     Retrieves content of a Google Doc or a Drive file (like .docx) identified by document_id.
     - Native Google Docs: Fetches content via Docs API.
     - Office files (.docx, etc.) stored in Drive: Downloads via Drive API and extracts text.
 
-    For native Google Docs the returned text is index-aligned with the document:
+    By default, native Google Docs text is index-aligned with the document:
     empty paragraphs are preserved and every non-text element that occupies an
     index (inline object, page break, footnote reference, ...) is rendered as one
     U+FFFC placeholder per index. The document body starts at index 1, so an
@@ -218,9 +288,17 @@ async def get_doc_content(
     and multi-tab documents interleave separators, so alignment holds up to the
     first table or tab header.
 
+    Set preserve_context=True for readable link destinations, internal targets,
+    smart-chip values, table boundaries, headers, footers, footnotes, and object
+    context exposed by the Docs API. This output is plain text, not Markdown,
+    and its offsets must not be used as document editing indices. Comments,
+    revision history, exact visual layout, and chip details hidden by the API
+    are not included. Use get_doc_as_markdown for formatting or comments.
+
     Args:
         user_google_email: User's Google email address
-        document_id: ID of the Google Doc (or full URL)
+        document_id: ID of the Google Doc or Drive file (or full URL). A Docs
+            URL's ?tab= selects that tab unless tab_id is also specified.
         suggestions_view_mode: How to render suggestions in the returned content:
             - "DEFAULT_FOR_CURRENT_ACCESS": Default based on user's access level
             - "SUGGESTIONS_INLINE": Suggested changes appear inline in the document
@@ -228,8 +306,20 @@ async def get_doc_content(
             - "PREVIEW_WITHOUT_SUGGESTIONS": Preview as if all suggestions were rejected
         tab_id: Optional ID of a single tab to read (from inspect_doc_structure).
             When given, only that tab's content is returned with no tab separator,
-            so the content stays index-aligned with that tab. When omitted, every
-            tab is returned separated by "--- TAB: ... ---" markers.
+            so the default output stays index-aligned with that tab. When
+            omitted, every tab is returned with "--- TAB: ... ---" markers.
+            Pass "" to read every tab of a URL that carries ?tab=. This
+            filters output only: the whole document is still fetched.
+        preserve_context: Include readable semantic annotations for native Docs.
+            Defaults to False to retain index alignment. Office extraction is
+            unaffected. With tab_id, only the selected tab is rendered.
+        heading: Text of a body heading (case-insensitive, must match exactly one)
+            whose section to return instead of the whole document: the heading and
+            everything below it up to the next heading of equal or shallower level.
+            The header reports the section's start index s, and in the default
+            output offset n is document index n + s. Native Google Docs only;
+            tab_id is required when the doc has multiple tabs.
+        heading_level: Optional 1-6 heading level to narrow the heading match.
 
     Returns:
         str: The document content with metadata header.
@@ -237,8 +327,9 @@ async def get_doc_content(
     validation_error = validate_suggestions_view_mode(suggestions_view_mode)
     if validation_error:
         return validation_error
+    document_id, tab_id, tab_from_url = _parse_doc_reference(document_id, tab_id)
     logger.info(
-        f"[get_doc_content] Invoked. Document/File ID: '{document_id}' for user '{user_google_email}'"
+        f"[get_doc_content] Invoked. Document/File ID: '{document_id}', tab: '{tab_id}' for user '{user_google_email}'"
     )
 
     file_metadata = await asyncio.to_thread(
@@ -259,6 +350,7 @@ async def get_doc_content(
     )
 
     body_text = ""
+    notice = ""
 
     if mime_type == "application/vnd.google-apps.document":
         logger.info("[get_doc_content] Processing as native Google Doc.")
@@ -271,18 +363,42 @@ async def get_doc_content(
             )
             .execute
         )
-        if tab_id:
-            tab = _find_tab(doc_data.get("tabs", []), tab_id)
+        if heading is not None:
+            section = heading_section_document(doc_data, heading, heading_level, tab_id)
+            content = section["body"]["content"]
+            notice = (
+                f"Showing only the section under heading {heading!r}, "
+                f"starting at document index {content[0]['startIndex']}."
+            )
+            if tab_from_url:
+                tabs = doc_data.get("tabs", [])
+                tab_notice = _url_tab_notice(tabs, _find_tab(tabs, tab_id), tab_id)
+                notice = f"{tab_notice} {notice}".lstrip()
+            body_text = (
+                render_doc_to_plain_text(section, tab_id)
+                if preserve_context
+                else extract_text_from_elements(content)
+            )
+        elif tab_id:
+            tabs = doc_data.get("tabs", [])
+            tab = _find_tab(tabs, tab_id)
             if tab is None:
                 return f"Error: Tab {tab_id} not found in document."
             if "documentTab" not in tab:
                 return f"Error: Tab {tab_id} is not a document tab and has no body content."
-            # No tab separator: the caller named one tab, so the content section
-            # stays index-aligned with it.
+            if tab_from_url:
+                notice = _url_tab_notice(tabs, tab, tab_id)
+            # No tab separator: the caller named one tab. The default output
+            # stays index-aligned; context annotations are opt-in.
             file_name = f"{file_name} [tab: {_tab_title(tab)}]"
-            body_text = extract_text_from_elements(
-                tab["documentTab"].get("body", {}).get("content", [])
-            )
+            if preserve_context:
+                body_text = render_doc_to_plain_text(tab["documentTab"], tab_id)
+            else:
+                body_text = extract_text_from_elements(
+                    tab["documentTab"].get("body", {}).get("content", [])
+                )
+        elif preserve_context:
+            body_text = render_doc_to_plain_text(doc_data)
         else:
             processed_text_lines = []
 
@@ -300,6 +416,8 @@ async def get_doc_content(
                     processed_text_lines.append(tab_content)
 
             body_text = "".join(processed_text_lines)
+    elif heading is not None:
+        return "Error: 'heading' is only supported for native Google Docs."
     else:
         logger.info(
             f"[get_doc_content] Processing as Drive file (e.g., .docx, other). MimeType: {mime_type}"
@@ -348,6 +466,9 @@ async def get_doc_content(
 
         try:
             office_text = extract_office_xml_text(file_content_bytes, mime_type)
+        except OfficeXmlTooLargeError as e:
+            # Not damaged, and not to be retried as raw text: say what happened.
+            office_text = f"[Could not read '{mime_type}' file - {e}]"
         except OfficeXmlExtractionError as e:
             office_text = (
                 f"[Could not read '{mime_type}' file - it appears damaged or is "
@@ -364,9 +485,13 @@ async def get_doc_content(
                     f"{len(file_content_bytes)} bytes]"
                 )
 
+    # The notice stays above the content marker so content offsets keep their
+    # alignment with document indices.
     header = (
         f'File: "{file_name}" (ID: {document_id}, Type: {mime_type})\n'
-        f"Link: {web_view_link}\n\n--- CONTENT ---\n"
+        f"Link: {web_view_link}\n"
+        + (f"{notice}\n" if notice else "")
+        + "\n--- CONTENT ---\n"
     )
     return header + body_text
 
@@ -383,13 +508,25 @@ async def get_doc_content(
 @handle_http_errors("list_docs_in_folder", is_read_only=True, service_type="docs")
 @require_google_service("drive", "drive_read")
 async def list_docs_in_folder(
-    service: Any, user_google_email: str, folder_id: str = "root", page_size: int = 100
+    service: Any,
+    user_google_email: str,
+    folder_id: str = "root",
+    page_size: int = 100,
+    page_token: Optional[str] = None,
 ) -> str:
     """
     Lists Google Docs within a specific Drive folder.
 
+    Args:
+        user_google_email: The user's Google email address.
+        folder_id: ID of the Drive folder to list. Defaults to 'root'.
+        page_size: Maximum number of documents to return. Defaults to 100.
+        page_token: Page token from a previous response's nextPageToken to
+            retrieve the next page of results.
+
     Returns:
         str: A formatted list of Google Docs in the specified folder.
+            Includes a nextPageToken line when more results are available.
     """
     logger.info(
         f"[list_docs_in_folder] Invoked. Email: '{user_google_email}', Folder ID: '{folder_id}'"
@@ -400,20 +537,24 @@ async def list_docs_in_folder(
         .list(
             q=f"'{folder_id}' in parents and mimeType='application/vnd.google-apps.document' and trashed=false",
             pageSize=page_size,
-            fields="files(id, name, modifiedTime, webViewLink)",
+            pageToken=page_token,
+            fields="nextPageToken, files(id, name, modifiedTime, webViewLink)",
             supportsAllDrives=True,
             includeItemsFromAllDrives=True,
         )
         .execute
     )
     items = rsp.get("files", [])
-    if not items:
+    next_token = rsp.get("nextPageToken")
+    if not items and not next_token:
         return f"No Google Docs found in folder '{folder_id}'."
     out = [f"Found {len(items)} Docs in folder '{folder_id}':"]
     for f in items:
         out.append(
             f"- {f['name']} (ID: {f['id']}) Modified: {f.get('modifiedTime')} Link: {f.get('webViewLink')}"
         )
+    if next_token:
+        out.append(f"nextPageToken: {next_token}")
     return "\n".join(out)
 
 
@@ -433,9 +574,13 @@ async def create_doc(
     user_google_email: str,
     title: str,
     content: str = "",
+    folder_id: str = "root",
 ) -> str:
     """
     Creates a new Google Doc and optionally inserts initial content.
+
+    `content` is inserted as plain text (Markdown is not rendered); use
+    import_to_google_doc to create a doc from Markdown.
 
     After creation, the document body starts at index 1. A new empty doc
     has total length 2 (one section break at index 0, one newline at index 1).
@@ -449,18 +594,26 @@ async def create_doc(
         user_google_email: User's Google email address
         title: Title of the new document
         content: Optional initial plain text content to insert
+        folder_id: The ID of the parent folder. Defaults to 'root'. For shared
+            drives, this must be a folder ID within the shared drive.
 
     Returns:
         str: Confirmation message with document ID, link, and initial document state.
     """
     logger.info(
-        f"[create_doc] Invoked. Email: '{user_google_email}', title_len={len(title)}"
+        f"[create_doc] Invoked. Email: '{user_google_email}', title_len={len(title)}, "
+        f"folder_id='{folder_id}'"
     )
 
     doc = await asyncio.to_thread(
         service.documents().create(body={"title": title}).execute
     )
     doc_id = doc.get("documentId")
+
+    placement_note = await move_new_file_to_folder(
+        user_google_email, doc_id, folder_id, "create_doc"
+    )
+
     if content:
         requests = [{"insertText": {"location": {"index": 1}, "text": content}}]
         await asyncio.to_thread(
@@ -474,7 +627,8 @@ async def create_doc(
     else:
         content_note = "Document is empty (body starts at index 1, total length 2)."
     msg = (
-        f"Created Google Doc '{title}' (ID: {doc_id}) for {user_google_email}. "
+        f"Created Google Doc '{title}' (ID: {doc_id}) for {user_google_email}."
+        f"{placement_note} "
         f"{content_note} "
         f"Use batch_update_doc with end_of_segment=true to append content. "
         f"Link: {link}"
@@ -483,6 +637,89 @@ async def create_doc(
         f"Successfully created Google Doc (ID: {doc_id}) for {user_google_email}. Link: {link}"
     )
     return msg
+
+
+async def _modify_doc_text_by_heading(
+    service: Any,
+    document_id: str,
+    heading: str,
+    heading_level: Optional[int],
+    text: Optional[str],
+    tab_id: Optional[str],
+    segment_id: Optional[str],
+    start_index: Optional[int],
+    end_index: Optional[int],
+    end_of_segment: bool,
+    formatting_params: list,
+    validator: ValidationManager,
+    write_mode: str,
+) -> str:
+    """Replace, append to, or format the section under ``heading`` in one guarded write."""
+    has_formatting = any(p is not None for p in formatting_params)
+    if not heading.strip():
+        return "Error: 'heading' must not be empty."
+    if start_index is not None or end_index is not None:
+        return "Error: 'start_index'/'end_index' cannot be combined with 'heading'; the section range is resolved from the heading."
+    if segment_id is not None:
+        return "Error: 'heading' addresses the document body only; 'segment_id' cannot be combined with it."
+    if heading_level is not None and not 1 <= heading_level <= 6:
+        return "Error: 'heading_level' must be between 1 and 6."
+    if text is not None and has_formatting:
+        return "Error: In heading mode 'text' is rendered as Markdown; use Markdown syntax for inline formatting instead of formatting parameters."
+    if text is None and end_of_segment:
+        return "Error: end_of_segment cannot be used when applying formatting."
+    if has_formatting:
+        is_valid, error_msg = validator.validate_text_formatting_params(
+            *formatting_params
+        )
+        if not is_valid:
+            return f"Error: {error_msg}"
+
+    doc = await asyncio.to_thread(
+        service.documents().get(documentId=document_id, includeTabsContent=True).execute
+    )
+    section = find_heading_section(doc, heading, heading_level, tab_id)
+    body_start, section_end = section["body_start"], section["section_end"]
+    body_is_empty = section_end <= body_start
+
+    if text is None:
+        if body_is_empty:
+            return f"Error: The section under heading {heading!r} has no content to format."
+        requests = [
+            create_format_text_request(
+                body_start, section_end, *formatting_params, tab_id, None
+            )
+        ]
+        operation = f"Applied formatting to section {body_start}-{section_end} under heading {heading!r}"
+    else:
+        if not end_of_segment and section["footnote_refs"]:
+            raise UserInputError(
+                f"The section under heading {heading!r} contains "
+                f"{section['footnote_refs']} footnote reference(s); replacing it would "
+                "detach them. Use end_of_segment=true to append, or edit by index."
+            )
+        requests = build_section_markdown_requests(
+            section, text, end_of_segment, tab_id
+        )
+        if not requests:
+            return "Error: 'text' rendered to no content; nothing to insert."
+        verb = "Appended to" if end_of_segment or body_is_empty else "Replaced"
+        operation = f"{verb} section under heading {heading!r}"
+
+    body = build_batch_update_body(requests, write_mode)
+    if doc.get("revisionId"):
+        body.setdefault("writeControl", {})["requiredRevisionId"] = doc["revisionId"]
+    result = await asyncio.to_thread(
+        service.documents().batchUpdate(documentId=document_id, body=body).execute
+    )
+    save_error = suggestion_save_error(result, write_mode)
+    if save_error:
+        return f"Error: {save_error}"
+
+    if write_mode == "SUGGEST":
+        operation = f"Suggested: {operation}"
+    link = f"https://docs.google.com/document/d/{document_id}/edit"
+    return f"{operation} in document {document_id}. Link: {link}"
 
 
 @server.tool(
@@ -500,31 +737,39 @@ async def modify_doc_text(
     service: Any,
     user_google_email: str,
     document_id: str,
-    start_index: int,
-    end_index: int = None,
-    text: str = None,
-    tab_id: str = None,
-    segment_id: str = None,
+    start_index: Optional[int] = None,
+    end_index: Optional[int] = None,
+    text: Optional[str] = None,
+    heading: Optional[str] = None,
+    heading_level: Optional[int] = None,
+    tab_id: Optional[str] = None,
+    segment_id: Optional[str] = None,
     end_of_segment: bool = False,
-    bold: bool = None,
-    italic: bool = None,
-    underline: bool = None,
-    strikethrough: bool = None,
-    font_size: float = None,
-    font_family: str = None,
-    font_weight: int = None,
-    text_color: str = None,
-    background_color: str = None,
-    link_url: str = None,
-    clear_link: bool = None,
-    baseline_offset: str = None,
-    small_caps: bool = None,
+    bold: Optional[bool] = None,
+    italic: Optional[bool] = None,
+    underline: Optional[bool] = None,
+    strikethrough: Optional[bool] = None,
+    font_size: Optional[float] = None,
+    font_family: Optional[str] = None,
+    font_weight: Optional[int] = None,
+    text_color: Optional[str] = None,
+    background_color: Optional[str] = None,
+    link_url: Optional[str] = None,
+    clear_link: Optional[bool] = None,
+    baseline_offset: Optional[str] = None,
+    small_caps: Optional[bool] = None,
+    write_mode: str = "EDIT",
 ) -> str:
     """
     Modifies text in a Google Doc - can insert/replace text and/or apply formatting in a single operation.
 
     TIP: To append text to the end of the document without calculating indices,
     set end_of_segment=true. This avoids index calculation errors.
+
+    HEADING MODE: Pass heading instead of start_index to edit the body below a
+    heading, up to the next heading of equal or shallower level. text is
+    rendered as Markdown and replaces that body; end_of_segment=true appends
+    instead. Formatting parameters without text format the whole body.
 
     For ordinary header/footer text, prefer update_doc_headers_footers.
     Only pass segment_id when you already have a real header/footer/footnote
@@ -536,10 +781,14 @@ async def modify_doc_text(
         document_id: ID of the document to update
         start_index: Start position for operation using Docs API indices from
             inspect_doc_structure. For the main body, 0 is also accepted as an
-            alias for the first writable position.
+            alias for the first writable position. Required unless heading is set.
         end_index: End position for text replacement/formatting (if not provided with text, text is inserted)
-        text: New text to insert or replace with (optional - can format existing text without changing it)
-        tab_id: Optional document tab ID to target
+        text: New text to insert or replace with (optional - can format existing text without changing it).
+            Rendered as Markdown when heading is set.
+        heading: Text of a body heading (case-insensitive, must match exactly one) whose
+            section to edit instead of start_index/end_index
+        heading_level: Optional 1-6 heading level to narrow the heading match
+        tab_id: Optional document tab ID to target (required with heading when the doc has multiple tabs)
         segment_id: Optional header/footer/footnote segment ID to target
         end_of_segment: Insert text at the end of the targeted segment instead of start_index
         bold: Whether to make text bold (True/False/None to leave unchanged)
@@ -555,6 +804,8 @@ async def modify_doc_text(
         clear_link: Remove hyperlink from the target range
         baseline_offset: One of NONE, SUPERSCRIPT, SUBSCRIPT
         small_caps: Whether to apply small caps
+        write_mode: "EDIT" (default) applies the change directly; "SUGGEST"
+            records it as a suggested edit that collaborators can accept or reject
 
     Returns:
         str: Confirmation message with operation details
@@ -570,6 +821,10 @@ async def modify_doc_text(
     is_valid, error_msg = validator.validate_document_id(document_id)
     if not is_valid:
         return f"Error: {error_msg}"
+
+    write_mode_error = validate_write_mode(write_mode)
+    if write_mode_error:
+        return write_mode_error
 
     # Validate that we have something to do
     formatting_params = [
@@ -588,7 +843,26 @@ async def modify_doc_text(
         small_caps,
     ]
     if text is None and not any(p is not None for p in formatting_params):
-        return "Error: Must provide either 'text' to insert/replace, or formatting parameters (bold, italic, underline, strikethrough, font_size, font_family, text_color, background_color, link_url)."
+        return "Error: Must provide either 'text' to insert/replace, or formatting parameters (bold, italic, underline, strikethrough, font_size, font_family, font_weight, text_color, background_color, link_url, clear_link, baseline_offset, small_caps)."
+
+    if heading is not None:
+        return await _modify_doc_text_by_heading(
+            service,
+            document_id,
+            heading,
+            heading_level,
+            text,
+            tab_id,
+            segment_id,
+            start_index,
+            end_index,
+            end_of_segment,
+            formatting_params,
+            validator,
+            write_mode,
+        )
+    if start_index is None:
+        return "Error: 'start_index' is required unless 'heading' is provided."
 
     # Validate text formatting params if provided
     if any(p is not None for p in formatting_params):
@@ -754,15 +1028,24 @@ async def modify_doc_text(
         )
 
     try:
-        await asyncio.to_thread(
+        result = await asyncio.to_thread(
             service.documents()
-            .batchUpdate(documentId=document_id, body={"requests": requests})
+            .batchUpdate(
+                documentId=document_id,
+                body=build_batch_update_body(requests, write_mode),
+            )
             .execute
         )
     except HttpError as error:
         raise _rewrite_modify_doc_text_http_error(error, segment_id) from error
 
+    save_error = suggestion_save_error(result, write_mode)
+    if save_error:
+        return f"Error: {save_error}"
+
     link = f"https://docs.google.com/document/d/{document_id}/edit"
+    if write_mode == "SUGGEST":
+        operations = [f"Suggested: {operation}" for operation in operations]
     operation_summary = "; ".join(operations)
     text_info = f" Text length: {len(text)} characters." if text else ""
     return f"{operation_summary} in document {document_id}.{text_info} Link: {link}"
@@ -787,6 +1070,7 @@ async def find_and_replace_doc(
     replace_text: str,
     match_case: bool = False,
     tab_id: Optional[str] = None,
+    write_mode: str = "EDIT",
 ) -> str:
     """
     Finds and replaces text throughout a Google Doc. No index calculation required.
@@ -807,6 +1091,8 @@ async def find_and_replace_doc(
         replace_text: Text to replace with
         match_case: Whether to match case exactly
         tab_id: Optional ID of the tab to target
+        write_mode: "EDIT" (default) applies the replacements directly; "SUGGEST"
+            records them as suggested edits that collaborators can accept or reject
 
     Returns:
         str: Confirmation message with replacement count
@@ -816,15 +1102,26 @@ async def find_and_replace_doc(
     )
     logger.debug(f"[find_and_replace_doc] find='{find_text}', replace='{replace_text}'")
 
+    write_mode_error = validate_write_mode(write_mode)
+    if write_mode_error:
+        return write_mode_error
+
     requests = [
         create_find_replace_request(find_text, replace_text, match_case, tab_id)
     ]
 
     result = await asyncio.to_thread(
         service.documents()
-        .batchUpdate(documentId=document_id, body={"requests": requests})
+        .batchUpdate(
+            documentId=document_id,
+            body=build_batch_update_body(requests, write_mode),
+        )
         .execute
     )
+
+    save_error = suggestion_save_error(result, write_mode)
+    if save_error:
+        return f"Error: {save_error}"
 
     # Extract number of replacements from response
     replacements = 0
@@ -834,7 +1131,8 @@ async def find_and_replace_doc(
             replacements = reply["replaceAllText"].get("occurrencesChanged", 0)
 
     link = f"https://docs.google.com/document/d/{document_id}/edit"
-    return f"Replaced {replacements} occurrence(s) of '{find_text}' with '{replace_text}' in document {document_id}. Link: {link}"
+    verb = "Suggested replacing" if write_mode == "SUGGEST" else "Replaced"
+    return f"{verb} {replacements} occurrence(s) of '{find_text}' with '{replace_text}' in document {document_id}. Link: {link}"
 
 
 @server.tool(
@@ -854,10 +1152,10 @@ async def insert_doc_elements(
     document_id: str,
     element_type: str,
     index: int,
-    rows: int = None,
-    columns: int = None,
-    list_type: str = None,
-    text: str = None,
+    rows: Optional[int] = None,
+    columns: Optional[int] = None,
+    list_type: Optional[str] = None,
+    text: Optional[str] = None,
 ) -> str:
     """
     Inserts structural elements like tables, lists, or page breaks into a Google Doc.
@@ -1121,6 +1419,7 @@ async def batch_update_doc(
     user_google_email: str,
     document_id: str,
     operations: BatchDocOperations,
+    write_mode: str = "EDIT",
 ) -> str:
     """
     Executes multiple low-level document operations in a single atomic batch update.
@@ -1198,6 +1497,10 @@ async def batch_update_doc(
         document_id: ID of the document to update
         operations: List of operation dicts. Each operation MUST have a 'type' field.
                     All operations accept an optional 'tab_id' to target a specific tab.
+        write_mode: "EDIT" (default) applies the batch directly; "SUGGEST" records
+                    every operation as a suggested edit that collaborators can accept
+                    or reject. The Docs API rejects some operations in SUGGEST mode,
+                    such as named range and tab changes.
 
     Supported operation types and their parameters:
 
@@ -1273,6 +1576,13 @@ async def batch_update_doc(
                          the writable request for the tableHeader state reported
                          in TableRowStyle.
       insert_page_break- optional: index (int), end_of_segment, tab_id
+      insert_person    - required: email (str)
+                         optional: index (int), end_of_segment, tab_id, segment_id
+                         Inserts an @mention person smart chip.
+      insert_date      - required: date (str, YYYY-MM-DD or ISO 8601 with a time zone)
+                         optional: index (int), end_of_segment, tab_id, segment_id,
+                         date_format, time_format, timezone
+                         Inserts a date smart chip.
       insert_section_break
                        - optional: index (int), end_of_segment, section_type
                                    ('CONTINUOUS'|'NEXT_PAGE')
@@ -1375,11 +1685,15 @@ async def batch_update_doc(
     if not is_valid:
         return f"Error: {error_msg}"
 
+    write_mode_error = validate_write_mode(write_mode)
+    if write_mode_error:
+        return write_mode_error
+
     # Use BatchOperationManager to handle the complex logic
     batch_manager = BatchOperationManager(service)
 
     success, message, metadata = await batch_manager.execute_batch_operations(
-        document_id, normalized_operations
+        document_id, normalized_operations, write_mode
     )
 
     if success:
@@ -1451,7 +1765,7 @@ async def inspect_doc_structure(
     user_google_email: str,
     document_id: str,
     detailed: bool = False,
-    tab_id: str = None,
+    tab_id: Optional[str] = None,
     preview_chars: Optional[int] = 100,
 ) -> str:
     """
@@ -1484,7 +1798,8 @@ async def inspect_doc_structure(
     Ranges can include required empty paragraphs. Before cleanup, use detailed=true
     to check adjacent elements, formatting, and object anchors. Preserve the final
     newline and newlines before tables, tables of contents, or section breaks.
-    The final range has end == total_length and may be omitted by truncation.
+    If the body ends with an empty paragraph, that paragraph's range has
+    end == total_length; truncation may omit that range.
 
     WORKFLOW FOR TABLE INSERTION:
     Step 1: Call this function
@@ -1821,43 +2136,6 @@ def _build_segment_inspection_entries(
 
 
 @server.tool(
-    title="Debug Docs Runtime Info",
-    annotations=ToolAnnotations(
-        readOnlyHint=True,
-        destructiveHint=False,
-        idempotentHint=True,
-        openWorldHint=True,
-    ),
-)
-@handle_http_errors("debug_docs_runtime_info", is_read_only=True, service_type="docs")
-@require_google_service("docs", "docs_read")
-async def debug_docs_runtime_info(
-    service: Any,
-    user_google_email: str,
-) -> str:
-    """
-    Return runtime/source information for diagnosing stale MCP server instances.
-
-    This is a temporary diagnostic tool intended to verify which code checkout
-    the running MCP server has loaded.
-    """
-    import gdocs.managers.header_footer_manager as header_footer_manager_module
-
-    return json.dumps(
-        {
-            "runtime_canary": HEADER_FOOTER_RUNTIME_CANARY,
-            "docs_tools_file": inspect.getsourcefile(
-                inspect.getmodule(debug_docs_runtime_info)
-            ),
-            "header_footer_manager_file": inspect.getsourcefile(
-                header_footer_manager_module
-            ),
-        },
-        indent=2,
-    )
-
-
-@server.tool(
     title="Create Table with Data",
     annotations=ToolAnnotations(
         readOnlyHint=False,
@@ -1991,6 +2269,7 @@ async def debug_table_structure(
     user_google_email: str,
     document_id: str,
     table_index: int = 0,
+    tab_id: Optional[str] = None,
 ) -> str:
     """
     ESSENTIAL DEBUGGING TOOL - Use this whenever tables don't work as expected.
@@ -2000,7 +2279,7 @@ async def debug_table_structure(
     - You get "table not found" errors
     - Data appears concatenated in first cell
     - Need to understand existing table structure
-    - Planning to use populate_existing_table
+    - Planning to fill existing cells with modify_doc_text at their insertion_index
 
     WHAT THIS SHOWS YOU:
     - Exact table dimensions (rows × columns)
@@ -2025,18 +2304,31 @@ async def debug_table_structure(
         user_google_email: User's Google email address
         document_id: ID of the document to inspect
         table_index: Which table to debug (0 = first table, 1 = second table, etc.)
+        tab_id: Optional ID of the tab containing the table (from inspect_doc_structure).
+            If not provided, inspects the first tab.
 
     Returns:
         str: Detailed JSON structure showing table layout, cell positions, and current content
     """
     logger.debug(
-        f"[debug_table_structure] Doc={document_id}, table_index={table_index}"
+        f"[debug_table_structure] Doc={document_id}, table_index={table_index}, "
+        f"tab_id={tab_id}"
     )
 
     # Get the document
     doc = await asyncio.to_thread(
-        service.documents().get(documentId=document_id).execute
+        service.documents()
+        .get(documentId=document_id, includeTabsContent=bool(tab_id))
+        .execute
     )
+
+    if tab_id:
+        tab = _find_tab(doc.get("tabs", []), tab_id)
+        if not tab:
+            return f"Error: Tab {tab_id} not found in document."
+        if "documentTab" not in tab:
+            return f"Error: Tab {tab_id} is not a document tab and has no body content."
+        doc = tab["documentTab"]
 
     # Find tables
     tables = find_tables(doc)
@@ -2085,8 +2377,8 @@ async def export_doc_to_pdf(
     service: Any,
     user_google_email: str,
     document_id: str,
-    pdf_filename: str = None,
-    folder_id: str = None,
+    pdf_filename: Optional[str] = None,
+    folder_id: Optional[str] = None,
 ) -> str:
     """
     Exports a Google Doc to PDF format and saves it to Google Drive.
@@ -2252,32 +2544,32 @@ async def update_paragraph_style(
     document_id: str,
     start_index: int,
     end_index: int,
-    heading_level: int = None,
-    alignment: str = None,
-    line_spacing: float = None,
-    indent_first_line: float = None,
-    indent_start: float = None,
-    indent_end: float = None,
-    space_above: float = None,
-    space_below: float = None,
-    named_style_type: str = None,
-    tab_id: str = None,
-    segment_id: str = None,
-    direction: str = None,
-    keep_lines_together: bool = None,
-    keep_with_next: bool = None,
-    avoid_widow_and_orphan: bool = None,
-    page_break_before: bool = None,
-    spacing_mode: str = None,
-    shading_color: str = None,
-    border_edges: list[ParagraphBorderEdge] = None,
-    border_color: str = None,
-    border_width: float = None,
-    border_padding: float = None,
-    border_dash: str = None,
-    list_type: str = None,
-    list_nesting_level: int = None,
-    bullet_preset: str = None,
+    heading_level: Optional[int] = None,
+    alignment: Optional[str] = None,
+    line_spacing: Optional[float] = None,
+    indent_first_line: Optional[float] = None,
+    indent_start: Optional[float] = None,
+    indent_end: Optional[float] = None,
+    space_above: Optional[float] = None,
+    space_below: Optional[float] = None,
+    named_style_type: Optional[str] = None,
+    tab_id: Optional[str] = None,
+    segment_id: Optional[str] = None,
+    direction: Optional[str] = None,
+    keep_lines_together: Optional[bool] = None,
+    keep_with_next: Optional[bool] = None,
+    avoid_widow_and_orphan: Optional[bool] = None,
+    page_break_before: Optional[bool] = None,
+    spacing_mode: Optional[str] = None,
+    shading_color: Optional[str] = None,
+    border_edges: Optional[list[ParagraphBorderEdge]] = None,
+    border_color: Optional[str] = None,
+    border_width: Optional[float] = None,
+    border_padding: Optional[float] = None,
+    border_dash: Optional[str] = None,
+    list_type: Optional[str] = None,
+    list_nesting_level: Optional[int] = None,
+    bullet_preset: Optional[str] = None,
 ) -> str:
     """
     Apply paragraph-level formatting, heading styles, and/or list formatting to a range in a Google Doc.
@@ -2381,61 +2673,40 @@ async def update_paragraph_style(
         if list_nesting_level < 0 or list_nesting_level > 8:
             return "Error: list_nesting_level must be between 0 and 8"
 
-    # Validate named_style_type
-    if named_style_type is not None and heading_level is not None:
-        return "Error: heading_level and named_style_type are mutually exclusive; provide only one"
+    if bullet_preset is not None and list_type_value in (None, "NONE"):
+        return "Error: bullet_preset requires list_type 'UNORDERED', 'ORDERED', or 'CHECKBOX'"
 
-    paragraph_style_params = [
-        heading_level,
-        alignment,
-        line_spacing,
-        indent_first_line,
-        indent_start,
-        indent_end,
-        space_above,
-        space_below,
-        named_style_type,
-        direction,
-        keep_lines_together,
-        keep_with_next,
-        avoid_widow_and_orphan,
-        page_break_before,
-        spacing_mode,
-        shading_color,
-        border_edges,
-        border_color,
-        border_width,
-        border_padding,
-        border_dash,
-    ]
-
-    validator = ValidationManager()
-    is_valid, error_msg = validator.validate_paragraph_style_params(
-        heading_level=heading_level,
-        alignment=alignment,
-        line_spacing=line_spacing,
-        indent_first_line=indent_first_line,
-        indent_start=indent_start,
-        indent_end=indent_end,
-        space_above=space_above,
-        space_below=space_below,
-        named_style_type=named_style_type,
-        direction=direction,
-        keep_lines_together=keep_lines_together,
-        keep_with_next=keep_with_next,
-        avoid_widow_and_orphan=avoid_widow_and_orphan,
-        page_break_before=page_break_before,
-        spacing_mode=spacing_mode,
-        shading_color=shading_color,
-        border_edges=border_edges,
-        border_color=border_color,
-        border_width=border_width,
-        border_padding=border_padding,
-        border_dash=border_dash,
-    )
-    has_paragraph_style = any(param is not None for param in paragraph_style_params)
-    if not is_valid and (has_paragraph_style or list_type_value is None):
-        return f"Error: {error_msg}"
+    style_params = {
+        "heading_level": heading_level,
+        "alignment": alignment,
+        "line_spacing": line_spacing,
+        "indent_first_line": indent_first_line,
+        "indent_start": indent_start,
+        "indent_end": indent_end,
+        "space_above": space_above,
+        "space_below": space_below,
+        "named_style_type": named_style_type,
+        "direction": direction,
+        "keep_lines_together": keep_lines_together,
+        "keep_with_next": keep_with_next,
+        "avoid_widow_and_orphan": avoid_widow_and_orphan,
+        "page_break_before": page_break_before,
+        "spacing_mode": spacing_mode,
+        "shading_color": shading_color,
+        "border_edges": border_edges,
+        "border_color": border_color,
+        "border_width": border_width,
+        "border_padding": border_padding,
+        "border_dash": border_dash,
+    }
+    # A list-only call has no style params, so skip the validator's
+    # "at least one style param" check rather than discarding its errors.
+    if list_type_value is None or any(v is not None for v in style_params.values()):
+        is_valid, error_msg = ValidationManager().validate_paragraph_style_params(
+            **style_params
+        )
+        if not is_valid:
+            return f"Error: {error_msg}"
 
     # Create batch update requests
     requests = []
@@ -2523,28 +2794,8 @@ async def update_paragraph_style(
         )
     detail_labels = [
         name
-        for name, value in [
-            ("alignment", alignment),
-            ("line_spacing", line_spacing),
-            ("indent_first_line", indent_first_line),
-            ("indent_start", indent_start),
-            ("indent_end", indent_end),
-            ("space_above", space_above),
-            ("space_below", space_below),
-            ("direction", direction),
-            ("keep_lines_together", keep_lines_together),
-            ("keep_with_next", keep_with_next),
-            ("avoid_widow_and_orphan", avoid_widow_and_orphan),
-            ("page_break_before", page_break_before),
-            ("spacing_mode", spacing_mode),
-            ("shading_color", shading_color),
-            ("border_edges", border_edges),
-            ("border_color", border_color),
-            ("border_width", border_width),
-            ("border_padding", border_padding),
-            ("border_dash", border_dash),
-        ]
-        if value is not None
+        for name, value in style_params.items()
+        if value is not None and name not in ("heading_level", "named_style_type")
     ]
     if detail_labels:
         summary_parts.append(", ".join(detail_labels))
@@ -2590,6 +2841,9 @@ async def get_doc_as_markdown(
     include_resolved: bool = False,
     suggestions_view_mode: str = "DEFAULT_FOR_CURRENT_ACCESS",
     tab_id: Optional[str] = None,
+    include_colors: bool = False,
+    heading: Optional[str] = None,
+    heading_level: Optional[int] = None,
 ) -> str:
     """
     Reads a Google Doc and returns it as clean Markdown with optional comment context.
@@ -2603,7 +2857,9 @@ async def get_doc_as_markdown(
 
     Args:
         user_google_email: User's Google email address
-        document_id: ID of the Google Doc (or full URL)
+        document_id: ID of the Google Doc (or full URL). When a full URL is provided
+            and it contains a ?tab= query parameter, that tab is used automatically
+            unless tab_id is also specified (explicit tab_id takes precedence).
         include_comments: Whether to include comments (default: True)
         comment_mode: How to display comments:
             - "inline": Footnote-style references placed at the anchor text location (default)
@@ -2617,15 +2873,23 @@ async def get_doc_as_markdown(
             - "PREVIEW_WITHOUT_SUGGESTIONS": Preview as if all suggestions were rejected
         tab_id: Optional ID of a single tab to read (from inspect_doc_structure).
             When given, only that tab's content is rendered, without its child tabs
-            and without a tab heading. When omitted, every tab is rendered.
+            and without a tab heading, and comments are listed as document-wide.
+            When omitted, every tab is rendered. Pass "" to read every tab of a
+            URL that carries ?tab=. This filters output only: the whole document
+            is still fetched.
+        include_colors: Follow text that has an explicit RGB foreground color
+            with "[color: #rrggbb]" (default: False). Theme colors are not shown.
+        heading: Text of a body heading (case-insensitive, must match exactly one)
+            whose section to render instead of the whole document: the heading and
+            everything below it up to the next heading of equal or shallower level.
+            Comments are listed as document-wide. tab_id is required when the doc
+            has multiple tabs.
+        heading_level: Optional 1-6 heading level to narrow the heading match.
 
     Returns:
         str: The document content as Markdown, optionally with comments
     """
-    # Extract doc ID from URL if a full URL was provided
-    url_match = re.search(r"/d/([\w-]+)", document_id)
-    if url_match:
-        document_id = url_match.group(1)
+    document_id, tab_id, tab_from_url = _parse_doc_reference(document_id, tab_id)
 
     valid_modes = ("inline", "appendix", "none")
     if comment_mode not in valid_modes:
@@ -2636,7 +2900,7 @@ async def get_doc_as_markdown(
         return validation_error
 
     logger.info(
-        f"[get_doc_as_markdown] Doc={document_id}, comments={include_comments}, mode={comment_mode}"
+        f"[get_doc_as_markdown] Doc={document_id}, tab={tab_id}, comments={include_comments}, mode={comment_mode}"
     )
 
     # Fetch document content via Docs API (includeTabsContent for multi-tab docs)
@@ -2659,17 +2923,28 @@ async def get_doc_as_markdown(
             "The document may be too large or there may be a network issue. Please try again."
         )
 
-    if tab_id:
-        tab = _find_tab(doc.get("tabs", []), tab_id)
+    notice = ""
+    if heading is not None:
+        tabs = doc.get("tabs", [])
+        doc = heading_section_document(doc, heading, heading_level, tab_id)
+        if tab_from_url:
+            notice = _url_tab_notice(tabs, _find_tab(tabs, tab_id), tab_id)
+    elif tab_id:
+        tabs = doc.get("tabs", [])
+        tab = _find_tab(tabs, tab_id)
         if tab is None:
             return f"Error: Tab {tab_id} not found in document."
         if "documentTab" not in tab:
             return f"Error: Tab {tab_id} is not a document tab and has no body content."
+        if tab_from_url:
+            notice = _url_tab_notice(tabs, tab, tab_id)
         # Drop childTabs so only the named tab renders, and leave it as the sole
         # tab so it renders without a tab heading.
         doc = {**doc, "tabs": [{k: v for k, v in tab.items() if k != "childTabs"}]}
 
-    markdown = convert_doc_to_markdown(doc)
+    markdown = convert_doc_to_markdown(doc, include_colors=include_colors)
+    if notice:
+        markdown = f"*{notice}*\n\n{markdown}"
 
     if not include_comments or comment_mode == "none":
         return markdown
@@ -2704,23 +2979,27 @@ async def get_doc_as_markdown(
     if not comments:
         return markdown
 
-    if comment_mode == "inline":
+    # Drive comments carry no tab association, so with one tab selected they
+    # stay document-wide instead of being pinned to matching text in this tab.
+    partial = bool(tab_id) or heading is not None
+    if comment_mode == "inline" and not partial:
         return format_comments_inline(markdown, comments)
-    else:
-        appendix = format_comments_appendix(comments)
-        return markdown.rstrip("\n") + "\n\n" + appendix
+    appendix = format_comments_appendix(
+        comments, title="Comments (entire document)" if partial else "Comments"
+    )
+    return markdown.rstrip("\n") + "\n\n" + appendix
 
 
-def _find_tab_end_index(doc: dict, target_tab_id: str) -> Optional[int]:
-    """Walk the document tabs tree and return the end index of target tab's body.
+def _find_tab_last_element(doc: dict, target_tab_id: str) -> Optional[dict]:
+    """Walk the document tabs tree and return the last element of target tab's body.
 
     Returns:
-        The end index of the tab's body content, or ``None`` when the
+        The last body element (``{}`` for an empty body), or ``None`` when the
         *target_tab_id* does not exist in the document or when the matching tab
         has no ``documentTab``.
     """
 
-    def walk(tabs: list) -> Optional[int]:
+    def walk(tabs: list) -> Optional[dict]:
         for tab in tabs:
             tab_props = tab.get("tabProperties", {})
             if tab_props.get("tabId") == target_tab_id:
@@ -2729,9 +3008,7 @@ def _find_tab_end_index(doc: dict, target_tab_id: str) -> Optional[int]:
                 document_tab = tab.get("documentTab", {})
                 body = document_tab.get("body", {})
                 content = body.get("content", [])
-                if content:
-                    return content[-1].get("endIndex", 1)
-                return 1
+                return content[-1] if content else {}
             child_tabs = tab.get("childTabs", [])
             if child_tabs:
                 found = walk(child_tabs)
@@ -2922,13 +3199,19 @@ async def manage_doc_tab(
         service.documents().get(documentId=document_id, includeTabsContent=True).execute
     )
     try:
-        tab_end = _find_tab_end_index(doc, tab_id)
+        last_element = _find_tab_last_element(doc, tab_id)
     except ValueError as exc:
         raise UserInputError(str(exc))
-    if tab_end is None:
+    if last_element is None:
         raise UserInputError(f"'{tab_id}' not found in document")
+    tab_end = last_element.get("endIndex", 1)
 
     if replace_existing:
+        markdown_requests = markdown_to_docs_requests(markdown_text, tab_id=tab_id)
+        if markdown_text.strip() and not markdown_requests:
+            raise UserInputError(
+                "'markdown_text' rendered to no content; the tab was left unchanged."
+            )
         # tab_end includes the segment-terminating newline that Google Docs
         # refuses to delete, so we delete up to tab_end - 1. Empty tabs
         # (tab_end <= 2) have nothing to clear.
@@ -2944,13 +3227,17 @@ async def manage_doc_tab(
                     }
                 }
             )
-        all_requests.extend(markdown_to_docs_requests(markdown_text, tab_id=tab_id))
+        all_requests.extend(markdown_requests)
     else:
         # Append after existing content instead of prepending at index 1.
         insert_at = tab_end - 1 if tab_end > 2 else 1
         all_requests.extend(
-            markdown_to_docs_requests(
-                markdown_text, tab_id=tab_id, start_index=insert_at
+            build_markdown_insert_requests(
+                markdown_text,
+                insert_at,
+                tab_id=tab_id,
+                split_paragraph=last_element.get("startIndex", insert_at) < insert_at,
+                drop_bullet="bullet" in last_element.get("paragraph", {}),
             )
         )
 

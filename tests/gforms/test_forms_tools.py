@@ -5,6 +5,8 @@ Tests the batch_update_form tool with mocked API responses
 """
 
 import pytest
+from googleapiclient.errors import HttpError
+from httplib2 import Response
 from unittest.mock import Mock
 import sys
 import os
@@ -15,7 +17,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 from gforms.forms_tools import (
     _batch_update_form_impl,
     _serialize_form_item,
+    create_form,
     get_form,
+    get_form_response,
     set_publish_settings,
 )
 
@@ -350,6 +354,44 @@ async def test_get_form_returns_structured_item_metadata():
 
 
 @pytest.mark.asyncio
+async def test_get_form_response_lists_uploaded_files():
+    """A file-upload answer names the uploaded files instead of 'No answer provided'."""
+    mock_service = Mock()
+    mock_service.forms().responses().get().execute.return_value = {
+        "responseId": "resp_1",
+        "answers": {
+            "q_upload": {
+                "questionId": "q_upload",
+                "fileUploadAnswers": {
+                    "answers": [
+                        {
+                            "fileId": "file_1",
+                            "fileName": "receipt.pdf",
+                            "mimeType": "application/pdf",
+                        },
+                        {
+                            "fileId": "file_2",
+                            "fileName": "invoice.pdf",
+                            "mimeType": "application/pdf",
+                        },
+                    ]
+                },
+            }
+        },
+    }
+
+    result = await get_form_response.__wrapped__.__wrapped__(
+        mock_service, "user@example.com", "form_1", "resp_1"
+    )
+
+    assert (
+        "Question ID q_upload: receipt.pdf (file ID: file_1), "
+        "invoice.pdf (file ID: file_2)" in result
+    )
+    assert "No answer provided" not in result
+
+
+@pytest.mark.asyncio
 async def test_set_publish_settings_builds_publish_state_body():
     """set_publish_settings should send publishSettings.publishState with an updateMask."""
     mock_service = Mock()
@@ -394,3 +436,94 @@ async def test_set_publish_settings_defaults_publish_and_accept():
         "isPublished": True,
         "isAcceptingResponses": True,
     }
+
+
+@pytest.mark.asyncio
+async def test_create_form_uses_document_title_and_batches_description():
+    """create_form should send camelCase documentTitle on create and apply description via batchUpdate."""
+    mock_service = Mock()
+    mock_service.forms().create().execute.return_value = {
+        "formId": "form_456",
+        "info": {"title": "Feedback Form", "documentTitle": "Browser Tab Title"},
+        "responderUri": "https://docs.google.com/forms/d/form_456/viewform",
+    }
+    mock_service.forms().batchUpdate().execute.return_value = {"replies": [{}]}
+
+    result = await create_form.__wrapped__.__wrapped__(
+        mock_service,
+        "user@example.com",
+        "Feedback Form",
+        description="Please share your thoughts",
+        document_title="Browser Tab Title",
+    )
+
+    _, create_kwargs = mock_service.forms().create.call_args
+    assert create_kwargs["body"] == {
+        "info": {
+            "title": "Feedback Form",
+            "documentTitle": "Browser Tab Title",
+        }
+    }
+
+    _, batch_kwargs = mock_service.forms().batchUpdate.call_args
+    assert batch_kwargs == {
+        "formId": "form_456",
+        "body": {
+            "requests": [
+                {
+                    "updateFormInfo": {
+                        "info": {"description": "Please share your thoughts"},
+                        "updateMask": "description",
+                    }
+                }
+            ]
+        },
+    }
+    assert "Successfully created form 'Feedback Form'" in result
+    assert "form_456" in result
+
+
+@pytest.mark.asyncio
+async def test_create_form_without_description_skips_batch_update():
+    """create_form should not call batchUpdate when description is omitted."""
+    mock_service = Mock()
+    mock_service.forms().create().execute.return_value = {
+        "formId": "form_789",
+        "info": {"title": "Title Only"},
+    }
+
+    await create_form.__wrapped__.__wrapped__(
+        mock_service,
+        "user@example.com",
+        "Title Only",
+    )
+
+    _, create_kwargs = mock_service.forms().create.call_args
+    assert create_kwargs["body"] == {"info": {"title": "Title Only"}}
+    mock_service.forms().batchUpdate.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_form_description_failure_returns_created_form_id():
+    """A failed description update must still report the created form's ID."""
+    mock_service = Mock()
+    mock_service.forms().create().execute.return_value = {
+        "formId": "form_999",
+        "info": {"title": "Partial"},
+    }
+    mock_service.forms().batchUpdate().execute.side_effect = HttpError(
+        Response({"status": "500"}), b"backend error"
+    )
+
+    result = await create_form.__wrapped__.__wrapped__(
+        mock_service,
+        "user@example.com",
+        "Partial",
+        description="Will fail",
+    )
+
+    mock_service.forms().create().execute.assert_called_once()
+    assert "Successfully created form 'Partial'" in result
+    assert "Form ID: form_999" in result
+    assert "description was not applied" in result
+    assert "batch_update_form on form ID form_999" in result

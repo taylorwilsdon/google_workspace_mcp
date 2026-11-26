@@ -1,4 +1,6 @@
 import base64
+import binascii
+import html
 import io
 import json
 import logging
@@ -11,18 +13,27 @@ import zipfile
 import ssl
 import asyncio
 import functools
+import inspect
 
 from pathlib import Path
-from typing import Annotated, Any, List, Optional
+from typing import Annotated, Any, List, NamedTuple, Optional, TypeGuard, Union
 
 from pydantic import BeforeValidator
 from defusedxml import DefusedXmlException, ElementTree as ET
 
+import fastmcp
 from fastmcp.exceptions import ToolError
 from googleapiclient.errors import HttpError
+from mcp.types import ImageContent
 from .api_enablement import get_api_enablement_message
-from auth.google_auth import GoogleAuthenticationError
-from auth.oauth_config import is_oauth21_enabled, is_external_oauth21_provider
+from auth.google_auth import GoogleAuthenticationError, get_default_credentials_dir
+from auth.oauth_config import (
+    get_transport_mode,
+    is_external_oauth21_provider,
+    is_oauth21_enabled,
+    is_stateless_mode,
+)
+from .file_limits import get_max_office_xml_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +62,10 @@ _DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.doc
 _XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 _PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 _OFFICE_XML_MIME_TYPES = {_DOCX_MIME, _XLSX_MIME, _PPTX_MIME}
-_EXCEL_MAIN_NAMESPACE = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+_SPREADSHEETML_NAMESPACES = {
+    "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
+    "http://purl.oclc.org/ooxml/spreadsheetml/main",
+}
 _WORD_TEXT_RELATIONSHIP_KINDS = {"header", "footer", "footnotes", "endnotes"}
 _WORD_TEXT_RELATIONSHIP_TYPES = {
     f"{base}/{kind}": kind
@@ -81,6 +95,23 @@ class UserInputError(Exception):
     """Raised for user-facing input/validation errors that shouldn't be retried."""
 
     pass
+
+
+_PATH_SEGMENT_PATTERN = re.compile(r"(?!\.+\Z)[A-Za-z0-9._-]+")
+
+
+def is_path_segment(value: Any) -> TypeGuard[str]:
+    """Return True if value is safe unescaped as one segment of a Google API resource path."""
+    return isinstance(value, str) and _PATH_SEGMENT_PATTERN.fullmatch(value) is not None
+
+
+def check_path_segment(value: Any, label: str) -> str:
+    """Return value, raising UserInputError unless is_path_segment accepts it."""
+    if not is_path_segment(value):
+        raise UserInputError(
+            f"Invalid {label} {value!r}: expected only letters, digits, '.', '_' or '-'."
+        )
+    return value
 
 
 def _coerce_json_str_to_type(v: Any, expected_type: type) -> Any:
@@ -126,6 +157,12 @@ ObjectList = Annotated[List[object], BeforeValidator(_coerce_json_str_to_list)]
 """``List[object]`` that also accepts a JSON-encoded string of an array."""
 
 
+StringOrDictList = Annotated[
+    List[Union[str, dict[str, Any]]], BeforeValidator(_coerce_json_str_to_list)
+]
+"""List of strings and/or dicts that also accepts a JSON-encoded string of an array."""
+
+
 def _coerce_json_str_to_dict(v: Any) -> Any:
     """Coerce a JSON-encoded string to a dict.
 
@@ -148,6 +185,71 @@ that send ``'{"key":"val"}'`` instead of ``{"key": "val"}``.
 # By default, only the managed attachment storage directory is trusted.
 # Override via ALLOWED_FILE_DIRS env var (os.pathsep-separated paths).
 _ALLOWED_FILE_DIRS_ENV = "ALLOWED_FILE_DIRS"
+
+# Operators of hosted deployments, where the server cannot see the caller's
+# disk, set this to stop tools reading server-side paths. Transport alone is not
+# a reliable signal: streamable-http on localhost shares the caller's filesystem.
+_DISABLE_LOCAL_FILES_ENV = "WORKSPACE_MCP_DISABLE_LOCAL_FILES"
+
+
+def local_file_access_enabled() -> bool:
+    """Return whether tools may read files from the server's filesystem.
+
+    Disabled by ``WORKSPACE_MCP_DISABLE_LOCAL_FILES=true``, and implied by
+    stateless mode, which already denotes a diskless hosted deployment.
+    """
+    if is_stateless_mode():
+        return False
+    # Stray whitespace from YAML or .env files must not leave local files enabled.
+    return os.environ.get(_DISABLE_LOCAL_FILES_ENV, "").strip().lower() != "true"
+
+
+def _hide_parameters(func, names: tuple[str, ...], hide: bool):
+    """Drop ``names`` from ``func``'s signature when ``hide`` is set.
+
+    Rewrites ``__signature__``, as ``require_google_service`` does, so FastMCP
+    omits the parameters from the schema and rejects them if a client with a
+    cached schema sends them anyway. Names are checked either way, so a stale
+    one fails at import. Each call reads the signature the previous decorator
+    left, so the decorators below stack.
+    """
+    sig = inspect.signature(func)
+    missing = [name for name in names if name not in sig.parameters]
+    if missing:
+        raise ValueError(f"{func.__name__} has no parameter(s) {missing} to hide.")
+    if hide:
+        func.__signature__ = sig.replace(
+            parameters=[p for p in sig.parameters.values() if p.name not in names]
+        )
+    return func
+
+
+def hide_local_file_args(*names: str):
+    """Tool decorator: drop server-side path parameters when local files are off.
+
+    Apply directly under ``@server.tool`` so the rewritten signature is what
+    FastMCP sees (see ``_hide_parameters``). No-op when local file access is
+    enabled.
+    """
+
+    def decorator(func):
+        return _hide_parameters(func, names, hide=not local_file_access_enabled())
+
+    return decorator
+
+
+def hide_remote_only_args(*names: str):
+    """Tool decorator: drop remote-only parameters when local files are on.
+
+    The inverse of ``hide_local_file_args``, so a tool carrying both kinds of
+    parameter advertises exactly one under any setting. Apply directly under
+    ``@server.tool``, stacked with ``hide_local_file_args`` in either order.
+    """
+
+    def decorator(func):
+        return _hide_parameters(func, names, hide=local_file_access_enabled())
+
+    return decorator
 
 
 def _get_allowed_file_dirs() -> list[Path]:
@@ -173,6 +275,15 @@ def _get_allowed_file_dirs() -> list[Path]:
     return unique_dirs
 
 
+def _file_identity(path: Path) -> Optional[tuple[int, int]]:
+    """Return ``(st_dev, st_ino)`` for ``path``, or None if it cannot be stat'ed."""
+    try:
+        stat_result = path.stat()
+    except OSError:
+        return None
+    return stat_result.st_dev, stat_result.st_ino
+
+
 def validate_file_path(file_path: str) -> Path:
     """
     Validate that a file path is safe to read from the server filesystem.
@@ -188,13 +299,31 @@ def validate_file_path(file_path: str) -> Path:
         Path: The resolved, validated Path object.
 
     Raises:
+        UserInputError: If local file access is disabled on this server.
+        FileNotFoundError: If the path does not exist on the server.
         ValueError: If the path is outside allowed directories or targets
                     a sensitive location.
     """
+    if not local_file_access_enabled():
+        raise UserInputError(
+            "Local file access is disabled on this server: file paths resolve "
+            "on the server's filesystem, not the caller's. Provide the file by "
+            "URL or as inline content instead."
+        )
+
     resolved = Path(file_path).resolve()
 
     if not resolved.exists():
-        raise FileNotFoundError(f"Path does not exist: {resolved}")
+        # Over HTTP the server may be on another machine, where a caller-side
+        # path can never exist, so say so rather than imply a typo.
+        hint = (
+            " Paths resolve on the MCP server's filesystem; if the server runs "
+            "on a different machine than the client, provide the file by URL "
+            "or as inline content instead."
+            if get_transport_mode() == "streamable-http"
+            else ""
+        )
+        raise FileNotFoundError(f"Path does not exist: {resolved}.{hint}")
 
     # Block sensitive file patterns regardless of allowlist
     resolved_str = str(resolved)
@@ -234,18 +363,24 @@ def validate_file_path(file_path: str) -> Path:
         )
 
     home = Path.home()
-    sensitive_home_dirs = (
-        ".kube",
-        ".gnupg",
-        ".config/gcloud",
-    )
-    for sensitive_dir in sensitive_home_dirs:
-        blocked = home / sensitive_dir
-        if resolved == blocked or str(resolved).startswith(str(blocked) + "/"):
-            raise ValueError(
-                f"Access to '{resolved_str}' is not allowed: "
-                "path is in a directory that commonly contains secrets or credentials."
-            )
+    blocked_ids = {
+        _file_identity(blocked)
+        for blocked in (
+            home / ".kube",
+            home / ".gnupg",
+            home / ".docker" / "config.json",
+            home / ".config" / "gcloud",
+            Path(get_default_credentials_dir()),
+        )
+    } - {None}
+    if any(
+        _file_identity(ancestor) in blocked_ids
+        for ancestor in (resolved, *resolved.parents)
+    ):
+        raise ValueError(
+            f"Access to '{resolved_str}' is not allowed: "
+            "path is in a directory that commonly contains secrets or credentials."
+        )
 
     # Block other credential/secret file patterns
     sensitive_names = {
@@ -260,9 +395,8 @@ def validate_file_path(file_path: str) -> Path:
         ".pypirc",
         ".netrc",
         ".git-credentials",
-        ".docker/config.json",
     }
-    if file_name in sensitive_names:
+    if file_name in sensitive_names or path_parts[-2:] == [".docker", "config.json"]:
         raise ValueError(
             f"Access to '{resolved_str}' is not allowed: "
             "this file commonly contains secrets or credentials."
@@ -332,6 +466,136 @@ class OfficeXmlExtractionError(Exception):
     """Raised when an Office file cannot be read."""
 
 
+class OfficeXmlTooLargeError(OfficeXmlExtractionError):
+    """Raised when an Office file expands beyond the configured limits.
+
+    A subclass, so callers that only know OfficeXmlExtractionError still stop
+    cleanly; callers that know it can say the file is too large rather than
+    damaged.
+    """
+
+
+# An Office file is a ZIP archive. Nothing the archive says about itself is
+# trusted further than it can be checked: the budget below bounds the bytes
+# expanded out of it, whatever the compressed size was.
+_ZIP_READ_CHUNK_BYTES = 64 * 1024
+
+# OPC packaging (ECMA-376 Part 2) allows only these two. It matters here because
+# ZipExtFile.read(n) passes a length bound to the decompressor for DEFLATE only:
+# BZIP2 and LZMA members are decompressed a whole block at a time and sliced
+# afterwards, so a counted read cannot bound them.
+_OFFICE_ZIP_COMPRESSION = (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)
+
+
+def _office_extraction_too_large(
+    total_bytes: int, name: str, *, reason: str, activity: str
+) -> OfficeXmlTooLargeError:
+    """Build the common actionable error for either extraction boundary."""
+    return OfficeXmlTooLargeError(
+        f"{reason} the extraction limit of {total_bytes:,} bytes (exceeded while "
+        f"{activity} {name}; set by WORKSPACE_MCP_MAX_OFFICE_XML_BYTES). To read "
+        "it anyway, convert it to a native Google file in Drive (File > Save as "
+        "Google Docs, Sheets or Slides) and read the converted file: Google "
+        "exports native files as text itself, so nothing is expanded here."
+    )
+
+
+class _ExpansionBudget:
+    """Bytes one Office file may still expand to, across all of its parts."""
+
+    def __init__(self, total_bytes: Optional[int]) -> None:
+        self.total_bytes = total_bytes
+        self.used = 0
+
+    def remaining(self) -> Optional[int]:
+        """Bytes that may still be read; None when expansion is uncapped."""
+        if self.total_bytes is None:
+            return None
+        return self.total_bytes - self.used
+
+    def too_large(self, name: str) -> OfficeXmlTooLargeError:
+        assert self.total_bytes is not None
+        return _office_extraction_too_large(
+            self.total_bytes,
+            name,
+            reason="the file expands beyond",
+            activity="reading",
+        )
+
+
+class _ExtractedTextBudget:
+    """UTF-8 bytes of text one Office file may produce.
+
+    This is independent of the XML expansion budget. In particular, XLSX can
+    reference one shared string from many cells, making the extracted text much
+    larger than the XML that describes it.
+    """
+
+    def __init__(self, total_bytes: Optional[int]) -> None:
+        self.total_bytes = total_bytes
+        self.used = 0
+
+    def join(
+        self,
+        parts: list[str],
+        separator: str,
+        member: str,
+        *,
+        prefix: str = "",
+    ) -> str:
+        """Join ``parts`` only after proving the result fits the text budget."""
+        if self.total_bytes is not None:
+            size = self.used + len(prefix.encode("utf-8"))
+            separator_size = len(separator.encode("utf-8"))
+            for index, part in enumerate(parts):
+                if index:
+                    size += separator_size
+                size += len(part.encode("utf-8"))
+                if size > self.total_bytes:
+                    raise _office_extraction_too_large(
+                        self.total_bytes,
+                        member,
+                        reason="the extracted text exceeds",
+                        activity="extracting text from",
+                    )
+            self.used = size
+        return separator.join(parts)
+
+
+def _read_zip_member(zf: zipfile.ZipFile, name: str, budget: _ExpansionBudget) -> bytes:
+    """Read one ZIP member without expanding past the budget.
+
+    Raises KeyError when the member is absent, like ZipFile.read. The declared
+    size is checked first because it is free, but it is only a claim: the read
+    itself is counted, and stops at the limit whatever the header said.
+    """
+    info = zf.getinfo(name)
+    limit = budget.remaining()
+    if limit is None:
+        return zf.read(info)
+    if info.compress_type not in _OFFICE_ZIP_COMPRESSION:
+        raise OfficeXmlExtractionError(
+            f"{name} uses a compression method Office files do not allow"
+        )
+    if info.file_size > limit:
+        raise budget.too_large(name)
+
+    chunks: list[bytes] = []
+    read = 0
+    with zf.open(info) as member:
+        while True:
+            # One byte past the limit is enough to know the limit was exceeded.
+            chunk = member.read(min(_ZIP_READ_CHUNK_BYTES, limit - read + 1))
+            if not chunk:
+                break
+            read += len(chunk)
+            if read > limit:
+                raise budget.too_large(name)
+            chunks.append(chunk)
+    budget.used += read
+    return b"".join(chunks)
+
+
 def _xml_name(tag: str) -> tuple[Optional[str], str]:
     """Return an ElementTree tag's namespace URI and local name."""
     if tag.startswith("{") and "}" in tag:
@@ -343,10 +607,18 @@ def _xml_name(tag: str) -> tuple[Optional[str], str]:
 def _parse_xml_with_choice_namespaces(
     xml_content: bytes,
 ) -> tuple[Any, dict[Any, dict[str, str]]]:
-    """Parse XML and retain the in-scope prefix map for each mc:Choice."""
+    """Parse XML and retain the in-scope prefix map for each mc:Choice.
+
+    The maps are read-only and may be shared: every mc:Choice that starts while
+    the scope is unchanged gets the SAME dict. Copying the map per element cost
+    (declared prefixes x Choice elements), which a document controls on both
+    sides.
+    """
     namespaces: dict[str, str] = {}
     namespace_stack: list[tuple[str, Any]] = []
     choice_namespaces: dict[Any, dict[str, str]] = {}
+    # A copy of `namespaces` as of the last scope change, made on demand.
+    snapshot: Optional[dict[str, str]] = None
     missing = object()
     xml_root = None
 
@@ -358,18 +630,22 @@ def _parse_xml_with_choice_namespaces(
             prefix = prefix or ""
             namespace_stack.append((prefix, namespaces.get(prefix, missing)))
             namespaces[prefix] = uri
+            snapshot = None
         elif event == "end-ns":
             prefix, previous = namespace_stack.pop()
             if previous is missing:
                 namespaces.pop(prefix, None)
             else:
                 namespaces[prefix] = previous
+            snapshot = None
         else:
             element = value
             if xml_root is None:
                 xml_root = element
             if element.tag == f"{{{_MARKUP_COMPATIBILITY_NAMESPACE}}}Choice":
-                choice_namespaces[element] = namespaces.copy()
+                if snapshot is None:
+                    snapshot = namespaces.copy()
+                choice_namespaces[element] = snapshot
 
     if xml_root is None:
         raise ET.ParseError("XML member has no root element")
@@ -405,10 +681,12 @@ def _relationship_id(element: Any) -> Optional[str]:
     return None
 
 
-def _word_related_text_targets(zf: zipfile.ZipFile, document_root: Any) -> list[str]:
+def _word_related_text_targets(
+    zf: zipfile.ZipFile, document_root: Any, budget: _ExpansionBudget
+) -> list[str]:
     """Return active Word text parts using OPC relationships, not filenames."""
     try:
-        relationships_xml = zf.read("word/_rels/document.xml.rels")
+        relationships_xml = _read_zip_member(zf, "word/_rels/document.xml.rels", budget)
     except KeyError:
         return []
     relationships_root = ET.fromstring(relationships_xml)
@@ -536,25 +814,52 @@ def _alternate_content_skip_set(
     return skip
 
 
-def _read_part(zf: zipfile.ZipFile, name: str) -> bytes:
+def _read_part(zf: zipfile.ZipFile, name: str, budget: _ExpansionBudget) -> bytes:
     """Read a ZIP member the file cannot be valid without."""
     try:
-        return zf.read(name)
+        return _read_zip_member(zf, name, budget)
     except KeyError as e:
         raise OfficeXmlExtractionError(f"missing required part: {name}") from e
 
 
-def _read_shared_strings(zf: zipfile.ZipFile) -> Optional[List[str]]:
+def _sheet_children(node: Any, local_name: str) -> List[Any]:
+    """Direct children of ``node`` named ``local_name`` in any SpreadsheetML namespace."""
+    return [
+        child
+        for child in node
+        if _xml_name(child.tag)[0] in _SPREADSHEETML_NAMESPACES
+        and _xml_name(child.tag)[1] == local_name
+    ]
+
+
+def _rich_text(node: Any) -> str:
+    """Text of a rich-text container: a shared-string ``<si>`` or an inline ``<is>``.
+
+    Both hold a single ``<t>`` or runs ``<r><t>...</t></r>``. Phonetic guides
+    ``<rPh>`` also carry ``<t>`` but are annotations, so they are skipped.
+    """
+    parts: List[str] = []
+    for child in node:
+        namespace, local_name = _xml_name(child.tag)
+        if namespace not in _SPREADSHEETML_NAMESPACES:
+            continue
+        if local_name == "t":
+            parts.append(child.text or "")
+        elif local_name == "r":
+            parts.extend(t.text or "" for t in _sheet_children(child, "t"))
+    return "".join(parts)
+
+
+def _read_shared_strings(
+    zf: zipfile.ZipFile, budget: _ExpansionBudget
+) -> Optional[List[str]]:
     """Return workbook shared strings, or None when the part is absent."""
     try:
-        shared_strings_xml = zf.read("xl/sharedStrings.xml")
+        shared_strings_xml = _read_zip_member(zf, "xl/sharedStrings.xml", budget)
     except KeyError:
         return None
     root = ET.fromstring(shared_strings_xml)
-    return [
-        "".join(t.text or "" for t in si.findall(f".//{{{_EXCEL_MAIN_NAMESPACE}}}t"))
-        for si in root.findall(f"{{{_EXCEL_MAIN_NAMESPACE}}}si")
-    ]
+    return [_rich_text(si) for si in _sheet_children(root, "si")]
 
 
 def _shared_string(shared_strings: Optional[List[str]], value: str, member: str) -> str:
@@ -580,12 +885,22 @@ def _spreadsheet_texts(
     xml_root: Any, shared_strings: Optional[List[str]], member: str
 ) -> List[str]:
     """Return cell values from one worksheet in document order."""
+    namespace = _xml_name(xml_root.tag)[0]
+    if namespace not in _SPREADSHEETML_NAMESPACES:
+        return []
+    ns = f"{{{namespace}}}"
     texts: List[str] = []
-    for cell in xml_root.iter(f"{{{_EXCEL_MAIN_NAMESPACE}}}c"):
-        value = cell.find(f"{{{_EXCEL_MAIN_NAMESPACE}}}v")
+    for cell in xml_root.iter(f"{ns}c"):
+        cell_type = cell.get("t")
+        inline = cell.find(f"{ns}is")
+        if cell_type == "inlineStr" and inline is not None:
+            if text := _rich_text(inline):
+                texts.append(text)
+            continue
+        value = cell.find(f"{ns}v")
         if value is None or value.text is None:
             continue
-        if cell.get("t") == "s":
+        if cell_type == "s":
             texts.append(_shared_string(shared_strings, value.text, member))
         else:
             texts.append(value.text)
@@ -672,44 +987,59 @@ def extract_office_xml_text(file_bytes: bytes, mime_type: str) -> Optional[str]:
     if mime_type not in _OFFICE_XML_MIME_TYPES:
         return None
 
+    # Outside the try: an invalid setting is a configuration error, and must not
+    # be reported as a damaged file.
+    max_bytes = get_max_office_xml_bytes()
+    budget = _ExpansionBudget(max_bytes)
+    text_budget = _ExtractedTextBudget(max_bytes)
+
     try:
         with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
             parsed_members: dict[str, tuple[Any, dict[Any, dict[str, str]]]] = {}
             shared_strings: Optional[List[str]] = None
             if mime_type == _DOCX_MIME:
                 document = _parse_xml_with_choice_namespaces(
-                    _read_part(zf, "word/document.xml")
+                    _read_part(zf, "word/document.xml", budget)
                 )
                 parsed_members["word/document.xml"] = document
                 targets = ["word/document.xml"]
-                targets.extend(_word_related_text_targets(zf, document[0]))
+                targets.extend(_word_related_text_targets(zf, document[0], budget))
             elif mime_type == _PPTX_MIME:
-                ET.fromstring(_read_part(zf, "ppt/presentation.xml"))
+                ET.fromstring(_read_part(zf, "ppt/presentation.xml", budget))
                 targets = [n for n in zf.namelist() if n.startswith("ppt/slides/slide")]
             else:
-                ET.fromstring(_read_part(zf, "xl/workbook.xml"))
+                ET.fromstring(_read_part(zf, "xl/workbook.xml", budget))
                 targets = [
                     n
                     for n in zf.namelist()
                     if n.startswith("xl/worksheets/sheet") and "drawing" not in n
                 ]
-                shared_strings = _read_shared_strings(zf)
+                shared_strings = _read_shared_strings(zf, budget)
 
             pieces: List[str] = []
             for member in targets:
                 if mime_type == _XLSX_MIME:
-                    xml_root = ET.fromstring(_read_part(zf, member))
+                    xml_root = ET.fromstring(_read_part(zf, member, budget))
                     member_texts = _spreadsheet_texts(xml_root, shared_strings, member)
                     sep = " "
                 else:
                     xml_root, choice_namespaces = parsed_members.get(
                         member
-                    ) or _parse_xml_with_choice_namespaces(_read_part(zf, member))
+                    ) or _parse_xml_with_choice_namespaces(
+                        _read_part(zf, member, budget)
+                    )
                     member_texts = _paragraph_texts(xml_root, choice_namespaces)
                     # Paragraph boundaries carry meaning; keep them as newlines.
                     sep = "\n"
                 if member_texts:
-                    pieces.append(sep.join(member_texts))
+                    pieces.append(
+                        text_budget.join(
+                            member_texts,
+                            sep,
+                            member,
+                            prefix="\n\n" if pieces else "",
+                        )
+                    )
 
             text = "\n\n".join(pieces).strip(" ")
             return text or None
@@ -737,6 +1067,23 @@ IMAGE_MIME_TYPES = {
     "image/tiff",
     "image/svg+xml",
 }
+
+# Model APIs reject BMP, TIFF and SVG as image blocks.
+INLINE_IMAGE_MIME_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
+
+SVG_MIME_TYPE = "image/svg+xml"
+
+# Line breaks, literal or as XML character references, may precede or split a
+# payload, but it ends with a base64 character so the match never runs into
+# the text that follows.
+_SVG_DATA_URI_RE = re.compile(
+    r"data:(?P<mime>[\w.+-]+/[\w.+-]+)?(?:;[\w.+-]+=[\w.+-]+)*;base64,"
+    r"(?P<payload>(?:\s|&#x?[0-9A-Fa-f]+;)*"
+    r"[A-Za-z0-9+/]+(?:(?:\s|&#x?[0-9A-Fa-f]+;)*[A-Za-z0-9+/]+)*=*)",
+    re.IGNORECASE,
+)
+
+_SVG_MIN_ELIDED_PAYLOAD = 64
 
 
 def extract_pdf_text(file_bytes: bytes) -> Optional[str]:
@@ -784,6 +1131,110 @@ def encode_image_content(file_bytes: bytes, mime_type: str) -> str:
     return f"[base64_image:{mime_type}]{encoded}"
 
 
+def image_content_from_bytes(file_bytes: bytes, mime_type: str) -> ImageContent:
+    """
+    Wrap image bytes as an MCP ImageContent block.
+
+    Args:
+        file_bytes: The image file content as bytes.
+        mime_type: The MIME type of the image (must start with "image/").
+
+    Returns:
+        ImageContent: The image, base64-encoded, with its MIME type.
+
+    Raises:
+        ValueError: If mime_type is not an image MIME type.
+    """
+    if not mime_type.startswith("image/"):
+        raise ValueError(
+            f"Expected image/* MIME type, got '{mime_type}'. "
+            "Only image content can be returned as an image block."
+        )
+    return ImageContent(
+        type="image",
+        data=base64.b64encode(file_bytes).decode("ascii"),
+        mimeType=mime_type,
+    )
+
+
+def sniff_inline_image_mime_type(data: bytes) -> Optional[str]:
+    """
+    Identify image bytes by their magic number, for the types in
+    INLINE_IMAGE_MIME_TYPES only.
+
+    Returns:
+        Optional[str]: The MIME type, or None if the bytes are not PNG, JPEG,
+        GIF or WebP.
+    """
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+class SvgContent(NamedTuple):
+    """An SVG read for a model: its markup, and the raster images it embeds."""
+
+    markup: str
+    images: List[ImageContent]
+
+
+def svg_content(file_bytes: bytes) -> Optional[SvgContent]:
+    """
+    Read an SVG as its markup, with embedded raster images pulled out as
+    image content. Each base64 data URI payload is replaced by a short note:
+
+    - A PNG, JPEG, GIF or WebP payload (identified by its bytes, not the type
+      the URI declares) is decoded and attached as image content. Its note is
+      numbered to match its position in ``images``.
+    - Any other payload (fonts, BMP, TIFF, nested SVG, or base64 that doesn't
+      decode) is omitted, and its note gives its size.
+
+    Payloads shorter than _SVG_MIN_ELIDED_PAYLOAD characters are left in
+    place.
+
+    Args:
+        file_bytes: The SVG file content as bytes.
+
+    Returns:
+        Optional[SvgContent]: The markup and the attached images in document
+        order, or None if the bytes are not UTF-8 text (for example a
+        gzip-compressed .svgz file).
+    """
+    try:
+        markup = file_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+    images: List[ImageContent] = []
+
+    def _elide(match: re.Match) -> str:
+        payload = re.sub(r"\s", "", html.unescape(match.group("payload")))
+        if len(payload) < _SVG_MIN_ELIDED_PAYLOAD:
+            return match.group(0)
+        declared = match.group("mime") or ""
+        try:
+            data = base64.b64decode(payload, validate=True)
+        except (binascii.Error, ValueError):
+            size = len(payload) * 3 // 4 - payload.count("=")
+            return f"data:{declared};base64,[{size} bytes of invalid base64 omitted]"
+        mime_type = sniff_inline_image_mime_type(data)
+        if mime_type is None:
+            return f"data:{declared};base64,[{len(data)} bytes omitted]"
+        images.append(image_content_from_bytes(data, mime_type))
+        return (
+            f"data:{declared};base64,[embedded image {len(images)}, "
+            f"{len(data)} bytes, attached as image content]"
+        )
+
+    return SvgContent(_SVG_DATA_URI_RE.sub(_elide, markup), images)
+
+
 _URL_QUERY_RE = re.compile(r"\?.*?(?=\s+returned(?:\s|$)|[>\"']|$)")
 
 
@@ -806,6 +1257,63 @@ def _format_http_error_for_log(error: HttpError) -> str:
     return f"status={status}, request={request}"
 
 
+_RATE_LIMIT_ERROR_REASONS = frozenset(
+    {
+        "rateLimitExceeded",
+        "userRateLimitExceeded",
+        "quotaExceeded",
+        "dailyLimitExceeded",
+        "RATE_LIMIT_EXCEEDED",
+    }
+)
+
+
+def _is_rate_limit_or_quota_error(error: HttpError) -> bool:
+    """Return True when Google rejected the request for API rate or quota limits."""
+    if error.resp.status == 429:
+        return True
+    if error.resp.status != 403:
+        return False
+    try:
+        payload = json.loads(error.content)
+    except ValueError:
+        return False
+    for entry in payload if isinstance(payload, list) else [payload]:
+        err = entry.get("error") if isinstance(entry, dict) else None
+        if not isinstance(err, dict):
+            continue
+        if err.get("status") == "RESOURCE_EXHAUSTED":
+            return True
+        items = [err]
+        for key in ("errors", "details"):
+            if isinstance(err.get(key), list):
+                items.extend(err[key])
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            reason, detail_type = item.get("reason"), item.get("@type")
+            if (isinstance(reason, str) and reason in _RATE_LIMIT_ERROR_REASONS) or (
+                isinstance(detail_type, str)
+                and detail_type.endswith("/google.rpc.QuotaFailure")
+            ):
+                return True
+    return False
+
+
+APPS_SCRIPT_USER_SETTINGS_URL = "https://script.google.com/home/usersettings"
+
+
+def _is_apps_script_api_disabled_for_user(error: HttpError, error_details: str) -> bool:
+    """Google reports the per-user setting off as a 403 or a 503 "Service error -27"."""
+    host = urllib.parse.urlparse(getattr(error, "uri", None) or "").hostname
+    if host != "script.googleapis.com":
+        return False
+    status = getattr(error.resp, "status", None)
+    if status == 503:
+        return "Service error -27" in error_details
+    return status == 403 and "has not enabled the Apps Script API" in error_details
+
+
 def handle_http_errors(
     tool_name: str, is_read_only: bool = False, service_type: Optional[str] = None
 ):
@@ -813,7 +1321,7 @@ def handle_http_errors(
     A decorator to handle Google API HttpErrors and transient SSL errors in a standardized way.
 
     It wraps a tool function, catches HttpError, logs a detailed error message,
-    and raises a generic Exception with a user-friendly message.
+    and raises a ToolError with a user-friendly message.
 
     If is_read_only is True, it will also catch ssl.SSLError and retry with
     exponential backoff. After exhausting retries, it raises a TransientNetworkError.
@@ -856,6 +1364,11 @@ def handle_http_errors(
                 except HttpError as error:
                     user_google_email = kwargs.get("user_google_email", "N/A")
                     error_details = str(error)
+                    error_summary = (
+                        f"HTTP {error.resp.status}"
+                        if fastmcp.settings.mask_error_details
+                        else error_details
+                    )
 
                     # Check if this is an API not enabled error
                     if (
@@ -873,10 +1386,26 @@ def handle_http_errors(
                             )
                         else:
                             message = (
-                                f"API error in {tool_name}: {error}. "
+                                f"API error in {tool_name}: {error_summary}. "
                                 f"The required API is not enabled for your project. "
                                 f"Please check the Google Cloud Console to enable it."
                             )
+                    elif _is_apps_script_api_disabled_for_user(error, error_details):
+                        message = (
+                            f"API error in {tool_name}: the Apps Script API refused "
+                            f"the request (HTTP {error.resp.status}) for user "
+                            f"'{user_google_email}'. This usually means the Apps "
+                            f"Script API is turned off in that user's Apps Script "
+                            f"settings. LLM: Ask the user to open "
+                            f"{APPS_SCRIPT_USER_SETTINGS_URL}, turn on 'Google Apps "
+                            f"Script API', wait a minute, and retry."
+                        )
+                    elif _is_rate_limit_or_quota_error(error):
+                        message = (
+                            f"API error in {tool_name}: {error_summary}. "
+                            "Google API rate limit or quota exceeded (not an authentication failure). "
+                            "LLM: Retry later with fewer concurrent requests."
+                        )
                     elif error.resp.status in [401, 403]:
                         # Authentication/authorization errors
                         if is_oauth21_enabled():
@@ -896,13 +1425,13 @@ def handle_http_errors(
                                 "and the appropriate service_name."
                             )
                         message = (
-                            f"API error in {tool_name}: {error}. "
+                            f"API error in {tool_name}: {error_summary}. "
                             f"You might need to re-authenticate for user '{user_google_email}'. "
                             f"{auth_hint}"
                         )
                     else:
                         # Other HTTP errors (400 Bad Request, etc.) - don't suggest re-auth
-                        message = f"API error in {tool_name}: {error}"
+                        message = f"API error in {tool_name}: {error_summary}"
 
                     # ERROR gets the scrubbed form (HttpError embeds the request
                     # URI and may echo user content in its response details);
@@ -911,7 +1440,7 @@ def handle_http_errors(
                         f"API error in {tool_name}: {_format_http_error_for_log(error)}"
                     )
                     logger.debug(f"API error detail in {tool_name}", exc_info=True)
-                    raise Exception(message) from error
+                    raise ToolError(message) from error
                 except TransientNetworkError:
                     # Re-raise without wrapping to preserve the specific error type
                     raise

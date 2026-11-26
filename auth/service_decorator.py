@@ -11,9 +11,13 @@ from contextlib import ExitStack
 
 from google.auth.exceptions import RefreshError
 from google.oauth2 import service_account as google_service_account
-from googleapiclient.discovery import build
 from fastmcp.server.dependencies import get_access_token, get_context
-from auth.google_auth import get_authenticated_google_service, GoogleAuthenticationError
+from auth.google_auth import (
+    GoogleAuthenticationError,
+    build_google_service,
+    get_authenticated_google_service,
+    recycling,
+)
 from auth.gateway_identity import (
     require_gateway_principal,
     get_verified_gateway_principal,
@@ -33,7 +37,7 @@ from auth.oauth_config import (
     is_trust_gateway_identity,
 )
 from core.context import set_fastmcp_session_id
-from core.telemetry import record_authenticated_user
+from core.telemetry import record_authenticated_user, record_google_principal
 from auth.scopes import (
     GMAIL_READONLY_SCOPE,
     GMAIL_SEND_SCOPE,
@@ -75,6 +79,19 @@ from auth.scopes import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class GoogleScopeError(GoogleAuthenticationError):
+    """The authenticated account has not granted this tool's permissions."""
+
+
+def _missing_scope_message(service_name: str, error: GoogleScopeError) -> str:
+    return (
+        f"Permission required for {service_name}: {error}. "
+        "Reconnect using your MCP client's OAuth flow and grant access to this "
+        "service if it is available for your account. Other services with granted "
+        "permissions remain usable."
+    )
 
 
 def _release_google_service_cycles() -> None:
@@ -353,16 +370,18 @@ async def _authenticate_service(
         credentials = _get_service_account_credentials(
             _widen_drive_scope_for_dwd(resolved_scopes, tool_name), target_email
         )
-        service = build(service_name, service_version, credentials=credentials)
+        service = build_google_service(service_name, service_version, credentials)
         logger.info(
             f"[{tool_name}] Authenticated {service_name} for "
             f"{target_email} via service-account"
         )
+        record_google_principal("service-account", target_email)
         return service, target_email
 
     if use_oauth21:
         logger.debug(f"[{tool_name}] Using OAuth 2.1 flow")
-        return await get_authenticated_google_service_oauth21(
+        auth_mode = "oauth2.1"
+        service, actual_user_email = await get_authenticated_google_service_oauth21(
             service_name=service_name,
             version=service_version,
             tool_name=tool_name,
@@ -374,7 +393,8 @@ async def _authenticate_service(
         )
     else:
         logger.debug(f"[{tool_name}] Using legacy OAuth 2.0 flow")
-        return await get_authenticated_google_service(
+        auth_mode = "oauth2.0"
+        service, actual_user_email = await get_authenticated_google_service(
             service_name=service_name,
             version=service_version,
             tool_name=tool_name,
@@ -382,6 +402,8 @@ async def _authenticate_service(
             required_scopes=resolved_scopes,
             session_id=mcp_session_id,
         )
+    record_google_principal(auth_mode, actual_user_email)
+    return service, actual_user_email
 
 
 async def get_authenticated_google_service_oauth21(
@@ -434,11 +456,11 @@ async def get_authenticated_google_service_oauth21(
             scopes_available = set(access_token.scopes)
 
         if not has_required_scopes(scopes_available, required_scopes):
-            raise GoogleAuthenticationError(
+            raise GoogleScopeError(
                 f"OAuth credentials lack required scopes. Need: {required_scopes}, Have: {sorted(scopes_available)}"
             )
 
-        service = build(service_name, version, credentials=credentials)
+        service = build_google_service(service_name, version, credentials)
         logger.info(
             f"[{tool_name}] Authenticated {service_name} for "
             f"{resolved_email} via oauth2.1"
@@ -467,11 +489,11 @@ async def get_authenticated_google_service_oauth21(
         scopes_available = set(credentials.scopes)
 
     if not has_required_scopes(scopes_available, required_scopes):
-        raise GoogleAuthenticationError(
+        raise GoogleScopeError(
             f"OAuth 2.1 credentials lack required scopes. Need: {required_scopes}, Have: {sorted(scopes_available)}"
         )
 
-    service = build(service_name, version, credentials=credentials)
+    service = build_google_service(service_name, version, credentials)
     logger.info(
         f"[{tool_name}] Authenticated {service_name} for "
         f"{user_google_email} via oauth2.1"
@@ -863,6 +885,11 @@ def require_google_service(
                     mcp_session_id,
                     authenticated_user,
                 )
+            except GoogleScopeError as e:
+                logger.info(
+                    "[%s] Missing %s permissions: %s", tool_name, service_name, e
+                )
+                return _missing_scope_message(service_name, e)
             except GoogleAuthenticationError as e:
                 logger.error(
                     f"[{tool_name}] Auth failed for {user_google_email} | "
@@ -878,16 +905,15 @@ def require_google_service(
                     kwargs["user_google_email"] = user_google_email
 
                 # Prepend the fetched service object to the original arguments
-                return await func(service, *args, **kwargs)
+                with recycling(service):
+                    return await func(service, *args, **kwargs)
             except RefreshError as e:
                 error_message = _handle_token_refresh_error(
                     e, actual_user_email, service_name
                 )
                 raise GoogleAuthenticationError(error_message)
             finally:
-                if service:
-                    service.close()
-                    _release_google_service_cycles()
+                _release_google_service_cycles()
 
         # Set the wrapper's signature to the one without 'service'
         wrapper.__signature__ = wrapper_sig
@@ -1019,9 +1045,17 @@ def require_multiple_services(service_configs: List[Dict[str, Any]]):
 
                             # Inject service with specified parameter name
                             kwargs[param_name] = service
-                            stack.callback(service.close)
+                            stack.enter_context(recycling(service))
                             services_created = True
 
+                        except GoogleScopeError as e:
+                            logger.info(
+                                "[%s] Missing %s permissions: %s",
+                                tool_name,
+                                service_name,
+                                e,
+                            )
+                            return _missing_scope_message(service_name, e)
                         except GoogleAuthenticationError as e:
                             logger.error(
                                 f"[{tool_name}] Auth failed for {user_google_email} | "

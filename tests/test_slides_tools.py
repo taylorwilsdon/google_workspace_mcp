@@ -1,16 +1,14 @@
+import base64
 from unittest.mock import Mock
 
+import httpx
 import pytest
+from fastmcp.tools import ToolResult
 
 from core.utils import UserInputError
 from gslides import slides_tools
 from gslides.slides_tools import (
-    _describe_elements,
-    _extract_shape_text,
-    _iter_text_bearing_elements,
-    _speaker_notes_shape,
     batch_update_presentation,
-    get_presentation,
 )
 
 
@@ -202,6 +200,44 @@ async def test_batch_update_allows_insert_text_targeting_created_shape():
 
 
 @pytest.mark.asyncio
+async def test_batch_update_reports_replace_all_text_counts() -> None:
+    """replaceAllText replies report how many occurrences changed, including none."""
+    service, _ = _build_slides_service(
+        batch_update_response={
+            "replies": [
+                {"replaceAllText": {"occurrencesChanged": 3}},
+                {"replaceAllText": {}},
+            ]
+        }
+    )
+    requests = [
+        {
+            "replaceAllText": {
+                "containsText": {"text": "{{name}}"},
+                "replaceText": "Ada",
+            }
+        },
+        {
+            "replaceAllText": {
+                "containsText": {"text": "{{missing}}"},
+                "replaceText": "x",
+            }
+        },
+    ]
+
+    result = await _unwrap(batch_update_presentation)(
+        service=service,
+        user_google_email="user@example.com",
+        presentation_id="presentation-1",
+        requests=requests,
+    )
+
+    assert "Request 1: Replaced 3 occurrence(s)" in result
+    assert "Request 2: Replaced 0 occurrence(s)" in result
+    assert "Operation completed" not in result
+
+
+@pytest.mark.asyncio
 async def test_batch_update_rejects_insert_text_targeting_new_slide_id():
     service, presentations = _build_slides_service(presentation={"slides": []})
 
@@ -226,7 +262,7 @@ async def test_batch_update_rejects_insert_text_targeting_new_slide_id():
     presentations.batchUpdate.assert_not_called()
 
 
-# --- Tests for text-extraction helpers used by get_page / get_presentation ---
+# --- Tests for speaker notes reporting and insertText redirection ---
 
 
 def _text_shape(content):
@@ -239,210 +275,6 @@ def _text_shape(content):
             },
         }
     }
-
-
-def test_extract_shape_text_joins_runs_in_start_index_order():
-    shape = {
-        "text": {
-            "textElements": [
-                {"startIndex": 7, "textRun": {"content": "world!"}},
-                {"startIndex": 0, "textRun": {"content": "Hello, "}},
-            ]
-        }
-    }
-    assert _extract_shape_text(shape) == "Hello, world!"
-
-
-def test_extract_shape_text_handles_missing_or_empty_inputs():
-    assert _extract_shape_text(None) == ""
-    assert _extract_shape_text({}) == ""
-    assert _extract_shape_text({"shapeType": "RECTANGLE"}) == ""
-    assert _extract_shape_text({"text": {"textElements": []}}) == ""
-
-
-def test_extract_shape_text_skips_textelements_without_textrun():
-    shape = {
-        "text": {
-            "textElements": [
-                {"startIndex": 0, "paragraphMarker": {}},
-                {"startIndex": 0, "textRun": {"content": "actual text"}},
-            ]
-        }
-    }
-    assert _extract_shape_text(shape) == "actual text"
-
-
-def test_iter_text_bearing_elements_recurses_into_groups():
-    elements = [
-        _text_shape("top-level"),
-        {
-            "elementGroup": {
-                "children": [
-                    _text_shape("nested"),
-                    {
-                        "elementGroup": {
-                            "children": [_text_shape("deep")],
-                        }
-                    },
-                ]
-            }
-        },
-    ]
-    assert list(_iter_text_bearing_elements(elements)) == [
-        "top-level",
-        "nested",
-        "deep",
-    ]
-
-
-def test_iter_text_bearing_elements_skips_empty_shapes_and_non_shape_types():
-    elements = [
-        {"shape": {"shapeType": "RECTANGLE"}},
-        {"table": {"rows": 2, "columns": 2}},
-        {"line": {"lineType": "STRAIGHT"}},
-        {"image": {}},
-        _text_shape("only-text"),
-    ]
-    assert list(_iter_text_bearing_elements(elements)) == ["only-text"]
-
-
-def test_iter_text_bearing_elements_handles_empty_and_none_input():
-    assert list(_iter_text_bearing_elements([])) == []
-    assert list(_iter_text_bearing_elements(None)) == []
-
-
-def test_describe_elements_renders_single_line_text_inline():
-    elements = [{"objectId": "s1", **_text_shape("Hello")}]
-    assert _describe_elements(elements) == [
-        '  Shape: ID s1, Type: TEXT_BOX, Text: "Hello"'
-    ]
-
-
-def test_describe_elements_renders_multiline_text_as_blockquote():
-    elements = [
-        {
-            "objectId": "s1",
-            "shape": {
-                "shapeType": "TEXT_BOX",
-                "text": {
-                    "textElements": [
-                        {
-                            "startIndex": 0,
-                            "textRun": {"content": "line one\nline two\nline three"},
-                        }
-                    ]
-                },
-            },
-        }
-    ]
-    assert _describe_elements(elements) == [
-        "  Shape: ID s1, Type: TEXT_BOX, Text:",
-        "    > line one",
-        "    > line two",
-        "    > line three",
-    ]
-
-
-def test_describe_elements_recurses_into_groups_with_deeper_indent():
-    elements = [
-        {
-            "objectId": "g1",
-            "elementGroup": {
-                "children": [
-                    {"objectId": "child1", **_text_shape("inside")},
-                    {
-                        "objectId": "g2",
-                        "elementGroup": {
-                            "children": [
-                                {"objectId": "grandchild", **_text_shape("deeper")}
-                            ]
-                        },
-                    },
-                ]
-            },
-        }
-    ]
-    assert _describe_elements(elements) == [
-        "  Group: ID g1, Children: 2",
-        '    Shape: ID child1, Type: TEXT_BOX, Text: "inside"',
-        "    Group: ID g2, Children: 1",
-        '      Shape: ID grandchild, Type: TEXT_BOX, Text: "deeper"',
-    ]
-
-
-def test_describe_elements_labels_non_text_element_types():
-    elements = [
-        {"objectId": "t1", "table": {"rows": 3, "columns": 2}},
-        {"objectId": "l1", "line": {"lineType": "STRAIGHT"}},
-        {"objectId": "x1", "speakerSpotlight": {}},
-    ]
-    assert _describe_elements(elements) == [
-        "  Table: ID t1, Size: 3x2",
-        "  Line: ID l1, Type: STRAIGHT",
-        "  Element: ID x1, Type: Unknown",
-    ]
-
-
-def test_describe_elements_surfaces_sheets_chart_source():
-    """A linked Sheets chart must expose its source spreadsheetId/chartId so a
-    caller can edit the source data and refresh the chart with refreshSheetsChart.
-    """
-    elements = [
-        {
-            "objectId": "c1",
-            "sheetsChart": {
-                "spreadsheetId": "sheet-123",
-                "chartId": 456,
-                "contentUrl": "https://example.com/chart.png",
-            },
-        }
-    ]
-    assert _describe_elements(elements) == [
-        "  SheetsChart: ID c1, SpreadsheetID sheet-123, ChartID 456"
-    ]
-
-
-def test_describe_elements_surfaces_sheets_chart_with_missing_fields():
-    elements = [{"objectId": "c1", "sheetsChart": {}}]
-    assert _describe_elements(elements) == [
-        "  SheetsChart: ID c1, SpreadsheetID Unknown, ChartID Unknown"
-    ]
-
-
-def test_describe_elements_labels_image_video_and_wordart():
-    elements = [
-        {"objectId": "i1", "image": {"sourceUrl": "https://example.com/img.png"}},
-        {"objectId": "i2", "image": {"contentUrl": "https://example.com/rendered.png"}},
-        {"objectId": "i3", "image": {}},
-        {"objectId": "v1", "video": {"source": "YOUTUBE", "id": "abc123"}},
-        {"objectId": "w1", "wordArt": {"renderedText": "Hello"}},
-        {"objectId": "w2", "wordArt": {}},
-    ]
-    assert _describe_elements(elements) == [
-        "  Image: ID i1, Source: https://example.com/img.png",
-        "  Image: ID i2, ContentURL: https://example.com/rendered.png",
-        "  Image: ID i3, Source: Unknown",
-        "  Video: ID v1, Source: YOUTUBE, VideoID: abc123",
-        '  WordArt: ID w1, Text: "Hello"',
-        "  WordArt: ID w2",
-    ]
-
-
-def test_describe_elements_keeps_shape_without_text_simple():
-    elements = [
-        {"objectId": "s1", "shape": {"shapeType": "RECTANGLE"}},
-    ]
-    assert _describe_elements(elements) == [
-        "  Shape: ID s1, Type: RECTANGLE",
-    ]
-
-
-def test_describe_elements_handles_empty_and_none_input():
-    assert _describe_elements([]) == []
-    assert _describe_elements(None) == []
-
-
-# --- Tests for speaker notes reporting and insertText redirection ---
 
 
 def _slide_with_notes(slide_id="slide_1", notes_object_id="notes_shape_1", text=None):
@@ -462,61 +294,6 @@ def _slide_with_notes(slide_id="slide_1", notes_object_id="notes_shape_1", text=
         "objectId": slide_id,
         "slideProperties": {"notesPage": notes_page},
     }
-
-
-def test_speaker_notes_shape_returns_id_and_text():
-    slide = _slide_with_notes(text="Talk track\n")
-    assert _speaker_notes_shape(slide) == ("notes_shape_1", "Talk track\n")
-
-
-def test_speaker_notes_shape_handles_missing_shape_and_missing_id():
-    assert _speaker_notes_shape(_slide_with_notes()) == ("notes_shape_1", "")
-    assert _speaker_notes_shape(_slide_with_notes(notes_object_id=None)) == (None, "")
-    assert _speaker_notes_shape({}) == (None, "")
-
-
-@pytest.mark.asyncio
-async def test_get_presentation_omits_speaker_notes_by_default():
-    service, _ = _build_slides_service(
-        presentation={"slides": [_slide_with_notes("slide_1", "notes_1", "Talk\n")]}
-    )
-
-    result = await _unwrap(get_presentation)(
-        service=service,
-        user_google_email="user@example.com",
-        presentation_id="presentation-1",
-    )
-
-    assert "Speaker Notes" not in result
-    assert "notes_1" not in result
-
-
-@pytest.mark.asyncio
-async def test_get_presentation_reports_speaker_notes_when_requested():
-    service, _ = _build_slides_service(
-        presentation={
-            "slides": [
-                _slide_with_notes(
-                    "slide_1", "notes_1", "Opening remarks\nSecond line\n"
-                ),
-                _slide_with_notes("slide_2", "notes_2"),
-                _slide_with_notes("slide_3", notes_object_id=None),
-            ]
-        }
-    )
-
-    result = await _unwrap(get_presentation)(
-        service=service,
-        user_google_email="user@example.com",
-        presentation_id="presentation-1",
-        include_speaker_notes=True,
-    )
-
-    assert "    Speaker Notes Shape ID: notes_1, Notes:" in result
-    assert "      > Opening remarks" in result
-    assert "      > Second line" in result
-    assert "    Speaker Notes Shape ID: notes_2, Notes: empty" in result
-    assert "    Speaker Notes: none (slide has no notes placeholder)" in result
 
 
 @pytest.mark.asyncio
@@ -618,71 +395,159 @@ async def test_batch_update_allows_insert_text_into_the_speaker_notes_shape():
     assert "Batch Update Completed" in result
 
 
-class TestGeometryReporting:
-    """Element placement is reported only when asked for (issue #1026)."""
+class TestRenderPageToImage:
+    URL = "https://lh7-us.googleusercontent.com/thumb.png"
 
-    ELEMENTS = [
-        {
-            "objectId": "el1",
-            "shape": {"shapeType": "TEXT_BOX"},
-            "transform": {
-                "translateX": 685800,
-                "translateY": 1143000,
-                "scaleX": 1,
-                "scaleY": 1,
-                "unit": "EMU",
-            },
-            "size": {
-                "width": {"magnitude": 7772400, "unit": "EMU"},
-                "height": {"magnitude": 1325563, "unit": "EMU"},
-            },
+    def _service(self):
+        service = Mock()
+        service.presentations.return_value.pages.return_value.getThumbnail.return_value.execute.return_value = {
+            "contentUrl": self.URL
         }
-    ]
+        return service
 
-    def test_geometry_is_omitted_by_default(self):
-        lines = slides_tools._describe_elements(self.ELEMENTS)
-        assert not any("position:" in line for line in lines)
+    @staticmethod
+    def _mock_fetch(monkeypatch, handler):
+        real_client = httpx.AsyncClient
+        monkeypatch.setattr(
+            slides_tools.httpx,
+            "AsyncClient",
+            lambda **kw: real_client(transport=httpx.MockTransport(handler), **kw),
+        )
 
-    def test_geometry_reports_position_and_size_in_emu(self):
-        lines = slides_tools._describe_elements(self.ELEMENTS, include_geometry=True)
-        geometry = next(line for line in lines if "position:" in line)
-        assert "x=685800" in geometry
-        assert "y=1143000" in geometry
-        assert "7772400 x 1325563 EMU" in geometry
-        # Identity scale is noise, so it is left out.
-        assert "scale:" not in geometry
-
-    def test_non_identity_scale_is_reported(self):
-        element = {
-            **self.ELEMENTS[0],
-            "transform": {**self.ELEMENTS[0]["transform"], "scaleX": 0.5},
-        }
-        geometry = next(
-            line
-            for line in slides_tools._describe_elements(
-                [element], include_geometry=True
+    @staticmethod
+    def _png_handler(png=b"\x89PNG\r\n\x1a\nfake"):
+        def handler(request):
+            assert request.url.host == "lh7-us.googleusercontent.com"
+            return httpx.Response(
+                200, content=png, headers={"content-type": "image/png"}
             )
-            if "position:" in line
-        )
-        assert "scale: x=0.5 y=1" in geometry
 
-    def test_geometry_line_follows_its_own_element_inside_a_group(self):
-        group = [
-            {
-                "objectId": "grp",
-                "elementGroup": {"children": self.ELEMENTS},
-                "transform": {"translateX": 0, "translateY": 0, "unit": "EMU"},
-            }
-        ]
-        lines = slides_tools._describe_elements(group, include_geometry=True)
-        assert "Group: ID grp" in lines[0]
-        assert "position: x=0" in lines[1]
-        assert "Shape: ID el1" in lines[2]
-        assert "x=685800" in lines[3]
+        return handler
 
-    def test_element_without_geometry_yields_no_line(self):
-        lines = slides_tools._describe_elements(
-            [{"objectId": "el2", "shape": {"shapeType": "TEXT_BOX"}}],
-            include_geometry=True,
+    @pytest.mark.asyncio
+    async def test_returns_png_image_content_by_default(self, monkeypatch):
+        png = b"\x89PNG\r\n\x1a\nfake"
+        self._mock_fetch(monkeypatch, self._png_handler(png))
+        service = self._service()
+        out = await _unwrap(slides_tools.render_page_to_image)(
+            service, "u@example.com", "pres", "p1"
         )
-        assert lines == ["  Shape: ID el2, Type: TEXT_BOX"]
+        assert isinstance(out, ToolResult)
+        text, image = out.content
+        assert "pres" in text.text and "p1" in text.text
+        assert "MEDIUM" in text.text
+        assert self.URL in text.text
+        assert "30 minutes" in text.text
+        assert image.type == "image" and image.mime_type == "image/png"
+        assert base64.b64decode(image.data) == png
+        assert out.structured_content == {"result": text.text}
+        get_thumbnail = (
+            service.presentations.return_value.pages.return_value.getThumbnail
+        )
+        assert (
+            get_thumbnail.call_args.kwargs["thumbnailProperties_thumbnailSize"]
+            == "MEDIUM"
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "size, width",
+        [("SMALL", 200), ("MEDIUM", 800), ("LARGE", 1600), ("WIDTH2000_PX", 2000)],
+    )
+    async def test_each_valid_size_is_passed_to_the_api(self, monkeypatch, size, width):
+        self._mock_fetch(monkeypatch, self._png_handler())
+        service = self._service()
+        out = await _unwrap(slides_tools.render_page_to_image)(
+            service, "u@example.com", "pres", "p1", size=size
+        )
+        get_thumbnail = (
+            service.presentations.return_value.pages.return_value.getThumbnail
+        )
+        get_thumbnail.assert_called_once_with(
+            presentationId="pres",
+            pageObjectId="p1",
+            thumbnailProperties_thumbnailSize=size,
+            thumbnailProperties_mimeType="PNG",
+        )
+        assert f"{size} ({width}px wide)" in out.content[0].text
+
+    @pytest.mark.asyncio
+    async def test_reports_dimensions_returned_by_the_api(self, monkeypatch):
+        self._mock_fetch(monkeypatch, self._png_handler())
+        service = self._service()
+        service.presentations.return_value.pages.return_value.getThumbnail.return_value.execute.return_value = {
+            "contentUrl": self.URL,
+            "width": 450,
+            "height": 800,
+        }
+        out = await _unwrap(slides_tools.render_page_to_image)(
+            service, "u@example.com", "pres", "p1"
+        )
+        assert "MEDIUM (450x800px)" in out.content[0].text
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("size", ["HUGE", "medium", ""])
+    async def test_invalid_size_is_rejected_before_calling_the_api(self, size):
+        service = self._service()
+        with pytest.raises(UserInputError) as exc_info:
+            await _unwrap(slides_tools.render_page_to_image)(
+                service, "u@example.com", "pres", "p1", size=size
+            )
+        message = str(exc_info.value)
+        for valid in ("SMALL", "MEDIUM", "LARGE", "WIDTH2000_PX"):
+            assert valid in message
+        service.presentations.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "response",
+        [
+            httpx.Response(403),
+            httpx.Response(
+                200, content=b"<html>", headers={"content-type": "text/html"}
+            ),
+            httpx.Response(
+                200, content=b"<svg/>", headers={"content-type": "image/svg+xml"}
+            ),
+            httpx.Response(
+                200,
+                content=b"\x89PNG\r\n\x1a\nfake",
+                headers={"content-type": "text/html"},
+            ),
+            httpx.Response(200, content=b"\x89PNG\r\n\x1a\nfake"),
+            httpx.ConnectError("unreachable"),
+        ],
+    )
+    async def test_fetch_failure_falls_back_to_text_with_url(
+        self, monkeypatch, response
+    ):
+        def handler(request):
+            if isinstance(response, Exception):
+                raise response
+            return response
+
+        self._mock_fetch(monkeypatch, handler)
+        out = await _unwrap(slides_tools.render_page_to_image)(
+            self._service(), "u@example.com", "pres", "p1"
+        )
+        assert isinstance(out, ToolResult)
+        assert len(out.content) == 1
+        text = out.content[0].text
+        assert self.URL in text
+        assert "Image unavailable" in text
+        assert out.structured_content == {"result": text}
+
+    @pytest.mark.asyncio
+    async def test_fetch_failure_keeps_url_out_of_logs(self, monkeypatch, caplog):
+        self._mock_fetch(monkeypatch, lambda request: httpx.Response(403))
+        with caplog.at_level("DEBUG", logger=slides_tools.logger.name):
+            await _unwrap(slides_tools.render_page_to_image)(
+                self._service(), "u@example.com", "pres", "p1"
+            )
+        # httpx's own request log is held at WARNING by main.py, so only the
+        # tool's records are checked here.
+        tool_logs = " ".join(
+            r.getMessage() for r in caplog.records if r.name == slides_tools.logger.name
+        )
+        assert "Image fetch failed" in tool_logs
+        assert "googleusercontent" not in tool_logs

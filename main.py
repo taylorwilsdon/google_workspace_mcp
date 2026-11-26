@@ -8,6 +8,7 @@ import sys
 from functools import partial
 from importlib import metadata, import_module
 from typing import NoReturn
+from urllib.parse import urlparse
 from dotenv import load_dotenv
 from core.startup_ui import StartupDisplay, collapse_home, wordmark_lines
 
@@ -34,7 +35,12 @@ def _load_startup_dependencies():
         install_noisy_log_filters,
     )
     from core.utils import check_credentials_directory_permissions
-    from core.server import server, set_transport_mode, configure_server_for_http
+    from core.server import (
+        server,
+        set_transport_mode,
+        configure_server_for_http,
+        get_stateless_http,
+    )
     from core.tool_tier_loader import resolve_tools_from_tier
     from core.tool_registry import (
         set_enabled_tools as set_enabled_tool_names,
@@ -42,6 +48,7 @@ def _load_startup_dependencies():
         set_disabled_tools,
         wrap_server_tool_method,
         filter_server_tools,
+        mark_always_load_tools,
     )
 
     return (
@@ -58,14 +65,19 @@ def _load_startup_dependencies():
         server,
         set_transport_mode,
         configure_server_for_http,
+        get_stateless_http,
         resolve_tools_from_tier,
         set_enabled_tool_names,
         resolve_disabled_tools,
         set_disabled_tools,
         wrap_server_tool_method,
         filter_server_tools,
+        mark_always_load_tools,
     )
 
+
+dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+load_dotenv(dotenv_path=dotenv_path)
 
 (
     get_selected_backend,
@@ -81,24 +93,23 @@ def _load_startup_dependencies():
     server,
     set_transport_mode,
     configure_server_for_http,
+    get_stateless_http,
     resolve_tools_from_tier,
     set_enabled_tool_names,
     resolve_disabled_tools,
     set_disabled_tools,
     wrap_server_tool_method,
     filter_server_tools,
+    mark_always_load_tools,
 ) = _load_startup_dependencies()
-
-dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
-load_dotenv(dotenv_path=dotenv_path)
 
 # Suppress googleapiclient discovery cache warning
 logging.getLogger("googleapiclient.discovery_cache").setLevel(logging.ERROR)
 
 # Suppress httpx/httpcore INFO logs that leak access tokens in URLs
-# (e.g. tokeninfo?access_token=ya29.xxx)
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("httpcore").setLevel(logging.WARNING)
+# (e.g. tokeninfo?access_token=ya29.xxx). FastMCP 4 uses the httpx2 fork.
+for _http_logger in ("httpx", "httpcore", "httpx2", "httpcore2"):
+    logging.getLogger(_http_logger).setLevel(logging.WARNING)
 
 reload_oauth_config()
 
@@ -127,6 +138,22 @@ logger = logging.getLogger(__name__)
 install_noisy_log_filters()
 configure_file_logging()
 
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def _loopback_redirect_port(redirect_uri: str | None) -> int | None:
+    """Return the explicit port of an http loopback redirect URI, else None."""
+    if not redirect_uri:
+        return None
+    try:
+        parsed = urlparse(redirect_uri)
+        port = parsed.port
+    except ValueError:
+        return None
+    if parsed.scheme != "http" or parsed.hostname not in _LOOPBACK_HOSTS:
+        return None
+    return port
+
 
 def resolve_stdio_callback_port() -> None:
     """
@@ -134,15 +161,35 @@ def resolve_stdio_callback_port() -> None:
 
     Streamable HTTP/OAuth 2.1 owns its main HTTP port directly and must keep the
     normal PORT/WORKSPACE_MCP_PORT semantics. The fallback range only exists for
-    the standalone stdio callback listener.
+    the standalone stdio callback listener, and only when no redirect URI pins it.
+    A busy port is logged rather than fatal because the listener binds lazily.
     """
     from auth.port_resolver import resolve_port, NoAvailablePortError, PortConfigError
 
+    redirect_uri = os.getenv("GOOGLE_OAUTH_REDIRECT_URI")
+    pinned_port = _loopback_redirect_port(redirect_uri)
+
     try:
-        resolve_port()
-    except (NoAvailablePortError, PortConfigError) as exc:
+        resolve_port(preferred=pinned_port, allow_fallback=not redirect_uri)
+    except PortConfigError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
+    except NoAvailablePortError as exc:
+        if pinned_port is None:
+            logger.warning(
+                "%s Continuing; OAuth re-authorization will fail until the port frees up.",
+                exc,
+            )
+            os.environ.pop("WORKSPACE_MCP_RESOLVED_PORT", None)
+        else:
+            logger.warning(
+                "OAuth callback port %d required by GOOGLE_OAUTH_REDIRECT_URI is in "
+                "use. Continuing; OAuth re-authorization will fail until the port "
+                "frees up or GOOGLE_OAUTH_REDIRECT_URI is changed.",
+                pinned_port,
+            )
+            os.environ["WORKSPACE_MCP_PORT"] = str(pinned_port)
+            os.environ["WORKSPACE_MCP_RESOLVED_PORT"] = "1"
     reload_oauth_config()
 
 
@@ -278,6 +325,38 @@ def fatal(ui: StartupDisplay, text: str, *details: str) -> NoReturn:
     sys.exit(1)
 
 
+def _local_ipv4_addresses() -> list[str]:
+    """Best-effort list of this machine's IPv4 addresses, loopback first."""
+    try:
+        infos = socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)
+    except (OSError, UnicodeError):
+        infos = []
+    return list(dict.fromkeys(["127.0.0.1", *(info[4][0] for info in infos)]))
+
+
+def _http_port_conflict(host: str, port: int) -> str | None:
+    """Return why uvicorn could not serve host:port, or None if it can."""
+    # macOS SO_REUSEADDR wildcard binds coexist with specific-address listeners.
+    connect_hosts = _local_ipv4_addresses() if host in ("", "0.0.0.0") else [host]
+    for connect_host in connect_hosts:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(0.5)
+                if s.connect_ex((connect_host, port)) == 0:
+                    return f"a server is already listening on {connect_host}:{port}"
+        except OSError:
+            pass
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            if os.name != "nt":  # matches asyncio's reuse_address default
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind((host, port))
+    except OSError as e:
+        return str(e)
+    return None
+
+
 def configure_safe_logging():
     """Replace console handlers with ASCII-safe formatters for Windows compatibility."""
 
@@ -343,12 +422,13 @@ def _optional_field(name: str, *, path: bool = False) -> tuple[str, str, str]:
     return name, collapse_home(os.path.expanduser(value)) if path else value, "on"
 
 
-def _flag_field(name: str, *, warn_when_true: bool = False) -> tuple[str, str, str]:
-    """Describe a boolean env var as a (label, value, state) display row."""
-    value = os.getenv(name, "false")
-    if value.strip().lower() not in {"true", "1", "yes"}:
-        return name, value, "off"
-    return name, value, "warn" if warn_when_true else "on"
+def _mode_field(
+    label: str, env_var: str, enabled: bool, *, warn_when_on: bool = False
+) -> tuple[str, str, str]:
+    """Describe a resolved mode as a (label, value, state) row naming its env var."""
+    if not enabled:
+        return label, f"off · {env_var}", "off"
+    return label, f"on  · {env_var}", "warn" if warn_when_on else "on"
 
 
 def _systemd_activation_sockets() -> list[socket.socket] | None:
@@ -378,10 +458,10 @@ def _systemd_activation_sockets() -> list[socket.socket] | None:
 
 def _disabled_tools_field(disabled_tools: set[str]) -> tuple[str, str, str]:
     """Describe the resolved per-tool block list as a display row."""
-    name = "WORKSPACE_MCP_DISABLED_TOOLS"
+    env_var = "WORKSPACE_MCP_DISABLED_TOOLS"
     if not disabled_tools:
-        return name, "not set", "off"
-    return name, ", ".join(sorted(disabled_tools)), "on"
+        return "Disabled tools", f"none · {env_var}", "off"
+    return "Disabled tools", f"{', '.join(sorted(disabled_tools))} · {env_var}", "on"
 
 
 def _client_secret_field() -> tuple[str, str, str]:
@@ -425,14 +505,34 @@ def describe_credential_config() -> list[tuple[str, str, str]]:
 
 
 def describe_mode_config(
-    disabled_tools: set[str] = frozenset(),
+    disabled_tools: set[str] = frozenset(), *, single_user: bool = False
 ) -> list[tuple[str, str, str]]:
-    """Build the mode rows shown in the startup configuration section."""
+    """Build the mode rows shown in the startup configuration section.
+
+    Rows report the modes the server resolved, not a re-parse of the env vars,
+    so the banner cannot disagree with how the server actually runs.
+    """
+    config = get_oauth_config()
     return [
-        _flag_field("MCP_SINGLE_USER_MODE"),
-        _flag_field("MCP_ENABLE_OAUTH21"),
-        _flag_field("WORKSPACE_MCP_STATELESS_MODE"),
-        _flag_field("OAUTHLIB_INSECURE_TRANSPORT", warn_when_true=True),
+        _mode_field("OAuth 2.1", "MCP_ENABLE_OAUTH21", config.is_oauth21_enabled()),
+        _mode_field("Stateless", "WORKSPACE_MCP_STATELESS_MODE", config.stateless_mode),
+        _mode_field(
+            "Sessionless HTTP",
+            "WORKSPACE_MCP_STATELESS_HTTP",
+            config.stateless_mode or get_stateless_http(),
+        ),
+        _mode_field(
+            "Single-user",
+            "MCP_SINGLE_USER_MODE",
+            single_user or os.getenv("MCP_SINGLE_USER_MODE") == "1",
+        ),
+        # oauthlib treats any non-empty value as enabled, "false" included.
+        _mode_field(
+            "Insecure transport",
+            "OAUTHLIB_INSECURE_TRANSPORT",
+            bool(os.getenv("OAUTHLIB_INSECURE_TRANSPORT")),
+            warn_when_on=True,
+        ),
         _disabled_tools_field(disabled_tools),
     ]
 
@@ -523,18 +623,25 @@ def main():
             "Example: --permissions gmail:organize drive:readonly. "
             "Gmail levels: readonly, organize, drafts, send, full (cumulative). "
             "Other services: readonly, full. "
+            "Join levels with '+' to grant only the scopes each named level adds "
+            "(e.g. gmail:readonly+send). "
             "Mutually exclusive with --read-only and --tools."
         ),
     )
     args = parser.parse_args()
 
-    # Validate the memory-safety setting once at startup. Tool helpers parse it
+    # Validate the memory-safety settings once at startup. Tool helpers parse them
     # defensively as well, but a deployment typo must not silently disable the
     # configured limit.
-    from core.file_limits import get_max_file_bytes
+    from core.file_limits import validate_file_limit_settings
 
     try:
-        get_max_file_bytes()
+        validate_file_limit_settings()
+    except ValueError as exc:
+        parser.error(str(exc))
+
+    try:
+        stateless_http = get_stateless_http()
     except ValueError as exc:
         parser.error(str(exc))
 
@@ -701,7 +808,10 @@ def main():
     ui.fields(
         [
             ("Credentials", describe_credential_config()),
-            ("Modes", describe_mode_config(disabled_tools)),
+            (
+                "Modes",
+                describe_mode_config(disabled_tools, single_user=args.single_user),
+            ),
         ]
     )
 
@@ -788,6 +898,7 @@ def main():
 
     # Filter tools based on tier configuration (if tier-based loading is enabled)
     tools_removed = filter_server_tools(server)
+    mark_always_load_tools(server)
 
     ui.section("Services")
     ui.grid([(SERVICE_ICONS.get(t, "🔧"), t.title()) for t in loaded])
@@ -983,21 +1094,15 @@ def main():
 
             if activation_sockets is None:
                 # Check port availability before starting HTTP server
-                try:
-                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                        s.bind((host, port))
-                except OSError as e:
-                    fatal(
-                        ui,
-                        f"Port {port} is already in use. Cannot start HTTP server.",
-                        str(e),
-                    )
+                conflict = _http_port_conflict(host, port)
+                if conflict is not None:
+                    fatal(ui, f"Cannot start HTTP server on {host}:{port}", conflict)
 
             server.run(
                 transport="streamable-http",
                 host=host,
                 port=port,
-                stateless_http=is_stateless_mode(),
+                stateless_http=is_stateless_mode() or stateless_http,
                 show_banner=False,
                 sockets=activation_sockets,
             )
@@ -1014,13 +1119,12 @@ def main():
                 async def _run_dual() -> None:
                     """Run stdio and HTTP transports concurrently."""
                     http_available = True
-                    try:
-                        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                            s.bind((http_host, http_port))
-                    except OSError:
+                    conflict = _http_port_conflict(http_host, http_port)
+                    if conflict is not None:
                         logger.warning(
-                            "Port %d in use, workspace-cli HTTP endpoint unavailable",
+                            "workspace-cli HTTP endpoint unavailable on port %d: %s",
                             http_port,
+                            conflict,
                         )
                         http_available = False
 

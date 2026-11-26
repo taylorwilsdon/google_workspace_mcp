@@ -9,6 +9,8 @@ export_doc_to_pdf, and list_spreadsheets — without requiring --tools drive.
 import sys
 import os
 
+import pytest
+
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from auth.scopes import (
@@ -33,6 +35,12 @@ from auth.scopes import (
     set_read_only,
 )
 from auth.permissions import get_scopes_for_permission, set_permissions
+from gchat.chat_tools import (
+    download_chat_attachment,
+    get_messages,
+    list_spaces,
+    search_messages,
+)
 import auth.permissions as permissions_module
 
 
@@ -62,6 +70,11 @@ class TestSheetsScopes:
         """list_spreadsheets needs drive.readonly."""
         scopes = get_scopes_for_tools(["sheets"])
         assert DRIVE_READONLY_SCOPE in scopes
+
+    def test_sheets_includes_drive_file(self):
+        """create_spreadsheet needs drive.file to move the new file into a folder."""
+        scopes = get_scopes_for_tools(["sheets"])
+        assert DRIVE_FILE_SCOPE in scopes
 
     def test_sheets_does_not_include_full_drive(self):
         """sheets should NOT request full drive access."""
@@ -109,6 +122,40 @@ class TestReadOnlyScopes:
         set_read_only(True)
         scopes = get_scopes_for_tools(["sheets"])
         assert DRIVE_READONLY_SCOPE in scopes
+
+    def test_sheets_readonly_excludes_drive_file(self):
+        """In read-only mode, sheets should NOT request drive.file."""
+        set_read_only(True)
+        scopes = get_scopes_for_tools(["sheets"])
+        assert DRIVE_FILE_SCOPE not in scopes
+
+
+def _chat_readonly_permission():
+    set_permissions({"chat": "readonly"})
+
+
+class TestChatScopes:
+    """Every Chat read tool can authenticate with the scopes chat requests."""
+
+    def teardown_method(self):
+        set_read_only(False)
+        permissions_module._PERMISSIONS = None
+
+    @pytest.mark.parametrize(
+        "configure",
+        [lambda: None, lambda: set_read_only(True), _chat_readonly_permission],
+        ids=["default", "read_only", "chat_readonly_permission"],
+    )
+    @pytest.mark.parametrize(
+        "tool",
+        [list_spaces, get_messages, search_messages, download_chat_attachment],
+        ids=lambda tool: tool.__name__,
+    )
+    def test_requested_scopes_cover_chat_read_tools(self, configure, tool):
+        configure()
+        assert has_required_scopes(
+            get_scopes_for_tools(["chat"]), tool._required_google_scopes
+        )
 
 
 class TestHasRequiredScopes:

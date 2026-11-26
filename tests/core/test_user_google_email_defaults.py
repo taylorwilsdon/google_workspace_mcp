@@ -220,7 +220,7 @@ async def test_authenticate_service_account_uses_verified_gateway_email(monkeypa
         "_get_service_account_credentials",
         fake_get_service_account_credentials,
     )
-    monkeypatch.setattr(service_decorator, "build", fake_build)
+    monkeypatch.setattr(service_decorator, "build_google_service", fake_build)
 
     service, actual_user = await service_decorator._authenticate_service(
         use_oauth21=False,
@@ -305,7 +305,7 @@ def _patch_service_account(monkeypatch, *, allowed_domains=""):
         "_get_service_account_credentials",
         fake_get_creds,
     )
-    monkeypatch.setattr(service_decorator, "build", fake_build)
+    monkeypatch.setattr(service_decorator, "build_google_service", fake_build)
     return captured, fake_service
 
 
@@ -475,3 +475,67 @@ async def test_dwd_gateway_mode_rejects_missing_or_unverified_identity(
             authenticated_user="other@corp.com",
         )
     assert "subject" not in captured
+
+
+@pytest.mark.asyncio
+async def test_dwd_records_delegated_subject_on_span(monkeypatch):
+    _patch_service_account(monkeypatch)
+    recorded = []
+    monkeypatch.setattr(
+        service_decorator,
+        "record_google_principal",
+        lambda mode, email: recorded.append((mode, email)),
+    )
+
+    await service_decorator._authenticate_service(
+        use_oauth21=False,
+        service_name="gmail",
+        service_version="v1",
+        tool_name="t",
+        user_google_email=None,
+        resolved_scopes=["scope-a"],
+        mcp_session_id=None,
+        authenticated_user=None,
+    )
+
+    assert recorded == [("service-account", "canonical@corp.com")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("use_oauth21", "flow", "mode"),
+    [
+        (True, "get_authenticated_google_service_oauth21", "oauth2.1"),
+        (False, "get_authenticated_google_service", "oauth2.0"),
+    ],
+)
+async def test_oauth_records_resolved_principal_on_span(
+    monkeypatch, use_oauth21, flow, mode
+):
+    monkeypatch.setattr(service_decorator, "is_service_account_enabled", lambda: False)
+    fake_service = object()
+    monkeypatch.setattr(
+        service_decorator,
+        flow,
+        AsyncMock(return_value=(fake_service, "resolved@example.com")),
+    )
+    recorded = []
+    monkeypatch.setattr(
+        service_decorator,
+        "record_google_principal",
+        lambda mode, email: recorded.append((mode, email)),
+    )
+
+    service, actual_user = await service_decorator._authenticate_service(
+        use_oauth21=use_oauth21,
+        service_name="gmail",
+        service_version="v1",
+        tool_name="t",
+        user_google_email="resolved@example.com",
+        resolved_scopes=["scope-a"],
+        mcp_session_id=None,
+        authenticated_user=None,
+    )
+
+    assert (service, actual_user) == (fake_service, "resolved@example.com")
+    assert recorded == [(mode, "resolved@example.com")]

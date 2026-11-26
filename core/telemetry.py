@@ -15,6 +15,8 @@ import logging
 import os
 from typing import Any, Optional
 
+from opentelemetry import trace
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_SERVICE_NAME = "google-workspace-mcp"
@@ -41,18 +43,50 @@ def record_authenticated_user(email: Optional[str]) -> None:
     attributed to a person rather than only the opaque ``enduser.id`` FastMCP
     derives from the OAuth token. This is PII, so it is a no-op unless the
     operator opts in via ``WORKSPACE_MCP_OTEL_USER_EMAIL``. Safe to call
-    unconditionally: it no-ops when disabled, when there is no email, when the
-    OpenTelemetry API is not installed, or when no span is recording.
+    unconditionally: it no-ops when disabled, when there is no email, or when
+    no span is recording.
     """
-    if not email or not _user_email_attribute_enabled():
-        return
-    try:
-        from opentelemetry import trace
-    except ImportError:
-        return
+    if email and _user_email_attribute_enabled():
+        _set_span_attribute("user.email", email)
+
+
+def record_google_principal(auth_mode: str, email: Optional[str]) -> None:
+    """Attach the Google identity a tool call acts as to the active span.
+
+    ``workspace_mcp.auth.mode`` names the credential path (``service-account``,
+    ``oauth2.1`` or ``oauth2.0``) and is always recorded. Under domain-wide
+    delegation the impersonated subject can differ from the MCP caller in
+    ``user.email``, so ``workspace_mcp.google.principal`` records the account
+    the Google API calls actually run as. That email is PII and follows the
+    same ``WORKSPACE_MCP_OTEL_USER_EMAIL`` opt-in as ``user.email``.
+    """
+    _set_span_attribute("workspace_mcp.auth.mode", auth_mode)
+    if email and _user_email_attribute_enabled():
+        _set_span_attribute("workspace_mcp.google.principal", email)
+
+
+def record_degraded_failure(error: BaseException) -> None:
+    """Mark the active span as failed for an error a tool caught and recovered from.
+
+    Records only the exception type and errno, since the message can carry file
+    paths derived from email subjects and attachment names.
+    """
     span = trace.get_current_span()
-    if span is not None and span.is_recording():
-        span.set_attribute("user.email", email)
+    if not span.is_recording():
+        return
+    error_type = type(error).__name__
+    attributes = {"exception.type": error_type}
+    if isinstance(getattr(error, "errno", None), int):
+        attributes["exception.errno"] = error.errno
+    span.add_event("exception", attributes)
+    span.set_status(trace.Status(trace.StatusCode.ERROR, error_type))
+
+
+def _set_span_attribute(key: str, value: str) -> None:
+    """Set an attribute on the active span if one is recording."""
+    span = trace.get_current_span()
+    if span.is_recording():
+        span.set_attribute(key, value)
 
 
 def _otlp_endpoint_configured() -> bool:
@@ -114,7 +148,6 @@ def configure_telemetry() -> bool:
         return False
 
     try:
-        from opentelemetry import trace
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
     except ImportError:

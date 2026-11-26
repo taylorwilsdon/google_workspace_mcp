@@ -10,6 +10,7 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from gdocs import docs_tools
+from gdocs.managers.table_operation_manager import TableOperationManager
 
 
 def _unwrap(tool):
@@ -132,6 +133,278 @@ async def test_get_doc_content_finds_a_nested_child_tab():
     )
 
     assert result.split("--- CONTENT ---\n", 1)[1] == "Child text\n"
+
+
+DOC_URL = "https://docs.google.com/document/d/doc123/edit"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tab_value", ["t.week2", "t%2Eweek%32"])
+async def test_get_doc_content_extracts_the_id_and_tab_from_a_url(tab_value):
+    drive = _drive_service()
+    docs = _docs_service(TABBED_DOC)
+
+    result = await _unwrap(docs_tools.get_doc_content)(
+        drive_service=drive,
+        docs_service=docs,
+        user_google_email="user@example.com",
+        document_id=f"{DOC_URL}?tab={tab_value}",
+    )
+
+    assert drive.files.return_value.get.call_args.kwargs["fileId"] == "doc123"
+    assert docs.documents.return_value.get.call_args.kwargs["documentId"] == "doc123"
+    header, content = result.split("--- CONTENT ---\n", 1)
+    # The notice sits in the header so the content stays index-aligned.
+    assert content == "Second week notes\n"
+    assert "Showing only tab 'Week 2' (t.week2)" in header
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("suffix", ["", "#?tab=t.week2", "#heading=h.x&tab=t.week2"])
+async def test_get_doc_content_reads_every_tab_of_a_url_without_tab(suffix):
+    drive = _drive_service()
+
+    result = await _unwrap(docs_tools.get_doc_content)(
+        drive_service=drive,
+        docs_service=_docs_service(TABBED_DOC),
+        user_google_email="user@example.com",
+        document_id=f"{DOC_URL}{suffix}",
+    )
+
+    assert drive.files.return_value.get.call_args.kwargs["fileId"] == "doc123"
+    assert "First week notes" in result
+    assert "Second week notes" in result
+    assert "Showing only tab" not in result
+
+
+async def _get_doc_as_markdown(doc, comments=None, **kwargs):
+    drive = Mock()
+    drive.comments.return_value.list.return_value.execute = Mock(
+        return_value={"comments": comments or []}
+    )
+    docs = _docs_service(doc)
+    result = await _unwrap(docs_tools.get_doc_as_markdown)(
+        drive_service=drive,
+        docs_service=docs,
+        user_google_email="user@example.com",
+        **kwargs,
+    )
+    assert docs.documents.return_value.get.call_args.kwargs["documentId"] == "doc123"
+    return result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tab_value", ["t.week2", "t%2Eweek%32"])
+async def test_get_doc_as_markdown_reads_the_tab_named_in_the_url(tab_value):
+    result = await _get_doc_as_markdown(
+        TABBED_DOC,
+        document_id=f"{DOC_URL}?usp=sharing&tab={tab_value}#heading=h.x",
+        include_comments=False,
+    )
+
+    assert "Second week notes" in result
+    assert "First week notes" not in result
+    # Browsers add ?tab= to every URL, so the narrowed read must say so.
+    assert "Showing only tab 'Week 2' (t.week2)" in result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fragment", ["?tab=t.week2", "heading=h.x&tab=t.week2"])
+async def test_get_doc_as_markdown_ignores_tab_parameters_in_the_fragment(fragment):
+    result = await _get_doc_as_markdown(
+        TABBED_DOC,
+        document_id=f"{DOC_URL}#{fragment}",
+        include_comments=False,
+    )
+
+    assert "First week notes" in result
+    assert "Second week notes" in result
+    assert "Showing only tab" not in result
+
+
+@pytest.mark.asyncio
+async def test_get_doc_as_markdown_explicit_tab_id_overrides_the_url():
+    result = await _get_doc_as_markdown(
+        TABBED_DOC,
+        document_id=f"{DOC_URL}?tab=t.week2",
+        tab_id="t.week1",
+        include_comments=False,
+    )
+
+    assert result == "First week notes\n"
+
+
+@pytest.mark.asyncio
+async def test_get_doc_as_markdown_empty_tab_id_reads_every_tab_of_a_url():
+    result = await _get_doc_as_markdown(
+        TABBED_DOC,
+        document_id=f"{DOC_URL}?tab=t.week2",
+        tab_id="",
+        include_comments=False,
+    )
+
+    assert "First week notes" in result
+    assert "Second week notes" in result
+
+
+@pytest.mark.asyncio
+async def test_get_doc_as_markdown_url_tab_of_a_single_tab_doc_adds_no_notice():
+    result = await _get_doc_as_markdown(
+        {"tabs": [_tab("t.0", "Tab 1", "Only tab\n")]},
+        document_id=f"{DOC_URL}?tab=t.0",
+        include_comments=False,
+    )
+
+    assert result == "Only tab\n"
+
+
+@pytest.mark.asyncio
+async def test_get_doc_as_markdown_selected_parent_excludes_child_tabs():
+    doc = {
+        "tabs": [
+            _tab(
+                "t.parent",
+                "Parent",
+                "Parent text\n",
+                [_tab("t.child", "Child", "Child text\n")],
+            )
+        ]
+    }
+
+    result = await _get_doc_as_markdown(
+        doc, document_id="doc123", tab_id="t.parent", include_comments=False
+    )
+
+    assert result == "Parent text\n"
+
+
+@pytest.mark.asyncio
+async def test_get_doc_as_markdown_keeps_comments_document_wide_for_one_tab():
+    comment = {
+        "content": "Belongs to another tab",
+        "author": {"displayName": "Ann"},
+        "quotedFileContent": {"value": "week notes"},
+    }
+
+    result = await _get_doc_as_markdown(
+        TABBED_DOC, comments=[comment], document_id="doc123", tab_id="t.week1"
+    )
+
+    # Drive comments have no tab association, so the anchor text matching
+    # this tab must not pin the comment inline.
+    assert "[^c1]" not in result
+    assert "## Comments (entire document)" in result
+    assert "Belongs to another tab" in result
+
+
+def _table_tab(tab_id, title, cell_text):
+    tab = _tab(tab_id, title, "")
+    tab["documentTab"]["body"]["content"] = [
+        {
+            "startIndex": 1,
+            "endIndex": 10,
+            "table": {
+                "tableRows": [
+                    {
+                        "tableCells": [
+                            {
+                                "startIndex": 2,
+                                "endIndex": 9,
+                                "content": [
+                                    {
+                                        "paragraph": {
+                                            "elements": [
+                                                {
+                                                    "startIndex": 3,
+                                                    "textRun": {"content": cell_text},
+                                                }
+                                            ]
+                                        }
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                ]
+            },
+        }
+    ]
+    return tab
+
+
+async def _debug_table_structure(doc, **kwargs):
+    service = _docs_service(doc)
+    result = await _unwrap(docs_tools.debug_table_structure)(
+        service=service,
+        user_google_email="user@example.com",
+        document_id="doc123",
+        **kwargs,
+    )
+    return service, result
+
+
+@pytest.mark.asyncio
+async def test_debug_table_structure_reads_a_table_in_a_nested_tab():
+    doc = {
+        "tabs": [
+            _tab(
+                "t.week1",
+                "Week 1",
+                "No table here\n",
+                child_tabs=[_table_tab("t.child", "Metrics", "42\n")],
+            )
+        ]
+    }
+
+    service, result = await _debug_table_structure(doc, tab_id="t.child")
+
+    call_kwargs = service.documents.return_value.get.call_args.kwargs
+    assert call_kwargs["includeTabsContent"] is True
+    assert '"dimensions": "1x1"' in result
+    assert '"insertion_index": 3' in result
+    assert "42" in result
+
+
+@pytest.mark.asyncio
+async def test_debug_table_structure_reports_an_unknown_tab():
+    _, result = await _debug_table_structure(TABBED_DOC, tab_id="t.missing")
+
+    assert result == "Error: Tab t.missing not found in document."
+
+
+@pytest.mark.asyncio
+async def test_populate_existing_table_targets_a_table_in_a_nested_tab():
+    doc = {
+        "tabs": [
+            _tab(
+                "t.week1",
+                "Week 1",
+                "No table here\n",
+                child_tabs=[_table_tab("t.child", "Metrics", "\n")],
+            )
+        ]
+    }
+    service = _docs_service(doc)
+
+    success, message, _ = await TableOperationManager(service).populate_existing_table(
+        "doc123", 0, [["42"]], tab_id="t.child"
+    )
+
+    assert success, message
+    service.documents.return_value.batchUpdate.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_populate_existing_table_reports_an_unknown_tab():
+    service = _docs_service(TABBED_DOC)
+
+    success, message, _ = await TableOperationManager(service).populate_existing_table(
+        "doc123", 0, [["42"]], tab_id="t.missing"
+    )
+
+    assert not success
+    assert "Tab t.missing not found in document." in message
+    service.documents.return_value.batchUpdate.assert_not_called()
 
 
 @pytest.mark.asyncio

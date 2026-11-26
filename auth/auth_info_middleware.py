@@ -268,13 +268,8 @@ class AuthInfoMiddleware(Middleware):
                 # This is ONLY safe in stdio mode because it's single-user
                 logger.debug("Checking for stdio mode authentication")
 
-                # Get the requested user from the context if available
-                requested_user = None
-                if hasattr(context, "request") and hasattr(context.request, "params"):
-                    requested_user = context.request.params.get("user_google_email")
-                elif hasattr(context, "arguments"):
-                    # FastMCP may store arguments differently
-                    requested_user = context.arguments.get("user_google_email")
+                arguments = getattr(context.message, "arguments", None) or {}
+                requested_user = arguments.get("user_google_email")
 
                 if requested_user:
                     try:
@@ -394,15 +389,12 @@ class AuthInfoMiddleware(Middleware):
             return result
 
         except Exception as e:
-            # Check if this is an authentication error - don't log traceback for these
             if (
                 isinstance(e, GatewayIdentityError)
                 or "GoogleAuthenticationError" in str(type(e))
                 or "Access denied: Cannot retrieve credentials" in str(e)
             ):
                 logger.info(f"Authentication check failed: {e}")
-            else:
-                logger.error(f"Error in on_call_tool middleware: {e}", exc_info=True)
             raise
 
     async def on_get_prompt(self, context: MiddlewareContext, call_next):
@@ -418,13 +410,10 @@ class AuthInfoMiddleware(Middleware):
             return result
 
         except Exception as e:
-            # Check if this is an authentication error - don't log traceback for these
             if (
                 isinstance(e, GatewayIdentityError)
                 or "GoogleAuthenticationError" in str(type(e))
                 or "Access denied: Cannot retrieve credentials" in str(e)
             ):
                 logger.info(f"Authentication check failed in prompt: {e}")
-            else:
-                logger.error(f"Error in on_get_prompt middleware: {e}", exc_info=True)
             raise

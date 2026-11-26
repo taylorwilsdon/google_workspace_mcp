@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -44,10 +45,12 @@ async def test_get_drive_file_content_rejects_declared_oversized(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_get_drive_file_download_url_allows_disk_streamed_oversized(
-    monkeypatch, tmp_path
+@pytest.mark.parametrize(("cap", "inlined"), [("20", False), ("1000", True)])
+async def test_get_drive_file_download_url_stateless_inline_respects_file_cap(
+    monkeypatch, tmp_path, cap, inlined
 ):
-    monkeypatch.setenv("WORKSPACE_MCP_MAX_FILE_BYTES", "20")
+    """Stateless mode buffers the file to inline it, so the in-memory cap applies."""
+    monkeypatch.setenv("WORKSPACE_MCP_MAX_FILE_BYTES", cap)
     mock_service = Mock()
     downloaded = tmp_path / "download.bin"
     downloaded.write_bytes(b"x" * 500)
@@ -75,9 +78,17 @@ async def test_get_drive_file_download_url_allows_disk_streamed_oversized(
             file_id="file123",
         )
 
-    assert "File downloaded successfully!" in result
-    assert "500 bytes" in result
-    download.assert_awaited_once_with(mock_service, "file123", None)
+    if inlined:
+        download.assert_awaited_once_with(mock_service, "file123", None)
+        assert not downloaded.exists()
+        text, resource = result.content
+        assert "500 bytes" in text.text
+        assert base64.b64decode(resource.resource.blob) == b"x" * 500
+    else:
+        # The declared size already exceeds the cap, so nothing is downloaded.
+        download.assert_not_awaited()
+        assert isinstance(result, str)
+        assert "exceeds the inline limit of 20 bytes" in result
 
 
 @pytest.mark.asyncio

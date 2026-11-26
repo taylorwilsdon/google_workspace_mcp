@@ -1,11 +1,14 @@
 import importlib
 from types import SimpleNamespace
 
+import pytest
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.responses import Response
 from starlette.routing import Route
 from starlette.testclient import TestClient
+
+from core.server import OriginValidationMiddleware, SecureFastMCP, get_allowed_hosts
 
 
 def test_well_known_cache_control_middleware_rewrites_headers():
@@ -154,15 +157,15 @@ def test_origin_validation_allows_same_origin_request(monkeypatch):
     from core.server import OriginValidationMiddleware
 
     # The OAuth proxy consent form posts to itself (action=""), so the request is
-    # always same-origin with the host that served the page. A request whose Origin
-    # matches its own Host must be accepted even if that host was never added to the
-    # allowlist (e.g. WORKSPACE_EXTERNAL_URL unset or misconfigured) — a same-origin
-    # request is the server's own page, never the cross-site threat this guard stops.
+    # always same-origin with the host that served the page. In OAuth 2.1 mode a
+    # request whose Origin matches its own Host must be accepted even if that host
+    # was never added to the allowlist (e.g. WORKSPACE_EXTERNAL_URL unset).
     monkeypatch.setattr(
         "auth.oauth_config.get_oauth_config",
         lambda: SimpleNamespace(
             get_allowed_origins=lambda: ["http://localhost:8000"],
             external_url=None,
+            is_oauth21_enabled=lambda: True,
         ),
     )
 
@@ -194,6 +197,141 @@ def test_origin_validation_allows_same_origin_request(monkeypatch):
         },
     )
     assert cross_origin.status_code == 403
+
+
+def test_origin_validation_rejects_dns_rebinding_without_oauth21(monkeypatch):
+    from core.server import OriginValidationMiddleware
+
+    # A DNS-rebinding page controls both Host and Origin, so without OAuth 2.1
+    # bearer auth a same-origin match must not bypass the allowlist.
+    monkeypatch.setattr(
+        "auth.oauth_config.get_oauth_config",
+        lambda: SimpleNamespace(
+            get_allowed_origins=lambda: ["http://localhost:8000"],
+            external_url=None,
+            is_oauth21_enabled=lambda: False,
+        ),
+    )
+
+    async def endpoint(request):
+        return Response("ok")
+
+    app = Starlette(
+        routes=[Route("/mcp", endpoint, methods=["POST"])],
+        middleware=[Middleware(OriginValidationMiddleware)],
+    )
+    client = TestClient(app)
+
+    rebound = client.post(
+        "/mcp",
+        headers={
+            "Origin": "http://attacker.example:8000",
+            "Host": "attacker.example:8000",
+        },
+    )
+    assert rebound.status_code == 403
+
+    local = client.post(
+        "/mcp",
+        headers={"Origin": "http://localhost:8000", "Host": "localhost:8000"},
+    )
+    assert local.status_code == 200
+
+
+def _host_check_client(monkeypatch, allowed_hosts, oauth21=False):
+    monkeypatch.setattr(
+        "auth.oauth_config.get_oauth_config",
+        lambda: SimpleNamespace(
+            get_allowed_origins=lambda: ["http://localhost:8000"],
+            external_url="https://mcp.example.com",
+            is_oauth21_enabled=lambda: oauth21,
+        ),
+    )
+    monkeypatch.setattr("core.server.is_oauth21_enabled", lambda: oauth21)
+
+    async def endpoint(request):
+        return Response("ok")
+
+    app = Starlette(
+        routes=[Route("/attachments/{file_id}", endpoint, methods=["GET"])],
+        middleware=[
+            Middleware(OriginValidationMiddleware, allowed_hosts=allowed_hosts)
+        ],
+    )
+    return TestClient(app)
+
+
+def test_origin_validation_accepts_any_host_without_allowlist(monkeypatch):
+    client = _host_check_client(monkeypatch, allowed_hosts=None)
+
+    for host in ("workspace-mcp:8000", "192.168.1.20:8000", "attacker.example:8000"):
+        response = client.get("/attachments/abc", headers={"Host": host})
+        assert response.status_code == 200, host
+
+
+@pytest.mark.parametrize("oauth21", [False, True])
+def test_origin_validation_rejects_rebound_host_with_allowlist(monkeypatch, oauth21):
+    client = _host_check_client(
+        monkeypatch, allowed_hosts=frozenset({"workspace-mcp"}), oauth21=oauth21
+    )
+
+    for host in ("attacker.example:8000", "[bad"):
+        response = client.get("/attachments/abc", headers={"Host": host})
+        assert response.status_code == 403, host
+        assert response.json() == {"error": "Host not allowed"}
+    for host in (
+        "workspace-mcp:8000",
+        "LOCALHOST:8000",
+        "[::1]:8000",
+        "mcp.example.com",
+    ):
+        response = client.get("/attachments/abc", headers={"Host": host})
+        assert response.status_code == 200, host
+
+
+def test_origin_validation_rejects_malformed_host_with_origin(monkeypatch):
+    client = _host_check_client(monkeypatch, allowed_hosts=None, oauth21=True)
+
+    response = client.get(
+        "/attachments/abc",
+        headers={"Origin": "http://attacker.example", "Host": "[bad"},
+    )
+    assert response.status_code == 403
+    assert response.json() == {"error": "Origin not allowed"}
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("", None),
+        (
+            "MCP.Example.com, workspace-mcp",
+            frozenset({"mcp.example.com", "workspace-mcp"}),
+        ),
+        ("192.168.1.20,[::1]", frozenset({"192.168.1.20", "::1"})),
+    ],
+)
+def test_get_allowed_hosts_parses_hostnames(monkeypatch, raw, expected):
+    monkeypatch.setenv("WORKSPACE_MCP_ALLOWED_HOSTS", raw)
+
+    assert get_allowed_hosts() == expected
+
+
+@pytest.mark.parametrize(
+    "raw", ["host:8000", "host/path", "user@host", "[bad", "a,,b", "*"]
+)
+def test_get_allowed_hosts_rejects_invalid_values(monkeypatch, raw):
+    monkeypatch.setenv("WORKSPACE_MCP_ALLOWED_HOSTS", raw)
+
+    with pytest.raises(ValueError, match="WORKSPACE_MCP_ALLOWED_HOSTS"):
+        get_allowed_hosts()
+
+
+def test_http_app_fails_startup_on_invalid_allowed_hosts(monkeypatch):
+    monkeypatch.setenv("WORKSPACE_MCP_ALLOWED_HOSTS", "host:8000")
+
+    with pytest.raises(ValueError, match="WORKSPACE_MCP_ALLOWED_HOSTS"):
+        SecureFastMCP("test").http_app(transport="streamable-http", path="/mcp")
 
 
 def test_origin_validation_rejects_null_origin_consent_by_default(monkeypatch):

@@ -49,6 +49,30 @@ async def test_resolve_and_validate_host_rejects_ipv6_private(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_private_host_refusals_are_value_errors_of_their_own_class(
+    monkeypatch,
+):
+    """Callers can add advice without matching the message; existing ValueError
+    handling still catches them."""
+    assert issubclass(http_utils.PrivateHostError, ValueError)
+    with pytest.raises(
+        http_utils.PrivateHostError,
+        match="^URLs pointing to localhost are not allowed$",
+    ):
+        await http_utils.resolve_and_validate_host("localhost")
+
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda hostname, port: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.5", 0))
+        ],
+    )
+    with pytest.raises(http_utils.PrivateHostError, match="private/internal networks"):
+        await http_utils.resolve_and_validate_host("internal.example")
+
+
+@pytest.mark.asyncio
 async def test_resolve_and_validate_host_deduplicates_addresses(monkeypatch):
     """Duplicate DNS answers should be de-duplicated while preserving order."""
 

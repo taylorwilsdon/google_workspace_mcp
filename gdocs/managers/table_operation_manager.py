@@ -181,15 +181,19 @@ class TableOperationManager:
         """Get fresh document structure and extract table information."""
         doc = await asyncio.to_thread(
             self.service.documents()
-            .get(documentId=document_id, includeTabsContent=True)
+            .get(documentId=document_id, includeTabsContent=bool(tab_id))
             .execute
         )
 
         if tab_id:
             tab = self._find_tab(doc.get("tabs", []), tab_id)
-            if tab and "documentTab" in tab:
-                doc = doc.copy()
-                doc["body"] = tab["documentTab"].get("body", {})
+            if not tab:
+                raise ValueError(f"Tab {tab_id} not found in document.")
+            if "documentTab" not in tab:
+                raise ValueError(
+                    f"Tab {tab_id} is not a document tab and has no body content."
+                )
+            doc = tab["documentTab"]
 
         return find_tables(doc)
 
