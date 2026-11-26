@@ -262,10 +262,12 @@
         "enum": [
           "create",
           "update",
-          "delete"
+          "delete",
+          "set_photo",
+          "delete_photo"
         ],
         "type": "string",
-        "description": "The action to perform: \"create\", \"update\", or \"delete\"."
+        "description": "The action to perform: \"create\", \"update\", \"delete\", \"set_photo\", or \"delete_photo\"."
       },
       "contact_id": {
         "anyOf": [
@@ -277,7 +279,7 @@
           }
         ],
         "default": null,
-        "description": "The contact ID. Required for \"update\" and \"delete\" actions."
+        "description": "The contact ID. Required for all actions except \"create\"."
       },
       "given_name": {
         "anyOf": [
@@ -561,6 +563,30 @@
         ],
         "default": null,
         "description": "[DEPRECATED] Job title. Use organizations=[{\"title\":...}]."
+      },
+      "photo_base64": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Raw Base64 JPEG or PNG bytes for \"set_photo\", without a data URL prefix. Maximum 5 MiB decoded."
+      },
+      "file_path": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Server-side JPEG or PNG path for \"set_photo\", instead of photo_base64. Must be under ALLOWED_FILE_DIRS. Maximum 5 MiB."
       }
     },
     "required": [
