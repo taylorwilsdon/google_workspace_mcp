@@ -1638,16 +1638,21 @@ async def manage_contact_group(
         .execute
     )
 
-    not_found = result.get("notFoundResourceNames", [])
-    cannot_remove = result.get("canNotRemoveLastContactGroupResourceNames", [])
+    not_found = result.get("notFoundResourceNames") or []
+    cannot_remove = result.get("canNotRemoveLastContactGroupResourceNames") or []
 
     response = f"Contact Group Members Modified for {user_google_email}:\n\n"
     response += f"Group: {group_id}\n"
 
+    skipped = set(not_found)
     if add_contact_ids:
-        response += f"Added: {len(add_contact_ids)} contacts\n"
+        added = set(modify_body["resourceNamesToAdd"]) - skipped
+        response += f"Added: {len(added)} contacts\n"
     if remove_contact_ids:
-        response += f"Removed: {len(remove_contact_ids)} contacts\n"
+        removed = (
+            set(modify_body["resourceNamesToRemove"]) - skipped - set(cannot_remove)
+        )
+        response += f"Removed: {len(removed)} contacts\n"
 
     if not_found:
         response += f"\nNot found: {', '.join(not_found)}\n"
