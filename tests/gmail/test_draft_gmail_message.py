@@ -1,10 +1,13 @@
 import base64
+from collections.abc import Awaitable, Callable
 from email import policy
 from email.parser import BytesParser
 import os
+from pathlib import Path
 import ssl
 import sys
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import Mock
 from contextlib import asynccontextmanager
 
@@ -2525,7 +2528,11 @@ async def test_draft_gmail_message_forward_honors_direction(monkeypatch):
     assert captured["as_draft"] is True
 
 
-def _reply_quote_service(thread):
+_ReplyTool = Callable[..., Awaitable[str]]
+_ThreadFetch = dict[str, Any] | Exception
+
+
+def _reply_quote_service(thread: _ThreadFetch) -> Mock:
     """Gmail double for one send or draft, with ``thread`` as the thread fetch."""
     service = _mock_gmail_service()
     service.users().messages().send().execute.return_value = {"id": "sent_reply"}
@@ -2539,7 +2546,7 @@ def _reply_quote_service(thread):
     return service
 
 
-def _reply_quote_html(service, tool) -> str:
+def _reply_quote_html(service: Mock, tool: _ReplyTool) -> str:
     """The HTML body of the message ``tool`` sent or drafted."""
     users = service.users.return_value
     if tool is send_gmail_message:
@@ -2551,7 +2558,7 @@ def _reply_quote_html(service, tool) -> str:
     return _parse_raw_message(raw).get_body(preferencelist=("html",)).get_content()
 
 
-_QUOTABLE_THREAD = {
+_QUOTABLE_THREAD: dict[str, Any] = {
     "messages": [
         _thread_message(
             "<parent@example.com>",
@@ -2565,7 +2572,7 @@ _QUOTABLE_THREAD = {
 _REPLY_TOOLS = pytest.mark.parametrize(
     "tool", [send_gmail_message, draft_gmail_message], ids=["send", "draft"]
 )
-_RESULT_ID = {
+_RESULT_ID: dict[_ReplyTool, str] = {
     send_gmail_message: "Message ID: sent_reply",
     draft_gmail_message: "Draft ID: draft_reply",
 }
@@ -2573,7 +2580,7 @@ _RESULT_ID = {
 
 @pytest.mark.asyncio
 @_REPLY_TOOLS
-async def test_reply_quotes_original_when_requested(tool):
+async def test_reply_quotes_original_when_requested(tool: _ReplyTool) -> None:
     service = _reply_quote_service(_QUOTABLE_THREAD)
 
     result = await _unwrap(tool)(
@@ -2599,7 +2606,9 @@ async def test_reply_quotes_original_when_requested(tool):
 @pytest.mark.parametrize(
     "quote_kwargs", [{}, {"quote_original": False}], ids=["default", "explicit"]
 )
-async def test_reply_does_not_quote_unless_requested(tool, quote_kwargs):
+async def test_reply_does_not_quote_unless_requested(
+    tool: _ReplyTool, quote_kwargs: dict[str, Any]
+) -> None:
     service = _reply_quote_service(_QUOTABLE_THREAD)
 
     result = await _unwrap(tool)(
@@ -2625,7 +2634,9 @@ async def test_reply_does_not_quote_unless_requested(tool, quote_kwargs):
 @pytest.mark.parametrize(
     "quote_kwargs", [{}, {"quote_original": True}], ids=["default", "explicit"]
 )
-async def test_non_reply_never_quotes(tool, quote_kwargs):
+async def test_non_reply_never_quotes(
+    tool: _ReplyTool, quote_kwargs: dict[str, Any]
+) -> None:
     service = _reply_quote_service(_QUOTABLE_THREAD)
 
     result = await _unwrap(tool)(
@@ -2659,7 +2670,9 @@ async def test_non_reply_never_quotes(tool, quote_kwargs):
     ],
     ids=["unparseable-date", "fetch-failed"],
 )
-async def test_reply_reports_dropped_quote(tool, thread, reason):
+async def test_reply_reports_dropped_quote(
+    tool: _ReplyTool, thread: _ThreadFetch, reason: str
+) -> None:
     service = _reply_quote_service(thread)
 
     result = await _unwrap(tool)(
@@ -2679,7 +2692,7 @@ async def test_reply_reports_dropped_quote(tool, thread, reason):
     )
 
 
-def _attachment_backed_parent():
+def _attachment_backed_parent() -> dict[str, Any]:
     """A parent whose text and HTML bodies Gmail stores behind an attachmentId."""
     message = _thread_message(
         "<parent@example.com>", from_value="Ada Lovelace <ada@example.com>"
@@ -2695,7 +2708,7 @@ def _attachment_backed_parent():
 
 @pytest.mark.asyncio
 @_REPLY_TOOLS
-async def test_reply_reports_unfetchable_parent_body(tool):
+async def test_reply_reports_unfetchable_parent_body(tool: _ReplyTool) -> None:
     service = _reply_quote_service(_attachment_backed_parent())
     service.users().messages().attachments().get().execute.side_effect = ValueError(
         "body fetch failed"
@@ -2722,7 +2735,9 @@ async def test_reply_reports_unfetchable_parent_body(tool):
 
 @pytest.mark.asyncio
 @_REPLY_TOOLS
-async def test_reply_quotes_parent_when_only_one_body_part_is_unfetchable(tool):
+async def test_reply_quotes_parent_when_only_one_body_part_is_unfetchable(
+    tool: _ReplyTool,
+) -> None:
     thread = _attachment_backed_parent()
     thread["messages"][0]["payload"]["parts"][1]["body"] = {
         "data": _encode_part("<div>Original line</div>")
@@ -2773,8 +2788,13 @@ async def test_reply_quotes_parent_when_only_one_body_part_is_unfetchable(tool):
     ids=["unparseable-date", "fetch-failed"],
 )
 async def test_reply_with_attachment_quotes_or_reports(
-    tool, thread, quoted, note, tmp_path, monkeypatch
-):
+    tool: _ReplyTool,
+    thread: _ThreadFetch,
+    quoted: bool,
+    note: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("ALLOWED_FILE_DIRS", str(tmp_path))
     attachment_path = tmp_path / "sample.txt"
     attachment_path.write_text("hello attachment", encoding="utf-8")
