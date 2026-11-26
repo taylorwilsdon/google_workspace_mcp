@@ -251,26 +251,15 @@ def _override_oauth21_user_email(
     return authenticated_user, args
 
 
-def _load_service_account_info() -> Dict[str, Any]:
-    """Load the configured service account key as a dict."""
-    config = get_oauth_config()
-    try:
-        if config.service_account_key_file:
-            with open(config.service_account_key_file) as f:
-                return json.load(f)
-        return json.loads(config.service_account_key_json or "")
-    except (OSError, json.JSONDecodeError) as e:
-        raise GoogleAuthenticationError(
-            f"Failed to read service account key: {e}"
-        ) from e
-
-
 def _get_service_account_email() -> str:
-    """Return the service account's own email (``client_email`` in the key)."""
-    client_email = _load_service_account_info().get("client_email")
+    """Return the service account's own email (``client_email`` in the key).
+
+    Read once when the config loads, so this does not touch the key file per call.
+    """
+    client_email = get_oauth_config().service_account_email
     if not client_email:
         raise GoogleAuthenticationError(
-            "Service account key is missing 'client_email'."
+            "Service account key is missing a readable 'client_email'."
         )
     return client_email
 
@@ -606,6 +595,34 @@ def _extract_managed_user_email(
     if is_trust_gateway_identity():
         return require_gateway_principal(authenticated_user, auth_method)
     return _extract_oauth21_user_email(authenticated_user, func_name)
+
+
+def _managed_call_kwargs(
+    wrapper_sig: inspect.Signature, args: tuple, kwargs: dict
+) -> Dict[str, Any]:
+    """Build keyword arguments for the decorated function in managed-email modes.
+
+    The wrapper signature omits ``user_google_email`` (the server supplies it), but
+    the decorated function still has it in a position before later parameters. Passing
+    positional arguments through unchanged would shift them onto that slot, so they are
+    mapped by name against the wrapper's visible parameters instead.
+    """
+    positional = [
+        p
+        for p in wrapper_sig.parameters.values()
+        if p.kind
+        in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    ]
+    if len(args) > len(positional):
+        raise TypeError(
+            f"takes {len(positional)} positional arguments but {len(args)} were given"
+        )
+    merged: Dict[str, Any] = {p.name: v for p, v in zip(positional, args)}
+    for name, value in kwargs.items():
+        if name in merged:
+            raise TypeError(f"got multiple values for argument '{name}'")
+        merged[name] = value
+    return merged
 
 
 def _extract_oauth20_user_email(
@@ -975,6 +992,9 @@ def require_google_service(
                 # In OAuth 2.1 mode, we need to add user_google_email to kwargs since it was removed from signature
                 if _user_email_is_managed():
                     kwargs["user_google_email"] = user_google_email
+                    call_kwargs = _managed_call_kwargs(wrapper_sig, args, kwargs)
+                    with recycling(service):
+                        return await func(service, **call_kwargs)
 
                 # Prepend the fetched service object to the original arguments
                 with recycling(service):
@@ -1142,6 +1162,9 @@ def require_multiple_services(service_configs: List[Dict[str, Any]]):
                         # In OAuth 2.1 mode, we need to add user_google_email to kwargs since it was removed from signature
                         if _user_email_is_managed():
                             kwargs["user_google_email"] = user_google_email
+                            return await func(
+                                **_managed_call_kwargs(wrapper_sig, args, kwargs)
+                            )
 
                         return await func(*args, **kwargs)
                     except RefreshError as e:

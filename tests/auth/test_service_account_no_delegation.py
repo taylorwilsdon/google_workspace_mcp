@@ -239,17 +239,6 @@ def test_credentials_builder_passes_no_subject(monkeypatch: pytest.MonkeyPatch) 
     assert calls["subject"] is None
 
 
-def test_get_service_account_email_reads_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        service_decorator,
-        "get_oauth_config",
-        lambda: MagicMock(
-            service_account_key_file=None, service_account_key_json=SA_KEY_JSON
-        ),
-    )
-    assert service_decorator._get_service_account_email() == SA_EMAIL
-
-
 # --- gateway identity is incompatible with no delegation ---
 
 
@@ -338,52 +327,6 @@ async def test_call_tool_drops_caller_supplied_email_without_delegation(
 # --- key loading errors ---
 
 
-def test_service_account_email_requires_client_email(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        service_decorator,
-        "get_oauth_config",
-        lambda: MagicMock(
-            service_account_key_file=None,
-            service_account_key_json=json.dumps({"type": "service_account"}),
-        ),
-    )
-    with pytest.raises(
-        service_decorator.GoogleAuthenticationError, match="client_email"
-    ):
-        service_decorator._get_service_account_email()
-
-
-def test_service_account_key_file_is_read(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    key = tmp_path / "key.json"
-    key.write_text(SA_KEY_JSON)
-    monkeypatch.setattr(
-        service_decorator,
-        "get_oauth_config",
-        lambda: MagicMock(
-            service_account_key_file=str(key), service_account_key_json=None
-        ),
-    )
-    assert service_decorator._get_service_account_email() == SA_EMAIL
-
-
-def test_service_account_key_invalid_json_raises(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        service_decorator,
-        "get_oauth_config",
-        lambda: MagicMock(
-            service_account_key_file=None, service_account_key_json="{nope"
-        ),
-    )
-    with pytest.raises(service_decorator.GoogleAuthenticationError):
-        service_decorator._get_service_account_email()
-
-
 # --- delegation flag validation ---
 
 
@@ -419,3 +362,143 @@ async def test_start_google_auth_is_a_noop_without_delegation(
     monkeypatch.setattr(server_module, "is_service_account_no_delegation", lambda: True)
     result = await server_module.start_google_auth(service_name="drive")
     assert "not used in service-account mode" in result
+
+
+# --- service account email, read once from the key when config loads ---
+
+
+def test_get_service_account_email_uses_config_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        service_decorator,
+        "get_oauth_config",
+        lambda: MagicMock(service_account_email=SA_EMAIL),
+    )
+    assert service_decorator._get_service_account_email() == SA_EMAIL
+
+
+def test_get_service_account_email_raises_when_key_has_no_email(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        service_decorator,
+        "get_oauth_config",
+        lambda: MagicMock(service_account_email=None),
+    )
+    with pytest.raises(
+        service_decorator.GoogleAuthenticationError, match="client_email"
+    ):
+        service_decorator._get_service_account_email()
+
+
+def test_read_client_email_from_key_file(tmp_path: Path) -> None:
+    key = tmp_path / "key.json"
+    key.write_text(SA_KEY_JSON)
+    assert (
+        oauth_config_module._read_service_account_client_email(str(key), None)
+        == SA_EMAIL
+    )
+
+
+def test_read_client_email_from_json() -> None:
+    assert (
+        oauth_config_module._read_service_account_client_email(None, SA_KEY_JSON)
+        == SA_EMAIL
+    )
+
+
+@pytest.mark.parametrize(
+    "key_json", ["{nope", "[]", json.dumps({"type": "service_account"}), ""]
+)
+def test_read_client_email_returns_none_for_bad_keys(key_json: str) -> None:
+    assert (
+        oauth_config_module._read_service_account_client_email(None, key_json) is None
+    )
+
+
+def test_config_stores_client_email(monkeypatch: pytest.MonkeyPatch) -> None:
+    _base_env(monkeypatch)
+    assert OAuthConfig().service_account_email == SA_EMAIL
+
+
+def test_config_has_no_email_without_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    _base_env(monkeypatch)
+    monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_KEY_JSON")
+    assert OAuthConfig().service_account_email is None
+
+
+# --- positional arguments in managed mode ---
+
+
+@pytest.mark.asyncio
+async def test_positional_args_do_not_collide_with_injected_email(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_no_delegation(monkeypatch)
+    monkeypatch.setattr(
+        service_decorator, "build_google_service", lambda *a, **k: MagicMock()
+    )
+    monkeypatch.setattr(service_decorator, "is_oauth21_enabled", lambda: False)
+    monkeypatch.setattr(service_decorator, "is_trust_gateway_identity", lambda: False)
+
+    @service_decorator.require_google_service("drive", "drive_read")
+    async def sample_tool(
+        service: Any, user_google_email: str, query: str = "q"
+    ) -> tuple[str, str]:
+        return user_google_email, query
+
+    assert await sample_tool("abc") == (SA_EMAIL, "abc")
+
+
+def test_managed_call_kwargs_rejects_duplicate_and_extra_args() -> None:
+    import inspect
+
+    def visible(query: str) -> None:
+        return None
+
+    sig = inspect.signature(visible)
+    assert service_decorator._managed_call_kwargs(sig, ("x",), {}) == {"query": "x"}
+    with pytest.raises(TypeError, match="multiple values"):
+        service_decorator._managed_call_kwargs(sig, ("x",), {"query": "y"})
+    with pytest.raises(TypeError, match="positional arguments"):
+        service_decorator._managed_call_kwargs(sig, ("x", "y"), {})
+
+
+# --- services dropped from the tool list without delegation ---
+
+
+def _main_module() -> Any:
+    import main
+
+    return main
+
+
+def test_unsupported_services_dropped_without_delegation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    main = _main_module()
+    monkeypatch.setattr(main, "is_service_account_enabled", lambda: True)
+    monkeypatch.setattr(
+        main,
+        "get_oauth_config",
+        lambda: MagicMock(service_account_delegation=False),
+    )
+    notices: list[str] = []
+    monkeypatch.setattr(main, "add_startup_notice", notices.append)
+
+    kept = main._without_delegation_unsupported(
+        ["drive", "gmail", "calendar", "chat", "contacts", "appscript", "docs"]
+    )
+    assert kept == ["drive", "calendar", "docs"]
+    assert notices and "gmail" in notices[0] and "appscript" in notices[0]
+
+
+def test_services_kept_with_delegation(monkeypatch: pytest.MonkeyPatch) -> None:
+    main = _main_module()
+    monkeypatch.setattr(main, "is_service_account_enabled", lambda: True)
+    monkeypatch.setattr(
+        main, "get_oauth_config", lambda: MagicMock(service_account_delegation=True)
+    )
+    services = ["drive", "gmail", "chat"]
+    assert main._without_delegation_unsupported(services) == services

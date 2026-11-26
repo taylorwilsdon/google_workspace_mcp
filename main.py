@@ -213,6 +213,25 @@ def add_startup_notice(message: str) -> None:
     logger.debug(message)
 
 
+def _without_delegation_unsupported(services):
+    """Drop services that cannot work with a service account acting as itself."""
+    services = list(services)
+    if not (
+        is_service_account_enabled()
+        and not get_oauth_config().service_account_delegation
+    ):
+        return services
+    kept = [s for s in services if s not in NO_DELEGATION_UNSUPPORTED_SERVICES]
+    dropped = [s for s in services if s in NO_DELEGATION_UNSUPPORTED_SERVICES]
+    if dropped:
+        add_startup_notice(
+            "Service account without delegation: not loading "
+            + ", ".join(dropped)
+            + " (needs domain-wide delegation)"
+        )
+    return kept
+
+
 def resolve_bind_host_for_transport(transport: str) -> str:
     """Choose a safe default bind host for the selected transport/auth mode."""
     configured_host = os.getenv("WORKSPACE_MCP_HOST")
@@ -275,6 +294,13 @@ SERVICE_MODULES = {
     "appscript": "gappsscript.apps_script_tools",
 }
 VALID_SERVICES = frozenset(SERVICE_MODULES)
+
+# Services whose APIs cannot act on behalf of a service account without domain-wide
+# delegation (they need a user mailbox, user contacts, a Chat app, or an API that
+# rejects service accounts). They are not loaded when delegation is off.
+NO_DELEGATION_UNSUPPORTED_SERVICES = frozenset(
+    {"gmail", "chat", "contacts", "appscript"}
+)
 
 # Every icon is a double-width emoji with no variation selector, so the startup
 # service grid stays aligned across terminals.
@@ -807,6 +833,8 @@ def main():
             print(f"Error: {e}", file=sys.stderr)
             sys.exit(1)
         # Permissions implicitly defines which services to load
+        allowed = set(_without_delegation_unsupported(perms.keys()))
+        perms = {svc: level for svc, level in perms.items() if svc in allowed}
         tools_to_import = list(perms.keys())
         set_enabled_tool_names(None)
 
@@ -857,6 +885,7 @@ def main():
 
     from auth.scopes import set_enabled_tools, set_read_only
 
+    tools_to_import = _without_delegation_unsupported(tools_to_import)
     set_enabled_tools(list(tools_to_import))
     if args.read_only:
         set_read_only(True)

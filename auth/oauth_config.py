@@ -8,6 +8,7 @@ sensible defaults for all OAuth-related settings.
 Supports both OAuth 2.0 and OAuth 2.1 with automatic client capability detection.
 """
 
+import json
 import logging
 import os
 from ipaddress import ip_address
@@ -238,6 +239,16 @@ class OAuthConfig:
             )
         self.service_account_enabled = bool(
             self.service_account_key_file or self.service_account_key_json
+        )
+        # The key's own identity (client_email), read once so per-call code does not
+        # re-read the key file. None when the key is unset or unreadable; startup
+        # validation reports those problems.
+        self.service_account_email: Optional[str] = (
+            _read_service_account_client_email(
+                self.service_account_key_file, self.service_account_key_json
+            )
+            if self.service_account_enabled
+            else None
         )
         if self.service_account_enabled and self.oauth21_enabled:
             raise ValueError(
@@ -738,3 +749,21 @@ def is_service_account_enabled() -> bool:
 def is_service_account_no_delegation() -> bool:
     """Check if service account mode runs without domain-wide delegation."""
     return get_oauth_config().is_service_account_no_delegation()
+
+
+def _read_service_account_client_email(
+    key_file: Optional[str], key_json: Optional[str]
+) -> Optional[str]:
+    """Return ``client_email`` from the service account key, or None if unavailable."""
+    try:
+        if key_file:
+            with open(key_file, encoding="utf-8") as f:
+                info = json.load(f)
+        else:
+            info = json.loads(key_json or "")
+    except (OSError, ValueError):
+        return None
+    if not isinstance(info, dict):
+        return None
+    email = info.get("client_email")
+    return email if isinstance(email, str) and email else None
