@@ -7,7 +7,10 @@ based on tier configuration, replacing direct @server.tool() decorators.
 
 import logging
 import os
-from typing import Set, Optional, Callable
+import re
+from typing import Callable, Iterable, Optional, Set
+
+from fastmcp import FastMCP
 
 from auth.oauth_config import is_oauth21_enabled
 from auth.permissions import is_permissions_mode, get_allowed_scopes_set
@@ -20,6 +23,10 @@ _enabled_tools: Optional[Set[str]] = None
 
 # Tools explicitly blocked regardless of tier or permission selection
 _disabled_tools: Set[str] = set()
+
+_ALWAYS_LOAD_TOOLS_ENV = "WORKSPACE_MCP_ALWAYS_LOAD_TOOLS"
+ALWAYS_LOAD_META_KEY = "anthropic/alwaysLoad"
+_TOOL_NAME_RE = re.compile(r"[a-z0-9_]+")
 
 
 def set_enabled_tools(tool_names: Optional[Set[str]]):
@@ -44,6 +51,11 @@ def get_disabled_tools() -> Set[str]:
     return _disabled_tools
 
 
+def _normalize_tool_names(names: Iterable[str]) -> Set[str]:
+    """Return the non-blank names stripped and lowercased."""
+    return {name.strip().lower() for name in names if name.strip()}
+
+
 def resolve_disabled_tools(cli_names: Optional[list[str]] = None) -> Set[str]:
     """Resolve the per-tool block list from CLI names, falling back to the env var.
 
@@ -61,7 +73,19 @@ def resolve_disabled_tools(cli_names: Optional[list[str]] = None) -> Set[str]:
         if cli_names
         else os.getenv("WORKSPACE_MCP_DISABLED_TOOLS", "").split(",")
     )
-    return {name.strip().lower() for name in raw if name.strip()}
+    return _normalize_tool_names(raw)
+
+
+def get_always_load_tools() -> Set[str]:
+    """Parse WORKSPACE_MCP_ALWAYS_LOAD_TOOLS; ValueError on a malformed tool name."""
+    names = _normalize_tool_names(os.getenv(_ALWAYS_LOAD_TOOLS_ENV, "").split(","))
+    malformed = sorted(name for name in names if not _TOOL_NAME_RE.fullmatch(name))
+    if malformed:
+        raise ValueError(
+            f"{_ALWAYS_LOAD_TOOLS_ENV} must be a comma-separated list of tool names, "
+            f"got {malformed[0]!r}"
+        )
+    return names
 
 
 def is_tool_enabled(tool_name: str) -> bool:
@@ -266,3 +290,22 @@ def filter_server_tools(server) -> int:
         )
 
     return tools_removed
+
+
+def mark_always_load_tools(server: FastMCP) -> int:
+    """Mark the WORKSPACE_MCP_ALWAYS_LOAD_TOOLS tools still registered; return the count."""
+    tool_components = get_tool_components(server)
+    marked = 0
+    for tool_name in sorted(get_always_load_tools()):
+        tool = tool_components.get(tool_name)
+        if tool is None:
+            logger.warning(
+                "Always-load entry '%s' matches no registered tool - check spelling, "
+                "or it may be filtered out by the current tool selection",
+                tool_name,
+            )
+            continue
+        tool.meta = {**(tool.meta or {}), ALWAYS_LOAD_META_KEY: True}
+        logger.info("Always-load: marking tool '%s'", tool_name)
+        marked += 1
+    return marked
