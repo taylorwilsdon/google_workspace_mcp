@@ -1094,6 +1094,9 @@ async def test_list_script_processes_against_discovery_schema(
 async def test_delete_script_project():
     """Test deleting a script project"""
     mock_service = Mock()
+    mock_service.files().get().execute.return_value = {
+        "mimeType": "application/vnd.google-apps.script"
+    }
     mock_service.files().delete().execute.return_value = {}
 
     result = await _delete_script_project_impl(
@@ -1101,6 +1104,53 @@ async def test_delete_script_project():
     )
 
     assert "Deleted Apps Script project: test123" in result
+
+
+@pytest.mark.asyncio
+async def test_delete_script_project_reaches_shared_drives() -> None:
+    """Projects in shared drives are listed, so they must be deletable too."""
+    mock_service = Mock()
+    mock_service.files().get().execute.return_value = {
+        "mimeType": "application/vnd.google-apps.script"
+    }
+
+    await _delete_script_project_impl(
+        service=mock_service, user_google_email="test@example.com", script_id="test123"
+    )
+
+    assert mock_service.files().get.call_args.kwargs == {
+        "fileId": "test123",
+        "fields": "mimeType",
+        "supportsAllDrives": True,
+    }
+    assert mock_service.files().delete.call_args.kwargs == {
+        "fileId": "test123",
+        "supportsAllDrives": True,
+    }
+    mock_service.files().delete.return_value.execute.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_delete_script_project_refuses_other_files() -> None:
+    """A Doc or Sheet ID is refused instead of being deleted past the trash."""
+    mock_service = Mock()
+    mock_service.files().get().execute.return_value = {
+        "mimeType": "application/vnd.google-apps.document"
+    }
+
+    with pytest.raises(UserInputError, match="not an Apps Script project"):
+        await _delete_script_project_impl(
+            service=mock_service,
+            user_google_email="test@example.com",
+            script_id="doc123",
+        )
+
+    assert mock_service.files().get.call_args.kwargs == {
+        "fileId": "doc123",
+        "fields": "mimeType",
+        "supportsAllDrives": True,
+    }
+    mock_service.files().delete.return_value.execute.assert_not_called()
 
 
 @pytest.mark.asyncio

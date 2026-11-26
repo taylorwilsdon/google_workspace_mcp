@@ -16,6 +16,7 @@ from auth.service_decorator import require_google_service
 from core.server import server
 from core.utils import (
     StringList,
+    check_path_segment,
     handle_http_errors,
     image_content_from_bytes,
     sniff_inline_image_mime_type,
@@ -143,6 +144,7 @@ async def get_presentation(
     Returns:
         str: The deck or layout digest, the page digest, or the markup JSON.
     """
+    presentation_id = check_path_segment(presentation_id, "presentation_id")
     logger.info(
         f"[get_presentation] Invoked. Email: '{user_google_email}', ID: '{presentation_id}', Action: '{action}'"
     )
@@ -205,6 +207,7 @@ async def batch_update_presentation(
     Returns:
         str: Details about the batch update operation results.
     """
+    presentation_id = check_path_segment(presentation_id, "presentation_id")
     logger.info(
         f"[batch_update_presentation] Invoked. Email: '{user_google_email}', ID: '{presentation_id}', Requests: {len(requests)}"
     )

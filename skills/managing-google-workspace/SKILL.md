@@ -122,7 +122,7 @@ For parameters: [references/drive.md](references/drive.md)
 | List calendars | `list_calendars` |
 | Create secondary calendar / share calendar, list, update or remove access | `manage_calendar` |
 | Get events | `get_events` |
-| Create/update/delete event | `manage_event` |
+| Create/update/delete/move event | `manage_event` |
 | Out of office (auto-decline) | `manage_out_of_office` |
 | Focus time (auto-decline, DND) | `manage_focus_time` |
 | Check availability | `query_freebusy` |
@@ -164,6 +164,7 @@ For parameters: [references/docs.md](references/docs.md)
 | Write/append/clear values | `modify_sheet_values` |
 | Insert smart chips | `modify_sheet_values` (`chips`) |
 | Copy/paste a range with formulas and formatting | `modify_sheet_values` (`source_range`) |
+| Load rows from a local CSV/TSV file into an existing sheet | `modify_sheet_values` (`file_path`) |
 | Format cells | `format_sheet_range` |
 | Conditional formatting | `manage_conditional_formatting` |
 | Get spreadsheet info | `get_spreadsheet_info` |

@@ -120,6 +120,8 @@ _SESSION_IDLE_TIMEOUT_ENV = "WORKSPACE_MCP_SESSION_IDLE_TIMEOUT"
 _DEFAULT_SESSION_IDLE_TIMEOUT_SECONDS = 60 * 60 + 60
 _GOOGLE_API_WORKERS_ENV = "WORKSPACE_MCP_GOOGLE_API_WORKERS"
 _ALLOWED_HOSTS_ENV = "WORKSPACE_MCP_ALLOWED_HOSTS"
+_STATELESS_HTTP_ENV = "WORKSPACE_MCP_STATELESS_HTTP"
+_SERVER_INSTRUCTIONS_ENV = "WORKSPACE_MCP_SERVER_INSTRUCTIONS"
 
 
 def _parse_bool_env(value: str) -> bool:
@@ -322,6 +324,14 @@ class WellKnownCacheControlMiddleware:
 
 
 well_known_cache_control_middleware = Middleware(WellKnownCacheControlMiddleware)
+
+
+def get_stateless_http() -> bool:
+    """Parse WORKSPACE_MCP_STATELESS_HTTP; ValueError unless unset, true or false."""
+    raw = os.getenv(_STATELESS_HTTP_ENV, "").strip().lower()
+    if raw not in ("", "true", "false"):
+        raise ValueError(f"{_STATELESS_HTTP_ENV} must be true or false, got {raw!r}")
+    return raw == "true"
 
 
 def get_session_idle_timeout() -> Optional[int]:
@@ -567,16 +577,22 @@ class SecureFastMCP(FastMCP):
         return await super().call_tool(name, arguments, *args, **kwargs)
 
 
-# Build server instructions with user email context for single-user mode.
-# Skipped in trusted-gateway and service-account no-delegation modes: the server
-# owns the identity, and user_google_email is no longer a tool parameter clients
-# can pass.
-_server_instructions = None
-if USER_GOOGLE_EMAIL and not _email_param_removed():
-    _server_instructions = f"""Connected Google account: {USER_GOOGLE_EMAIL}
+def get_server_instructions() -> Optional[str]:
+    """Return WORKSPACE_MCP_SERVER_INSTRUCTIONS, then the single-user account context."""
+    sections = [os.getenv(_SERVER_INSTRUCTIONS_ENV, "").strip()]
+    # Skipped in trusted-gateway and service-account no-delegation modes: the server
+    # owns the identity, and user_google_email is no longer a tool parameter clients
+    # can pass.
+    if USER_GOOGLE_EMAIL and not _email_param_removed():
+        sections.append(
+            f"Connected Google account: {USER_GOOGLE_EMAIL}\n\n"
+            f"When using Google Workspace tools, always use `{USER_GOOGLE_EMAIL}` "
+            "as the `user_google_email` parameter. Do not ask the user for their "
+            "email address."
+        )
+        logger.info(f"Server instructions configured for user: {USER_GOOGLE_EMAIL}")
+    return "\n\n".join(filter(None, sections)) or None
 
-When using Google Workspace tools, always use `{USER_GOOGLE_EMAIL}` as the `user_google_email` parameter. Do not ask the user for their email address."""
-    logger.info(f"Server instructions configured for user: {USER_GOOGLE_EMAIL}")
 
 # Branding for the OAuth consent page: FastMCP's OAuth proxy renders the server's
 # name / icon / website on the consent screen (auth/oauth_config reads the env vars).
@@ -588,7 +604,7 @@ _brand_icons = (
 server = SecureFastMCP(
     name=_brand_config.brand_name or "google_workspace",
     auth=None,
-    instructions=_server_instructions,
+    instructions=get_server_instructions(),
     website_url=_brand_config.brand_website_url,
     icons=_brand_icons,
     lifespan=_freeze_startup_heap | _google_api_executor,
