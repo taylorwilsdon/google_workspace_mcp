@@ -376,6 +376,8 @@ Execute multiple operations atomically in a single API call. Each operation is a
 | `insert_page_break` | `index` | |
 | `insert_person` | `email`, plus one of `index`, `end_of_segment=true`, `after_heading`, `before_heading` or `anchor_text` | `anchor_position`, `segment_id` (inserts an @mention smart chip) |
 | `insert_date` | `date` (`YYYY-MM-DD` or ISO 8601 with a time zone), plus one of `index`, `end_of_segment=true`, `after_heading`, `before_heading` or `anchor_text` | `anchor_position`, `segment_id`, `date_format`, `time_format`, `timezone` (needs `time_format=TIME_FORMAT_HOUR_MINUTE_TIMEZONE`; inserts a date smart chip) |
+| `create_dropdown_definition` | `title`, `options` (2-50 choices) | `dropdown_definition_id`; each choice has `display_value` and optional `option_id`, `text_color`, `background_color` (`#RRGGBB`) |
+| `insert_dropdown` | `dropdown_definition_id`, plus one of `index`, `end_of_segment=true`, `after_heading`, `before_heading`, `anchor_text` | `selected_option_id` (defaults to first choice), `segment_id`, `anchor_position` |
 | `find_replace` | `find_text`, `replace_text` | `match_case` |
 | `create_bullet_list` | `start_index`, `end_index` | `list_type` (`UNORDERED`/`ORDERED`/`NONE`), `nesting_level` (0-8), `paragraph_start_indices` |
 | `insert_doc_tab` | `title`, `index` | `parent_tab_id` |
@@ -383,6 +385,49 @@ Execute multiple operations atomically in a single API call. Each operation is a
 | `update_doc_tab` | `tab_id`, `title` | |
 
 Use `list_type='NONE'` in `create_bullet_list` to remove existing list formatting.
+
+### Native status dropdowns
+
+A definition belongs to one tab (the first tab when `tab_id` is omitted) and is
+reused by every chip in that tab. Definitions are not shared across tabs or
+documents. `title` and each `display_value` take 1-200 characters. Invalid
+operations are rejected before anything is written.
+
+```json
+[
+  {
+    "type": "create_dropdown_definition",
+    "dropdown_definition_id": "kix.meeting_status",
+    "title": "Meeting status",
+    "options": [
+      {"option_id": "dropdownItem.todo", "display_value": "To do", "background_color": "#E8EAED", "text_color": "#3C4043"},
+      {"option_id": "dropdownItem.active", "display_value": "In progress", "background_color": "#FEEFC3", "text_color": "#594300"},
+      {"option_id": "dropdownItem.done", "display_value": "Done", "background_color": "#CEEAD6", "text_color": "#0D652D"}
+    ]
+  },
+  {
+    "type": "insert_dropdown",
+    "dropdown_definition_id": "kix.meeting_status",
+    "selected_option_id": "dropdownItem.todo",
+    "end_of_segment": true
+  }
+]
+```
+
+A definition ID must match `^kix\.[a-zA-Z0-9_-]{2,14}$` and be unique within its
+tab; an option ID must match `^dropdownItem\.[a-zA-Z0-9_-]{2,14}$` and be unique
+within its definition. Explicit IDs let one batch create a definition and insert
+its chips. Omit them and Google generates them: the `Dropdown results` JSON in
+the response lists each created definition (`title`, `dropdown_definition_id`,
+`tab_id`, `options` with `option_id` and `display_value`) and each inserted chip
+(`dropdown_id`, `dropdown_definition_id`, `selected_option_id`, `tab_id`), where
+a `null` `tab_id` means the first tab. Do not repeat a successful creation with
+the same IDs.
+
+For an existing definition, submit only `insert_dropdown`. Anchored insertions
+(`after_heading`, `before_heading`, `anchor_text`) cannot share a batch with other
+operation types, so create the definition first. Updating or deleting definitions
+and changing an existing chip's selection are not supported.
 
 ---
 

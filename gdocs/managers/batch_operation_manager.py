@@ -29,6 +29,8 @@ from gdocs.docs_helpers import (
     create_insert_image_request,
     create_insert_person_request,
     create_insert_date_request,
+    create_dropdown_definition_request,
+    create_insert_dropdown_request,
     create_bullet_list_request,
     create_delete_bullet_list_request,
     create_named_range_request,
@@ -219,6 +221,10 @@ class BatchOperationManager:
             if created_tabs:
                 metadata["created_tabs"] = created_tabs
 
+            dropdown_results = self._extract_dropdown_results(requests, result)
+            if dropdown_results:
+                metadata["dropdown_results"] = dropdown_results
+
             summary = self._build_operation_summary(operation_descriptions)
             msg = f"Successfully executed {len(operations)} operations ({summary})"
             if write_mode == "SUGGEST":
@@ -274,6 +280,7 @@ class BatchOperationManager:
                 "insert_image",
                 "insert_person",
                 "insert_date",
+                "insert_dropdown",
             }:
                 return "Semantic anchors are supported only for insertion operations."
             valid, error = validate_operation(op)
@@ -1011,6 +1018,23 @@ class BatchOperationManager:
                 else f"mention {op['email']} at {op.get('index')}"
             )
 
+        elif op_type == "create_dropdown_definition":
+            request = create_dropdown_definition_request(
+                op["title"], op["options"], op.get("dropdown_definition_id"), tab_id
+            )
+            description = f"create dropdown definition '{op['title']}'"
+
+        elif op_type == "insert_dropdown":
+            request = create_insert_dropdown_request(
+                op.get("index"),
+                op["dropdown_definition_id"],
+                op.get("selected_option_id"),
+                tab_id,
+                segment_id=segment_id,
+                end_of_segment=end_of_segment,
+            )
+            description = f"insert dropdown '{op['dropdown_definition_id']}'"
+
         elif op_type == "insert_date":
             request = create_insert_date_request(
                 op.get("index"),
@@ -1161,6 +1185,7 @@ class BatchOperationManager:
 
         else:
             supported_types = [
+                "create_dropdown_definition",
                 "insert_text",
                 "delete_text",
                 "replace_text",
@@ -1181,6 +1206,7 @@ class BatchOperationManager:
                 "insert_image",
                 "insert_person",
                 "insert_date",
+                "insert_dropdown",
                 "insert_doc_tab",
                 "delete_doc_tab",
                 "update_doc_tab",
@@ -1250,6 +1276,56 @@ class BatchOperationManager:
                         created_tabs.append({"tab_id": tab_id, "title": title})
                     break
         return created_tabs
+
+    @staticmethod
+    def _extract_dropdown_results(
+        requests: list[dict[str, Any]], result: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        """IDs of each created dropdown definition and inserted chip, in request order."""
+        results = []
+        for request, reply in zip(requests, result.get("replies", [])):
+            if "createDropdownDefinition" in reply:
+                definition = reply["createDropdownDefinition"].get(
+                    "dropdownDefinition", {}
+                )
+                options = definition.get("dropdownDefinitionProperties", {}).get(
+                    "options", []
+                )
+                results.append(
+                    {
+                        "title": request["createDropdownDefinition"][
+                            "dropdownDefinition"
+                        ]["dropdownDefinitionProperties"]["title"],
+                        "dropdown_definition_id": definition.get(
+                            "dropdownDefinitionId"
+                        ),
+                        "tab_id": request["createDropdownDefinition"].get("tabId"),
+                        "options": [
+                            {
+                                "option_id": option.get("optionId"),
+                                "display_value": option.get("displayValue"),
+                            }
+                            for option in options
+                        ],
+                    }
+                )
+            elif "insertDropdown" in reply:
+                payload = request["insertDropdown"]
+                location = payload.get(
+                    "location", payload.get("endOfSegmentLocation", {})
+                )
+                chip = reply["insertDropdown"].get("dropdown", {})
+                results.append(
+                    {
+                        "dropdown_id": chip.get("dropdownId"),
+                        "dropdown_definition_id": payload["dropdownDefinitionId"],
+                        "selected_option_id": chip.get("dropdownProperties", {}).get(
+                            "selectedOptionId"
+                        ),
+                        "tab_id": location.get("tabId"),
+                    }
+                )
+        return results
 
     def _build_operation_summary(self, operation_descriptions: list[str]) -> str:
         """
@@ -1494,6 +1570,26 @@ class BatchOperationManager:
                     "required": ["email"],
                     "optional": ["index", "end_of_segment", "segment_id", "tab_id"],
                     "description": "Insert a person @mention smart chip",
+                },
+                "create_dropdown_definition": {
+                    "required": ["title", "options"],
+                    "optional": ["dropdown_definition_id", "tab_id"],
+                    "description": "Create a reusable native dropdown definition in a tab",
+                },
+                "insert_dropdown": {
+                    "required": ["dropdown_definition_id"],
+                    "optional": [
+                        "selected_option_id",
+                        "index",
+                        "end_of_segment",
+                        "segment_id",
+                        "tab_id",
+                        "after_heading",
+                        "before_heading",
+                        "anchor_text",
+                        "anchor_position",
+                    ],
+                    "description": "Insert a native dropdown chip using an existing definition",
                 },
                 "insert_date": {
                     "required": ["date"],

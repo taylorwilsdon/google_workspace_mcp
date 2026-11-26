@@ -145,7 +145,7 @@ For parameters: [references/calendar.md](references/calendar.md)
 | Update paragraph styles | `update_paragraph_style` |
 | Find and replace | `find_and_replace_doc` |
 | Inspect structure | `inspect_doc_structure` |
-| Batch update (multiple ops) | `batch_update_doc` |
+| Batch update (multiple ops, native status dropdowns) | `batch_update_doc` |
 | Headers/footers | `update_doc_headers_footers` |
 | Manage tabs | `manage_doc_tab` |
 | Export to PDF | `export_doc_to_pdf` |
