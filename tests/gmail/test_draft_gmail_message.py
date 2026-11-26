@@ -1,10 +1,13 @@
 import base64
+from collections.abc import Awaitable, Callable
 from email import policy
 from email.parser import BytesParser
 import os
+from pathlib import Path
 import ssl
 import sys
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import Mock
 from contextlib import asynccontextmanager
 
@@ -2523,3 +2526,292 @@ async def test_draft_gmail_message_forward_honors_direction(monkeypatch):
 
     assert captured["direction"] == "rtl"
     assert captured["as_draft"] is True
+
+
+_ReplyTool = Callable[..., Awaitable[str]]
+_ThreadFetch = dict[str, Any] | Exception
+
+
+def _reply_quote_service(thread: _ThreadFetch) -> Mock:
+    """Gmail double for one send or draft, with ``thread`` as the thread fetch."""
+    service = _mock_gmail_service()
+    service.users().messages().send().execute.return_value = {"id": "sent_reply"}
+    service.users().drafts().create().execute.return_value = {"id": "draft_reply"}
+    if isinstance(thread, Exception):
+        service.users().threads().get().execute.side_effect = thread
+    else:
+        service.users().threads().get().execute.return_value = thread
+    # Count only the calls the tool makes, not the setup above.
+    service.users.return_value.threads.return_value.get.reset_mock()
+    return service
+
+
+def _reply_quote_html(service: Mock, tool: _ReplyTool) -> str:
+    """The HTML body of the message ``tool`` sent or drafted."""
+    users = service.users.return_value
+    if tool is send_gmail_message:
+        raw = users.messages.return_value.send.call_args.kwargs["body"]["raw"]
+    else:
+        raw = users.drafts.return_value.create.call_args.kwargs["body"]["message"][
+            "raw"
+        ]
+    return _parse_raw_message(raw).get_body(preferencelist=("html",)).get_content()
+
+
+_QUOTABLE_THREAD: dict[str, Any] = {
+    "messages": [
+        _thread_message(
+            "<parent@example.com>",
+            from_value="Ada Lovelace <ada@example.com>",
+            text="Original line",
+            html="<div>Original line</div>",
+        )
+    ]
+}
+
+_REPLY_TOOLS = pytest.mark.parametrize(
+    "tool", [send_gmail_message, draft_gmail_message], ids=["send", "draft"]
+)
+_RESULT_ID: dict[_ReplyTool, str] = {
+    send_gmail_message: "Message ID: sent_reply",
+    draft_gmail_message: "Draft ID: draft_reply",
+}
+
+
+@pytest.mark.asyncio
+@_REPLY_TOOLS
+async def test_reply_quotes_original_when_requested(tool: _ReplyTool) -> None:
+    service = _reply_quote_service(_QUOTABLE_THREAD)
+
+    result = await _unwrap(tool)(
+        service=service,
+        user_google_email="user@example.com",
+        to="ada@example.com",
+        subject="Meeting tomorrow",
+        body="Thanks!",
+        thread_id="thread123",
+        include_signature=False,
+        quote_original=True,
+    )
+
+    html_body = _reply_quote_html(service, tool)
+    assert "gmail_quote" in html_body
+    assert "Ada Lovelace" in html_body
+    assert "<div>Original line</div>" in html_body
+    assert "not quoted" not in result
+
+
+@pytest.mark.asyncio
+@_REPLY_TOOLS
+@pytest.mark.parametrize(
+    "quote_kwargs", [{}, {"quote_original": False}], ids=["default", "explicit"]
+)
+async def test_reply_does_not_quote_unless_requested(
+    tool: _ReplyTool, quote_kwargs: dict[str, Any]
+) -> None:
+    service = _reply_quote_service(_QUOTABLE_THREAD)
+
+    result = await _unwrap(tool)(
+        service=service,
+        user_google_email="user@example.com",
+        to="ada@example.com",
+        subject="Meeting tomorrow",
+        body="Thanks!",
+        thread_id="thread123",
+        include_signature=False,
+        **quote_kwargs,
+    )
+
+    thread_get = service.users.return_value.threads.return_value.get
+    assert "fields" in thread_get.call_args.kwargs
+    assert "gmail_quote" not in _reply_quote_html(service, tool)
+    assert "Original line" not in _reply_quote_html(service, tool)
+    assert "not quoted" not in result
+
+
+@pytest.mark.asyncio
+@_REPLY_TOOLS
+@pytest.mark.parametrize(
+    "quote_kwargs", [{}, {"quote_original": True}], ids=["default", "explicit"]
+)
+async def test_non_reply_never_quotes(
+    tool: _ReplyTool, quote_kwargs: dict[str, Any]
+) -> None:
+    service = _reply_quote_service(_QUOTABLE_THREAD)
+
+    result = await _unwrap(tool)(
+        service=service,
+        user_google_email="user@example.com",
+        to="ada@example.com",
+        subject="Meeting tomorrow",
+        body="Hello",
+        include_signature=False,
+        **quote_kwargs,
+    )
+
+    assert service.users.return_value.threads.return_value.get.call_count == 0
+    assert "gmail_quote" not in _reply_quote_html(service, tool)
+    assert "not quoted" not in result
+
+
+@pytest.mark.asyncio
+@_REPLY_TOOLS
+@pytest.mark.parametrize(
+    ("thread", "reason"),
+    [
+        (
+            {"messages": [_thread_message("<parent@example.com>", date="not a date")]},
+            "it has no parseable From address or Date header",
+        ),
+        (
+            RuntimeError("fetch failed"),
+            "the message being replied to could not be loaded from the thread",
+        ),
+    ],
+    ids=["unparseable-date", "fetch-failed"],
+)
+async def test_reply_reports_dropped_quote(
+    tool: _ReplyTool, thread: _ThreadFetch, reason: str
+) -> None:
+    service = _reply_quote_service(thread)
+
+    result = await _unwrap(tool)(
+        service=service,
+        user_google_email="user@example.com",
+        to="ada@example.com",
+        subject="Meeting tomorrow",
+        body="Thanks!",
+        thread_id="thread123",
+        include_signature=False,
+        quote_original=True,
+    )
+
+    assert "gmail_quote" not in _reply_quote_html(service, tool)
+    assert result.endswith(
+        f" Note: the original message was not quoted because {reason}."
+    )
+
+
+def _attachment_backed_parent() -> dict[str, Any]:
+    """A parent whose text and HTML bodies Gmail stores behind an attachmentId."""
+    message = _thread_message(
+        "<parent@example.com>", from_value="Ada Lovelace <ada@example.com>"
+    )
+    message["id"] = "parent123"
+    message["payload"]["mimeType"] = "multipart/alternative"
+    message["payload"]["parts"] = [
+        {"mimeType": mime_type, "body": {"attachmentId": f"att-{n}", "size": 10}}
+        for n, mime_type in enumerate(("text/plain", "text/html"))
+    ]
+    return {"messages": [message]}
+
+
+@pytest.mark.asyncio
+@_REPLY_TOOLS
+async def test_reply_reports_unfetchable_parent_body(tool: _ReplyTool) -> None:
+    service = _reply_quote_service(_attachment_backed_parent())
+    service.users().messages().attachments().get().execute.side_effect = ValueError(
+        "body fetch failed"
+    )
+
+    result = await _unwrap(tool)(
+        service=service,
+        user_google_email="user@example.com",
+        to="ada@example.com",
+        subject="Meeting tomorrow",
+        body="Thanks!",
+        thread_id="thread123",
+        include_signature=False,
+        quote_original=True,
+    )
+
+    assert "gmail_quote" not in _reply_quote_html(service, tool)
+    assert "wrote:" not in _reply_quote_html(service, tool)
+    assert (
+        " Note: the original message was not quoted because its body could not be fetched"
+        in result
+    )
+
+
+@pytest.mark.asyncio
+@_REPLY_TOOLS
+async def test_reply_quotes_parent_when_only_one_body_part_is_unfetchable(
+    tool: _ReplyTool,
+) -> None:
+    thread = _attachment_backed_parent()
+    thread["messages"][0]["payload"]["parts"][1]["body"] = {
+        "data": _encode_part("<div>Original line</div>")
+    }
+    service = _reply_quote_service(thread)
+    service.users().messages().attachments().get().execute.side_effect = ValueError(
+        "body fetch failed"
+    )
+
+    result = await _unwrap(tool)(
+        service=service,
+        user_google_email="user@example.com",
+        to="ada@example.com",
+        subject="Meeting tomorrow",
+        body="Thanks!",
+        thread_id="thread123",
+        include_signature=False,
+        quote_original=True,
+    )
+
+    assert "<div>Original line</div>" in _reply_quote_html(service, tool)
+    assert "not quoted" not in result
+
+
+@pytest.mark.asyncio
+@_REPLY_TOOLS
+@pytest.mark.parametrize(
+    ("thread", "quoted", "note"),
+    [
+        (
+            {
+                "messages": [
+                    _thread_message(
+                        "<parent@example.com>", date="not a date", text="Original line"
+                    )
+                ]
+            },
+            True,
+            "",
+        ),
+        (
+            RuntimeError("fetch failed"),
+            False,
+            " Note: the original message was not quoted because the message being"
+            " replied to could not be loaded from the thread.",
+        ),
+    ],
+    ids=["unparseable-date", "fetch-failed"],
+)
+async def test_reply_with_attachment_quotes_or_reports(
+    tool: _ReplyTool,
+    thread: _ThreadFetch,
+    quoted: bool,
+    note: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ALLOWED_FILE_DIRS", str(tmp_path))
+    attachment_path = tmp_path / "sample.txt"
+    attachment_path.write_text("hello attachment", encoding="utf-8")
+    service = _reply_quote_service(thread)
+
+    result = await _unwrap(tool)(
+        service=service,
+        user_google_email="user@example.com",
+        to="ada@example.com",
+        subject="Meeting tomorrow",
+        body="Thanks!",
+        thread_id="thread123",
+        include_signature=False,
+        quote_original=True,
+        body_format="html",
+        attachments=[{"path": str(attachment_path)}],
+    )
+
+    assert ("Original line" in _reply_quote_html(service, tool)) is quoted
+    assert result.endswith(f"with 1 attachment(s)! {_RESULT_ID[tool]}{note}")

@@ -1438,20 +1438,45 @@ def _fill_missing_body(plain: str, html_body: str) -> tuple[str, str]:
     return plain, html_body
 
 
+def _web_quote_attribution(
+    target: Mapping[str, Any],
+) -> Optional[tuple[str, str, datetime]]:
+    """Return the (name, email, date) of Gmail's reply attribution, or None if unparseable."""
+    parent_name, parent_email = parseaddr(target.get("from") or "")
+    parent_dt = _parse_message_date(target.get("date") or "")
+    if "@" not in parent_email or parent_dt is None:
+        return None
+    return parent_name.strip() or parent_email, parent_email, parent_dt
+
+
+def _resolve_reply_quote(
+    target: Optional[Mapping[str, Any]], web_path: bool
+) -> tuple[Optional[Mapping[str, Any]], str]:
+    """Return the parent to quote, or None and a tool-result note saying why not."""
+    if target is None:
+        reason = "the message being replied to could not be loaded from the thread"
+    elif target.get("body_error"):
+        reason = f"its body could not be fetched ({target['body_error']})"
+    elif web_path and _web_quote_attribution(target) is None:
+        reason = "it has no parseable From address or Date header"
+    else:
+        return target, ""
+    return None, f" Note: the original message was not quoted because {reason}."
+
+
 def _build_web_reply_bodies(
     new_plain: str, new_html: str, target: Mapping[str, Any]
 ) -> tuple[str, str]:
     """Append a Gmail-web ``gmail_quote`` reply trail to both body parts.
 
     ``target`` is the parent message from the thread reply context. When it
-    lacks a usable sender address or date, the bodies are returned unchanged so
-    the reply still sends, just without a quote.
+    lacks a usable sender address or date (see ``_web_quote_attribution``), the
+    bodies are returned unchanged so the reply still sends, just without a quote.
     """
-    parent_name, parent_email = parseaddr(target.get("from") or "")
-    parent_dt = _parse_message_date(target.get("date") or "")
-    if "@" not in parent_email or parent_dt is None:
+    attribution = _web_quote_attribution(target)
+    if attribution is None:
         return new_plain, new_html
-    parent_name = parent_name.strip() or parent_email
+    parent_name, parent_email, parent_dt = attribution
     parent_text, parent_html = _fill_missing_body(
         target.get("text_body") or "", target.get("html_body") or ""
     )
