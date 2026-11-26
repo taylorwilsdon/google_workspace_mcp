@@ -3,7 +3,7 @@
 MCP tools for Gmail message search, sending, drafting, labels, and filters. All tools require `user_google_email` (string, required).
 
 ## Contents
-- Search & Read: search_gmail_messages, get_gmail_message_content, get_gmail_messages_content_batch, get_gmail_thread_content, get_gmail_threads_content_batch, get_gmail_attachment_content
+- Search & Read: search_gmail_messages, search_gmail_threads, get_gmail_message_content, get_gmail_messages_content_batch, get_gmail_thread_content, get_gmail_threads_content_batch, get_gmail_attachment_content
 - Send & Draft: send_gmail_message, draft_gmail_message
 - Label Management: list_gmail_labels, manage_gmail_label, modify_gmail_message_labels, batch_modify_gmail_message_labels
 - Filter Management: list_gmail_filters, manage_gmail_filter
@@ -23,6 +23,26 @@ Search messages by query. Returns message IDs, thread IDs, and Gmail web links.
 | page_size | integer | no | 10 | Max results per page |
 | page_token | any | no | | Pagination token |
 | include_headers | boolean | no | false | Also return Subject, From, Date and label IDs per result; costs one metadata read per result |
+
+### search_gmail_threads
+Search one provider page of conversations, not messages. Returns thread IDs, Gmail
+links, snippets, message counts and the latest message's Subject, From and Date.
+No message bodies or attachments are fetched. Counts and latest headers include
+all messages in each thread (including drafts), not only messages matching the query;
+latest means the greatest Gmail internalDate, not the sender's Date header.
+
+| Parameter | Type | Required | Default | Notes |
+|-----------|------|----------|---------|-------|
+| query | string | yes | | Gmail search query |
+| user_google_email | string | yes | | |
+| page_size | integer | no | 10 | Maximum threads per page, 1 to 100 |
+| page_token | string | no | | Previous next_page_token; keep query unchanged |
+
+Costs one list call plus one metadata read per result, performed sequentially with
+bounded retries for transient errors. Failed metadata reads leave the thread ID
+and snippet visible and mark count/headers unavailable. Follow next_page_token,
+even on an empty page, until no token is returned. No total result cap is imposed
+across calls. Existing search_gmail_messages behavior is unchanged.
 
 ### get_gmail_message_content
 Get full content of a single message (subject, sender, recipients, date, Message-ID, body).
