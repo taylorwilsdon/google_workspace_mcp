@@ -1,5 +1,7 @@
 import io
 import argparse
+import asyncio
+import errno
 import json
 import logging
 import os
@@ -216,7 +218,7 @@ def add_startup_notice(message: str) -> None:
 def resolve_bind_host_for_transport(transport: str) -> str:
     """Choose a safe default bind host for the selected transport/auth mode."""
     configured_host = os.getenv("WORKSPACE_MCP_HOST")
-    host = configured_host or "0.0.0.0"
+    host = configured_host or ""
     if transport != "streamable-http":
         return host
 
@@ -334,27 +336,49 @@ def _local_ipv4_addresses() -> list[str]:
     return list(dict.fromkeys(["127.0.0.1", *(info[4][0] for info in infos)]))
 
 
+def _format_address(host: str, port: int) -> str:
+    """Render host:port for messages, bracketing IPv6 and showing "" as *."""
+    return f"[{host}]:{port}" if ":" in host else f"{host or '*'}:{port}"
+
+
 def _http_port_conflict(host: str, port: int) -> str | None:
     """Return why uvicorn could not serve host:port, or None if it can."""
     # macOS SO_REUSEADDR wildcard binds coexist with specific-address listeners.
-    connect_hosts = _local_ipv4_addresses() if host in ("", "0.0.0.0") else [host]
+    connect_hosts = [host]
+    if host in ("", "0.0.0.0", "::"):
+        connect_hosts = [
+            *([] if host == "::" else _local_ipv4_addresses()),
+            *([] if host == "0.0.0.0" else ["::1"]),
+        ]
     for connect_host in connect_hosts:
         try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.settimeout(0.5)
-                if s.connect_ex((connect_host, port)) == 0:
-                    return f"a server is already listening on {connect_host}:{port}"
+            socket.create_connection((connect_host, port), timeout=0.5).close()
         except OSError:
-            pass
+            continue
+        return f"a server is already listening on {_format_address(connect_host, port)}"
 
     try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            if os.name != "nt":  # matches asyncio's reuse_address default
-                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            s.bind((host, port))
+        infos = socket.getaddrinfo(
+            host or None, port, type=socket.SOCK_STREAM, flags=socket.AI_PASSIVE
+        )
     except OSError as e:
         return str(e)
-    return None
+    bound, skipped = False, None
+    for family, kind, proto, _, address in infos:
+        try:
+            with socket.socket(family, kind, proto) as s:
+                if os.name != "nt":  # matches asyncio's reuse_address default
+                    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                if family == socket.AF_INET6:  # asyncio never binds dual-stack
+                    s.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+                s.bind(address)
+            bound = True
+        except OSError as e:
+            # asyncio skips address families the host has disabled.
+            if e.errno not in (errno.EADDRNOTAVAIL, errno.EAFNOSUPPORT):
+                return str(e)
+            skipped = str(e)
+    return None if bound else skipped
 
 
 def _systemd_activation_sockets() -> list[socket.socket] | None:
@@ -1101,7 +1125,11 @@ def main():
                 # Check port availability before starting HTTP server
                 conflict = _http_port_conflict(host, port)
                 if conflict is not None:
-                    fatal(ui, f"Cannot start HTTP server on {host}:{port}", conflict)
+                    fatal(
+                        ui,
+                        f"Cannot start HTTP server on {_format_address(host, port)}",
+                        conflict,
+                    )
 
             server.run(
                 transport="streamable-http",
@@ -1114,7 +1142,6 @@ def main():
         else:
             if http_port is not None:
                 # Dual transport: stdio for MCP client + HTTP for workspace-cli
-                import asyncio
                 import uvicorn
 
                 # Bind sidecar to loopback only — auth provider is not initialized
