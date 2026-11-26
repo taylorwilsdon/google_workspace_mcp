@@ -8,6 +8,7 @@ sensible defaults for all OAuth-related settings.
 Supports both OAuth 2.0 and OAuth 2.1 with automatic client capability detection.
 """
 
+import json
 import logging
 import os
 from ipaddress import ip_address
@@ -227,7 +228,7 @@ class OAuthConfig:
                 "WORKSPACE_MCP_STATELESS_MODE requires MCP_ENABLE_OAUTH21=true"
             )
 
-        # Service account (domain-wide delegation) configuration
+        # Service account configuration (domain-wide delegation, or acting as itself)
         self.service_account_key_file = os.getenv("GOOGLE_SERVICE_ACCOUNT_KEY_FILE")
         self.service_account_key_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_KEY_JSON")
         if self.service_account_key_file and self.service_account_key_json:
@@ -239,6 +240,16 @@ class OAuthConfig:
         self.service_account_enabled = bool(
             self.service_account_key_file or self.service_account_key_json
         )
+        # The key's own identity (client_email), read once so per-call code does not
+        # re-read the key file. None when the key is unset or unreadable; startup
+        # validation reports those problems.
+        self.service_account_email: Optional[str] = (
+            _read_service_account_client_email(
+                self.service_account_key_file, self.service_account_key_json
+            )
+            if self.service_account_enabled
+            else None
+        )
         if self.service_account_enabled and self.oauth21_enabled:
             raise ValueError(
                 "Service account mode is incompatible with OAuth 2.1 mode. "
@@ -246,8 +257,42 @@ class OAuthConfig:
                 "but not MCP_ENABLE_OAUTH21=true."
             )
 
+        # Domain-wide delegation toggle. Defaults to on (impersonate USER_GOOGLE_EMAIL).
+        # When false, the service account authenticates as itself (no `subject`),
+        # which needs no Admin console delegation and suits single-tenant bots.
+        # Unrecognized values are rejected: a typo must not silently keep delegation
+        # on. An unset or empty value keeps the default.
+        _delegation_raw = (
+            os.getenv("GOOGLE_SERVICE_ACCOUNT_DELEGATION", "").strip().lower()
+        )
+        if _delegation_raw in ("", "1", "true", "yes", "on"):
+            self.service_account_delegation = True
+        elif _delegation_raw in ("0", "false", "no", "off"):
+            self.service_account_delegation = False
+        else:
+            raise ValueError(
+                "GOOGLE_SERVICE_ACCOUNT_DELEGATION must be true or false, "
+                f"got {_delegation_raw!r}."
+            )
+        if self.is_service_account_no_delegation() and self.trust_gateway_identity:
+            raise ValueError(
+                "TRUST_GATEWAY_IDENTITY requires per-user identity, which a service "
+                "account without delegation cannot provide. Set "
+                "GOOGLE_SERVICE_ACCOUNT_DELEGATION=true or disable TRUST_GATEWAY_IDENTITY."
+            )
+
         # Optional per-request impersonation domain allowlist for service accounts.
         _raw_domains = os.getenv("DWD_ALLOWED_DOMAINS", "")
+        if (
+            _raw_domains
+            and self.service_account_enabled
+            and not self.service_account_delegation
+        ):
+            logger.warning(
+                "DWD_ALLOWED_DOMAINS is ignored when "
+                "GOOGLE_SERVICE_ACCOUNT_DELEGATION is disabled."
+            )
+            _raw_domains = ""
         self.dwd_allowed_domains: List[str] = (
             [d.strip().lower() for d in _raw_domains.split(",") if d.strip()]
             if self.service_account_enabled and _raw_domains
@@ -450,6 +495,7 @@ class OAuthConfig:
             "external_oauth21_provider": self.external_oauth21_provider,
             "pkce_required": self.pkce_required,
             "service_account_enabled": self.service_account_enabled,
+            "service_account_delegation": self.service_account_delegation,
             "transport_mode": self._transport_mode,
             "total_redirect_uris": len(self.get_redirect_uris()),
             "total_allowed_origins": len(self.get_allowed_origins()),
@@ -496,12 +542,19 @@ class OAuthConfig:
 
     def is_service_account_enabled(self) -> bool:
         """
-        Check if service account (domain-wide delegation) mode is enabled.
+        Check if service account mode is enabled.
+
+        True for both domain-wide delegation and no-delegation (bot) mode; use
+        is_service_account_no_delegation() to tell them apart.
 
         Returns:
             True if service account mode is enabled
         """
         return self.service_account_enabled
+
+    def is_service_account_no_delegation(self) -> bool:
+        """True when a service account acts as itself, without impersonation."""
+        return self.service_account_enabled and not self.service_account_delegation
 
     def detect_oauth_version(self, request_params: Dict[str, Any]) -> str:
         """
@@ -689,5 +742,28 @@ def is_trust_gateway_identity() -> bool:
 
 
 def is_service_account_enabled() -> bool:
-    """Check if service account (domain-wide delegation) mode is enabled."""
+    """Check if service account mode is enabled (with or without delegation)."""
     return get_oauth_config().is_service_account_enabled()
+
+
+def is_service_account_no_delegation() -> bool:
+    """Check if service account mode runs without domain-wide delegation."""
+    return get_oauth_config().is_service_account_no_delegation()
+
+
+def _read_service_account_client_email(
+    key_file: Optional[str], key_json: Optional[str]
+) -> Optional[str]:
+    """Return ``client_email`` from the service account key, or None if unavailable."""
+    try:
+        if key_file:
+            with open(key_file, encoding="utf-8") as f:
+                info = json.load(f)
+        else:
+            info = json.loads(key_json or "")
+    except (OSError, ValueError):
+        return None
+    if not isinstance(info, dict):
+        return None
+    email = info.get("client_email")
+    return email if isinstance(email, str) and email else None

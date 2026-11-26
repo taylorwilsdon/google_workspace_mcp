@@ -34,6 +34,7 @@ from auth.oauth_config import (
     is_oauth21_enabled,
     is_external_oauth21_provider,
     get_oauth_config,
+    is_service_account_no_delegation,
     is_trust_gateway_identity,
 )
 from auth.oauth_proxy_config import (
@@ -126,6 +127,15 @@ _SERVER_INSTRUCTIONS_ENV = "WORKSPACE_MCP_SERVER_INSTRUCTIONS"
 def _parse_bool_env(value: str) -> bool:
     """Parse environment variable string to boolean."""
     return value.lower() in ("1", "true", "yes", "on")
+
+
+def _email_param_removed() -> bool:
+    """True when the server owns the identity and tools have no user_google_email.
+
+    That is the case for a verified gateway principal and for a service account
+    acting as itself (no delegation).
+    """
+    return is_trust_gateway_identity() or is_service_account_no_delegation()
 
 
 def _normalize_parsed(parsed: ParseResult) -> Optional[str]:
@@ -504,7 +514,7 @@ class SecureFastMCP(FastMCP):
         runtime still resolves the email correctly via the service decorator.
         """
         tools = list(await super().list_tools(run_middleware=run_middleware))
-        if is_trust_gateway_identity():
+        if _email_param_removed():
             patched = []
             for tool in tools:
                 if tool.name != "start_google_auth":
@@ -547,11 +557,12 @@ class SecureFastMCP(FastMCP):
         inject the default BEFORE that validation step.
         """
         arguments = arguments or {}
-        if is_trust_gateway_identity():
-            # The verified gateway principal is authoritative for every tool, and the
-            # parameter is gone from tool signatures. Drop any caller-supplied email
-            # (older clients may have the pre-gateway schema cached) instead of letting
-            # it fail signature validation, and never inject USER_GOOGLE_EMAIL.
+        if _email_param_removed():
+            # The server owns the identity (a verified gateway principal, or the
+            # service account itself) and the parameter is gone from tool signatures.
+            # Drop any caller-supplied email (older clients may have the previous
+            # schema cached) instead of letting it fail signature validation, and
+            # never inject USER_GOOGLE_EMAIL.
             arguments = {
                 key: value
                 for key, value in arguments.items()
@@ -569,9 +580,10 @@ class SecureFastMCP(FastMCP):
 def get_server_instructions() -> Optional[str]:
     """Return WORKSPACE_MCP_SERVER_INSTRUCTIONS, then the single-user account context."""
     sections = [os.getenv(_SERVER_INSTRUCTIONS_ENV, "").strip()]
-    # Skipped in trusted-gateway mode: the verified principal supersedes the configured
-    # default, and user_google_email is no longer a tool parameter clients can pass.
-    if USER_GOOGLE_EMAIL and not is_trust_gateway_identity():
+    # Skipped in trusted-gateway and service-account no-delegation modes: the server
+    # owns the identity, and user_google_email is no longer a tool parameter clients
+    # can pass.
+    if USER_GOOGLE_EMAIL and not _email_param_removed():
         sections.append(
             f"Connected Google account: {USER_GOOGLE_EMAIL}\n\n"
             f"When using Google Workspace tools, always use `{USER_GOOGLE_EMAIL}` "
@@ -1149,6 +1161,12 @@ async def start_google_auth(
             "start_google_auth is disabled when OAuth 2.1 is enabled. "
             "Authenticate through your MCP client's OAuth 2.1 flow and retry the "
             "original tool."
+        )
+
+    if is_service_account_no_delegation():
+        return (
+            "start_google_auth is not used in service-account mode. The server "
+            "authenticates as its service account; no OAuth flow is required."
         )
 
     if is_trust_gateway_identity():

@@ -34,6 +34,7 @@ from auth.oauth_config import (
     get_oauth_config,
     is_external_oauth21_provider,
     is_service_account_enabled,
+    is_service_account_no_delegation,
     is_trust_gateway_identity,
 )
 from core.context import set_fastmcp_session_id
@@ -145,8 +146,13 @@ def _user_email_is_managed() -> bool:
     """True when the server determines user_google_email from a verified identity
     (an OAuth 2.1 access token OR a trusted-gateway assertion) instead of the caller
     passing it. Drives hiding + auto-filling the user_google_email tool parameter so
-    the client never has to ask for it."""
-    return is_oauth21_enabled() or is_trust_gateway_identity()
+    the client never has to ask for it. Service accounts without delegation act as
+    themselves, so there is no user email for the caller to supply either."""
+    return (
+        is_oauth21_enabled()
+        or is_trust_gateway_identity()
+        or is_service_account_no_delegation()
+    )
 
 
 def _detect_oauth_version(
@@ -245,15 +251,45 @@ def _override_oauth21_user_email(
     return authenticated_user, args
 
 
+def _get_service_account_email() -> str:
+    """Return the service account's own email (``client_email`` in the key).
+
+    Read once when the config loads, so this does not touch the key file per call.
+    """
+    client_email = get_oauth_config().service_account_email
+    if not client_email:
+        raise GoogleAuthenticationError(
+            "Service account key is missing a readable 'client_email'."
+        )
+    return client_email
+
+
+# Services that need a real user (mailbox, contacts) or a Chat app identity, so
+# they cannot work when a service account acts as itself.
+_NO_DELEGATION_UNSUPPORTED_SERVICES = {
+    "gmail": "Gmail needs a user mailbox; enable domain-wide delegation to use it.",
+    "people": "Contacts belong to a user; enable domain-wide delegation to use them.",
+    "chat": (
+        "Google Chat is not yet supported for service accounts without "
+        "domain-wide delegation."
+    ),
+    "script": (
+        "The Apps Script API does not support service accounts; use OAuth "
+        "authentication to use Apps Script tools."
+    ),
+}
+
+
 def _get_service_account_credentials(
-    scopes: List[str], subject: str
+    scopes: List[str], subject: Optional[str] = None
 ) -> google_service_account.Credentials:
     """
-    Build service account credentials for domain-wide delegation.
+    Build service account credentials.
 
     Args:
         scopes: OAuth scopes to request
-        subject: Email of the domain user to impersonate
+        subject: Email of the domain user to impersonate (domain-wide delegation).
+            When None the service account authenticates as itself.
 
     Returns:
         google.oauth2.service_account.Credentials instance
@@ -320,10 +356,16 @@ def _widen_drive_scope_for_dwd(scopes: List[str], tool_name: str) -> List[str]:
         return scopes
 
     widened = [DRIVE_SCOPE if s == DRIVE_FILE_SCOPE else s for s in scopes]
+    hint = (
+        "Without delegation, access is still limited to what is shared with the "
+        "service account."
+        if is_service_account_no_delegation()
+        else "Authorize it in the Admin console DWD scope list."
+    )
     logger.debug(
         f"[{tool_name}] Service-account mode: requesting {DRIVE_SCOPE} in place of "
-        f"{DRIVE_FILE_SCOPE}, which cannot reach pre-existing files under "
-        "domain-wide delegation. Authorize it in the Admin console DWD scope list."
+        f"{DRIVE_FILE_SCOPE}, which cannot reach pre-existing files shared with a "
+        f"service account. {hint}"
     )
     return widened
 
@@ -344,6 +386,23 @@ async def _authenticate_service(
     Returns:
         Tuple of (service, actual_user_email)
     """
+    if is_service_account_no_delegation():
+        if service_name in _NO_DELEGATION_UNSUPPORTED_SERVICES:
+            raise GoogleAuthenticationError(
+                f"[{tool_name}] " + _NO_DELEGATION_UNSUPPORTED_SERVICES[service_name]
+            )
+        sa_email = _get_service_account_email()
+        credentials = _get_service_account_credentials(
+            _widen_drive_scope_for_dwd(resolved_scopes, tool_name)
+        )
+        service = build_google_service(service_name, service_version, credentials)
+        logger.info(
+            f"[{tool_name}] Authenticated {service_name} as {sa_email} "
+            "via service-account (no delegation)"
+        )
+        record_google_principal("service-account", sa_email)
+        return service, sa_email
+
     if is_service_account_enabled():
         canonical_email = _get_configured_user_google_email()
         if not canonical_email:
@@ -531,9 +590,39 @@ def _extract_managed_user_email(
     func_name: str,
 ) -> str:
     """Resolve an email from the configured authoritative identity source."""
+    if is_service_account_no_delegation():
+        return _get_service_account_email()
     if is_trust_gateway_identity():
         return require_gateway_principal(authenticated_user, auth_method)
     return _extract_oauth21_user_email(authenticated_user, func_name)
+
+
+def _managed_call_kwargs(
+    wrapper_sig: inspect.Signature, args: tuple, kwargs: dict
+) -> Dict[str, Any]:
+    """Build keyword arguments for the decorated function in managed-email modes.
+
+    The wrapper signature omits ``user_google_email`` (the server supplies it), but
+    the decorated function still has it in a position before later parameters. Passing
+    positional arguments through unchanged would shift them onto that slot, so they are
+    mapped by name against the wrapper's visible parameters instead.
+    """
+    positional = [
+        p
+        for p in wrapper_sig.parameters.values()
+        if p.kind
+        in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    ]
+    if len(args) > len(positional):
+        raise TypeError(
+            f"takes {len(positional)} positional arguments but {len(args)} were given"
+        )
+    merged: Dict[str, Any] = {p.name: v for p, v in zip(positional, args)}
+    for name, value in kwargs.items():
+        if name in merged:
+            raise TypeError(f"got multiple values for argument '{name}'")
+        merged[name] = value
+    return merged
 
 
 def _extract_oauth20_user_email(
@@ -903,6 +992,9 @@ def require_google_service(
                 # In OAuth 2.1 mode, we need to add user_google_email to kwargs since it was removed from signature
                 if _user_email_is_managed():
                     kwargs["user_google_email"] = user_google_email
+                    call_kwargs = _managed_call_kwargs(wrapper_sig, args, kwargs)
+                    with recycling(service):
+                        return await func(service, **call_kwargs)
 
                 # Prepend the fetched service object to the original arguments
                 with recycling(service):
@@ -921,7 +1013,7 @@ def require_google_service(
         # Conditionally modify docstring to remove user_google_email parameter documentation
         if _user_email_is_managed():
             logger.debug(
-                "OAuth 2.1 mode enabled, removing user_google_email from docstring"
+                "Managed user email mode enabled, removing user_google_email from docstring"
             )
             if func.__doc__:
                 wrapper.__doc__ = _remove_user_email_arg_from_docstring(func.__doc__)
@@ -1070,6 +1162,9 @@ def require_multiple_services(service_configs: List[Dict[str, Any]]):
                         # In OAuth 2.1 mode, we need to add user_google_email to kwargs since it was removed from signature
                         if _user_email_is_managed():
                             kwargs["user_google_email"] = user_google_email
+                            return await func(
+                                **_managed_call_kwargs(wrapper_sig, args, kwargs)
+                            )
 
                         return await func(*args, **kwargs)
                     except RefreshError as e:
@@ -1088,7 +1183,7 @@ def require_multiple_services(service_configs: List[Dict[str, Any]]):
         # Conditionally modify docstring to remove user_google_email parameter documentation
         if _user_email_is_managed():
             logger.debug(
-                "OAuth 2.1 mode enabled, removing user_google_email from docstring"
+                "Managed user email mode enabled, removing user_google_email from docstring"
             )
             if func.__doc__:
                 wrapper.__doc__ = _remove_user_email_arg_from_docstring(func.__doc__)
