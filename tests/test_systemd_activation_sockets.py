@@ -131,7 +131,10 @@ def test_no_activation_sockets_without_a_valid_handoff(
     listen_pid: str | None,
     listen_fds: str | None,
 ) -> None:
-    pids = {"self": str(os.getpid()), "other": str(os.getpid() + 1)}
+    pids: dict[str | None, str] = {
+        "self": str(os.getpid()),
+        "other": str(os.getpid() + 1),
+    }
     env = {
         "LISTEN_PID": pids.get(listen_pid, listen_pid),
         "LISTEN_FDS": listen_fds,

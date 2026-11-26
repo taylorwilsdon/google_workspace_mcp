@@ -216,9 +216,6 @@ def add_startup_notice(message: str) -> None:
     logger.debug(message)
 
 
-_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
-
-
 def resolve_bind_host_for_transport(transport: str) -> str:
     """Choose a safe default bind host for the selected transport/auth mode."""
     configured_host = os.getenv("WORKSPACE_MCP_HOST")
