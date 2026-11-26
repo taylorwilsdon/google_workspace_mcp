@@ -14,11 +14,34 @@ from typing import Any, Dict, List, Optional
 
 from googleapiclient.errors import HttpError
 
-from core.utils import UserInputError
+from core.utils import UserInputError, check_path_segment
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_PERSON_FIELDS = "names,nicknames,emailAddresses,phoneNumbers,organizations"
+OTHER_CONTACT_FIELDS = "names,emailAddresses,phoneNumbers"
+
+
+def _resource_name(value: str, collection: str, label: str) -> str:
+    """Return collection/<id> for a bare ID or a full resource name, refusing unsafe IDs."""
+    prefix = f"{collection}/"
+    return prefix + check_path_segment(value.removeprefix(prefix), label)
+
+
+def _people_resource_name(contact_id: str) -> str:
+    """Return people/<id> for "c123" or "people/c123", refusing unsafe IDs."""
+    return _resource_name(contact_id, "people", "contact_id")
+
+
+def _contact_group_resource_name(group_id: str) -> str:
+    """Return contactGroups/<id> for "abc" or "contactGroups/abc", refusing unsafe IDs."""
+    return _resource_name(group_id, "contactGroups", "group_id")
+
+
+_URL_SCHEME_HOST_RE = re.compile(
+    r"([a-z][a-z0-9+.-]*:)(?!//)|((?:[a-z][a-z0-9+.-]*:)?//)?([^/?#@]*@)?([^/?#]*)",
+    re.IGNORECASE,
+)
 
 
 def _is_expired_sync_token(exc: HttpError) -> bool:
@@ -35,6 +58,13 @@ def _is_expired_sync_token(exc: HttpError) -> bool:
             for detail in details
         )
     )
+
+
+def _search_request(service: Any, source: str, **params: Any) -> Any:
+    """Build a saved contacts or other contacts search request."""
+    if source == "other":
+        return service.otherContacts().search(**params)
+    return service.people().searchContacts(**params)
 
 
 async def _list_contacts(
@@ -160,10 +190,12 @@ def _normalize_nickname(value: str) -> str:
 
 def _normalize_url(value: str) -> str:
     """Return a normalized URL string for deduplication. Lowercases scheme/host, strips trailing slash."""
-    stripped = value.strip().lower()
-    if stripped.endswith("/"):
-        stripped = stripped[:-1]
-    return stripped
+    stripped = value.strip()
+    match = _URL_SCHEME_HOST_RE.match(stripped)
+    opaque_scheme, scheme, userinfo, host = match.groups(default="")
+    prefix = (opaque_scheme + scheme).lower()
+    normalized = prefix + userinfo + host.lower() + stripped[match.end() :]
+    return normalized.removesuffix("/")
 
 
 def _normalize_user_defined_key(value: str) -> str:
@@ -516,7 +548,7 @@ def _merge_urls(
     mode: str,
 ) -> List[Dict[str, Any]]:
     """
-    Merge URL lists according to mode. Dedup by normalized URL (lowercased, trailing slash stripped).
+    Merge URL lists according to mode. Dedup by normalized URL (scheme/host lowercased, trailing slash stripped).
     """
     if mode == "replace":
         return new_urls

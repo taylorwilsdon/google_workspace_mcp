@@ -21,9 +21,12 @@ from gcalendar.calendar_helpers import (
     _build_attachment_entries,
     _build_time_boundary,
     _correct_time_format_for_api,
+    _create_calendar,
     _format_event_detail_lines,
     _format_event_time,
     _get_meeting_link,
+    _manage_calendar_acl,
+    _move_event,
     _normalize_attendees,
     _parse_reminders_json,
     _preserve_existing_fields,
@@ -149,7 +152,7 @@ async def get_events(
         max_results (int): The maximum number of events to return in one page. Defaults to 25. Ignored if event_id is provided.
         page_token (Optional[str]): Token for the next page, taken from a previous response. When single_events=True, also pass the response's Pagination time_min as time_min, even if omitted on the first call. Keep all other query parameters unchanged. Ignored if event_id is provided.
         query (Optional[str]): A keyword to search for within event fields (summary, description, location). Ignored if event_id is provided.
-        detailed (bool): Whether to return detailed event information including description, location, colour (colorId), attendees, and attendee details (response status, organizer, optional flags). Recurring instances also report the parent series ID needed to edit the whole series; recurring masters report their raw RFC5545 recurrence rules; and events that are not ordinary confirmed meetings report their event type (outOfOffice, workingLocation, focusTime) and status. Defaults to False.
+        detailed (bool): Whether to return detailed event information including description, location, colour (colorId), attendees, and attendee details (response status, organizer, optional flags). Recurring instances also report the parent series ID needed to edit the whole series; recurring masters report their raw RFC5545 recurrence rules; and events that are not ordinary confirmed meetings report their event type (outOfOffice, workingLocation, focusTime) and status. Custom reminders (an empty list means none), non-default visibility and transparency are reported too; events using the calendar's default reminders omit the Reminders line. Defaults to False.
         include_attachments (bool): Whether to include attachment information in detailed event output. When True, shows attachment details (fileId, fileUrl, mimeType, title) for events that have attachments. Only applies when detailed=True. Set this to True when you need to view or access files that have been attached to calendar events, such as meeting documents, presentations, or other shared files. Defaults to False.
         single_events (bool): Whether to expand recurring series into individual instances. Defaults to True for backwards compatibility. Set to False with detailed=True to retrieve recurring master events and their exact RFC5545 recurrence rules instead of inferring cadence from expanded instances.
 
@@ -949,18 +952,20 @@ async def manage_event(
     start_timezone: Optional[str] = None,
     end_timezone: Optional[str] = None,
     this_and_following: bool = False,
+    destination_calendar_id: Optional[str] = None,
 ) -> str:
     """
-    Manages calendar events. Supports creating, updating, deleting, and RSVP.
+    Manages calendar events. Supports creating, updating, deleting, moving, and RSVP.
 
     Args:
         user_google_email (str): The user's Google email address. Required.
-        action (str): Action to perform - "create", "update", "delete", or "rsvp".
+        action (str): Action to perform - "create", "update", "delete", "move", or "rsvp".
         summary (Optional[str]): Event title (required for create).
         start_time (Optional[str]): Start time (required for create). An RFC3339 UTC offset identifies the exact instant and is preserved. Without an offset, supply start_timezone or timezone. For a local wall-clock time, omit the offset and pass the zone so Google resolves daylight saving; a wrong offset moves the event. Date-only values create all-day events.
         end_time (Optional[str]): End time (required for create). An RFC3339 UTC offset identifies the exact instant and is preserved. Without an offset, supply end_timezone or timezone. All-day end dates are exclusive.
-        event_id (Optional[str]): Event ID (required for update and delete).
-        calendar_id (str): Calendar ID (default: 'primary').
+        event_id (Optional[str]): Event ID (required for update, delete, move, and rsvp).
+        calendar_id (str): Calendar ID (default: 'primary'). For move, this is the source.
+        destination_calendar_id (Optional[str]): Calendar to move the event to, which becomes its organizer (required for move). Only default events can be moved, and the user needs access to both calendars.
         description (Optional[str]): Event description.
         location (Optional[str]): Event location.
         attendees (Optional[List[Union[str, Dict[str, Any]]]]): Attendee email addresses, attendee objects (e.g. {"email": ..., "responseStatus": "accepted"}), or a mix of both.
@@ -1003,7 +1008,8 @@ async def manage_event(
         guests_can_see_other_guests (Optional[bool]): Whether attendees can see other guests.
         response (Optional[str]): RSVP response — "accepted", "declined", "tentative", or "needsAction" (rsvp action only).
         rsvp_comment (Optional[str]): Optional message to include with the RSVP response (rsvp action only).
-        send_updates (Optional[str]): Notification behavior for create, update, delete, and rsvp — "all" (default), "externalOnly", or "none".
+        send_updates (Optional[str]): Notification behavior: "all", "externalOnly", or "none".
+            Defaults to "none" for move and "all" for other actions.
         this_and_following (bool): Update only. With event_id set to a recurring instance ID,
             applies the change to that instance and every later one by ending the original
             series before it and starting a new series there; earlier instances are kept.
@@ -1115,6 +1121,18 @@ async def manage_event(
             calendar_id=calendar_id,
             send_updates=send_updates or "all",
         )
+    elif action_lower == "move":
+        if not event_id or not destination_calendar_id:
+            raise UserInputError(
+                "event_id and destination_calendar_id are required for move action"
+            )
+        return await _move_event(
+            service=service,
+            calendar_id=calendar_id,
+            event_id=event_id,
+            destination_calendar_id=destination_calendar_id,
+            send_updates=send_updates or "none",
+        )
     elif action_lower == "rsvp":
         if not event_id:
             raise UserInputError("event_id is required for rsvp action")
@@ -1131,7 +1149,7 @@ async def manage_event(
         )
     else:
         raise UserInputError(
-            f"Invalid action '{action_lower}'. Must be 'create', 'update', 'delete', or 'rsvp'."
+            f"Invalid action '{action_lower}'. Must be 'create', 'update', 'delete', 'move', or 'rsvp'."
         )
 
 
@@ -2143,50 +2161,71 @@ async def query_freebusy(
 
 
 @server.tool(
-    title="Create Calendar",
+    title="Manage Calendar",
     annotations=ToolAnnotations(
         readOnlyHint=False,
-        destructiveHint=False,
+        destructiveHint=True,
         idempotentHint=False,
         openWorldHint=True,
     ),
 )
-@handle_http_errors("create_calendar", is_read_only=False, service_type="calendar")
+@handle_http_errors("manage_calendar", service_type="calendar")
 @require_google_service("calendar", "calendar")
-async def create_calendar(
+async def manage_calendar(
     service,
     user_google_email: str,
-    summary: str,
+    action: str,
+    summary: Optional[str] = None,
     description: Optional[str] = None,
     timezone: Optional[str] = None,
+    calendar_id: str = "primary",
+    role: Optional[str] = None,
+    scope_type: str = "user",
+    scope_value: Optional[str] = None,
+    rule_id: Optional[str] = None,
+    send_notifications: bool = True,
+    page_token: Optional[str] = None,
 ) -> str:
     """
-    Creates a new secondary Google Calendar.
+    Creates secondary Google Calendars and manages who a calendar is shared with (its access control rules).
 
     Args:
         user_google_email (str): The user's Google email address. Required.
-        summary (str): The title/name of the new calendar.
-        description (Optional[str]): An optional description for the calendar.
-        timezone (Optional[str]): IANA timezone for the calendar (e.g. 'America/New_York').
+        action (str): Action to perform. One of:
+            - "create": Create a new secondary calendar. Uses summary, description, timezone.
+            - "list_sharing": List the calendar's sharing rules. Uses calendar_id, page_token.
+            - "share": Grant access to the calendar. Uses calendar_id, role, scope_type, scope_value, send_notifications.
+            - "update_sharing": Change the role of an existing rule. Uses calendar_id, rule_id, role, send_notifications.
+            - "unshare": Remove an existing rule. Uses calendar_id, rule_id.
+        summary (Optional[str]): The title/name of the new calendar. Required for "create".
+        description (Optional[str]): An optional description for the new calendar. Used by "create".
+        timezone (Optional[str]): IANA timezone for the new calendar (e.g. 'America/New_York'). Used by "create".
+        calendar_id (str): Calendar ID for the sharing actions. Defaults to 'primary'.
+        role (Optional[str]): Access level for "share" and "update_sharing". One of: "freeBusyReader", "reader", "writerWithoutPrivateAccess", "writer", "owner", "none".
+        scope_type (str): Who "share" grants access to: "user", "group", "domain", or "default" (public). Defaults to "user".
+        scope_value (Optional[str]): Email address for "user"/"group" or domain name for "domain". Required for "share" unless scope_type is "default".
+        rule_id (Optional[str]): Rule ID from "list_sharing" (e.g. "user:alice@example.com"). Required for "update_sharing" and "unshare".
+        send_notifications (bool): Whether to email the grantee on "share" and "update_sharing". Defaults to True.
+        page_token (Optional[str]): For "list_sharing" action: token for the next page, taken from a previous response.
 
     Returns:
-        str: The ID and summary of the newly created calendar.
+        str: The new calendar's summary and ID, the calendar's sharing rules, or a confirmation of the rule that changed.
     """
     logger.info(
-        f"[create_calendar] Invoked. Email: '{user_google_email}', summary_len={len(summary)}"
+        f"[manage_calendar] Invoked. Email: '{user_google_email}', Action: '{action}'"
     )
-
-    body: Dict[str, Any] = {"summary": summary}
-    if description:
-        body["description"] = description
-    if timezone:
-        body["timeZone"] = timezone
-
-    result = await asyncio.to_thread(
-        lambda: service.calendars().insert(body=body).execute()
+    action = action.lower().strip()
+    if action == "create":
+        return await _create_calendar(service, summary, description, timezone)
+    return await _manage_calendar_acl(
+        service,
+        user_google_email=user_google_email,
+        action=action,
+        calendar_id=calendar_id,
+        role=role,
+        scope_type=scope_type,
+        scope_value=scope_value,
+        rule_id=rule_id,
+        send_notifications=send_notifications,
+        page_token=page_token,
     )
-
-    calendar_id = result["id"]
-    calendar_summary = result.get("summary", summary)
-    logger.info(f"[create_calendar] Created calendar with ID: {calendar_id}")
-    return f"Created calendar '{calendar_summary}' (ID: {calendar_id})"

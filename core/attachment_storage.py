@@ -16,6 +16,9 @@ import uuid
 from pathlib import Path
 from typing import NamedTuple, Optional, Dict
 from datetime import datetime, timedelta
+from urllib.parse import urlparse
+
+from core import config
 
 logger = logging.getLogger(__name__)
 
@@ -410,6 +413,43 @@ def get_attachment_storage() -> AttachmentStorage:
         _attachment_storage = AttachmentStorage()
     _attachment_storage.sweep_expired()
     return _attachment_storage
+
+
+def _trusted_attachment_bases() -> set[tuple[str, str, str]]:
+    """Return the (scheme, host, path prefix) bases of this server's attachment links."""
+    bases: set[tuple[str, str, str]] = set()
+    for base in (
+        config.WORKSPACE_EXTERNAL_URL,
+        f"{config.WORKSPACE_MCP_BASE_URI}:{config.WORKSPACE_MCP_PORT}",
+    ):
+        if not base:
+            continue
+        parsed = urlparse(base)
+        if parsed.scheme and parsed.netloc:
+            bases.add(
+                (parsed.scheme.lower(), parsed.netloc.lower(), parsed.path.rstrip("/"))
+            )
+    return bases
+
+
+def resolve_local_attachment(url: str) -> Optional[tuple[Path, Dict]]:
+    """Return (path, metadata) when ``url`` is this server's own /attachments/{id} link."""
+    parsed = urlparse(url)
+    prefix, separator, file_id = parsed.path.rstrip("/").rpartition("/attachments/")
+    if not separator or "/" in file_id:
+        return None
+    base = (parsed.scheme.lower(), parsed.netloc.lower(), prefix)
+    if (parsed.netloc or prefix) and base not in _trusted_attachment_bases():
+        return None
+
+    storage = get_attachment_storage()
+    metadata = storage.get_attachment_metadata(file_id)
+    if metadata is None:
+        return None
+    file_path = storage.get_attachment_path(file_id)
+    if file_path is None:
+        return None
+    return Path(file_path), metadata
 
 
 def get_attachment_url(file_id: str) -> str:

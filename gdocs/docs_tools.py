@@ -51,6 +51,9 @@ from gdocs.docs_helpers import (
     create_update_doc_tab_request,
     create_delete_doc_tab_request,
     validate_suggestions_view_mode,
+    validate_write_mode,
+    build_batch_update_body,
+    suggestion_save_error,
     create_update_paragraph_style_request,
     extract_text_from_elements,
     process_tab_hierarchy,
@@ -64,6 +67,7 @@ from gdocs.docs_structure import (
     summarize_paragraph_layout,
     truncate_preview,
     find_heading_section,
+    heading_section_document,
 )
 from gdocs.docs_tables import extract_table_as_data
 from gdocs.docs_markdown import (
@@ -267,6 +271,8 @@ async def get_doc_content(
     suggestions_view_mode: str = "DEFAULT_FOR_CURRENT_ACCESS",
     tab_id: Optional[str] = None,
     preserve_context: bool = False,
+    heading: Optional[str] = None,
+    heading_level: Optional[int] = None,
 ) -> str:
     """
     Retrieves content of a Google Doc or a Drive file (like .docx) identified by document_id.
@@ -307,6 +313,13 @@ async def get_doc_content(
         preserve_context: Include readable semantic annotations for native Docs.
             Defaults to False to retain index alignment. Office extraction is
             unaffected. With tab_id, only the selected tab is rendered.
+        heading: Text of a body heading (case-insensitive, must match exactly one)
+            whose section to return instead of the whole document: the heading and
+            everything below it up to the next heading of equal or shallower level.
+            The header reports the section's start index s, and in the default
+            output offset n is document index n + s. Native Google Docs only;
+            tab_id is required when the doc has multiple tabs.
+        heading_level: Optional 1-6 heading level to narrow the heading match.
 
     Returns:
         str: The document content with metadata header.
@@ -350,7 +363,23 @@ async def get_doc_content(
             )
             .execute
         )
-        if tab_id:
+        if heading is not None:
+            section = heading_section_document(doc_data, heading, heading_level, tab_id)
+            content = section["body"]["content"]
+            notice = (
+                f"Showing only the section under heading {heading!r}, "
+                f"starting at document index {content[0]['startIndex']}."
+            )
+            if tab_from_url:
+                tabs = doc_data.get("tabs", [])
+                tab_notice = _url_tab_notice(tabs, _find_tab(tabs, tab_id), tab_id)
+                notice = f"{tab_notice} {notice}".lstrip()
+            body_text = (
+                render_doc_to_plain_text(section, tab_id)
+                if preserve_context
+                else extract_text_from_elements(content)
+            )
+        elif tab_id:
             tabs = doc_data.get("tabs", [])
             tab = _find_tab(tabs, tab_id)
             if tab is None:
@@ -387,6 +416,8 @@ async def get_doc_content(
                     processed_text_lines.append(tab_content)
 
             body_text = "".join(processed_text_lines)
+    elif heading is not None:
+        return "Error: 'heading' is only supported for native Google Docs."
     else:
         logger.info(
             f"[get_doc_content] Processing as Drive file (e.g., .docx, other). MimeType: {mime_type}"
@@ -621,6 +652,7 @@ async def _modify_doc_text_by_heading(
     end_of_segment: bool,
     formatting_params: list,
     validator: ValidationManager,
+    write_mode: str,
 ) -> str:
     """Replace, append to, or format the section under ``heading`` in one guarded write."""
     has_formatting = any(p is not None for p in formatting_params)
@@ -674,12 +706,18 @@ async def _modify_doc_text_by_heading(
         verb = "Appended to" if end_of_segment or body_is_empty else "Replaced"
         operation = f"{verb} section under heading {heading!r}"
 
-    body: dict[str, Any] = {"requests": requests}
+    body = build_batch_update_body(requests, write_mode)
     if doc.get("revisionId"):
-        body["writeControl"] = {"requiredRevisionId": doc["revisionId"]}
-    await asyncio.to_thread(
+        body.setdefault("writeControl", {})["requiredRevisionId"] = doc["revisionId"]
+    result = await asyncio.to_thread(
         service.documents().batchUpdate(documentId=document_id, body=body).execute
     )
+    save_error = suggestion_save_error(result, write_mode)
+    if save_error:
+        return f"Error: {save_error}"
+
+    if write_mode == "SUGGEST":
+        operation = f"Suggested: {operation}"
     link = f"https://docs.google.com/document/d/{document_id}/edit"
     return f"{operation} in document {document_id}. Link: {link}"
 
@@ -720,6 +758,7 @@ async def modify_doc_text(
     clear_link: Optional[bool] = None,
     baseline_offset: Optional[str] = None,
     small_caps: Optional[bool] = None,
+    write_mode: str = "EDIT",
 ) -> str:
     """
     Modifies text in a Google Doc - can insert/replace text and/or apply formatting in a single operation.
@@ -765,6 +804,8 @@ async def modify_doc_text(
         clear_link: Remove hyperlink from the target range
         baseline_offset: One of NONE, SUPERSCRIPT, SUBSCRIPT
         small_caps: Whether to apply small caps
+        write_mode: "EDIT" (default) applies the change directly; "SUGGEST"
+            records it as a suggested edit that collaborators can accept or reject
 
     Returns:
         str: Confirmation message with operation details
@@ -780,6 +821,10 @@ async def modify_doc_text(
     is_valid, error_msg = validator.validate_document_id(document_id)
     if not is_valid:
         return f"Error: {error_msg}"
+
+    write_mode_error = validate_write_mode(write_mode)
+    if write_mode_error:
+        return write_mode_error
 
     # Validate that we have something to do
     formatting_params = [
@@ -814,6 +859,7 @@ async def modify_doc_text(
             end_of_segment,
             formatting_params,
             validator,
+            write_mode,
         )
     if start_index is None:
         return "Error: 'start_index' is required unless 'heading' is provided."
@@ -982,15 +1028,24 @@ async def modify_doc_text(
         )
 
     try:
-        await asyncio.to_thread(
+        result = await asyncio.to_thread(
             service.documents()
-            .batchUpdate(documentId=document_id, body={"requests": requests})
+            .batchUpdate(
+                documentId=document_id,
+                body=build_batch_update_body(requests, write_mode),
+            )
             .execute
         )
     except HttpError as error:
         raise _rewrite_modify_doc_text_http_error(error, segment_id) from error
 
+    save_error = suggestion_save_error(result, write_mode)
+    if save_error:
+        return f"Error: {save_error}"
+
     link = f"https://docs.google.com/document/d/{document_id}/edit"
+    if write_mode == "SUGGEST":
+        operations = [f"Suggested: {operation}" for operation in operations]
     operation_summary = "; ".join(operations)
     text_info = f" Text length: {len(text)} characters." if text else ""
     return f"{operation_summary} in document {document_id}.{text_info} Link: {link}"
@@ -1015,6 +1070,7 @@ async def find_and_replace_doc(
     replace_text: str,
     match_case: bool = False,
     tab_id: Optional[str] = None,
+    write_mode: str = "EDIT",
 ) -> str:
     """
     Finds and replaces text throughout a Google Doc. No index calculation required.
@@ -1035,6 +1091,8 @@ async def find_and_replace_doc(
         replace_text: Text to replace with
         match_case: Whether to match case exactly
         tab_id: Optional ID of the tab to target
+        write_mode: "EDIT" (default) applies the replacements directly; "SUGGEST"
+            records them as suggested edits that collaborators can accept or reject
 
     Returns:
         str: Confirmation message with replacement count
@@ -1044,15 +1102,26 @@ async def find_and_replace_doc(
     )
     logger.debug(f"[find_and_replace_doc] find='{find_text}', replace='{replace_text}'")
 
+    write_mode_error = validate_write_mode(write_mode)
+    if write_mode_error:
+        return write_mode_error
+
     requests = [
         create_find_replace_request(find_text, replace_text, match_case, tab_id)
     ]
 
     result = await asyncio.to_thread(
         service.documents()
-        .batchUpdate(documentId=document_id, body={"requests": requests})
+        .batchUpdate(
+            documentId=document_id,
+            body=build_batch_update_body(requests, write_mode),
+        )
         .execute
     )
+
+    save_error = suggestion_save_error(result, write_mode)
+    if save_error:
+        return f"Error: {save_error}"
 
     # Extract number of replacements from response
     replacements = 0
@@ -1062,7 +1131,8 @@ async def find_and_replace_doc(
             replacements = reply["replaceAllText"].get("occurrencesChanged", 0)
 
     link = f"https://docs.google.com/document/d/{document_id}/edit"
-    return f"Replaced {replacements} occurrence(s) of '{find_text}' with '{replace_text}' in document {document_id}. Link: {link}"
+    verb = "Suggested replacing" if write_mode == "SUGGEST" else "Replaced"
+    return f"{verb} {replacements} occurrence(s) of '{find_text}' with '{replace_text}' in document {document_id}. Link: {link}"
 
 
 @server.tool(
@@ -1349,6 +1419,7 @@ async def batch_update_doc(
     user_google_email: str,
     document_id: str,
     operations: BatchDocOperations,
+    write_mode: str = "EDIT",
 ) -> str:
     """
     Executes multiple low-level document operations in a single atomic batch update.
@@ -1426,6 +1497,10 @@ async def batch_update_doc(
         document_id: ID of the document to update
         operations: List of operation dicts. Each operation MUST have a 'type' field.
                     All operations accept an optional 'tab_id' to target a specific tab.
+        write_mode: "EDIT" (default) applies the batch directly; "SUGGEST" records
+                    every operation as a suggested edit that collaborators can accept
+                    or reject. The Docs API rejects some operations in SUGGEST mode,
+                    such as named range and tab changes.
 
     Supported operation types and their parameters:
 
@@ -1504,6 +1579,10 @@ async def batch_update_doc(
       insert_person    - required: email (str)
                          optional: index (int), end_of_segment, tab_id, segment_id
                          Inserts an @mention person smart chip.
+      insert_date      - required: date (str, YYYY-MM-DD or ISO 8601 with a time zone)
+                         optional: index (int), end_of_segment, tab_id, segment_id,
+                         date_format, time_format, timezone
+                         Inserts a date smart chip.
       insert_section_break
                        - optional: index (int), end_of_segment, section_type
                                    ('CONTINUOUS'|'NEXT_PAGE')
@@ -1606,11 +1685,15 @@ async def batch_update_doc(
     if not is_valid:
         return f"Error: {error_msg}"
 
+    write_mode_error = validate_write_mode(write_mode)
+    if write_mode_error:
+        return write_mode_error
+
     # Use BatchOperationManager to handle the complex logic
     batch_manager = BatchOperationManager(service)
 
     success, message, metadata = await batch_manager.execute_batch_operations(
-        document_id, normalized_operations
+        document_id, normalized_operations, write_mode
     )
 
     if success:
@@ -2759,6 +2842,8 @@ async def get_doc_as_markdown(
     suggestions_view_mode: str = "DEFAULT_FOR_CURRENT_ACCESS",
     tab_id: Optional[str] = None,
     include_colors: bool = False,
+    heading: Optional[str] = None,
+    heading_level: Optional[int] = None,
 ) -> str:
     """
     Reads a Google Doc and returns it as clean Markdown with optional comment context.
@@ -2794,6 +2879,12 @@ async def get_doc_as_markdown(
             is still fetched.
         include_colors: Follow text that has an explicit RGB foreground color
             with "[color: #rrggbb]" (default: False). Theme colors are not shown.
+        heading: Text of a body heading (case-insensitive, must match exactly one)
+            whose section to render instead of the whole document: the heading and
+            everything below it up to the next heading of equal or shallower level.
+            Comments are listed as document-wide. tab_id is required when the doc
+            has multiple tabs.
+        heading_level: Optional 1-6 heading level to narrow the heading match.
 
     Returns:
         str: The document content as Markdown, optionally with comments
@@ -2833,7 +2924,12 @@ async def get_doc_as_markdown(
         )
 
     notice = ""
-    if tab_id:
+    if heading is not None:
+        tabs = doc.get("tabs", [])
+        doc = heading_section_document(doc, heading, heading_level, tab_id)
+        if tab_from_url:
+            notice = _url_tab_notice(tabs, _find_tab(tabs, tab_id), tab_id)
+    elif tab_id:
         tabs = doc.get("tabs", [])
         tab = _find_tab(tabs, tab_id)
         if tab is None:
@@ -2885,10 +2981,11 @@ async def get_doc_as_markdown(
 
     # Drive comments carry no tab association, so with one tab selected they
     # stay document-wide instead of being pinned to matching text in this tab.
-    if comment_mode == "inline" and not tab_id:
+    partial = bool(tab_id) or heading is not None
+    if comment_mode == "inline" and not partial:
         return format_comments_inline(markdown, comments)
     appendix = format_comments_appendix(
-        comments, title="Comments (entire document)" if tab_id else "Comments"
+        comments, title="Comments (entire document)" if partial else "Comments"
     )
     return markdown.rstrip("\n") + "\n\n" + appendix
 
@@ -3110,6 +3207,11 @@ async def manage_doc_tab(
     tab_end = last_element.get("endIndex", 1)
 
     if replace_existing:
+        markdown_requests = markdown_to_docs_requests(markdown_text, tab_id=tab_id)
+        if markdown_text.strip() and not markdown_requests:
+            raise UserInputError(
+                "'markdown_text' rendered to no content; the tab was left unchanged."
+            )
         # tab_end includes the segment-terminating newline that Google Docs
         # refuses to delete, so we delete up to tab_end - 1. Empty tabs
         # (tab_end <= 2) have nothing to clear.
@@ -3125,7 +3227,7 @@ async def manage_doc_tab(
                     }
                 }
             )
-        all_requests.extend(markdown_to_docs_requests(markdown_text, tab_id=tab_id))
+        all_requests.extend(markdown_requests)
     else:
         # Append after existing content instead of prepending at index 1.
         insert_at = tab_end - 1 if tab_end > 2 else 1

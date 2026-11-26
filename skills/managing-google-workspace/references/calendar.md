@@ -1,6 +1,6 @@
 # Google Calendar Tools Reference
 
-MCP tools for Google Calendar event management, Out of Office and Focus Time blocks, calendar creation, and availability queries. All tools require `user_google_email` (string, required).
+MCP tools for Google Calendar event management, Out of Office and Focus Time blocks, calendar creation and sharing, and availability queries. All tools require `user_google_email` (string, required).
 
 ---
 
@@ -15,15 +15,23 @@ List a single page of calendars accessible to the authenticated user. Returns su
 | max_results | integer | no | | Max calendars per page. Omit for the API default |
 | page_token | string | no | | Token from a previous response's `Next page token` |
 
-### create_calendar
-Create a new secondary calendar. Returns its ID for use as `calendar_id` elsewhere.
+### manage_calendar
+Create a secondary calendar, or list, share, update, or remove a calendar's access control rules. `create` returns the new calendar's ID for use as `calendar_id` elsewhere. `list_sharing` returns each rule's role, scope, and rule ID for use with `update_sharing` and `unshare`.
 
 | Parameter | Type | Required | Default | Notes |
 |-----------|------|----------|---------|-------|
 | user_google_email | string | yes | | |
-| summary | string | yes | | Calendar name |
-| description | string | no | | Calendar description |
-| timezone | string | no | | IANA timezone, e.g. `America/New_York` |
+| action | string | yes | | `create`, `list_sharing`, `share`, `update_sharing`, or `unshare` |
+| summary | string | for create | | Calendar name |
+| description | string | no | | Calendar description (create only) |
+| timezone | string | no | | IANA timezone, e.g. `America/New_York` (create only) |
+| calendar_id | string | no | primary | Calendar ID for the sharing actions |
+| role | string | for share/update_sharing | | `freeBusyReader`, `reader`, `writerWithoutPrivateAccess`, `writer`, `owner`, or `none` |
+| scope_type | string | no | user | `user`, `group`, `domain`, or `default` (public). Used by share |
+| scope_value | string | for share | | Email for user/group, domain name for domain. Omit for `default` |
+| rule_id | string | for update_sharing/unshare | | Rule ID from `list_sharing`, e.g. `user:alice@example.com` |
+| send_notifications | boolean | no | true | Email the grantee on share/update_sharing |
+| page_token | string | no | | Next-page token (list_sharing only) |
 
 ### get_events
 Retrieve events from a calendar. Fetch a single event by ID, list events in a time range, or search by keyword.
@@ -52,17 +60,21 @@ range instead of letting the default current time move between pages. With
 `single_events=false` and no initial `time_min`, continue leaving `time_min` unset.
 
 ### manage_event
-Create, update, delete, or RSVP to a calendar event.
+Create, update, delete, move, or RSVP to a calendar event. Moving changes the
+organizer calendar and returns a confirmation. Google Calendar must authorize
+access to both calendars, and only default events can be moved. Google may
+still send some emails when `send_updates="none"`.
 
 | Parameter | Type | Required | Default | Notes |
 |-----------|------|----------|---------|-------|
 | user_google_email | string | yes | | |
-| action | string | yes | | `create`, `update`, `delete`, or `rsvp` |
+| action | string | yes | | `create`, `update`, `delete`, `move`, or `rsvp` |
 | summary | string | for create | | Event title |
 | start_time | string | for create | | RFC 3339. An explicit offset fixes the instant; without one, pass `start_timezone` or `timezone`. Date-only creates an all-day event |
 | end_time | string | for create | | RFC 3339, same rules as `start_time`. All-day end dates are exclusive |
-| event_id | string | for update/delete/rsvp | | Event ID |
-| calendar_id | string | no | primary | |
+| event_id | string | for update/delete/move/rsvp | | Event ID |
+| calendar_id | string | no | primary | Source calendar for move |
+| destination_calendar_id | string | for move | | New organizer calendar ID |
 | description | string | no | | Event description |
 | location | string | no | | Event location |
 | attendees | array | no | | Email strings or attendee objects |
@@ -87,7 +99,7 @@ Create, update, delete, or RSVP to a calendar event.
 | guests_can_see_other_guests | boolean | no | | Attendees can see other attendees |
 | response | string | for rsvp | | `accepted`, `declined`, `tentative`, or `needsAction` |
 | rsvp_comment | string | no | | Message sent with the RSVP (rsvp only) |
-| send_updates | string | no | all | `all`, `externalOnly`, or `none`. Applies to every action |
+| send_updates | string | no | none for move; all otherwise | `all`, `externalOnly`, or `none`. Applies to every action |
 | this_and_following | boolean | no | false | Update only. With a recurring instance `event_id`, splits the series there so the change applies to that instance and all later ones while earlier instances keep the original schedule. Updating the series ID moves every instance and can drop past ones |
 
 **Reminder format** (each item is a dict):
