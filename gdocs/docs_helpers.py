@@ -2065,7 +2065,7 @@ TAB_HEADER_FORMAT = "\n--- TAB: {tab_name} (ID: {tab_id}) ---\n"
 
 def utf16_length(text: str) -> int:
     """Number of Google Docs index units in Unicode text (two for non-BMP characters)."""
-    return len(text.encode("utf-16-le")) // 2
+    return len(text.encode("utf-16-le", errors="surrogatepass")) // 2
 
 
 def _paragraph_element_text(element: Dict[str, Any]) -> str:

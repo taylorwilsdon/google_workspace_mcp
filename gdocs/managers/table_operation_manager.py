@@ -13,6 +13,7 @@ from gdocs.docs_helpers import (
     create_insert_table_request,
     create_insert_text_request,
     create_pin_table_header_rows_request,
+    utf16_length,
 )
 from gdocs.docs_structure import find_tables
 from gdocs.docs_tables import validate_table_data
@@ -325,7 +326,7 @@ class TableOperationManager:
                     "updateTextStyle": {
                         "range": {
                             "startIndex": insertion_index,
-                            "endIndex": insertion_index + len(cell_text),
+                            "endIndex": insertion_index + utf16_length(cell_text),
                         },
                         "textStyle": {"bold": True},
                         "fields": "bold",

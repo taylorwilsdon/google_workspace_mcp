@@ -57,6 +57,7 @@ from gdocs.docs_helpers import (
     create_update_paragraph_style_request,
     extract_text_from_elements,
     process_tab_hierarchy,
+    utf16_length,
 )
 
 # Import document structure and table utilities
@@ -909,10 +910,11 @@ async def modify_doc_text(
                 requests.append(
                     create_insert_text_request(1, text, tab_id, segment_id=segment_id)
                 )
-                adjusted_end = end_index + len(text)
+                text_utf16_len = utf16_length(text)
+                adjusted_end = end_index + text_utf16_len
                 requests.append(
                     create_delete_range_request(
-                        1 + len(text), adjusted_end, tab_id, segment_id=segment_id
+                        1 + text_utf16_len, adjusted_end, tab_id, segment_id=segment_id
                     )
                 )
                 operations.append(
@@ -966,14 +968,13 @@ async def modify_doc_text(
         format_end = end_index
 
         if text is not None:
-            if end_index is not None and end_index > start_index:
-                # Text was replaced - format the new text
-                format_end = start_index + len(text)
-            else:
-                # Text was inserted - format the inserted text
-                actual_index = 1 if start_index == 0 else start_index
-                format_start = actual_index
-                format_end = actual_index + len(text)
+            actual_index = (
+                1
+                if start_index == 0 and segment_id is None and tab_id is None
+                else start_index
+            )
+            format_start = actual_index
+            format_end = actual_index + utf16_length(text)
 
         # Handle special case for formatting at index 0
         if format_start == 0 and segment_id is None and tab_id is None:
@@ -1200,11 +1201,9 @@ async def insert_doc_elements(
             text = "List item"
 
         # Insert text first, then create list
+        requests.append(create_insert_text_request(index, text + "\n"))
         requests.extend(
-            [
-                create_insert_text_request(index, text + "\n"),
-                create_bullet_list_request(index, index + len(text), list_type),
-            ]
+            create_bullet_list_request(index, index + utf16_length(text), list_type)
         )
         description = f"{list_type.lower()} list"
 
