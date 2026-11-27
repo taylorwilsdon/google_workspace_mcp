@@ -611,11 +611,67 @@ class TestTables:
         assert "| Alice | 30 |" in md
 
 
+def _numbered_list_doc(items):
+    """Build a doc with one numbered list from (text, nesting level) pairs."""
+    content = [{"sectionBreak": {"sectionStyle": {}}}]
+    for text, level in items:
+        content.append(
+            {
+                "paragraph": {
+                    "elements": [
+                        {"textRun": {"content": f"{text}\n", "textStyle": {}}}
+                    ],
+                    "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+                    "bullet": {"listId": "kix.num001", "nestingLevel": level},
+                }
+            }
+        )
+    return {
+        "title": "Numbered List Test",
+        "lists": {
+            "kix.num001": {
+                "listProperties": {
+                    "nestingLevels": [
+                        {"glyphType": "DECIMAL"},
+                        {"glyphType": "ALPHA"},
+                        {"glyphType": "ROMAN"},
+                    ]
+                }
+            }
+        },
+        "body": {"content": content},
+    }
+
+
 class TestLists:
     def test_unordered(self):
         md = convert_doc_to_markdown(LIST_DOC)
         assert "- Item one" in md
         assert "- Item two" in md
+
+    def test_nested_numbering_restarts_under_each_parent(self):
+        doc = _numbered_list_doc(
+            [
+                ("First step", 0),
+                ("Detail A", 1),
+                ("Detail B", 1),
+                ("Second step", 0),
+                ("Detail C", 1),
+                ("Sub detail", 2),
+                ("Detail D", 1),
+                ("Sub detail", 2),
+            ]
+        )
+        assert convert_doc_to_markdown(doc) == (
+            "1. First step\n"
+            "   1. Detail A\n"
+            "   2. Detail B\n"
+            "2. Second step\n"
+            "   1. Detail C\n"
+            "      1. Sub detail\n"
+            "   2. Detail D\n"
+            "      1. Sub detail\n"
+        )
 
 
 CHECKLIST_DOC = {
