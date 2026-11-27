@@ -178,40 +178,46 @@ async def test_insert_doc_elements_list_flattens_requests_and_uses_utf16_range()
     }
 
 
-def test_build_table_population_requests_uses_utf16_header_bold_ranges():
-    table_info = {
-        "cells": [
-            [
-                {
-                    "start_index": 4,
-                    "end_index": 6,
-                    "insertion_index": 5,
-                    "content": "\n",
-                },
-                {
-                    "start_index": 10,
-                    "end_index": 16,
-                    "insertion_index": 11,
-                    "content": "Old",
-                },
-            ]
-        ]
-    }
+@pytest.mark.parametrize(
+    ("cell", "cell_text", "expected_range"),
+    [
+        pytest.param(
+            {
+                "start_index": 4,
+                "end_index": 6,
+                "insertion_index": 5,
+                "content": "\n",
+            },
+            "Metric 📊",
+            {"startIndex": 5, "endIndex": 14},
+            id="empty-cell",
+        ),
+        pytest.param(
+            {
+                "start_index": 10,
+                "end_index": 16,
+                "insertion_index": 11,
+                "content": "Old",
+            },
+            " + 🚀",
+            {"startIndex": 15, "endIndex": 20},
+            id="non-empty-cell",
+        ),
+    ],
+)
+def test_build_table_population_requests_uses_utf16_header_bold_ranges(
+    cell, cell_text, expected_range
+):
     requests = build_table_population_requests(
-        table_info,
-        [["Metric 📊", " + 🚀"]],
+        {"cells": [[cell]]},
+        [[cell_text]],
         bold_headers=True,
     )
 
     style_ranges = [
         req["updateTextStyle"]["range"] for req in requests if "updateTextStyle" in req
     ]
-    # Empty cell at 5 with "Metric 📊" (utf16=9) -> [5, 14)
-    # Non-empty cell appends at end_index-1=15 with " + 🚀" (utf16=5) -> [15, 20)
-    assert style_ranges == [
-        {"startIndex": 5, "endIndex": 14},
-        {"startIndex": 15, "endIndex": 20},
-    ]
+    assert style_ranges == [expected_range]
 
 
 @pytest.mark.asyncio
