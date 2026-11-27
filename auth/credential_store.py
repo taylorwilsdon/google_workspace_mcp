@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import re
+import tempfile
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import List, Optional
@@ -230,10 +231,21 @@ class LocalDirectoryCredentialStore(CredentialStore):
             "expiry": credentials.expiry.isoformat() if credentials.expiry else None,
         }
 
+        # Write to a temp file and swap it in, so a failed or interrupted save never
+        # truncates the existing file and loses its refresh token. The ".tmp" suffix,
+        # and the absence of "@" in mkstemp names, keep a leftover temp file out of
+        # list_users().
+        tmp_path = None
         try:
-            fd = os.open(str(creds_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            fd, tmp_path = tempfile.mkstemp(
+                dir=os.path.dirname(creds_path), prefix=".", suffix=".tmp"
+            )
             with os.fdopen(fd, "w") as f:
                 json.dump(creds_data, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, creds_path)
+            tmp_path = None
             logger.info(f"Stored credentials for {user_email} to {creds_path}")
             return True
         except IOError as e:
@@ -241,6 +253,12 @@ class LocalDirectoryCredentialStore(CredentialStore):
                 f"Error storing credentials for {user_email} to {creds_path}: {e}"
             )
             return False
+        finally:
+            if tmp_path is not None:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
 
     def delete_credential(self, user_email: str) -> bool:
         """Delete credential file for a user."""
