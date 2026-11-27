@@ -10,6 +10,7 @@ from importlib import metadata, import_module
 from typing import NoReturn
 from urllib.parse import urlparse
 from dotenv import load_dotenv
+from core.plugin_env import drop_unexpanded_plugin_options, load_user_env_file
 from core.startup_ui import StartupDisplay, collapse_home, wordmark_lines
 
 # Prevent any stray startup output on macOS (e.g. platform identifiers) from
@@ -76,8 +77,11 @@ def _load_startup_dependencies():
     )
 
 
+# Runs before any .env is loaded, so the files can supply what the placeholders blocked.
+_dropped_plugin_options = drop_unexpanded_plugin_options()
 dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
 load_dotenv(dotenv_path=dotenv_path)
+_user_env_file = load_user_env_file()
 
 (
     get_selected_backend,
@@ -199,6 +203,20 @@ def resolve_callback_port_for_transport(transport: str) -> None:
         resolve_stdio_callback_port()
     else:
         os.environ.pop("WORKSPACE_MCP_RESOLVED_PORT", None)
+
+
+def serve_stdio_in_handshake_era() -> None:
+    """Keep stdio connections on the `initialize` handshake protocol era.
+
+    Clients such as the Copilot runtime open with a 2026-07-28 `server/discover`
+    probe and, when they cannot use its answer, retry `initialize` on the same
+    connection. The MCP SDK locks a stdio connection to the era of its first
+    request and then rejects that `initialize`. Not treating the probe as a
+    2026 envelope makes it fail fast, so the client's `initialize` fallback works.
+    """
+    from mcp.server import runner
+
+    runner._has_modern_envelope = lambda params: False
 
 
 # Advisories raised while resolving configuration. They are queued rather than
@@ -544,6 +562,14 @@ def main():
 
     # Configure safe logging for Windows Unicode handling
     configure_safe_logging()
+
+    if _dropped_plugin_options:
+        logger.info(
+            "Ignoring unexpanded plugin options (the host does not fill them in): %s",
+            ", ".join(_dropped_plugin_options),
+        )
+    if _user_env_file:
+        logger.info("Loaded settings from %s", collapse_home(str(_user_env_file)))
 
     # Enable OpenTelemetry tracing when an OTLP endpoint is configured.
     from core.telemetry import configure_telemetry
@@ -1078,6 +1104,7 @@ def main():
                 show_banner=False,
             )
         else:
+            serve_stdio_in_handshake_era()
             if http_port is not None:
                 # Dual transport: stdio for MCP client + HTTP for workspace-cli
                 import asyncio

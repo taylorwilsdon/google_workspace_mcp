@@ -232,6 +232,15 @@ ln -s "$(pwd)/skills/managing-google-workspace" ~/.claude/skills/managing-google
 
 **ChatGPT** - connect via Developer Mode with the [ChatGPT guide](https://workspacemcp.com/guides/chatgpt-developer-mode?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=clients-chatgpt).
 
+**GitHub Copilot CLI and VS Code (plugin)** - these hosts install the Claude Code plugin and start its server, but they have no plugin options and pass `${user_config.*}` placeholders on unexpanded. The server ignores such placeholders and reads its settings from the environment it inherits and from `~/.config/google-workspace-mcp/.env`, which never overrides variables that are already set:
+
+```bash
+# ~/.config/google-workspace-mcp/.env
+GOOGLE_CLIENT_SECRET_PATH=/path/to/client_secret.json   # or GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET
+WORKSPACE_MCP_PERMISSIONS=gmail:readonly calendar:readonly drive:full
+USER_GOOGLE_EMAIL=you@example.com
+```
+
 **VS Code, LM Studio, Open WebUI, and everything else** - any MCP client works over streamable HTTP (recommended) or stdio. Client-specific walkthroughs live in the [guides](https://workspacemcp.com/guides?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=clients-guides) and [FAQ](https://workspacemcp.com/welcome/faq?utm_source=github.com&utm_medium=referral&utm_campaign=readme&utm_content=clients-guides-faq).
 
 ## CLI
