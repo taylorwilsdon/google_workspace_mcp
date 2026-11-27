@@ -129,6 +129,12 @@ def _convert_body_to_markdown(doc: dict[str, Any], include_colors: bool = False)
             if bullet:
                 list_id = bullet["listId"]
                 nesting = bullet.get("nestingLevel", 0)
+                # Like Google Docs, a new item restarts the numbering of the
+                # levels nested below it.
+                for key in [
+                    k for k in ordered_counters if k[0] == list_id and k[1] > nesting
+                ]:
+                    del ordered_counters[key]
 
                 if _is_checklist(lists_meta, list_id, nesting):
                     checked = _is_checked(para)
